@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Read the Windows CI release-version argument from `version.py` instead of
+  the retired `0.2.0-beta.1` literal, keeping the source-identity gate aligned
+  with the public release configuration.
 - 2026-08-14 public repository transition: publish the audited sanitized root
   in a new public repository, retain the retired original graph only in an
   owner-controlled private archive, and enable public-repository security and

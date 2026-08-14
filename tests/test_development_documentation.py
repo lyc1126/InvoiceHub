@@ -337,6 +337,14 @@ def test_public_history_sanitization_governance_is_consistent() -> None:
     assert "Signed-off-by" in (ROOT / ".github" / "workflows" / "dco.yml").read_text(encoding="utf-8")
 
 
+def test_windows_ci_derives_release_version_from_version_source() -> None:
+    workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+
+    assert "0.2.0-beta.1" not in workflow
+    assert "runpy.run_path('src/invoice_hub/version.py')" in workflow
+    assert "-Version $version" in workflow
+
+
 def test_current_architecture_docs_do_not_expose_absolute_machine_paths() -> None:
     exposed: list[str] = []
     for path in CURRENT_FACT_DOCS:

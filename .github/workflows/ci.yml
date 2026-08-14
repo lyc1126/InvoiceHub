@@ -57,11 +57,21 @@ jobs:
           if ($failed) { throw "PowerShell parser found errors." }
       - name: Verify clean release source identity
         shell: pwsh
-        run: >-
-          ./scripts/dev/verify_release_source.ps1
-          -Version 0.2.0-beta.1
-          -PythonVersion 3.14.6
-          -SourceCommit $env:GITHUB_SHA
+        run: |
+          $versionOutput = @(
+            python -c "import runpy; print(runpy.run_path('src/invoice_hub/version.py')['PRODUCT_VERSION'])"
+          )
+          if ($LASTEXITCODE -ne 0 -or $versionOutput.Count -ne 1) {
+            throw "Could not read PRODUCT_VERSION from src/invoice_hub/version.py."
+          }
+          $version = ([string]$versionOutput[0]).Trim()
+          if ([string]::IsNullOrWhiteSpace($version)) {
+            throw "PRODUCT_VERSION from src/invoice_hub/version.py is empty."
+          }
+          ./scripts/dev/verify_release_source.ps1 `
+            -Version $version `
+            -PythonVersion 3.14.6 `
+            -SourceCommit $env:GITHUB_SHA
       - name: Check whitespace
         run: git diff --check
 
