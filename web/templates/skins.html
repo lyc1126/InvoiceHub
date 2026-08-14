@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <title>皮肤</title>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="/static/css/app.css?v=20260802-release-update-v1">
+</head>
+<body data-page="skins">
+  <header class="topbar">
+    <a class="brand" href="/"><span class="brand-mark">票</span><span><h1>一站式发票汇总系统</h1><p>界面皮肤</p></span></a>
+    <nav aria-label="主导航">
+      <a class="nav-link" href="/">首页</a>
+      <a class="nav-link" href="/costs">成本分析</a>
+      <a class="nav-link" href="/documents">单据</a>
+      <a class="nav-link" href="/bookkeeping">做账</a>
+      <a class="nav-link" href="/ocr">OCR</a>
+      <a class="nav-link" href="/consistency">一致性</a>
+      <a class="nav-link" href="/settings">设置</a>
+    </nav>
+  </header>
+  <main class="shell">
+    <section class="page-head">
+      <div class="page-title">
+        <h2>皮肤</h2>
+        <p id="skinStatus">正在读取当前皮肤...</p>
+      </div>
+    </section>
+
+    <section id="skinBanner" class="banner banner--muted" hidden></section>
+
+    <section class="panel skin-upload-panel">
+      <div class="panel__head">
+        <div>
+          <h3>皮肤包</h3>
+          <p>当前默认不启用皮肤。</p>
+        </div>
+      </div>
+      <div class="skin-upload-row">
+        <label class="field skin-file-field">
+          <span class="field__label">ZIP 文件</span>
+          <input id="skinZipInput" class="input" type="file" accept=".zip,application/zip,application/x-zip-compressed">
+        </label>
+        <div class="toolbar skin-actions" aria-label="皮肤操作">
+          <button id="importSkinBtn" class="btn btn--primary" type="button" disabled>导入</button>
+          <button id="enableSkinBtn" class="btn btn--secondary" type="button" disabled>启用</button>
+          <button id="resetSkinBtn" class="btn btn--ghost" type="button" disabled>重置</button>
+          <button id="replaceSkinBtn" class="btn btn--ghost" type="button" disabled>替换</button>
+        </div>
+      </div>
+      <div id="skinFileMeta" class="inline-panel skin-file-meta">未选择 ZIP 文件</div>
+    </section>
+
+    <section class="panel">
+      <div class="panel__head">
+        <div>
+          <h3>可用皮肤</h3>
+          <div id="skinListMeta" class="panel__meta">等待列表数据</div>
+        </div>
+      </div>
+      <div id="skinList" class="skin-list" role="radiogroup" aria-label="可用皮肤"></div>
+    </section>
+  </main>
+  <script src="/static/js/common.js?v=20260729-main-macos-sync"></script>
+  <script src="/static/js/page-skins.js?v=20260717-settings-macos-sync"></script>
+</body>
+</html>

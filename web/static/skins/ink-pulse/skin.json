@@ -1,0 +1,7 @@
+{
+  "id": "ink-pulse",
+  "name": "Ink Pulse 墨潮电波",
+  "description": "原创喷墨街头风内置皮肤：栅格喷溅、印刷拼贴纹理、趣味展示字体与硬阴影。",
+  "version": "1.3.0",
+  "entry": "skin.css"
+}

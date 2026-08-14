@@ -1,0 +1,425 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <title>发票汇总</title>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="/static/css/app.css?v=20260802-release-update-v1">
+  <link rel="stylesheet" href="/static/css/settings-actions.css?v=20260720-shutdown-monitor-choice">
+</head>
+<body data-page="index">
+  <header class="topbar">
+    <a class="brand" href="/" aria-label="返回发票汇总首页">
+      <span class="brand-mark">票</span>
+      <span>
+        <h1>一站式发票汇总系统</h1>
+        <p>单机 localhost · 当前活动档案</p>
+      </span>
+    </a>
+    <nav aria-label="主导航">
+      <a class="nav-link" aria-current="page" href="/">首页</a>
+      <a class="nav-link" href="/costs">成本分析</a>
+      <a class="nav-link" href="/documents">单据</a>
+      <a class="nav-link" href="/bookkeeping">做账</a>
+      <a class="nav-link" href="/ocr">OCR</a>
+      <a class="nav-link" href="/consistency">一致性</a>
+      <a class="nav-link" href="/settings">设置</a>
+    </nav>
+  </header>
+  <main class="shell">
+    <section class="page-head">
+      <div class="page-title">
+        <h2>发票汇总</h2>
+        <p id="targetText" class="path-inline">正在读取当前发票目录...</p>
+      </div>
+      <span id="eventState" class="service-status service-status--muted">系统服务连接状态：初始化中</span>
+    </section>
+
+    <section id="pageBanner" class="banner banner--muted" role="status" aria-live="polite" aria-atomic="true" hidden></section>
+    <aside id="pageOperationNotice" class="operation-notice operation-notice--success" role="status" aria-live="polite" aria-atomic="true" hidden>
+      <span id="pageOperationNoticeIcon" class="operation-notice__icon" aria-hidden="true">&#10003;</span>
+      <div class="operation-notice__copy">
+        <strong id="pageOperationNoticeTitle"></strong>
+        <p id="pageOperationNoticeMessage"></p>
+      </div>
+      <button id="pageOperationNoticeCloseBtn" class="operation-notice__close" type="button" aria-label="&#20851;&#38381;&#25552;&#31034;">&times;</button>
+    </aside>
+
+    <section class="dashboard-grid">
+      <article class="panel">
+        <div class="panel__head">
+          <div>
+            <h3>汇总控制</h3>
+            <p>选择当前发票目录，检查后重建活动档案。</p>
+          </div>
+        </div>
+        <div class="field-row">
+          <label class="field field--wide">
+            <span class="field__label">发票监控文件夹</span>
+            <input id="watchDirInput" class="input" type="text" autocomplete="off" placeholder="选择要汇总的发票文件夹">
+          </label>
+          <button id="pickWatchDirBtn" class="btn btn--ghost" type="button">选择文件夹</button>
+          <button id="validateWatchDirBtn" class="btn btn--ghost" type="button">检查目录</button>
+          <button id="saveWatchDirBtn" class="btn btn--primary" type="button">保存目录</button>
+        </div>
+        <div id="watchDirDraft" class="watch-dir-draft" hidden></div>
+        <div id="watchDirHistory" class="watch-dir-history" hidden>
+          <div class="watch-dir-history__group">
+            <div class="watch-dir-history__label">当前使用</div>
+            <div id="currentWatchDirOption" class="watch-dir-options"></div>
+          </div>
+          <div class="watch-dir-history__group">
+            <div class="watch-dir-history__label">过去保存</div>
+            <div id="recentWatchDirs" class="watch-dir-options watch-dir-options--recent"></div>
+          </div>
+        </div>
+        <div id="watchDirValidation" class="inline-panel">尚未执行目录检查。</div>
+        <div class="toolbar">
+          <button id="healthBtn" class="btn btn--ghost" type="button">检查桥接</button>
+          <button id="rebuildBtn" class="btn btn--primary" type="button">重新汇总</button>
+          <button id="startBtn" class="btn btn--secondary" type="button">启动监控</button>
+          <button id="stopBtn" class="btn btn--ghost" type="button">停止监控</button>
+        </div>
+      </article>
+
+      <article class="panel">
+        <div class="panel__head">
+          <div>
+            <h3>当前档案</h3>
+            <p>路径与运行状态保持可诊断。</p>
+          </div>
+        </div>
+        <div class="stats-grid">
+          <div class="stat-card"><span>全部发票</span><strong id="totalCount">0</strong><small>活动档案总量</small></div>
+          <div class="stat-card"><span>待核对</span><strong id="reviewCount">0</strong><small>字段不完整</small></div>
+          <div class="stat-card"><span>重复发票</span><strong id="duplicateCount">0</strong><small>同号后续记录</small></div>
+          <div class="stat-card stat-card--subtle"><span>当前筛选合计</span><strong id="amountSum">0.00</strong><small>仅累计合法金额</small></div>
+        </div>
+        <div class="inline-panel">
+          <div class="meta-grid">
+            <span>监控状态：<strong id="monitorStatus">读取中</strong></span>
+            <span>PID：<strong id="monitorPid">--</strong></span>
+            <span>最后同步：<strong id="monitorSyncAt">--</strong></span>
+            <span class="path-cell" tabindex="0">业务日志：<strong id="monitorLogPath">--</strong></span>
+          </div>
+        </div>
+      </article>
+    </section>
+
+    <section id="businessDossierPanel" class="panel business-dossier business-dossier--wide" hidden>
+      <div class="business-dossier__head">
+        <div class="business-dossier__text">
+          <strong>业务资料夹</strong>
+          <span id="businessDossierSummary" role="status" aria-live="polite">正在读取公司资料夹...</span>
+        </div>
+        <button id="openBusinessDossierBtn" class="btn btn--secondary" type="button">打开公司资料夹</button>
+      </div>
+      <div id="businessDossierLinks" class="business-dossier__links" aria-label="业务资料夹快速入口"></div>
+    </section>
+
+    <section class="panel">
+      <div class="panel__head">
+        <div>
+          <h3>筛选</h3>
+          <p>列表始终来自当前活动档案，避免旧目录数据串入。</p>
+        </div>
+        <div id="tableMeta" class="panel__meta">等待列表数据</div>
+      </div>
+      <form id="filterForm" class="filters">
+        <label class="field">
+          <span class="field__label">关键字</span>
+          <input name="keyword" class="input" type="text" placeholder="供应商、发票号、文件名">
+        </label>
+        <label class="field">
+          <span class="field__label">文件类型</span>
+          <select name="file_ext" class="input">
+            <option value="">全部</option>
+            <option value=".pdf">PDF</option>
+            <option value=".ofd">OFD</option>
+            <option value=".xml">XML</option>
+          </select>
+        </label>
+        <label class="field">
+          <span class="field__label">发票大类</span>
+          <select name="invoice_type" class="input">
+            <option value="">全部</option>
+            <option value="增值税专用发票">增值税专用发票</option>
+            <option value="增值税普通发票">增值税普通发票</option>
+          </select>
+        </label>
+        <label class="field">
+          <span class="field__label">特定业务样式</span>
+          <select name="business_type" class="input">
+            <option value="">全部</option>
+            <option value="标准电子发票">标准电子发票</option>
+            <option value="稀土">稀土</option>
+            <option value="建筑服务">建筑服务</option>
+            <option value="旅客运输">旅客运输</option>
+            <option value="货物运输">货物运输</option>
+            <option value="不动产销售">不动产销售</option>
+            <option value="不动产经营租赁">不动产经营租赁</option>
+            <option value="农产品收购">农产品收购</option>
+            <option value="光伏收购">光伏收购</option>
+            <option value="代收车船税">代收车船税</option>
+            <option value="自产农产品销售">自产农产品销售</option>
+            <option value="差额征税差额开票">差额征税差额开票</option>
+            <option value="差额征税全额开票">差额征税全额开票</option>
+          </select>
+        </label>
+        <label class="field">
+          <span class="field__label">类型识别状态</span>
+          <select name="classification_status" class="input">
+            <option value="">全部</option>
+            <option value="ok">已识别</option>
+            <option value="needs_review">待核对</option>
+            <option value="conflict">冲突</option>
+          </select>
+        </label>
+        <label class="field">
+          <span class="field__label">汇总状态</span>
+          <select name="status" class="input">
+            <option value="">全部</option>
+            <option value="已识别">已识别</option>
+            <option value="待核对">待核对</option>
+            <option value="重复发票">重复发票</option>
+          </select>
+        </label>
+        <button class="btn btn--secondary" type="submit">应用筛选</button>
+        <button id="filterResetBtn" class="btn btn--ghost" type="button">重置</button>
+      </form>
+    </section>
+
+    <section class="panel panel--table">
+      <div class="panel__head">
+        <div>
+          <h3>发票列表</h3>
+          <p>可直接打开本地文件或进入详情手工修订。</p>
+        </div>
+        <div class="invoice-selection-tools" role="group" aria-label="发票勾选操作">
+          <div class="invoice-selection-actions">
+            <button id="selectAllInvoicesBtn" class="btn btn--secondary" type="button">一键全选</button>
+            <button id="clearSelectedInvoicesBtn" class="btn btn--ghost" type="button">清除勾选</button>
+            <div id="invoiceSelectionMore" class="invoice-action-menu-wrap">
+              <button
+                id="invoiceSelectionMoreBtn"
+                class="btn btn--ghost invoice-action-trigger"
+                type="button"
+                aria-label="更多勾选操作"
+                aria-haspopup="menu"
+                aria-controls="invoiceSelectionActionMenu"
+                aria-expanded="false"
+                title="更多勾选操作"
+                disabled><span aria-hidden="true">&gt;&gt;</span></button>
+              <div id="invoiceSelectionActionMenu" class="invoice-action-menu" role="menu" aria-label="已勾选发票操作" hidden>
+                <button id="previewSelectedInvoicesBtn" class="invoice-action-menu__item" type="button" role="menuitem" tabindex="-1">
+                  预览
+                </button>
+                <button id="printSelectedInvoicesBtn" class="invoice-action-menu__item" type="button" role="menuitem" tabindex="-1">
+                  打印已勾选发票
+                </button>
+              </div>
+            </div>
+          </div>
+          <div id="selectedInvoiceSummary" class="selection-summary" aria-live="polite">
+            <span>勾选价税合计金额</span>
+            <strong id="selectedInvoiceTotal">0.00</strong>
+            <small id="selectedInvoiceCount">已勾选 0 张</small>
+            <button
+              id="selectedInvoiceSummaryBtn"
+              class="selection-summary__button"
+              type="button"
+              aria-label="查看勾选发票合计详情"
+              aria-haspopup="dialog"
+              aria-controls="selectedInvoiceSummaryModal"
+              aria-expanded="false"
+              disabled></button>
+          </div>
+        </div>
+      </div>
+      <div class="table-shell">
+        <table class="data-table table--invoice-list">
+          <thead>
+            <tr>
+              <th>销售方</th><th>格式</th><th>发票号码</th><th>发票分类</th><th>税率</th><th>开票金额</th>
+              <th id="invoiceDateHeader" aria-sort="none">
+                <span class="sortable-heading">
+                  <span>开票时间</span>
+                  <button id="invoiceDateSortBtn" class="sort-toggle" type="button" data-sort-direction="none" aria-label="按开票时间正序排序" title="按开票时间正序排序">
+                    <span class="sort-toggle__icon sort-toggle__icon--asc" aria-hidden="true"></span>
+                    <span class="sort-toggle__icon sort-toggle__icon--desc" aria-hidden="true"></span>
+                  </button>
+                </span>
+              </th>
+              <th>状态</th><th>操作</th><th>勾选</th>
+            </tr>
+          </thead>
+          <tbody id="invoiceBody"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+  <div id="selectedInvoiceSummaryModal" class="modal-backdrop selection-summary-modal" hidden>
+    <section
+      id="selectedInvoiceSummaryDialog"
+      class="selection-summary-dialog"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="selectedInvoiceSummaryTitle"
+      aria-describedby="selectedInvoiceSummarySubtitle"
+      tabindex="-1">
+      <header class="selection-summary-dialog__head">
+        <div>
+          <h3 id="selectedInvoiceSummaryTitle">已勾选发票合计详情</h3>
+          <p id="selectedInvoiceSummarySubtitle">正在准备合计信息</p>
+        </div>
+        <button
+          id="selectedInvoiceSummaryCloseBtn"
+          class="selection-summary-dialog__close"
+          type="button"
+          aria-label="关闭合计详情"
+          title="关闭">&times;</button>
+      </header>
+
+      <div class="selection-summary-dialog__scroll">
+        <div id="selectedInvoiceSummaryLoading" class="selection-summary-state" role="status" aria-live="polite">
+          <span class="selection-summary-spinner" aria-hidden="true"></span>
+          <p>正在汇总已勾选发票...</p>
+        </div>
+
+        <div id="selectedInvoiceSummaryError" class="selection-summary-state selection-summary-state--error" role="alert" hidden>
+          <strong>合计详情加载失败</strong>
+          <p id="selectedInvoiceSummaryErrorMessage"></p>
+          <button id="selectedInvoiceSummaryRetryBtn" class="btn btn--secondary" type="button">重试</button>
+        </div>
+
+        <div id="selectedInvoiceSummaryContent" hidden>
+          <section class="selection-summary-totals" aria-label="勾选发票金额合计">
+            <div class="selection-summary-total">
+              <span>合计发票金额（除税）</span>
+              <strong id="selectedSummaryPretax">0.00</strong>
+              <small id="selectedSummaryPretaxMeta">有效计入 0 张</small>
+            </div>
+            <div class="selection-summary-total">
+              <span>合计税金</span>
+              <strong id="selectedSummaryTax">0.00</strong>
+              <small id="selectedSummaryTaxMeta">有效计入 0 张</small>
+            </div>
+            <div class="selection-summary-total">
+              <span>合计发票金额（价税合计）</span>
+              <strong id="selectedSummaryTotalWithTax">0.00</strong>
+              <small id="selectedSummaryTotalWithTaxMeta">有效计入 0 张</small>
+            </div>
+          </section>
+
+          <div id="selectedInvoiceSummaryNotices" class="selection-summary-notices" role="status" aria-live="polite" hidden></div>
+
+          <section class="selection-summary-breakdown" aria-labelledby="selectedInvoiceSummaryBreakdownTitle">
+            <div class="selection-summary-breakdown__head">
+              <h4 id="selectedInvoiceSummaryBreakdownTitle">合计发票明细</h4>
+              <span id="selectedInvoiceSummaryBreakdownMeta">等待明细</span>
+            </div>
+            <div id="selectedInvoiceSummaryDetails" class="selection-summary-details" role="region" aria-label="合计发票明细规格列表"></div>
+          </section>
+        </div>
+      </div>
+    </section>
+  </div>
+  <div id="filePreviewModal" class="modal-backdrop selection-summary-modal file-preview-modal" hidden>
+    <section
+      id="filePreviewDialog"
+      class="selection-summary-dialog file-preview-dialog"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="filePreviewTitle"
+      aria-describedby="filePreviewSubtitle"
+      tabindex="-1">
+      <header class="selection-summary-dialog__head file-preview-dialog__head">
+        <div>
+          <h3 id="filePreviewTitle">源文件预览</h3>
+          <p id="filePreviewSubtitle">正在准备已勾选文件</p>
+        </div>
+        <button
+          id="filePreviewCloseBtn"
+          class="selection-summary-dialog__close"
+          type="button"
+          aria-label="关闭源文件预览"
+          title="关闭">&times;</button>
+      </header>
+
+      <div class="file-preview-body">
+        <div class="file-preview-toolbar" aria-label="源文件预览工具栏">
+          <label class="file-preview-control file-preview-control--file" for="filePreviewFileSelect">
+            <span>文件</span>
+            <select id="filePreviewFileSelect" class="input" aria-label="选择预览文件"></select>
+          </label>
+
+          <div class="file-preview-control-group" role="group" aria-label="文件切换">
+            <button id="filePreviewPreviousFileBtn" class="btn btn--ghost" type="button">上一文件</button>
+            <button id="filePreviewNextFileBtn" class="btn btn--ghost" type="button">下一文件</button>
+          </div>
+
+          <div class="file-preview-control-group" role="group" aria-label="页面切换">
+            <button id="filePreviewPreviousPageBtn" class="btn btn--ghost" type="button">上一页</button>
+            <label class="file-preview-page-select" for="filePreviewPageSelect">
+              <span>页码</span>
+              <select id="filePreviewPageSelect" class="input" aria-label="选择预览页码"></select>
+            </label>
+            <button id="filePreviewNextPageBtn" class="btn btn--ghost" type="button">下一页</button>
+          </div>
+
+          <label class="file-preview-control file-preview-control--zoom" for="filePreviewZoomRange">
+            <span>缩放 <output id="filePreviewZoomOutput" for="filePreviewZoomRange">100%</output></span>
+            <input id="filePreviewZoomRange" type="range" min="50" max="200" step="10" value="100" aria-label="预览缩放比例">
+          </label>
+          <button id="filePreviewFitWidthBtn" class="btn btn--secondary" type="button" aria-pressed="true">适合宽度</button>
+
+          <div class="file-preview-control-group file-preview-control-group--open" role="group" aria-label="源文件操作">
+            <button id="filePreviewOpenFileBtn" class="btn btn--secondary" type="button">打开文件</button>
+            <button id="filePreviewOpenLocationBtn" class="btn btn--ghost" type="button">打开所在位置</button>
+          </div>
+        </div>
+
+        <div id="filePreviewNotice" class="file-preview-notice" role="status" aria-live="polite" hidden></div>
+
+        <div id="filePreviewViewport" class="file-preview-viewport" tabindex="0">
+          <div id="filePreviewLoading" class="selection-summary-state file-preview-state" role="status" aria-live="polite">
+            <span class="selection-summary-spinner" aria-hidden="true"></span>
+            <p>正在准备源文件预览...</p>
+          </div>
+
+          <div id="filePreviewError" class="selection-summary-state selection-summary-state--error file-preview-state" role="alert" hidden>
+            <strong id="filePreviewErrorTitle">文件预览失败</strong>
+            <p id="filePreviewErrorMessage"></p>
+            <button id="filePreviewRetryBtn" class="btn btn--secondary" type="button">重试</button>
+          </div>
+
+          <div id="filePreviewImageStage" class="file-preview-image-stage" data-fit-width="true" hidden>
+            <img id="filePreviewImage" alt="">
+          </div>
+
+          <section id="filePreviewTextPanel" class="file-preview-text-panel" aria-label="XML 原文" hidden>
+            <div class="file-preview-text-panel__head">
+              <strong>XML 原文</strong>
+              <span id="filePreviewTextMeta"></span>
+            </div>
+            <pre id="filePreviewText" tabindex="0"></pre>
+          </section>
+
+          <section id="filePreviewMetadata" class="file-preview-metadata" aria-labelledby="filePreviewMetadataTitle" hidden>
+            <h4 id="filePreviewMetadataTitle">文件信息</h4>
+            <dl>
+              <div><dt>文件名</dt><dd id="filePreviewMetadataName">--</dd></div>
+              <div><dt>格式</dt><dd id="filePreviewMetadataExtension">--</dd></div>
+              <div><dt>大小</dt><dd id="filePreviewMetadataSize">--</dd></div>
+              <div><dt>修改时间</dt><dd id="filePreviewMetadataModified">--</dd></div>
+            </dl>
+            <p id="filePreviewMetadataReason"></p>
+          </section>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script src="/static/js/common.js?v=20260729-main-macos-sync"></script>
+  <script src="/static/js/page-index.js?v=20260803-external-monitor-guard"></script>
+</body>
+</html>

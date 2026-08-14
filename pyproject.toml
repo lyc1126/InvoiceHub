@@ -1,0 +1,48 @@
+[build-system]
+requires = ["setuptools==83.0.0", "wheel==0.47.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "invoice-hub"
+dynamic = ["version"]
+description = "一站式发票汇总系统重构版"
+readme = "README.md"
+license = "AGPL-3.0-or-later"
+license-files = ["LICENSE"]
+requires-python = ">=3.14,<3.15"
+dependencies = [
+  "fastapi==0.141.1",
+  "uvicorn==0.52.1",
+  "pydantic==2.13.4",
+  "openpyxl==3.1.5",
+  "pymupdf==1.28.0",
+  "pillow==12.3.0",
+  "watchdog==6.0.0; sys_platform == 'win32'",
+  "packaging==26.2",
+  "certifi==2026.7.22",
+]
+
+[project.urls]
+Homepage = "https://lyc1126.github.io/InvoiceHub/"
+Source = "https://github.com/lyc1126/InvoiceHub"
+Changelog = "https://github.com/lyc1126/InvoiceHub/blob/main/CHANGELOG.md"
+
+[project.optional-dependencies]
+dev = [
+  "pytest==9.1.1",
+  "httpx2==2.9.1",
+]
+
+[tool.setuptools.dynamic]
+version = {attr = "invoice_hub.version.PYTHON_PACKAGE_VERSION"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+invoice_hub = ["projections/document_templates/*.xlsx"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-q"

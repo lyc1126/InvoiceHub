@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <title>后端状态</title>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="/static/css/app.css?v=20260802-release-update-v1">
+</head>
+<body data-page="backend">
+  <header class="topbar">
+    <a class="brand" href="/"><span class="brand-mark">票</span><span><h1>一站式发票汇总系统</h1><p>后端状态</p></span></a>
+    <nav aria-label="主导航"><a class="nav-link" href="/">首页</a><a class="nav-link" href="/costs">成本分析</a><a class="nav-link" href="/ocr">OCR</a><a class="nav-link" aria-current="page" href="/backend">后端</a></nav>
+  </header>
+  <main class="shell">
+    <section class="page-head"><div class="page-title"><h2>后端状态</h2><p>健康、桥接与运行路径</p></div></section>
+    <pre id="backendJson" class="panel json-panel"></pre>
+  </main>
+  <script src="/static/js/common.js?v=20260729-main-macos-sync"></script>
+  <script>Promise.all([app.api('/api/v1/health'), app.api('/api/v1/settings'), app.api('/api/v1/bridge/status')]).then(([health,settings,bridge])=>document.getElementById('backendJson').textContent=JSON.stringify({health,settings,bridge},null,2))</script>
+</body>
+</html>

@@ -1,0 +1,12 @@
+name: invoice_hub_refactor
+
+services:
+  test:
+    image: ${INVOICE_HUB_TEST_IMAGE:-python:3.12-slim}
+    working_dir: /workspace
+    volumes:
+      - .:/workspace
+    command: >
+      sh -lc "python -m pip install -e .[dev] &&
+              python -m pytest &&
+              python -m compileall src tests"

@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "product_version": "0.3.0-alpha.1",
+  "python_version": "3.14.6",
+  "architecture": "x64",
+  "manifest_architecture": "x86_64",
+  "package_id": "com.invoicehub.windows.x86_64.portable",
+  "artifact_name": "InvoiceHub-v0.3.0-alpha.1-windows-x64-portable.zip",
+  "source_branch": "main",
+  "dependency_lock": "requirements/windows-x64-py314.lock",
+  "test_lock": "requirements/test-tools-py314.lock",
+  "runtime_root": "release-staging/windows-runtime-3.14.6-x64",
+  "test_environment_root": "release-staging/windows-test-3.14.6-x64",
+  "build_receipt": "dist/InvoiceHub-v0.3.0-alpha.1-windows-x64-portable.build-receipt.json",
+  "evidence_root": "dist/evidence/windows-v0.3.0-alpha.1",
+  "default_host": "127.0.0.1",
+  "default_port": 8766,
+  "minimum_free_disk_gib": 10,
+  "reproducibility_builds": 2,
+  "offline_rebuild_required": true
+}

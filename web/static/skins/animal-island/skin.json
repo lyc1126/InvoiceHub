@@ -1,0 +1,7 @@
+{
+  "id": "animal-island",
+  "name": "Animal Island",
+  "version": "2.0.8",
+  "entry": "skin.css",
+  "description": "Cozy island dashboard skin with local OFL font subsets, original paper grain, soft 3D controls, polished cost tables, distinct light invoice status badges, and NookPhone-inspired accents."
+}

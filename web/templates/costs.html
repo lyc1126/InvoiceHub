@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <title>成本分析</title>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="/static/css/app.css?v=20260802-release-update-v1">
+</head>
+<body data-page="costs">
+  <header class="topbar">
+    <a class="brand" href="/">
+      <span class="brand-mark">票</span>
+      <span><h1>一站式发票汇总系统</h1><p>成本分析 · 开票参考</p></span>
+    </a>
+    <nav aria-label="主导航">
+      <a class="nav-link" href="/">首页</a>
+      <a class="nav-link" aria-current="page" href="/costs">成本分析</a>
+      <a class="nav-link" href="/documents">单据</a>
+      <a class="nav-link" href="/bookkeeping">做账</a>
+      <a class="nav-link" href="/ocr">OCR</a>
+      <a class="nav-link" href="/consistency">一致性</a>
+      <a class="nav-link" href="/settings">设置</a>
+    </nav>
+  </header>
+  <main class="shell">
+    <section class="page-head">
+      <div class="page-title">
+        <h2>成本分析</h2>
+        <p id="costPath" class="path-inline">正在读取当前发票目录...</p>
+      </div>
+      <div class="page-head__actions">
+        <span id="eventState" class="service-status service-status--muted">系统服务连接状态：初始化中</span>
+      </div>
+    </section>
+
+    <section id="recentWatchDirs" class="inline-panel path-inline" hidden></section>
+    <section id="syncPanel" class="banner">同步状态初始化中</section>
+    <section class="stats-grid">
+      <div class="stat-card"><span>成本明细</span><strong id="detailCount">0</strong><small>CSV 明细行</small></div>
+      <div class="stat-card"><span>开票参考</span><strong id="referenceCount">0</strong><small>按项目规格汇总</small></div>
+      <div class="stat-card"><span>入库总量合计</span><strong id="inventoryTotalWithTax">0.00</strong><small>项目规格价税合计</small></div>
+      <div class="stat-card"><span>已开库存合计金额</span><strong id="invoicedReferenceTotal">0.00</strong><small>价税合计 · 含加价率</small></div>
+      <div class="stat-card"><span>未开库存合计金额</span><strong id="uninvoicedReferenceTotal">0.00</strong><small>价税合计 · 含加价率</small></div>
+      <div class="stat-card"><span>同步状态</span><strong id="syncState">--</strong><small>发票池对比成本产物</small></div>
+    </section>
+
+    <section class="list-controls" aria-label="成本列表操作">
+      <div class="toolbar cost-actions">
+        <button id="refreshBtn" class="btn btn--ghost" type="button">刷新</button>
+        <button id="rebuildBtn" class="btn btn--primary" type="button">重新汇总</button>
+        <button id="openSummaryBtn" class="btn btn--secondary" type="button">打开成本分析表</button>
+        <button id="copyBtn" class="btn btn--ghost" type="button">复制当前表格</button>
+        <button id="markSelectedMaxBtn" class="btn btn--ghost" type="button" disabled>批量设为已开具</button>
+        <button id="markSelectedZeroBtn" class="btn btn--ghost" type="button" disabled>批量设为未开具</button>
+        <div class="batch-markup-control" aria-label="批量加价率">
+          <input id="batchMarkupInput" class="batch-markup-input" type="text" inputmode="decimal" pattern="[0-9]*(\.[0-9]*)?" autocomplete="off" spellcheck="false" data-batch-markup-input aria-label="批量加价率百分比">
+          <span class="markup-rate-percent" aria-hidden="true">%</span>
+          <button id="batchMarkupLockBtn" class="btn btn--ghost" type="button" disabled>批量锁定加价率</button>
+          <button id="batchMarkupUnlockBtn" class="btn btn--ghost" type="button" disabled>批量解锁加价率</button>
+        </div>
+        <button id="saveReferenceBtn" class="btn btn--primary" type="button" disabled>保存状态</button>
+      </div>
+      <div class="cost-view-switcher">
+        <div class="cost-formula-help-wrap">
+          <button class="cost-formula-help" type="button" aria-label="平均单价算法说明" aria-describedby="costFormulaTooltip">!</button>
+          <div id="costFormulaTooltip" class="cost-formula-tooltip" role="tooltip">
+            <strong>平均单价算法说明</strong>
+            <p><b>发票明细</b>：平均单价(含税) = (金额(除税) + 税金) / 数量；金额、税金或数量非法时留空。</p>
+            <p><b>项目规格汇总</b>：库存平均单价(除税) = sum(金额(除税)) / sum(数量)，库存平均单价(含税) = sum(金额(除税)+税金) / sum(数量)；采购参考平均单价(含税) = avg(明细行含税原始单价)，只作采购参考。</p>
+            <p><b>开票参考</b>：平均单价(除税) = 库存加权除税成本 × (1 + 行级加价率)，平均单价(含税) = 平均单价(除税) × 1.13；金额、税金和价税合计随数量与加价率联动。</p>
+          </div>
+        </div>
+        <div class="tabs cost-tabs" role="tablist" aria-label="成本分析视图">
+          <button class="tab is-active" data-view="details" role="tab" aria-selected="true" type="button">成本发票明细</button>
+          <button class="tab" data-view="project" role="tab" aria-selected="false" type="button">项目规格汇总</button>
+          <button class="tab" data-view="reference" role="tab" aria-selected="false" type="button">开票参考</button>
+          <button class="tab" data-view="checks" role="tab" aria-selected="false" type="button">发票校验</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel cost-view" data-view="details">
+      <div class="panel__head"><h3>成本发票明细</h3><div class="panel__meta">一条明细一行，保持 CSV 口径。</div></div>
+      <div class="table-shell"><table class="data-table" id="detailsTable"><thead></thead><tbody></tbody></table></div>
+      <div class="cost-table-footer" data-cost-table-footer="details">
+        <span class="cost-table-count" data-cost-row-count="details">显示 0 / 共 0 条</span>
+        <div class="cost-row-limit-control" role="group" aria-label="成本发票明细显示条数">
+          <button class="cost-row-limit-btn" type="button" data-cost-row-limit="30" aria-pressed="true">30</button>
+          <button class="cost-row-limit-btn" type="button" data-cost-row-limit="60" aria-pressed="false">60</button>
+          <button class="cost-row-limit-btn" type="button" data-cost-row-limit="100" aria-pressed="false">100</button>
+        </div>
+      </div>
+    </section>
+    <section class="panel cost-view" data-view="project" hidden>
+      <div class="panel__head"><h3>项目规格汇总</h3><div class="panel__meta">按项目、规格、单位汇总。</div></div>
+      <div class="table-shell"><table class="data-table" id="projectTable"><thead></thead><tbody></tbody></table></div>
+      <div class="cost-table-footer" data-cost-table-footer="project">
+        <span class="cost-table-count" data-cost-row-count="project">显示 0 / 共 0 条</span>
+        <div class="cost-row-limit-control" role="group" aria-label="项目规格汇总显示条数">
+          <button class="cost-row-limit-btn" type="button" data-cost-row-limit="30" aria-pressed="true">30</button>
+          <button class="cost-row-limit-btn" type="button" data-cost-row-limit="60" aria-pressed="false">60</button>
+          <button class="cost-row-limit-btn" type="button" data-cost-row-limit="100" aria-pressed="false">100</button>
+        </div>
+      </div>
+    </section>
+    <section class="panel cost-view" data-view="reference" hidden>
+      <div class="panel__head"><h3>开票参考</h3><div class="panel__meta">已开数量保存时锁定金额快照。</div></div>
+      <div class="table-shell"><table class="data-table" id="referenceTable"><thead></thead><tbody></tbody></table></div>
+      <div class="cost-table-footer" data-cost-table-footer="reference">
+        <span class="cost-table-count" data-cost-row-count="reference">显示 0 / 共 0 条</span>
+        <div class="cost-row-limit-control" role="group" aria-label="开票参考显示条数">
+          <button class="cost-row-limit-btn" type="button" data-cost-row-limit="30" aria-pressed="true">30</button>
+          <button class="cost-row-limit-btn" type="button" data-cost-row-limit="60" aria-pressed="false">60</button>
+          <button class="cost-row-limit-btn" type="button" data-cost-row-limit="100" aria-pressed="false">100</button>
+        </div>
+      </div>
+    </section>
+    <section class="panel cost-view" data-view="checks" hidden>
+      <div class="panel__head"><h3>发票校验</h3><div class="panel__meta">解析差异显式展示。</div></div>
+      <div class="table-shell"><table class="data-table" id="checksTable"><thead></thead><tbody></tbody></table></div>
+      <div class="cost-table-footer" data-cost-table-footer="checks">
+        <span class="cost-table-count" data-cost-row-count="checks">显示 0 / 共 0 条</span>
+        <div class="cost-row-limit-control" role="group" aria-label="发票校验显示条数">
+          <button class="cost-row-limit-btn" type="button" data-cost-row-limit="30" aria-pressed="true">30</button>
+          <button class="cost-row-limit-btn" type="button" data-cost-row-limit="60" aria-pressed="false">60</button>
+          <button class="cost-row-limit-btn" type="button" data-cost-row-limit="100" aria-pressed="false">100</button>
+        </div>
+      </div>
+    </section>
+  </main>
+  <script src="/static/js/common.js?v=20260729-main-macos-sync"></script>
+  <script src="/static/js/page-costs.js?v=20260726-invoice-taxonomy"></script>
+</body>
+</html>

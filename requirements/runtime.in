@@ -1,0 +1,11 @@
+# Runtime dependencies are exact by design. Platform lock files add transitive
+# dependencies and hashes; release installers never resolve from this file.
+fastapi==0.141.1
+uvicorn==0.52.1
+pydantic==2.13.4
+openpyxl==3.1.5
+pymupdf==1.28.0
+pillow==12.3.0
+watchdog==6.0.0; sys_platform == "win32"
+packaging==26.2
+certifi==2026.7.22

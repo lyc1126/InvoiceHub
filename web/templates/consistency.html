@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <title>一致性</title>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="/static/css/app.css?v=20260802-release-update-v1">
+</head>
+<body data-page="consistency">
+  <header class="topbar">
+    <a class="brand" href="/"><span class="brand-mark">票</span><span><h1>一站式发票汇总系统</h1><p>一致性检查</p></span></a>
+    <nav aria-label="主导航"><a class="nav-link" href="/">首页</a><a class="nav-link" href="/costs">成本分析</a><a class="nav-link" href="/documents">单据</a><a class="nav-link" href="/bookkeeping">做账</a><a class="nav-link" href="/ocr">OCR</a><a class="nav-link" aria-current="page" href="/consistency">一致性</a><a class="nav-link" href="/settings">设置</a></nav>
+  </header>
+  <main class="shell">
+    <section class="page-head">
+      <div class="page-title"><h2>一致性</h2><p>同票 PDF / OFD / XML 差异检查</p></div>
+      <label class="inline-panel"><input id="onlyMismatchToggle" type="checkbox"> 仅看存在差异</label>
+    </section>
+    <div id="pageBanner" class="banner" hidden></div>
+    <section id="consistencyStats" class="stats-grid"></section>
+    <section id="consistencyGroups" class="stack-list"></section>
+  </main>
+  <script src="/static/js/common.js?v=20260729-main-macos-sync"></script>
+  <script src="/static/js/page-consistency.js?v=20260726-invoice-taxonomy"></script>
+</body>
+</html>

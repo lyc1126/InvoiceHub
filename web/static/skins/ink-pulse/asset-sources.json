@@ -1,0 +1,65 @@
+{
+  "skin": "ink-pulse",
+  "version": "1.3.0",
+  "authorship": "Original CSS theme and generated raster textures created for InvoiceHub.",
+  "bundled_assets": [
+    {
+      "path": "fonts/dela-gothic-one-latin.woff",
+      "source": "https://github.com/google/fonts/tree/main/ofl/delagothicone",
+      "source_file": "DelaGothicOne-Regular.ttf",
+      "source_git_blob_sha": "258f93526667223b6fd9476258d42ace60c7bfd6",
+      "sha256": "877984d2c73e8727e4e49d033e08db1668bf313b2b6928492413a3f1410fe631",
+      "processing": "Latin, punctuation and currency subset converted to WOFF.",
+      "license": "SIL Open Font License 1.1",
+      "license_file": "fonts/OFL-DelaGothicOne.txt"
+    },
+    {
+      "path": "fonts/zcool-kuaile-ui.woff",
+      "source": "https://github.com/google/fonts/tree/main/ofl/zcoolkuaile",
+      "source_file": "ZCOOLKuaiLe-Regular.ttf",
+      "source_git_blob_sha": "3cf6cd927ee910d46875de173efdaac4330e84ac",
+      "sha256": "15856bd08926c00d129fcfafbd9783fadad6c44a03975b67d845dbf4f4e0c0c2",
+      "processing": "Original glyph set converted to WOFF for local UI use.",
+      "license": "SIL Open Font License 1.1",
+      "license_file": "fonts/OFL-ZCOOLKuaiLe.txt"
+    },
+    {
+      "path": "textures/ink-field-v1.webp",
+      "sha256": "8164fd75d1a6c5dddfead623af8ff1ba5625986c99092baa7a7c65719de05cff",
+      "dimensions": "1672x941",
+      "generator": "OpenAI built-in image generation",
+      "processing": "Generated as an original dark ink-field composition, then converted from PNG to quality-86 WebP.",
+      "reference_usage": "User-provided images informed only the high-level ink rhythm, layered print energy, and edge-weighted composition. No character, logo, text, icon, or identifiable reference artwork was requested or retained."
+    },
+    {
+      "path": "textures/panel-print-v1.webp",
+      "sha256": "b6518142202c1c20e1860aa55c1784ab89a74a76e2c7852ab2b01393e6b07225",
+      "dimensions": "1254x1254",
+      "generator": "OpenAI built-in image generation",
+      "processing": "Generated as an original low-contrast print-collage texture, then converted from PNG to quality-80 WebP.",
+      "reference_usage": "Reference images informed only the general screen-print layering and density; the texture contains no copied graphic, text, character, or brand element."
+    },
+    {
+      "path": "textures/ink-splatter-atlas-v1.png",
+      "sha256": "c3897d56dd3defd279b72ad8dc1e5c12997b01326ab93e919adfe5464e403a47",
+      "dimensions": "1254x1254 RGBA",
+      "generator": "OpenAI built-in image generation",
+      "processing": "Four original white splatter silhouettes were generated on a flat chroma field; the chroma was removed locally with soft matte and despill to produce a transparent CSS mask atlas.",
+      "reference_usage": "Reference images informed only wet-ink energy. All four silhouettes were newly generated without official or identifiable shapes."
+    }
+  ],
+  "texture_method": "The generated ink field supplies full-page print depth. The generated panel texture is sampled at different offsets per surface. A four-quadrant transparent splatter atlas is used as a CSS mask with per-card color, position, rotation, and sprite selection; no runtime script is executed.",
+  "visual_references": [
+    {
+      "name": "Splatoon 3 official event pages",
+      "url": "https://splatoon.nintendo.com/en/events/",
+      "usage": "High-level visual reference only: dark surfaces, saturated accents, graphic rhythm."
+    },
+    {
+      "name": "misenhower/splatoon3.ink",
+      "url": "https://github.com/misenhower/splatoon3.ink",
+      "usage": "High-level reference for dense data dashboard organization only."
+    }
+  ],
+  "license_note": "Only the two listed OFL fonts are bundled third-party assets. The three listed textures are original generated project assets. No third-party code, logos, characters, screenshots, icons, copied textures, official game assets, or proprietary game fonts are included. Nintendo and Splatoon are not names of this skin and no affiliation is implied."
+}

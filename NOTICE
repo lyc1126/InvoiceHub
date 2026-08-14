@@ -1,0 +1,16 @@
+InvoiceHub
+Copyright (c) 2026 lyc1126 and contributors
+
+InvoiceHub is licensed under the GNU Affero General Public License, version 3
+or later. See LICENSE for the complete license text.
+
+Contributors retain copyright in their contributions. Third-party components
+and their notices are listed in THIRD_PARTY_NOTICES.md.
+
+The names "InvoiceHub" and its logos are project identifiers. The AGPL license
+does not grant permission to use them in a way that implies endorsement,
+affiliation, or an official release.
+
+User invoices, configuration, runtime state, generated reports, and other user
+data are not source-code contributions and are not automatically licensed under
+the AGPL merely because InvoiceHub reads or generates them.

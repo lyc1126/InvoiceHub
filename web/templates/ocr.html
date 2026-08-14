@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <title>OCR</title>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="/static/css/app.css?v=20260802-release-update-v1">
+</head>
+<body data-page="ocr">
+  <header class="topbar">
+    <a class="brand" href="/"><span class="brand-mark">票</span><span><h1>一站式发票汇总系统</h1><p>OCR 入口</p></span></a>
+    <nav aria-label="主导航">
+      <a class="nav-link" href="/">首页</a>
+      <a class="nav-link" href="/costs">成本分析</a>
+      <a class="nav-link" href="/documents">单据</a>
+      <a class="nav-link" href="/bookkeeping">做账</a>
+      <a class="nav-link" aria-current="page" href="/ocr">OCR</a>
+      <a class="nav-link" href="/consistency">一致性</a>
+      <a class="nav-link" href="/settings">设置</a>
+    </nav>
+  </header>
+  <main class="shell">
+    <section class="page-head">
+      <div class="page-title"><h2>OCR</h2><p id="ocrStatus">正在读取 OCR 状态...</p></div>
+    </section>
+    <section id="ocrBanner" class="banner banner--muted"></section>
+    <section class="dashboard-grid">
+      <article class="panel">
+        <div class="panel__head"><h3>单文件识别</h3><div id="selectedFile" class="panel__meta">未选择文件</div></div>
+        <div class="toolbar">
+          <button id="pickFileBtn" class="btn btn--primary" type="button">选择文件</button>
+          <button id="extractBtn" class="btn btn--secondary" type="button">识别</button>
+          <button id="copyTextBtn" class="btn btn--ghost" type="button">复制结果</button>
+        </div>
+        <textarea id="ocrText" class="input" spellcheck="false" placeholder="OCR 结果"></textarea>
+      </article>
+      <article class="panel">
+        <div class="panel__head"><h3>候选文件</h3><div id="folderPath" class="panel__meta path-inline">当前发票目录</div></div>
+        <div class="toolbar">
+          <button id="pickFolderBtn" class="btn btn--ghost" type="button">选择文件夹</button>
+          <button id="openLogDirBtn" class="btn btn--ghost" type="button">打开日志目录</button>
+        </div>
+        <div class="table-shell">
+          <table class="data-table"><thead><tr><th>文件名</th><th>类型</th><th>大小</th></tr></thead><tbody id="ocrFilesBody"></tbody></table>
+        </div>
+      </article>
+    </section>
+  </main>
+  <script src="/static/js/common.js?v=20260729-main-macos-sync"></script>
+  <script src="/static/js/page-ocr.js?v=20260717-settings-macos-sync"></script>
+</body>
+</html>

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Invoice>
+  <invoiceType>增值税普通发票</invoiceType>
+  <businessType>标准电子发票</businessType>
+  <invoiceNo>25322000000043426430</invoiceNo>
+  <invoiceDate>2026-05-23</invoiceDate>
+  <sellerName>示例销售方有限公司</sellerName>
+  <buyerName>示例购买方有限公司</buyerName>
+  <totalAmount>1234.56</totalAmount>
+</Invoice>

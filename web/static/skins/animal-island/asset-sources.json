@@ -1,0 +1,46 @@
+{
+  "fonts": [
+    {
+      "family": "Nunito",
+      "file": "fonts/nunito-ui.woff2",
+      "source": "Google Fonts subset API",
+      "license": "SIL Open Font License 1.1"
+    },
+    {
+      "family": "Zen Maru Gothic",
+      "file": "fonts/zen-maru-ui-400.woff2",
+      "source": "Google Fonts subset API",
+      "license": "SIL Open Font License 1.1"
+    },
+    {
+      "family": "Zen Maru Gothic",
+      "file": "fonts/zen-maru-ui-700.woff2",
+      "source": "Google Fonts subset API",
+      "license": "SIL Open Font License 1.1"
+    },
+    {
+      "family": "Noto Sans SC",
+      "file": "fonts/noto-sans-sc-ui.woff2",
+      "source": "Google Fonts subset API",
+      "license": "SIL Open Font License 1.1"
+    }
+  ],
+  "textures": [
+    {
+      "file": "textures/paper-grain.png",
+      "source": "Generated locally with deterministic procedural noise",
+      "license": "Project original asset"
+    },
+    {
+      "file": "textures/leaf-confetti.png",
+      "source": "Generated locally with deterministic procedural shapes",
+      "license": "Project original asset"
+    }
+  ],
+  "externalDesignReferences": [
+    "https://guokaigdg.github.io/animal-island-ui/",
+    "https://github.com/guokaigdg/animal-island-ui",
+    "https://interfaceingame.com/games/animal-crossing-new-horizons/"
+  ],
+  "copyrightBoundary": "No Nintendo official characters, logos, screenshots, fonts, source code, or art assets are included."
+}

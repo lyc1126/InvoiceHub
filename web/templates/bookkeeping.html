@@ -1,0 +1,282 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <title>做账</title>
+  {{BASE_HEAD}}
+</head>
+<body data-page="bookkeeping">
+  <script id="bootstrapJson" type="application/json">{{BOOTSTRAP_JSON}}</script>
+  <header class="topbar">
+    <a class="brand" href="/"><span class="brand-mark">票</span><span><h1>一站式发票汇总系统</h1><p>捷锐凭证草稿人审</p></span></a>
+    <nav aria-label="主导航">
+      <a class="nav-link" href="/">首页</a>
+      <a class="nav-link" href="/costs">成本分析</a>
+      <a class="nav-link" href="/documents">单据</a>
+      <a class="nav-link" aria-current="page" href="/bookkeeping">做账</a>
+      <a class="nav-link" href="/ocr">OCR</a>
+      <a class="nav-link" href="/consistency">一致性</a>
+      <a class="nav-link" href="/settings">设置</a>
+    </nav>
+  </header>
+  <main class="shell bookkeeping-shell">
+    <section class="page-head">
+      <div class="page-title">
+        <h2>做账</h2>
+        <p id="bookkeepingPath" class="path-inline">正在读取做账状态...</p>
+      </div>
+      <div class="page-head__actions">
+        <span id="eventState" class="service-status service-status--muted">系统服务连接状态：初始化中</span>
+      </div>
+    </section>
+
+    <section id="bookkeepingBanner" class="banner banner--muted" hidden></section>
+
+    <section class="bookkeeping-readiness" aria-label="账套执行状态">
+      <div><span>账套</span><strong id="ledgerIdentityState">未确认</strong></div>
+      <div><span>科目</span><strong id="accountCatalogState">未加载</strong></div>
+      <div><span>辅助核算</span><strong id="auxCatalogState">未加载</strong></div>
+      <div><span>人审</span><strong id="reviewReadinessState">阻断</strong></div>
+      <div><span>审核</span><strong id="approvalReadinessState">阻断</strong></div>
+      <div><span>导出</span><strong id="exportReadinessState">阻断</strong></div>
+    </section>
+
+    <div class="view-tabs bookkeeping-tabs" role="tablist" aria-label="做账视图">
+      <button id="bookkeepingReviewTab" class="view-tab is-active" type="button" role="tab" aria-selected="true" aria-controls="bookkeepingReviewView" data-bookkeeping-tab="review">凭证人审</button>
+      <button id="bookkeepingMappingTab" class="view-tab" type="button" role="tab" aria-selected="false" aria-controls="bookkeepingMappingView" data-bookkeeping-tab="mapping">映射规则</button>
+      <button id="bookkeepingSetupTab" class="view-tab" type="button" role="tab" aria-selected="false" aria-controls="bookkeepingSetupView" data-bookkeeping-tab="setup">账套设置</button>
+    </div>
+
+    <section id="bookkeepingReviewView" data-bookkeeping-view="review" role="tabpanel" aria-labelledby="bookkeepingReviewTab">
+
+    <section class="stats-grid bookkeeping-stats" aria-label="凭证状态汇总">
+      <div class="stat-card"><span>草稿</span><strong id="draftCount">0</strong><small>待人审</small></div>
+      <div class="stat-card"><span>已通过</span><strong id="approvedCount">0</strong><small>待导出</small></div>
+      <div class="stat-card"><span>已导出</span><strong id="exportedCount">0</strong><small>待导入捷锐</small></div>
+      <div class="stat-card"><span>规则</span><strong id="mappingRuleCount">0</strong><small>科目映射</small></div>
+    </section>
+
+    <section class="list-controls bookkeeping-controls" aria-label="做账操作">
+      <div class="toolbar bookkeeping-actions">
+        <button id="generateDraftsBtn" class="btn btn--primary" type="button">生成凭证草稿</button>
+        <button id="exportImportFileBtn" class="btn btn--secondary" type="button">导出捷锐导入文件</button>
+        <button id="refreshBookkeepingBtn" class="btn btn--ghost" type="button">刷新</button>
+        <button id="copyVoucherTableBtn" class="btn btn--ghost" type="button">复制凭证表</button>
+      </div>
+      <div class="filters bookkeeping-filters" aria-label="凭证筛选">
+        <label class="field">
+          <span class="field__label">状态</span>
+          <select id="statusFilter" class="input">
+            <option value="">全部</option>
+            <option value="draft">draft</option>
+            <option value="blocked">blocked</option>
+            <option value="review_pending">review_pending</option>
+            <option value="approved">approved</option>
+            <option value="exported">exported</option>
+            <option value="importing">importing</option>
+            <option value="imported">imported</option>
+            <option value="import_failed">import_failed</option>
+            <option value="import_failed_confirmed">import_failed_confirmed</option>
+            <option value="import_unknown">import_unknown</option>
+            <option value="reconciled">reconciled</option>
+            <option value="rejected">rejected</option>
+            <option value="manual_entry">manual_entry</option>
+          </select>
+        </label>
+        <label class="field">
+          <span class="field__label">review_tier</span>
+          <select id="tierFilter" class="input">
+            <option value="">全部</option>
+            <option value="auto">auto</option>
+            <option value="ai_suggested">ai_suggested</option>
+            <option value="forced_manual">forced_manual</option>
+            <option value="manual_confirmed">manual_confirmed</option>
+          </select>
+        </label>
+      </div>
+    </section>
+
+    <section id="exportStatusPanel" class="inline-panel bookkeeping-export-status">导出状态等待读取。</section>
+
+    <section class="panel panel--table bookkeeping-table-panel">
+      <div class="panel__head">
+        <h3>凭证草稿</h3>
+        <div id="voucherTableMeta" class="panel__meta">等待凭证数据</div>
+      </div>
+      <div class="table-shell bookkeeping-table-shell">
+        <table id="voucherTable" class="data-table bookkeeping-table">
+          <thead>
+            <tr>
+              <th>凭证日期</th>
+              <th>来源发票号</th>
+              <th>分录概要</th>
+              <th>借方合计</th>
+              <th>贷方合计</th>
+              <th>review_tier</th>
+              <th>状态</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody id="voucherTableBody">
+            <tr><td colspan="8">正在读取凭证草稿...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="voucherDetailPanel" class="panel bookkeeping-detail-panel" hidden>
+      <div class="panel__head">
+        <div><h3>审核详细信息</h3><p id="voucherDetailMeta">选择一张凭证查看完整分录。</p></div>
+        <span id="voucherBalanceState" class="status-pill status-pill--muted">balance_ok: --</span>
+      </div>
+      <div class="table-shell bookkeeping-detail-shell">
+        <table id="voucherLinesTable" class="data-table bookkeeping-lines-table">
+          <thead><tr><th>摘要</th><th>科目编码名称</th><th>借贷</th><th>金额</th><th>辅助核算</th></tr></thead>
+          <tbody id="voucherLinesBody"></tbody>
+        </table>
+      </div>
+      <form id="voucherDecisionForm" class="bookkeeping-decision-form" novalidate>
+        <div class="bookkeeping-section-head">
+          <div><h4>会计决定</h4><p id="voucherDecisionRevision">proposal revision: --</p></div>
+          <div class="toolbar bookkeeping-decision-actions">
+            <button id="recomputeVoucherBtn" class="btn btn--ghost" type="button">重算当前</button>
+            <button id="saveVoucherDecisionBtn" class="btn btn--primary" type="submit">保存决定</button>
+          </div>
+        </div>
+        <fieldset class="bookkeeping-decision-grid">
+          <legend>业务与证据状态</legend>
+          <label class="field"><span class="field__label">业务类别</span><select id="decisionBusinessClass" class="input" required>
+            <option value="">请选择</option><option value="inventory_purchase">库存采购</option><option value="raw_material_purchase">原材料</option><option value="project_cost">项目成本</option><option value="period_expense">期间费用</option><option value="fixed_asset_purchase">固定资产</option>
+          </select></label>
+          <label class="field"><span class="field__label">付款状态</span><select id="decisionPaymentState" class="input" required>
+            <option value="unknown">未知</option><option value="unmatched">未匹配</option><option value="partial">部分匹配</option><option value="matched">已匹配</option>
+          </select></label>
+          <label class="field"><span class="field__label">税务处理</span><select id="decisionTaxTreatment" class="input" required>
+            <option value="pending">待确认</option><option value="deductible">可抵扣</option><option value="non_deductible">不可抵扣</option>
+          </select></label>
+          <label class="field"><span class="field__label">入库/验收覆盖</span><select id="decisionReceivingState" class="input" required>
+            <option value="missing">缺失</option><option value="partial">部分</option><option value="full">完整</option><option value="not_applicable">不适用</option>
+          </select></label>
+        </fieldset>
+        <fieldset>
+          <legend>税务证据</legend>
+          <div class="bookkeeping-fieldset-actions"><button id="addTaxEvidenceBtn" class="btn btn--ghost bookkeeping-icon-btn" type="button" title="新增税务证据" aria-label="新增税务证据">+</button></div>
+          <div class="table-shell bookkeeping-editor-table-shell"><table class="data-table bookkeeping-editor-table"><thead><tr><th>类型</th><th>证据 ID</th><th>证据对象</th><th>相对路径</th><th>SHA256</th><th>revision</th><th>原因</th><th>操作</th></tr></thead><tbody id="taxEvidenceRowsBody"></tbody></table></div>
+        </fieldset>
+        <fieldset id="paymentEvidenceFields">
+          <legend>付款证据</legend>
+          <div class="bookkeeping-fieldset-actions"><button id="addPaymentEvidenceBtn" class="btn btn--ghost bookkeeping-icon-btn" type="button" title="新增付款证据" aria-label="新增付款证据">+</button></div>
+          <div class="table-shell bookkeeping-editor-table-shell"><table class="data-table bookkeeping-editor-table"><thead><tr><th>银行匹配 ID</th><th>证据对象</th><th>相对路径</th><th>SHA256</th><th>revision</th><th>匹配金额</th><th>操作</th></tr></thead><tbody id="paymentEvidenceRowsBody"></tbody></table></div>
+        </fieldset>
+        <fieldset>
+          <legend>项目分配</legend>
+          <div class="table-shell bookkeeping-editor-table-shell"><table class="data-table bookkeeping-editor-table"><thead><tr><th>来源行</th><th>项目</th><th>除税额</th><th>税额</th><th>价税合计</th><th>操作</th></tr></thead><tbody id="decisionSourceLinesBody"></tbody></table></div>
+        </fieldset>
+        <fieldset>
+          <legend>入库/验收证据</legend>
+          <label class="field bookkeeping-receiving-reason"><span class="field__label">不适用原因</span><input id="receivingNotApplicableReason" class="input" type="text"></label>
+          <div class="table-shell bookkeeping-editor-table-shell"><table class="data-table bookkeeping-editor-table"><thead><tr><th>来源行</th><th>证据类型</th><th>覆盖状态</th><th>证据 ID</th><th>相对路径</th><th>SHA256</th><th>revision</th></tr></thead><tbody id="decisionReceivingRowsBody"></tbody></table></div>
+        </fieldset>
+        <fieldset>
+          <legend>科目与辅助核算</legend>
+          <div class="table-shell bookkeeping-editor-table-shell"><table class="data-table bookkeeping-editor-table"><thead><tr><th>角色</th><th>摘要</th><th>借贷</th><th>金额</th><th>科目</th><th>辅助核算</th></tr></thead><tbody id="decisionLinesBody"></tbody></table></div>
+        </fieldset>
+        <div id="voucherDecisionStatus" class="form-status" role="status" aria-live="polite"></div>
+      </form>
+      <section class="bookkeeping-detail-grid">
+        <article class="inline-panel">
+          <h4>执行阻断项</h4>
+          <ul id="voucherBlockers" class="bookkeeping-detail-list"></ul>
+        </article>
+        <article class="inline-panel">
+          <h4>来源行</h4>
+          <ul id="voucherSourceRows" class="bookkeeping-detail-list"></ul>
+        </article>
+        <article class="inline-panel">
+          <h4>审核记录</h4>
+          <div class="table-shell bookkeeping-audit-shell">
+            <table id="voucherAuditTable" class="data-table bookkeeping-audit-table">
+              <thead><tr><th>时间</th><th>动作</th><th>操作者</th><th>说明</th></tr></thead>
+              <tbody id="voucherAuditBody"></tbody>
+            </table>
+          </div>
+        </article>
+      </section>
+    </section>
+    </section>
+
+    <section id="bookkeepingMappingView" data-bookkeeping-view="mapping" role="tabpanel" aria-labelledby="bookkeepingMappingTab" hidden>
+      <form id="mappingRuleForm" class="panel bookkeeping-mapping-form" novalidate>
+        <div class="panel__head"><div><h3>映射规则</h3><p id="mappingRevisionMeta">mapping revision: --</p></div><div class="toolbar"><button id="previewMappingRuleBtn" class="btn btn--secondary" type="button">预览影响</button><button id="saveMappingRuleBtn" class="btn btn--primary" type="submit" disabled>保存规则</button></div></div>
+        <fieldset class="bookkeeping-mapping-grid">
+          <legend>作用范围</legend>
+          <label class="field"><span class="field__label">来源类型</span><select id="mappingSourceType" class="input"><option value="purchase_invoice">采购发票</option></select></label>
+          <label class="field"><span class="field__label">销售方</span><input id="mappingSeller" class="input" type="text" required></label>
+          <label class="field"><span class="field__label">品目</span><input id="mappingItem" class="input" type="text"></label>
+          <label class="field"><span class="field__label">项目</span><input id="mappingProject" class="input" type="text"></label>
+          <label class="field"><span class="field__label">生效日期</span><input id="mappingEffectiveFrom" class="input" type="date"></label>
+          <label class="field"><span class="field__label">失效日期</span><input id="mappingEffectiveTo" class="input" type="date"></label>
+          <label class="field"><span class="field__label">优先级</span><input id="mappingPriority" class="input" type="number" value="0" step="1"></label>
+          <label class="field"><span class="field__label">业务类别</span><select id="mappingBusinessClass" class="input"><option value="">不沉淀</option><option value="inventory_purchase">库存采购</option><option value="raw_material_purchase">原材料</option><option value="project_cost">项目成本</option><option value="period_expense">期间费用</option><option value="fixed_asset_purchase">固定资产</option></select></label>
+        </fieldset>
+        <fieldset class="bookkeeping-mapping-grid">
+          <legend>科目</legend>
+          <label class="field"><span class="field__label">借方科目</span><select id="mappingDebitAccount" class="input" required></select></label>
+          <label class="field"><span class="field__label">贷方科目</span><select id="mappingCreditAccount" class="input" required></select></label>
+          <label class="field"><span class="field__label">税额科目</span><select id="mappingTaxAccount" class="input"></select></label>
+          <label class="field"><span class="field__label">替换 rule ID</span><input id="mappingReplacesRuleId" class="input" type="text"></label>
+        </fieldset>
+        <fieldset>
+          <legend>辅助核算</legend>
+          <div id="mappingAuxFields" class="bookkeeping-mapping-aux-fields"><span class="muted">当前科目无需辅助核算</span></div>
+        </fieldset>
+        <div id="mappingImpactPanel" class="inline-panel" role="status" aria-live="polite">尚未预览影响。</div>
+      </form>
+      <section class="panel panel--table"><div class="panel__head"><h3>已确认规则</h3><span id="mappingTableMeta" class="panel__meta">0 条</span></div><div class="table-shell"><table id="mappingRulesTable" class="data-table bookkeeping-rules-table"><thead><tr><th>销售方</th><th>品目</th><th>项目</th><th>借方</th><th>贷方</th><th>税额</th><th>辅助核算</th><th>来源</th><th>优先级</th><th>操作</th></tr></thead><tbody id="mappingRulesBody"></tbody></table></div></section>
+    </section>
+
+    <section id="bookkeepingSetupView" data-bookkeeping-view="setup" role="tabpanel" aria-labelledby="bookkeepingSetupTab" hidden>
+      <section class="panel bookkeeping-catalog-status"><div class="panel__head"><h3>账套档案</h3><span id="setupProfileMeta" class="panel__meta">profile revision: 0</span></div><dl id="setupCatalogDetails" class="key-value-list"></dl></section>
+      <section class="panel bookkeeping-migration-panel">
+        <div class="panel__head"><h3>数据迁移</h3><span class="panel__meta">预览 / 执行</span></div>
+        <div class="bookkeeping-migration-row">
+          <div><h4>凭证状态</h4><p id="voucherMigrationStatus" role="status" aria-live="polite">等待读取。</p></div>
+          <div class="toolbar">
+            <button id="previewVoucherMigrationBtn" class="btn btn--ghost" type="button">预览</button>
+            <button id="applyVoucherMigrationBtn" class="btn btn--secondary" type="button" disabled>执行迁移</button>
+          </div>
+        </div>
+        <div class="bookkeeping-migration-row">
+          <div><h4>科目映射</h4><p id="mappingMigrationStatus" role="status" aria-live="polite">等待读取。</p></div>
+          <div class="toolbar">
+            <button id="previewMappingMigrationBtn" class="btn btn--ghost" type="button">预览</button>
+            <button id="applyMappingMigrationBtn" class="btn btn--secondary" type="button" disabled>执行迁移</button>
+          </div>
+        </div>
+      </section>
+      <form id="ledgerProfileForm" class="panel bookkeeping-profile-form" novalidate>
+        <div class="panel__head"><h3>账套配置</h3><button id="saveLedgerProfileBtn" class="btn btn--primary" type="submit">确认配置</button></div>
+        <fieldset class="bookkeeping-profile-grid">
+          <legend>公司与账套身份</legend>
+          <label class="field"><span class="field__label">公司法定名称</span><input id="profileCompanyName" class="input" type="text" required></label>
+          <label class="field"><span class="field__label">统一社会信用代码</span><input id="profileCompanyTaxId" class="input" type="text" required></label>
+          <label class="field"><span class="field__label">账套环境</span><select id="profileEnvironment" class="input"><option value="production">正式</option><option value="test">测试</option></select></label>
+          <label class="field"><span class="field__label">账套实例标识</span><input id="profileInstanceKey" class="input" type="text" required></label>
+          <label class="field"><span class="field__label">账套精确名称</span><input id="profileLedgerName" class="input" type="text" required></label>
+          <label class="field"><span class="field__label">身份方式</span><select id="profileIdentityMethod" class="input"><option value="native_id">平台原生 ID</option><option value="confirmed_composite">人工确认组合</option></select></label>
+          <label class="field"><span class="field__label">采集批次 ID</span><input id="profileCaptureId" class="input" type="text" required></label>
+          <label class="field"><span class="field__label">会计制度</span><input id="profileAccountingStandard" class="input" type="text" required></label>
+          <label class="field"><span class="field__label">纳税人类型</span><input id="profileTaxpayerProfile" class="input" type="text" required></label>
+          <label class="field"><span class="field__label">币种</span><input id="profileCurrency" class="input" type="text" value="CNY" required></label>
+          <label class="field"><span class="field__label">开放期间</span><input id="profileOpenPeriods" class="input" type="text" placeholder="2026-07"></label>
+          <label class="field"><span class="field__label">已结账至</span><input id="profileClosedThrough" class="input" type="month"></label>
+          <label class="field"><span class="field__label">默认凭证类别</span><input id="profileVoucherType" class="input" type="text" value="记" required></label>
+          <label class="field bookkeeping-checkbox-field"><input id="profileWritePermission" type="checkbox"><span>凭证写权限已确认</span></label>
+        </fieldset>
+        <div id="ledgerProfileStatus" class="form-status" role="status" aria-live="polite"></div>
+      </form>
+    </section>
+  </main>
+  <script src="/static/js/common.js?v=20260729-main-macos-sync"></script>
+  <script src="/static/js/page-bookkeeping.js?v=20260711-w9-ledger-review-v3"></script>
+</body>
+</html>

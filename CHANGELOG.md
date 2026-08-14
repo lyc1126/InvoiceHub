@@ -1,0 +1,26 @@
+# Changelog
+
+## Unreleased
+
+- Prepare a sanitized public root: replace historical business fixtures with
+  explicit synthetic data, retire pre-publication release evidence, and add
+  the all-ref and hosting verification gate.
+- Correct alpha-channel update-feed prerelease validation and synchronize the
+  local-candidate publication gate and Windows source-development guidance.
+
+## Public Baseline - 2026-08-14
+
+- The public repository begins from a sanitized source snapshot. Earlier
+  private development history, validation narratives, and release artifacts
+  are intentionally not part of the public Git graph.
+- The next development line is `0.3.0-alpha.1`, which introduces the Tauri 2
+  desktop host while retaining the Python, FastAPI, Web, and monitor core.
+- No pre-publication binary or tag is published from this repository. Future
+  public binaries use a new version and fresh audited release evidence.
+
+## Compatibility Scope
+
+- Invoice extraction, projections, the independent monitor, localhost APIs,
+  and the existing Web UI remain the shared product core.
+- The first Tauri release targets Windows 10/11 x64 NSIS and macOS 13+ arm64
+  DMG/update archives. Other desktop variants remain out of scope.

@@ -1,0 +1,41 @@
+name: DCO
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  signoff:
+    name: Developer Certificate of Origin
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Require a sign-off on every non-merge commit
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          python3 - <<'PY'
+          import os
+          import re
+          import subprocess
+          import sys
+
+          commits = subprocess.check_output(
+              ["git", "rev-list", "--no-merges", f"{os.environ['BASE_SHA']}..{os.environ['HEAD_SHA']}"],
+              text=True,
+          ).splitlines()
+          missing = []
+          pattern = re.compile(r"^Signed-off-by:\s+[^<\n]+\s+<[^>\n]+>\s*$", re.MULTILINE | re.IGNORECASE)
+          for commit in commits:
+              message = subprocess.check_output(["git", "show", "-s", "--format=%B", commit], text=True)
+              if not pattern.search(message):
+                  missing.append(commit)
+          if missing:
+              print("DCO sign-off missing from:", *missing, sep="\n", file=sys.stderr)
+              sys.exit(1)
+          PY

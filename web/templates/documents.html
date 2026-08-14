@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <title>单据</title>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="/static/css/app.css?v=20260802-release-update-v1">
+</head>
+<body data-page="documents">
+  <header class="topbar">
+    <a class="brand" href="/"><span class="brand-mark">票</span><span><h1>一站式发票汇总系统</h1><p>单据预览与导出</p></span></a>
+    <nav aria-label="主导航">
+      <a class="nav-link" href="/">首页</a>
+      <a class="nav-link" href="/costs">成本分析</a>
+      <a class="nav-link" aria-current="page" href="/documents">单据</a>
+      <a class="nav-link" href="/bookkeeping">做账</a>
+      <a class="nav-link" href="/ocr">OCR</a>
+      <a class="nav-link" href="/consistency">一致性</a>
+      <a class="nav-link" href="/settings">设置</a>
+    </nav>
+  </header>
+  <main class="shell documents-shell">
+    <section class="page-head">
+      <div class="page-title">
+        <h2>单据</h2>
+        <p id="documentsPath" class="path-inline">正在读取单据状态...</p>
+      </div>
+      <div class="page-head__actions">
+        <span id="eventState" class="service-status service-status--muted">系统服务连接状态：初始化中</span>
+      </div>
+    </section>
+
+    <section id="documentsBanner" class="banner banner--muted" hidden></section>
+
+    <section class="list-controls documents-controls" aria-label="单据视图">
+      <div class="tabs document-tabs" role="tablist" aria-label="单据类型">
+        <button id="inboundTab" class="tab is-active" data-document-tab="inbound" role="tab" aria-selected="true" type="button">入库单</button>
+        <button id="outboundTab" class="tab" data-document-tab="outbound" role="tab" aria-selected="false" type="button">出库单</button>
+      </div>
+      <div id="documentsMeta" class="panel__meta">等待状态数据</div>
+    </section>
+
+    <section id="inboundView" class="document-view" data-document-view="inbound">
+      <section class="dashboard-grid document-grid">
+        <article class="panel">
+          <div class="panel__head">
+            <div><h3>入库单发票</h3><p>来自当前发票目录的成本明细。</p></div>
+          </div>
+          <label class="field">
+            <span class="field__label">发票号码</span>
+            <select id="inboundInvoiceSelect" class="input">
+              <option value="">请选择发票</option>
+            </select>
+          </label>
+          <div id="inboundInvoiceMeta" class="inline-panel document-inline">未选择入库发票</div>
+        </article>
+        <article class="panel document-defaults-panel">
+          <div class="panel__head">
+            <div><h3>默认信息</h3><p>保存后作为入库单默认值复用。</p></div>
+          </div>
+          <form id="inboundDefaultsForm" class="document-form">
+            <label class="field"><span class="field__label">采购员</span><input name="采购员" class="input" type="text" autocomplete="off"></label>
+            <label class="field"><span class="field__label">负责人</span><input name="负责人" class="input" type="text" autocomplete="off"></label>
+            <label class="field"><span class="field__label">仓管员</span><input name="仓管员" class="input" type="text" autocomplete="off"></label>
+            <label class="field"><span class="field__label">制表人</span><input name="制表人" class="input" type="text" autocomplete="off"></label>
+          </form>
+          <div class="toolbar document-actions">
+            <button id="saveInboundDefaultsBtn" class="btn btn--ghost" type="button">保存默认信息</button>
+            <button id="exportInboundBtn" class="btn btn--primary" type="button" disabled>导出入库单</button>
+            <button id="openInboundBtn" class="btn btn--secondary" type="button" disabled>打开入库单</button>
+            <button id="openInboundLocationBtn" class="btn btn--secondary" type="button" disabled>打开文件所在位置</button>
+          </div>
+        </article>
+      </section>
+      <section id="inboundExportResult" class="inline-panel path-inline" hidden></section>
+      <section class="panel panel--table document-preview-panel">
+        <div class="panel__head"><h3>入库单预览</h3><div id="inboundPreviewMeta" class="panel__meta">选择发票后生成预览</div></div>
+        <div class="document-preview-scroll">
+          <table id="inboundPreviewTable" class="document-table document-table--inbound"></table>
+        </div>
+      </section>
+    </section>
+
+    <section id="outboundView" class="document-view" data-document-view="outbound" hidden>
+      <section class="panel">
+        <div class="panel__head">
+          <div><h3>开具发票目录</h3><p>选择目录后保存，出库单按该目录中的发票生成。</p></div>
+        </div>
+        <div class="field-row">
+          <label class="field field--wide">
+            <span class="field__label">开具发票文件夹</span>
+            <input id="outboundDirInput" class="input" type="text" autocomplete="off" placeholder="选择开具发票所在文件夹">
+          </label>
+          <button id="pickOutboundDirBtn" class="btn btn--ghost" type="button">选择文件夹</button>
+          <button id="saveOutboundDirBtn" class="btn btn--primary" type="button">保存目录</button>
+        </div>
+        <div id="outboundDirDraft" class="watch-dir-draft" hidden></div>
+        <div id="outboundDirHistory" class="watch-dir-history" hidden>
+          <div class="watch-dir-history__group">
+            <div class="watch-dir-history__label">当前使用</div>
+            <div id="currentOutboundDirOption" class="watch-dir-options"></div>
+          </div>
+          <div class="watch-dir-history__group">
+            <div class="watch-dir-history__label">过去保存</div>
+            <div id="recentOutboundDirs" class="watch-dir-options watch-dir-options--recent"></div>
+          </div>
+        </div>
+        <div id="outboundDirValidation" class="inline-panel document-inline">尚未保存开具发票目录。</div>
+      </section>
+
+      <section class="dashboard-grid document-grid">
+        <article class="panel">
+          <div class="panel__head">
+            <div><h3>出库单发票</h3><p>来自已保存的开具发票目录。</p></div>
+          </div>
+          <label class="field">
+            <span class="field__label">发票号码</span>
+            <select id="outboundInvoiceSelect" class="input">
+              <option value="">请选择发票</option>
+            </select>
+          </label>
+          <div id="outboundInvoiceMeta" class="inline-panel document-inline">未选择出库发票</div>
+        </article>
+        <article class="panel document-defaults-panel">
+          <div class="panel__head">
+            <div><h3>默认信息</h3><p>保存后作为出库单默认值复用。</p></div>
+          </div>
+          <form id="outboundDefaultsForm" class="document-form document-form--outbound">
+            <label class="field"><span class="field__label">收货单位</span><input name="收货单位" class="input" type="text" autocomplete="off"></label>
+            <label class="field"><span class="field__label">地址</span><input name="地址" class="input" type="text" autocomplete="off"></label>
+            <label class="field"><span class="field__label">电话</span><input name="电话" class="input" type="tel" autocomplete="off"></label>
+            <label class="field"><span class="field__label">联系人</span><input name="联系人" class="input" type="text" autocomplete="off"></label>
+            <label class="field"><span class="field__label">编辑人</span><input name="编辑人" class="input" type="text" autocomplete="off"></label>
+            <label class="field"><span class="field__label">收货人</span><input name="收货人" class="input" type="text" autocomplete="off"></label>
+            <label class="field"><span class="field__label">项目负责人</span><input name="项目负责人" class="input" type="text" autocomplete="off"></label>
+          </form>
+          <div class="toolbar document-actions">
+            <button id="saveOutboundDefaultsBtn" class="btn btn--ghost" type="button">保存默认信息</button>
+            <button id="exportOutboundBtn" class="btn btn--primary" type="button" disabled>导出出库单</button>
+            <button id="openOutboundBtn" class="btn btn--secondary" type="button" disabled>打开出库单</button>
+            <button id="openOutboundLocationBtn" class="btn btn--secondary" type="button" disabled>打开文件所在位置</button>
+          </div>
+        </article>
+      </section>
+      <section id="outboundExportResult" class="inline-panel path-inline" hidden></section>
+      <section class="panel panel--table document-preview-panel">
+        <div class="panel__head"><h3>出库单预览</h3><div id="outboundPreviewMeta" class="panel__meta">选择发票后生成预览</div></div>
+        <div class="document-preview-scroll">
+          <table id="outboundPreviewTable" class="document-table document-table--outbound"></table>
+        </div>
+      </section>
+    </section>
+
+    <div id="documentExportDialog" class="modal-backdrop document-dialog" role="presentation" hidden>
+      <section class="modal-card" role="dialog" aria-modal="true" aria-labelledby="documentExportDialogTitle" aria-describedby="documentExportDialogBody">
+        <h3 id="documentExportDialogTitle">单据已导出</h3>
+        <p id="documentExportDialogBody"></p>
+        <p id="documentExportDialogPath" class="modal-path path-inline"></p>
+        <div class="modal-actions">
+          <button id="documentDialogYesBtn" class="btn btn--primary" type="button">是</button>
+          <button id="documentDialogNoBtn" class="btn btn--ghost" type="button">否</button>
+          <button id="documentDialogOpenBtn" class="btn btn--secondary" type="button">打开该文件</button>
+        </div>
+      </section>
+    </div>
+  </main>
+  <script src="/static/js/common.js?v=20260729-main-macos-sync"></script>
+  <script src="/static/js/page-documents.js?v=20260729-main-macos-sync"></script>
+</body>
+</html>

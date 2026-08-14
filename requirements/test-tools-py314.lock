@@ -1,0 +1,16 @@
+# Test-only additions shared by the Windows and macOS runtime locks.
+# Install together with a platform runtime lock using --require-hashes --only-binary=:all:.
+httpcore2==2.9.1 \
+    --hash=sha256:6182472379e855fe4221246a2bb7ecede403bc61c6798062ae1787d051ccde26
+httpx2==2.9.1 \
+    --hash=sha256:1820fe14a9ab1107bfeff39259987429450b070ec0ff38cc87eb0d8c97fdc71a
+iniconfig==2.3.0 \
+    --hash=sha256:f631c04d2c48c52b84d0d0549c99ff3859c98df65b3101406327ecc7d53fbf12
+pluggy==1.6.0 \
+    --hash=sha256:e920276dd6813095e9377c0bc5566d94c932c33b27a3e3945d8389c374dd4746
+pygments==2.20.0 \
+    --hash=sha256:81a9e26dd42fd28a23a2d169d86d7ac03b46e2f8b59ed4698fb4785f946d0176
+pytest==9.1.1 \
+    --hash=sha256:37a86b45efb9a47a61a36449063e8e18d0cab3161329fc099eb21783169c4f0c
+truststore==0.10.4 \
+    --hash=sha256:adaeaecf1cbb5f4de3b1959b42d41f6fab57b2b1666adb59e89cb0b53361d981

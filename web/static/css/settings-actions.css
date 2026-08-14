@@ -1,0 +1,444 @@
+body[data-page="settings"] .settings-invoice-rename {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+  padding: 12px 14px;
+  border: 1px solid #f2b705;
+  border-radius: 8px;
+  background: #fff9dc;
+  color: #4a3500;
+}
+
+body[data-page="settings"] .settings-invoice-rename__copy {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+body[data-page="settings"] .settings-invoice-rename__eyebrow {
+  color: #8a5b00;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+body[data-page="settings"] .settings-invoice-rename__copy strong {
+  color: #3f2d00;
+  font-size: 15px;
+  line-height: 1.35;
+}
+
+body[data-page="settings"] .settings-invoice-rename__copy small {
+  color: #69530e;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+body[data-page="settings"] #settingsRenameInvoiceFilesBtn {
+  min-width: 108px;
+  min-height: 44px;
+  border-color: #ae7600;
+  background: #f4c654;
+  color: #3d2a00 !important;
+  font-weight: 800;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.58), 0 2px 0 rgba(128, 83, 0, 0.22);
+}
+
+body[data-page="settings"] #settingsRenameInvoiceFilesBtn:hover:not(:disabled),
+body[data-page="settings"] #settingsRenameInvoiceFilesBtn:focus-visible {
+  border-color: #7d4d00;
+  background: #ffd975;
+  color: #3d2a00 !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.66), 0 5px 12px rgba(128, 83, 0, 0.22);
+}
+
+body[data-page="settings"] #settingsRenameInvoiceFilesBtn:disabled {
+  border-color: #ddc06b;
+  background: #f7e7a6;
+  color: #80682a !important;
+  box-shadow: none;
+}
+
+.operation-notice {
+  position: fixed;
+  top: var(--operation-notice-top, 88px);
+  left: 50%;
+  z-index: 1300;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  width: min(540px, calc(100vw - 32px));
+  min-height: 64px;
+  padding: 14px 48px 14px 14px;
+  border: 1px solid currentColor;
+  border-radius: 8px;
+  box-shadow: 0 16px 34px rgba(15, 23, 42, 0.22);
+  transform: translate(-50%, 0);
+  animation: settings-notice-in 180ms ease-out;
+}
+
+.operation-notice[hidden] {
+  display: none;
+}
+
+.operation-notice__icon {
+  display: grid;
+  width: 24px;
+  height: 24px;
+  margin-right: 10px;
+  border-radius: 50%;
+  place-items: center;
+  background: currentColor;
+  color: #fff;
+  font-size: 14px;
+  font-weight: 900;
+  line-height: 1;
+}
+
+.operation-notice__copy {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.operation-notice__copy strong {
+  font-size: 14px;
+  line-height: 1.35;
+}
+
+.operation-notice__copy p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.operation-notice > button.operation-notice__close {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  display: grid;
+  box-sizing: border-box;
+  width: 20px;
+  min-width: 20px;
+  height: 20px;
+  min-height: 20px;
+  padding: 0;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  place-items: center;
+  background: rgba(255, 255, 255, 0.78);
+  color: currentColor;
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.14);
+  cursor: pointer;
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1;
+  text-shadow: none;
+  transform: none;
+  transition: background 150ms ease, border-color 150ms ease, box-shadow 150ms ease, transform 150ms ease;
+}
+
+.operation-notice > button.operation-notice__close:hover:not(:disabled),
+.operation-notice > button.operation-notice__close:focus-visible {
+  background: rgba(255, 255, 255, 0.98);
+  box-shadow: 0 3px 10px rgba(15, 23, 42, 0.2);
+  transform: none;
+}
+
+.operation-notice > button.operation-notice__close:active:not(:disabled) {
+  transform: scale(0.94);
+}
+
+.operation-notice--success {
+  background: #ecfdf5;
+  color: #087f3e;
+}
+
+.operation-notice--warning {
+  background: #fffbeb;
+  color: #9a6700;
+}
+
+.operation-notice--danger {
+  background: #fff1f2;
+  color: #b42318;
+}
+
+.operation-notice--info {
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+@keyframes settings-notice-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -8px);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+}
+
+@media (max-width: 640px) {
+  body[data-page="settings"] .settings-invoice-rename {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+
+  body[data-page="settings"] #settingsRenameInvoiceFilesBtn {
+    width: 100%;
+  }
+
+  .operation-notice {
+    width: min(100vw - 20px, 540px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .operation-notice {
+    animation: none;
+  }
+}
+
+body[data-page="settings"] {
+  --settings-danger-surface: #9f1239;
+  --settings-danger-surface: color-mix(in srgb, var(--red) 72%, #111827);
+  --settings-danger-surface-hover: #881337;
+  --settings-danger-surface-hover: color-mix(in srgb, var(--red) 62%, #111827);
+  --settings-danger-text: #ffffff;
+}
+
+body[data-page="settings"].settings-shutdown-dialog-open {
+  overflow: hidden;
+}
+
+body[data-page="settings"] .settings-shutdown-card {
+  border-left: 4px solid var(--red);
+}
+
+body[data-page="settings"] .settings-shutdown-row {
+  display: flex;
+  align-items: stretch;
+  gap: 12px;
+}
+
+body[data-page="settings"] .settings-shutdown-summary {
+  display: grid;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 72px;
+  align-content: center;
+  gap: 3px;
+  padding: 11px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+body[data-page="settings"] .settings-shutdown-summary span,
+body[data-page="settings"] .settings-shutdown-summary small {
+  color: var(--muted);
+}
+
+body[data-page="settings"] .settings-shutdown-summary span {
+  font-size: 12px;
+  font-weight: 700;
+}
+
+body[data-page="settings"] .settings-shutdown-summary strong {
+  color: var(--text);
+  font-size: 15px;
+  line-height: 1.35;
+}
+
+body[data-page="settings"] .settings-shutdown-summary small {
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+body[data-page="settings"] .btn--danger {
+  min-height: 44px;
+  border-color: var(--settings-danger-surface);
+  background: var(--settings-danger-surface);
+  color: var(--settings-danger-text);
+}
+
+body[data-page="settings"] .btn--danger:hover:not(:disabled),
+body[data-page="settings"] .btn--danger:focus-visible {
+  border-color: var(--settings-danger-surface-hover);
+  background: var(--settings-danger-surface-hover);
+  color: var(--settings-danger-text);
+}
+
+body[data-page="settings"] .settings-shutdown-button {
+  flex: 0 0 auto;
+  min-width: 190px;
+}
+
+body[data-page="settings"] .settings-shutdown-dialog {
+  z-index: 1500;
+}
+
+body[data-page="settings"] .settings-shutdown-dialog__card {
+  width: min(620px, 100%);
+  max-height: calc(100dvh - 32px);
+  overflow-y: auto;
+}
+
+body[data-page="settings"] .settings-shutdown-decision {
+  display: grid;
+  gap: 12px;
+}
+
+body[data-page="settings"] .settings-shutdown-options {
+  display: grid;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  gap: 8px;
+}
+
+body[data-page="settings"] .settings-shutdown-options legend {
+  margin-bottom: 8px;
+  padding: 0;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+body[data-page="settings"] .settings-shutdown-choice {
+  display: flex;
+  min-height: 68px;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-2);
+  color: var(--text);
+  cursor: pointer;
+}
+
+body[data-page="settings"] .settings-shutdown-choice:hover,
+body[data-page="settings"] .settings-shutdown-choice:focus-within {
+  border-color: var(--primary);
+}
+
+body[data-page="settings"] .settings-shutdown-choice:has(input:checked) {
+  border-color: var(--primary);
+  box-shadow: inset 0 0 0 1px var(--primary);
+}
+
+body[data-page="settings"] .settings-shutdown-choice--stop:has(input:checked) {
+  border-color: var(--red);
+  box-shadow: inset 0 0 0 1px var(--red);
+}
+
+body[data-page="settings"] .settings-shutdown-choice input,
+body[data-page="settings"] .settings-shutdown-remember input {
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  margin: 1px 0 0;
+  accent-color: var(--primary);
+}
+
+body[data-page="settings"] .settings-shutdown-choice span {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+body[data-page="settings"] .settings-shutdown-choice strong {
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+body[data-page="settings"] .settings-shutdown-choice small {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+body[data-page="settings"] .settings-shutdown-remember {
+  display: inline-flex;
+  width: fit-content;
+  min-height: 44px;
+  align-items: center;
+  gap: 10px;
+  color: var(--text);
+  cursor: pointer;
+  font-weight: 700;
+}
+
+body[data-page="settings"] .settings-shutdown-error {
+  padding: 10px 12px;
+  border: 1px solid var(--red);
+  border-left-width: 4px;
+  border-radius: 8px;
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+body[data-page="settings"] .settings-shutdown-dialog__actions {
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+body[data-page="settings"] .settings-shutdown-progress {
+  display: grid;
+  min-height: 112px;
+  align-content: center;
+  gap: 6px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--primary);
+  border-radius: 8px;
+  background: var(--surface-2);
+}
+
+body[data-page="settings"] .settings-shutdown-progress strong {
+  color: var(--text);
+  font-size: 16px;
+}
+
+body[data-page="settings"] .settings-shutdown-progress p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+@media (max-width: 640px) {
+  body[data-page="settings"] .settings-shutdown-row {
+    flex-direction: column;
+  }
+
+  body[data-page="settings"] .settings-shutdown-button {
+    width: 100%;
+    min-width: 0;
+  }
+
+  body[data-page="settings"] .settings-shutdown-dialog {
+    padding: 10px;
+  }
+
+  body[data-page="settings"] .settings-shutdown-dialog__card {
+    max-height: calc(100dvh - 20px);
+    padding: 16px;
+  }
+
+  body[data-page="settings"] .settings-shutdown-dialog__actions {
+    flex-direction: column-reverse;
+  }
+
+  body[data-page="settings"] .settings-shutdown-dialog__actions .btn {
+    width: 100%;
+  }
+}

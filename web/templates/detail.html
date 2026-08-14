@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <title>发票详情</title>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="/static/css/app.css?v=20260802-release-update-v1">
+</head>
+<body data-page="detail">
+  <header class="topbar">
+    <a class="brand" href="/"><span class="brand-mark">票</span><span><h1>一站式发票汇总系统</h1><p>发票详情</p></span></a>
+    <nav aria-label="主导航"><a class="nav-link" href="/">首页</a><a class="nav-link" href="/costs">成本分析</a><a class="nav-link" href="/documents">单据</a><a class="nav-link" href="/bookkeeping">做账</a><a class="nav-link" href="/ocr">OCR</a><a class="nav-link" href="/consistency">一致性</a><a class="nav-link" href="/settings">设置</a></nav>
+  </header>
+  <main class="shell">
+    <section class="page-head"><div class="page-title"><h2>发票详情</h2><p id="detailPath" class="path-inline">正在读取...</p></div></section>
+    <section id="detailBanner" class="banner banner--muted" hidden></section>
+    <section class="detail-grid">
+      <div class="detail-main-column">
+        <article class="panel">
+          <div class="panel__head">
+            <h3>核心字段</h3>
+            <div class="toolbar detail-file-actions" aria-label="源文件操作">
+              <button id="openSourceBtn" class="btn btn--secondary" type="button">打开文件</button>
+              <button id="openSourceLocationBtn" class="btn btn--secondary" type="button">打开文件所在位置</button>
+            </div>
+          </div>
+          <div id="detailSummary" class="stats-grid"></div>
+        </article>
+        <article class="panel">
+          <div class="panel__head"><h3>源文件与状态</h3><div class="panel__meta">当前活动档案来源</div></div>
+          <dl id="sourceMeta" class="kv-grid"></dl>
+        </article>
+      </div>
+      <div class="detail-side-column">
+        <article class="panel detail-manual-panel">
+          <div class="panel__head"><h3>手工修订</h3><div class="panel__meta">销售方、开票金额、发票号码</div></div>
+          <form id="manualForm" class="filters">
+            <label class="field"><span class="field__label">销售方</span><input id="manualSeller" class="input" type="text"></label>
+            <label class="field"><span class="field__label">开票金额</span><input id="manualAmount" class="input" type="text"></label>
+            <label class="field"><span class="field__label">发票号码</span><input id="manualNumber" class="input" type="text"></label>
+            <button id="saveManualBtn" class="btn btn--primary" type="submit">保存修订</button>
+          </form>
+        </article>
+        <article class="panel detail-cost-panel" aria-labelledby="detailCostTitle">
+          <div class="panel__head">
+            <h3 id="detailCostTitle">本票成本明细</h3>
+            <div id="detailCostMeta" class="panel__meta">按当前发票内项目与规格聚合</div>
+          </div>
+          <div id="detailCostBreakdown" class="detail-cost-body" role="region" aria-label="本票成本明细"></div>
+        </article>
+      </div>
+    </section>
+  </main>
+  <script src="/static/js/common.js?v=20260729-main-macos-sync"></script>
+  <script src="/static/js/page-detail.js?v=20260726-invoice-taxonomy"></script>
+</body>
+</html>

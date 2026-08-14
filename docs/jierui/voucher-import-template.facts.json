@@ -1,0 +1,55 @@
+{
+  "schema_version": 2,
+  "facts_version": "public-sanitized-w8-v2",
+  "readiness": {
+    "template": {
+      "status": "not_tested",
+      "evidence": "No external template evidence is distributed in the public source tree."
+    },
+    "grouping": {
+      "status": "not_tested",
+      "evidence": "Requires a newly authorized private test-environment observation."
+    },
+    "voucher_type": {
+      "status": "not_tested",
+      "evidence": "Requires a newly authorized private test-environment observation."
+    },
+    "numbering": {
+      "status": "not_tested",
+      "evidence": "Requires a newly authorized private test-environment observation."
+    },
+    "decimal": {
+      "status": "not_tested",
+      "evidence": "Requires a newly authorized private test-environment observation."
+    },
+    "aux": {
+      "status": "not_tested",
+      "evidence": "Requires a newly authorized private test-environment observation."
+    }
+  },
+  "sheet_name": "凭证导入",
+  "columns": [
+    "凭证类别",
+    "凭证号",
+    "凭证日期",
+    "附单据数",
+    "摘要",
+    "科目编码",
+    "借方金额",
+    "贷方金额",
+    "项目",
+    "客户",
+    "供应商",
+    "部门",
+    "员工",
+    "存货",
+    "数量",
+    "计量单位",
+    "单价",
+    "外币金额",
+    "币种",
+    "汇率",
+    "制单人",
+    "审核人"
+  ]
+}

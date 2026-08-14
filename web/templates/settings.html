@@ -1,0 +1,502 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <title>设置中心</title>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="/static/css/app.css?v=20260802-release-update-v1">
+  <link rel="stylesheet" href="/static/css/settings-actions.css?v=20260720-shutdown-monitor-choice">
+</head>
+<body data-page="settings">
+  <header class="topbar">
+    <a class="brand" href="/" aria-label="返回发票汇总首页">
+      <span class="brand-mark">票</span>
+      <span>
+        <h1>一站式发票汇总系统</h1>
+        <p>单机 localhost · 当前活动档案</p>
+      </span>
+    </a>
+    <nav aria-label="主导航">
+      <a class="nav-link" href="/">首页</a>
+      <a class="nav-link" href="/costs">成本分析</a>
+      <a class="nav-link" href="/documents">单据</a>
+      <a class="nav-link" href="/bookkeeping">做账</a>
+      <a class="nav-link" href="/ocr">OCR</a>
+      <a class="nav-link" href="/consistency">一致性</a>
+      <a class="nav-link" aria-current="page" href="/settings">设置</a>
+    </nav>
+  </header>
+  <main class="shell settings-shell">
+    <section class="page-head">
+      <div class="page-title">
+        <h2>设置中心</h2>
+        <p id="settingsSubtitle" class="path-inline">正在读取当前系统状态...</p>
+      </div>
+      <span id="settingsEventState" class="service-status service-status--muted">系统服务连接状态：初始化中</span>
+    </section>
+
+    <section id="settingsBanner" class="banner banner--muted" hidden></section>
+    <aside id="settingsOperationNotice" class="operation-notice operation-notice--success" role="status" aria-live="polite" aria-atomic="true" hidden>
+      <span id="settingsOperationNoticeIcon" class="operation-notice__icon" aria-hidden="true">&#10003;</span>
+      <div class="operation-notice__copy">
+        <strong id="settingsOperationNoticeTitle"></strong>
+        <p id="settingsOperationNoticeMessage"></p>
+      </div>
+      <button id="settingsOperationNoticeCloseBtn" class="operation-notice__close" type="button" aria-label="&#20851;&#38381;&#25552;&#31034;">&times;</button>
+    </aside>
+
+    <section class="settings-layout" aria-label="设置中心">
+      <aside class="settings-sidebar" aria-label="设置分类">
+        <div class="settings-category-list" role="tablist" aria-orientation="vertical">
+          <button id="settingsTabOverview" class="settings-tab" type="button" role="tab" aria-selected="true" aria-controls="settingsPanelOverview" data-settings-section="overview">概览</button>
+          <button id="settingsTabPaths" class="settings-tab" type="button" role="tab" aria-selected="false" aria-controls="settingsPanelPaths" data-settings-section="paths">目录与产物</button>
+          <button id="settingsTabRuntime" class="settings-tab" type="button" role="tab" aria-selected="false" aria-controls="settingsPanelRuntime" data-settings-section="runtime">运行与监控</button>
+          <button id="settingsTabDocuments" class="settings-tab" type="button" role="tab" aria-selected="false" aria-controls="settingsPanelDocuments" data-settings-section="documents">单据</button>
+          <button id="settingsTabAppearance" class="settings-tab" type="button" role="tab" aria-selected="false" aria-controls="settingsPanelAppearance" data-settings-section="appearance">外观</button>
+          <button id="settingsTabPreferences" class="settings-tab" type="button" role="tab" aria-selected="false" aria-controls="settingsPanelPreferences" data-settings-section="preferences">偏好</button>
+          <button id="settingsTabOcr" class="settings-tab" type="button" role="tab" aria-selected="false" aria-controls="settingsPanelOcr" data-settings-section="ocr">OCR</button>
+          <button id="settingsTabDiagnostics" class="settings-tab" type="button" role="tab" aria-selected="false" aria-controls="settingsPanelDiagnostics" data-settings-section="diagnostics">诊断</button>
+          <button id="settingsTabAbout" class="settings-tab settings-tab--with-badge" type="button" role="tab" aria-selected="false" aria-controls="settingsPanelAbout" data-settings-section="about">
+            <span>关于</span>
+            <span id="settingsAboutUpdateBadge" class="update-arrow-badge" role="img" aria-label="发现可升级版本" hidden>
+              <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M12 17V7m0 0-4 4m4-4 4 4"></path></svg>
+            </span>
+          </button>
+        </div>
+      </aside>
+
+      <div class="settings-content">
+        <section id="settingsPanelOverview" class="settings-section" role="tabpanel" aria-labelledby="settingsTabOverview" data-settings-panel="overview">
+          <div class="settings-section-head">
+            <h3>概览</h3>
+            <p>当前目录、档案和 localhost 状态。</p>
+          </div>
+          <div class="settings-summary-grid">
+            <article class="settings-card">
+              <span>当前发票目录</span>
+              <strong id="settingsOverviewWatchDir">--</strong>
+              <small id="settingsOverviewWatchValidation">--</small>
+            </article>
+            <article class="settings-card">
+              <span>监控状态</span>
+              <strong id="settingsOverviewMonitor">--</strong>
+              <small id="settingsOverviewMonitorMeta">--</small>
+            </article>
+            <article class="settings-card">
+              <span>当前档案</span>
+              <strong id="settingsOverviewTarget">--</strong>
+              <small id="settingsOverviewMode">--</small>
+            </article>
+            <article class="settings-card">
+              <span>localhost 地址</span>
+              <strong id="settingsOverviewLocalhost">--</strong>
+              <small id="settingsOverviewHealth">--</small>
+            </article>
+          </div>
+        </section>
+
+        <section id="settingsPanelPaths" class="settings-section" role="tabpanel" aria-labelledby="settingsTabPaths" data-settings-panel="paths" hidden>
+          <div class="settings-section-head">
+            <h3>目录与产物</h3>
+            <p>区分发票来源目录、普通汇总工作区和成本产物。</p>
+          </div>
+          <div id="settingsPathsList" class="settings-kv"></div>
+          <article class="settings-edit-card" aria-labelledby="settingsWatchDirTitle">
+            <div class="settings-edit-card__head">
+              <div>
+                <h4 id="settingsWatchDirTitle">发票目录</h4>
+                <p>选择后先作为待保存草稿，点击保存目录才切换当前活动目录。</p>
+              </div>
+            </div>
+            <div class="settings-invoice-rename" aria-label="&#21457;&#31080;&#25991;&#20214;&#19968;&#38190;&#37325;&#21629;&#21517;">
+              <div class="settings-invoice-rename__copy">
+                <span class="settings-invoice-rename__eyebrow">&#25991;&#20214;&#25972;&#29702;</span>
+                <strong>&#19968;&#38190;&#37325;&#21629;&#21517;&#25991;&#20214;&#22841;&#20869;&#21457;&#31080;&#25991;&#20214;</strong>
+                <small>&#21629;&#21517;&#26684;&#24335;&#65306;YY-MM-DD&#65288;&#24320;&#31080;&#26085;&#26399;&#65289;_&#38144;&#21806;&#26041;&amp;&#36141;&#20080;&#26041;_&#37329;&#39069;&#20803;.pdf/.ofd/.xml&#12290;&#25991;&#20214;&#21517;&#19981;&#20351;&#29992; /&#65292;&#20197; _ &#20998;&#38548;&#12290;</small>
+              </div>
+              <button id="settingsRenameInvoiceFilesBtn" class="btn settings-invoice-rename__button" type="button">&#19968;&#38190;&#20462;&#25913;</button>
+            </div>
+            <div class="field-row">
+              <label class="field field--wide">
+                <span class="field__label">待保存发票目录</span>
+                <input id="settingsWatchDirInput" class="input" type="text" autocomplete="off" placeholder="选择要汇总的发票文件夹">
+              </label>
+              <button id="settingsPickWatchDirBtn" class="btn btn--ghost" type="button">选择文件夹</button>
+              <button id="settingsValidateWatchDirBtn" class="btn btn--ghost" type="button">检查目录</button>
+              <button id="settingsSaveWatchDirBtn" class="btn btn--primary" type="button" disabled>保存目录</button>
+            </div>
+            <div id="settingsWatchDirDraft" class="watch-dir-draft" hidden></div>
+            <div id="settingsWatchDirValidation" class="inline-panel">尚未执行目录检查。</div>
+            <div id="settingsWatchDirHistory" class="watch-dir-history" hidden>
+              <div class="watch-dir-history__group">
+                <div class="watch-dir-history__label">当前使用</div>
+                <div id="settingsCurrentWatchDirOption" class="watch-dir-options"></div>
+              </div>
+              <div class="watch-dir-history__group">
+                <div class="watch-dir-history__label">过去保存</div>
+                <div id="settingsRecentWatchDirOptions" class="watch-dir-options watch-dir-options--recent"></div>
+              </div>
+            </div>
+          </article>
+          <div class="settings-card settings-card--wide">
+            <span>最近目录</span>
+            <div id="settingsRecentWatchDirs" class="settings-path-list"></div>
+          </div>
+        </section>
+
+        <section id="settingsPanelRuntime" class="settings-section" role="tabpanel" aria-labelledby="settingsTabRuntime" data-settings-panel="runtime" hidden>
+          <div class="settings-section-head">
+            <h3>运行与监控</h3>
+            <p>localhost 与独立监控 daemon 分开显示。</p>
+          </div>
+          <div id="settingsRuntimeList" class="settings-kv"></div>
+          <article class='settings-edit-card settings-runtime-controls' aria-labelledby='settingsRuntimeControlsTitle'>
+            <div class='settings-edit-card__head'>
+              <div>
+                <h4 id='settingsRuntimeControlsTitle'>监控与重建</h4>
+                <p>这里只控制独立监控 daemon；下方“关闭系统”再单独处理 localhost WebUI。</p>
+              </div>
+            </div>
+            <div class='settings-runtime-snapshot' aria-label='最近监控动作'>
+              <span><small>最近动作</small><strong id='settingsRuntimeLastTrigger'>--</strong></span>
+              <span><small>最近同步</small><strong id='settingsRuntimeLastSync'>--</strong></span>
+              <span><small>最近心跳</small><strong id='settingsRuntimeLastHeartbeat'>--</strong></span>
+              <span><small>当前 PID</small><strong id='settingsRuntimePid'>--</strong></span>
+            </div>
+            <div class='settings-action-row'>
+              <button id='settingsRefreshRuntimeBtn' class='btn btn--ghost' type='button'>刷新状态</button>
+              <button id='settingsStartMonitorBtn' class='btn btn--primary' type='button'>启动监控</button>
+              <button id='settingsStopMonitorBtn' class='btn btn--ghost' type='button'>停止监控</button>
+              <button id='settingsRebuildBtn' class='btn btn--secondary' type='button'>重新汇总</button>
+              <button id='settingsOpenMonitorLogBtn' class='btn btn--ghost' type='button'>打开监控日志</button>
+              <button id='settingsOpenRuntimeDirBtn' class='btn btn--ghost' type='button'>打开运行状态目录</button>
+            </div>
+            <div id='settingsRuntimeActionStatus' class='settings-action-status' role='status'>刷新状态只读取当前运行信息；重新汇总会扫描当前发票目录并重建普通汇总与成本分析。</div>
+          </article>
+          <article class="settings-edit-card settings-shutdown-card" aria-labelledby="settingsShutdownTitle">
+            <div class="settings-edit-card__head">
+              <div>
+                <h4 id="settingsShutdownTitle">关闭本系统</h4>
+                <p>只停止 localhost WebUI，或者先停止独立监控再关闭 WebUI；不会删除源发票和已生成产物。</p>
+              </div>
+            </div>
+            <div class="settings-shutdown-row">
+              <div class="settings-shutdown-summary" aria-live="polite">
+                <span>当前关闭方式</span>
+                <strong id="settingsShutdownBehaviorCurrent">每次询问</strong>
+                <small id="settingsShutdownBehaviorHint">点击后将先询问是否保留监控。</small>
+              </div>
+              <button id="settingsShutdownBtn" class="btn btn--danger settings-shutdown-button" type="button" aria-describedby="settingsShutdownActionStatus">关闭系统</button>
+            </div>
+            <div id="settingsShutdownActionStatus" class="settings-action-status settings-action-status--warning" role="status">
+              关闭浏览器标签不会停止 WebUI 或监控；只有点击上方按钮才执行系统关闭。
+            </div>
+          </article>
+        </section>
+
+        <section id="settingsPanelDocuments" class="settings-section" role="tabpanel" aria-labelledby="settingsTabDocuments" data-settings-panel="documents" hidden>
+          <div class="settings-section-head">
+            <h3>单据</h3>
+            <p>入库单、出库单目录和默认信息状态。</p>
+          </div>
+          <div id="settingsDocumentsList" class="settings-kv"></div>
+          <article class="settings-edit-card" aria-labelledby="settingsOutboundDirTitle">
+            <div class="settings-edit-card__head">
+              <div>
+                <h4 id="settingsOutboundDirTitle">出库发票目录</h4>
+                <p>用于出库单扫描，选择后同样先显示为待保存目录。</p>
+              </div>
+            </div>
+            <div class="field-row">
+              <label class="field field--wide">
+                <span class="field__label">待保存出库发票目录</span>
+                <input id="settingsOutboundDirInput" class="input" type="text" autocomplete="off" placeholder="选择开具发票所在文件夹">
+              </label>
+              <button id="settingsPickOutboundDirBtn" class="btn btn--ghost" type="button">选择文件夹</button>
+              <button id="settingsSaveOutboundDirBtn" class="btn btn--primary" type="button" disabled>保存目录</button>
+            </div>
+            <div id="settingsOutboundDirDraft" class="watch-dir-draft" hidden></div>
+            <div id="settingsOutboundDirValidation" class="inline-panel document-inline">尚未保存开具发票目录。</div>
+            <div id="settingsOutboundDirHistory" class="watch-dir-history" hidden>
+              <div class="watch-dir-history__group">
+                <div class="watch-dir-history__label">当前使用</div>
+                <div id="settingsCurrentOutboundDirOption" class="watch-dir-options"></div>
+              </div>
+              <div class="watch-dir-history__group">
+                <div class="watch-dir-history__label">过去保存</div>
+                <div id="settingsRecentOutboundDirOptions" class="watch-dir-options watch-dir-options--recent"></div>
+              </div>
+            </div>
+          </article>
+          <article class="settings-edit-card settings-defaults-card" aria-labelledby="settingsDocumentDefaultsTitle">
+            <div class="settings-edit-card__head">
+              <div>
+                <h4 id="settingsDocumentDefaultsTitle">单据默认信息</h4>
+                <p>保存后继续写入单据本地默认值，不改变发票汇总和成本产物。</p>
+              </div>
+            </div>
+            <div class="settings-defaults-grid">
+              <section class="settings-defaults-block" aria-labelledby="settingsInboundDefaultsTitle">
+                <h5 id="settingsInboundDefaultsTitle">入库单默认信息</h5>
+                <form id="settingsInboundDefaultsForm" class="document-form">
+                  <label class="field"><span class="field__label">采购员</span><input name="采购员" class="input" type="text" autocomplete="off"></label>
+                  <label class="field"><span class="field__label">负责人</span><input name="负责人" class="input" type="text" autocomplete="off"></label>
+                  <label class="field"><span class="field__label">仓管员</span><input name="仓管员" class="input" type="text" autocomplete="off"></label>
+                  <label class="field"><span class="field__label">制表人</span><input name="制表人" class="input" type="text" autocomplete="off"></label>
+                </form>
+                <div class="toolbar document-actions">
+                  <button id="settingsSaveInboundDefaultsBtn" class="btn btn--ghost" type="button" disabled>保存入库默认信息</button>
+                </div>
+              </section>
+              <section class="settings-defaults-block" aria-labelledby="settingsOutboundDefaultsTitle">
+                <h5 id="settingsOutboundDefaultsTitle">出库单默认信息</h5>
+                <form id="settingsOutboundDefaultsForm" class="document-form document-form--outbound">
+                  <label class="field"><span class="field__label">收货单位</span><input name="收货单位" class="input" type="text" autocomplete="off"></label>
+                  <label class="field"><span class="field__label">地址</span><input name="地址" class="input" type="text" autocomplete="off"></label>
+                  <label class="field"><span class="field__label">电话</span><input name="电话" class="input" type="tel" autocomplete="off"></label>
+                  <label class="field"><span class="field__label">联系人</span><input name="联系人" class="input" type="text" autocomplete="off"></label>
+                  <label class="field"><span class="field__label">编辑人</span><input name="编辑人" class="input" type="text" autocomplete="off"></label>
+                  <label class="field"><span class="field__label">收货人</span><input name="收货人" class="input" type="text" autocomplete="off"></label>
+                  <label class="field"><span class="field__label">项目负责人</span><input name="项目负责人" class="input" type="text" autocomplete="off"></label>
+                </form>
+                <div class="toolbar document-actions">
+                  <button id="settingsSaveOutboundDefaultsBtn" class="btn btn--ghost" type="button" disabled>保存出库默认信息</button>
+                </div>
+              </section>
+            </div>
+          </article>
+        </section>
+
+        <section id="settingsPanelAppearance" class="settings-section" role="tabpanel" aria-labelledby="settingsTabAppearance" data-settings-panel="appearance" hidden>
+          <div class="settings-section-head">
+            <h3>外观</h3>
+            <p>当前皮肤状态与恢复入口。</p>
+          </div>
+          <div id="settingsAppearanceList" class="settings-kv"></div>
+          <div id="settingsSkinList" class="skin-list settings-skin-list" role="radiogroup" aria-label="可用皮肤"></div>
+          <div class="settings-action-row">
+            <button id="settingsEnableSkinBtn" class="btn btn--secondary" type="button" disabled>启用选中皮肤</button>
+            <button id="settingsResetSkinBtn" class="btn btn--ghost" type="button" disabled>恢复默认外观</button>
+            <a class="btn btn--secondary" href="/skins">皮肤管理与导入</a>
+            <a class="btn btn--ghost" href="/settings?no_skin=1">无皮肤恢复入口</a>
+          </div>
+        </section>
+
+        <section id="settingsPanelPreferences" class="settings-section" role="tabpanel" aria-labelledby="settingsTabPreferences" data-settings-panel="preferences" hidden>
+          <div class="settings-section-head">
+            <h3>偏好</h3>
+            <p>只影响页面展示和交互默认值，不改变汇总、成本产物或发票源文件。</p>
+          </div>
+          <div id="settingsPreferencesList" class="settings-kv"></div>
+          <article class="settings-edit-card" aria-labelledby="settingsCostRowLimitTitle">
+            <div class="settings-edit-card__head">
+              <div>
+                <h4 id="settingsCostRowLimitTitle">成本页显示行数</h4>
+                <p>控制成本页表格可视窗口高度，真实表格和 TSV 复制口径不裁剪。</p>
+              </div>
+            </div>
+            <div class="settings-segmented" role="group" aria-label="成本页默认显示行数">
+              <button class="settings-segment" type="button" data-settings-cost-row-limit="30" aria-pressed="false">30</button>
+              <button class="settings-segment" type="button" data-settings-cost-row-limit="60" aria-pressed="false">60</button>
+              <button class="settings-segment" type="button" data-settings-cost-row-limit="100" aria-pressed="false">100</button>
+            </div>
+          </article>
+          <article class="settings-edit-card" aria-labelledby="settingsLongPathTitle">
+            <div class="settings-edit-card__head">
+              <div>
+                <h4 id="settingsLongPathTitle">长路径显示</h4>
+                <p>默认保持单行裁切，鼠标覆盖或键盘聚焦时在原位置查看完整内容。</p>
+              </div>
+            </div>
+            <div class="settings-segmented settings-segmented--wide" role="group" aria-label="长路径显示偏好">
+              <button class="settings-segment" type="button" data-settings-long-path-display="truncate-hover-scroll" aria-pressed="false">裁切并悬停滚动</button>
+              <button class="settings-segment" type="button" data-settings-long-path-display="wrap" aria-pressed="false">自动换行</button>
+            </div>
+          </article>
+          <article class="settings-edit-card" aria-labelledby="settingsDocumentExportTitle">
+            <div class="settings-edit-card__head">
+              <div>
+                <h4 id="settingsDocumentExportTitle">已导出单据处理</h4>
+                <p>重复导出时默认先提示；也可改为直接导出副本或打开已有文件。</p>
+              </div>
+            </div>
+            <div class="settings-segmented settings-segmented--wide" role="group" aria-label="已导出单据处理偏好">
+              <button class="settings-segment" type="button" data-settings-document-strategy="prompt" aria-pressed="false">提示选择</button>
+              <button class="settings-segment" type="button" data-settings-document-strategy="copy" aria-pressed="false">导出副本</button>
+              <button class="settings-segment" type="button" data-settings-document-strategy="open" aria-pressed="false">打开已有文件</button>
+            </div>
+          </article>
+          <article class="settings-edit-card" aria-labelledby="settingsShutdownBehaviorTitle">
+            <div class="settings-edit-card__head">
+              <div>
+                <h4 id="settingsShutdownBehaviorTitle">系统关闭方式</h4>
+                <p>默认每次询问。在关闭弹窗勾选“记住本次选择”后，也可在这里随时改回询问或切换关闭方式。</p>
+              </div>
+            </div>
+            <div class="settings-segmented settings-segmented--wide" role="group" aria-label="系统关闭方式偏好">
+              <button class="settings-segment" type="button" data-settings-shutdown-behavior="ask" aria-pressed="false">每次询问</button>
+              <button class="settings-segment" type="button" data-settings-shutdown-behavior="keep_monitor" aria-pressed="false">保留监控</button>
+              <button class="settings-segment" type="button" data-settings-shutdown-behavior="stop_monitor" aria-pressed="false">同时停止监控</button>
+            </div>
+          </article>
+          <article class="settings-edit-card" aria-labelledby="settingsStartupSurfaceTitle">
+            <div class="settings-edit-card__head">
+              <div>
+                <h4 id="settingsStartupSurfaceTitle">启动方式</h4>
+                <p>保存后在下次启动生效；关闭浏览器或桌面窗口均不会停止独立监控。</p>
+              </div>
+            </div>
+            <div class="settings-segmented settings-segmented--wide" role="group" aria-label="启动方式偏好">
+              <button class="settings-segment" type="button" data-settings-startup-surface="browser" aria-pressed="false">系统默认浏览器</button>
+              <button id="settingsDesktopSurfaceBtn" class="settings-segment" type="button" data-settings-startup-surface="desktop" aria-pressed="false">桌面窗口</button>
+            </div>
+            <div id="settingsStartupSurfaceHint" class="settings-action-status" role="status">正在读取当前平台支持情况...</div>
+          </article>
+          <article class="settings-edit-card" aria-labelledby="settingsAutoUpdateTitle">
+            <div class="settings-edit-card__head">
+              <div>
+                <h4 id="settingsAutoUpdateTitle">更新检查</h4>
+                <p>自动检查只读取公开 JSON 元数据，不会静默下载或安装；也可随时在“关于”中手工检查。</p>
+              </div>
+            </div>
+            <div class="settings-segmented" role="group" aria-label="自动检查更新偏好">
+              <button class="settings-segment" type="button" data-settings-auto-check-updates="true" aria-pressed="false">自动检查</button>
+              <button class="settings-segment" type="button" data-settings-auto-check-updates="false" aria-pressed="false">仅手工检查</button>
+            </div>
+          </article>
+          <article class="settings-edit-card" aria-labelledby="settingsOcrCandidateTitle">
+            <div class="settings-edit-card__head">
+              <div>
+                <h4 id="settingsOcrCandidateTitle">OCR 候选目录</h4>
+                <p>只作为 OCR 页面候选文件列表默认目录；留空时继续使用当前发票目录。</p>
+              </div>
+            </div>
+            <div class="field-row">
+              <label class="field field--wide">
+                <span class="field__label">OCR 候选目录偏好</span>
+                <input id="settingsOcrCandidateDirInput" class="input" type="text" autocomplete="off" placeholder="留空则使用当前发票目录">
+              </label>
+              <button id="settingsPickOcrCandidateDirBtn" class="btn btn--ghost" type="button">选择文件夹</button>
+              <button id="settingsUseWatchDirForOcrBtn" class="btn btn--ghost" type="button">使用当前发票目录</button>
+              <button id="settingsSaveOcrCandidateDirBtn" class="btn btn--primary" type="button" disabled>保存 OCR 偏好</button>
+            </div>
+            <div id="settingsOcrCandidateDirStatus" class="settings-action-status" role="status">留空时 OCR 候选文件来自当前发票目录。</div>
+          </article>
+        </section>
+        <section id="settingsPanelOcr" class="settings-section" role="tabpanel" aria-labelledby="settingsTabOcr" data-settings-panel="ocr" hidden>
+          <div class="settings-section-head">
+            <h3>OCR</h3>
+            <p>当前发布包的 OCR 能力与服务状态。</p>
+          </div>
+          <div id="settingsOcrList" class="settings-kv"></div>
+        </section>
+
+        <section id="settingsPanelDiagnostics" class="settings-section" role="tabpanel" aria-labelledby="settingsTabDiagnostics" data-settings-panel="diagnostics" hidden>
+          <div class="settings-section-head">
+            <h3>诊断</h3>
+            <p>配置、runtime、SQLite 与高级诊断入口。</p>
+          </div>
+          <div id="settingsDiagnosticsList" class="settings-kv"></div>
+          <div class="settings-action-row">
+            <a class="btn btn--ghost" href="/backend">打开高级诊断</a>
+          </div>
+          <details id="settingsAdvancedDiagnostics" class="settings-edit-card settings-diagnostics-advanced">
+            <summary class="settings-details-summary">高级诊断与支持包</summary>
+            <div class="settings-diagnostic-body">
+              <div id="settingsDiagnosticSummaryText" class="settings-diagnostic-summary" aria-label="诊断摘要">正在读取诊断摘要...</div>
+              <div class="settings-action-row">
+                <button id="settingsCopyDiagnosticSummaryBtn" class="btn btn--ghost" type="button">复制诊断摘要</button>
+                <button id="settingsRunConfigHealthBtn" class="btn btn--ghost" type="button">配置健康检查</button>
+                <button id="settingsExportSupportPackageBtn" class="btn btn--secondary" type="button">导出支持包</button>
+              </div>
+              <div id="settingsDiagnosticHealthList" class="settings-health-list" hidden></div>
+              <div id="settingsSupportPackagePath" class="settings-action-status" hidden></div>
+              <div id="settingsDiagnosticActionStatus" class="settings-action-status" role="status">支持包只包含诊断摘要、健康检查、事件尾部和日志尾部，不包含源发票文件。</div>
+              <div class="settings-action-status settings-action-status--warning">发布检查：config/app.local.json 不应原样打入 core 包。</div>
+            </div>
+          </details>
+        </section>
+
+        <section id="settingsPanelAbout" class="settings-section" role="tabpanel" aria-labelledby="settingsTabAbout" data-settings-panel="about" hidden>
+          <div class="settings-section-head">
+            <h3>关于</h3>
+            <p>查看版本、发行身份和更新状态。更新由用户决定，不会强制安装。</p>
+          </div>
+          <article class="about-product-card">
+            <div class="about-product-identity">
+              <span class="brand-mark" aria-hidden="true">票</span>
+              <div>
+                <h4 id="settingsAboutProductName">InvoiceHub</h4>
+                <span id="settingsAboutVersion" class="about-version-pill">版本 --</span>
+              </div>
+              <span id="settingsAboutCardUpdateBadge" class="update-arrow-badge update-arrow-badge--large" role="img" aria-label="发现可升级版本" hidden>
+                <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M12 17V7m0 0-4 4m4-4 4 4"></path></svg>
+              </span>
+            </div>
+            <div class="settings-action-row about-links">
+              <a id="settingsAboutWebsiteLink" class="btn btn--ghost" href="#" target="_blank" rel="noopener noreferrer">官方网站</a>
+              <a id="settingsAboutGithubLink" class="btn btn--ghost" href="#" target="_blank" rel="noopener noreferrer">GitHub</a>
+              <a id="settingsAboutChangelogLink" class="btn btn--ghost" href="#" target="_blank" rel="noopener noreferrer">更新日志</a>
+            </div>
+          </article>
+          <div id="settingsAboutIdentityList" class="settings-kv"></div>
+          <article class="settings-edit-card about-update-card" aria-labelledby="settingsUpdateStatusTitle">
+            <div class="settings-edit-card__head">
+              <div>
+                <h4 id="settingsUpdateStatusTitle">软件更新</h4>
+                <p id="settingsUpdateStatusText" role="status" aria-live="polite">尚未检查更新。</p>
+              </div>
+            </div>
+            <div id="settingsUpdateDetails" class="settings-kv" hidden></div>
+            <div class="settings-action-row">
+              <button id="settingsCheckUpdateBtn" class="btn btn--primary" type="button">检查更新</button>
+              <a id="settingsDownloadUpdateLink" class="btn btn--secondary" href="#" target="_blank" rel="noopener noreferrer" hidden>前往下载</a>
+              <button id="settingsInstallUpdateBtn" class="btn btn--secondary" type="button" hidden>安装更新</button>
+            </div>
+          </article>
+        </section>
+      </div>
+    </section>
+  </main>
+  <div id="settingsShutdownDialog" class="modal-backdrop settings-shutdown-dialog" role="presentation" hidden>
+    <section id="settingsShutdownDialogCard" class="modal-card settings-shutdown-dialog__card" role="dialog" aria-modal="true" aria-labelledby="settingsShutdownDialogTitle" aria-describedby="settingsShutdownDialogDescription" tabindex="-1">
+      <h3 id="settingsShutdownDialogTitle">关闭本系统？</h3>
+      <p id="settingsShutdownDialogDescription">关闭 WebUI 后，当前页面将无法继续操作。请选择是否让独立监控继续运行。</p>
+      <div id="settingsShutdownDecision" class="settings-shutdown-decision">
+        <fieldset class="settings-shutdown-options">
+          <legend>关闭后如何处理监控</legend>
+          <label class="settings-shutdown-choice">
+            <input id="settingsShutdownKeepMonitor" type="radio" name="settingsShutdownBehavior" value="keep_monitor" checked>
+            <span>
+              <strong>保留监控，仅关闭 WebUI</strong>
+              <small>独立监控继续处理当前发票目录的文件变化。</small>
+            </span>
+          </label>
+          <label class="settings-shutdown-choice settings-shutdown-choice--stop">
+            <input id="settingsShutdownStopMonitor" type="radio" name="settingsShutdownBehavior" value="stop_monitor">
+            <span>
+              <strong>关闭 WebUI，并停止监控</strong>
+              <small>先等待独立监控退出，再关闭 localhost WebUI。</small>
+            </span>
+          </label>
+        </fieldset>
+        <label class="settings-shutdown-remember">
+          <input id="settingsShutdownRemember" type="checkbox">
+          <span>记住本次选择</span>
+        </label>
+        <div id="settingsShutdownDialogError" class="settings-shutdown-error" role="alert" hidden></div>
+        <div class="modal-actions settings-shutdown-dialog__actions">
+          <button id="settingsShutdownCancelBtn" class="btn btn--ghost" type="button">取消</button>
+          <button id="settingsShutdownConfirmBtn" class="btn btn--danger" type="button">确认关闭</button>
+        </div>
+      </div>
+      <div id="settingsShutdownProgress" class="settings-shutdown-progress" role="status" aria-live="polite" aria-atomic="true" hidden>
+        <strong id="settingsShutdownProgressTitle">正在关闭...</strong>
+        <p id="settingsShutdownProgressText">请稍候，当前页面将保留关闭结果提示。</p>
+      </div>
+    </section>
+  </div>
+  <script src="/static/js/common.js?v=20260729-main-macos-sync"></script>
+  <script src="/static/js/page-settings.js?v=20260803-external-monitor-guard"></script>
+</body>
+</html>

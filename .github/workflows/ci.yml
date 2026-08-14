@@ -1,0 +1,107 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - "codex/**"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    name: Windows Python and release contracts
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14.6"
+          architecture: x64
+          cache: pip
+          cache-dependency-path: |
+            requirements/windows-x64-py314.lock
+            requirements/test-tools-py314.lock
+      - name: Install hash-locked dependencies
+        run: >-
+          python -m pip install
+          --require-hashes
+          --only-binary=:all:
+          -r requirements/windows-x64-py314.lock
+          -r requirements/test-tools-py314.lock
+      - name: Run Python, JavaScript, release, and documentation gates
+        shell: pwsh
+        run: ./scripts/dev/run_tests.ps1
+      - name: Parse every PowerShell source file
+        shell: pwsh
+        run: |
+          $failed = $false
+          Get-ChildItem -Recurse -File -Include *.ps1,*.psm1 | ForEach-Object {
+            $tokens = $null
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$tokens, [ref]$errors) | Out-Null
+            if ($errors.Count -gt 0) {
+              $failed = $true
+              $errors | ForEach-Object { Write-Error "$($_.Extent.File):$($_.Extent.StartLineNumber): $($_.Message)" }
+            }
+          }
+          if ($failed) { throw "PowerShell parser found errors." }
+      - name: Verify clean release source identity
+        shell: pwsh
+        run: >-
+          ./scripts/dev/verify_release_source.ps1
+          -Version 0.2.0-beta.1
+          -PythonVersion 3.14.6
+          -SourceCommit $env:GITHUB_SHA
+      - name: Check whitespace
+        run: git diff --check
+
+  macos:
+    name: macOS ARM64 Python, Swift, and release static checks
+    runs-on: macos-15
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14.6"
+          architecture: arm64
+          cache: pip
+          cache-dependency-path: |
+            requirements/macos-arm64-py314.lock
+            requirements/test-tools-py314.lock
+      - name: Assert Apple Silicon runner
+        run: test "$(uname -m)" = "arm64"
+      - name: Install hash-locked dependencies
+        run: >-
+          python -m pip install
+          --require-hashes
+          --only-binary=:all:
+          -r requirements/macos-arm64-py314.lock
+          -r requirements/test-tools-py314.lock
+      - name: Run Python tests and compile sources
+        run: |
+          PYTHONPATH="$PWD/src" python -m pytest
+          python -m compileall src tests
+      - name: Run JavaScript syntax checks
+        run: find web/static/js -name '*.js' -print0 | xargs -0 -n1 node --check
+      - name: Run Swift package tests from the resolved Sparkle pin
+        working-directory: macos/InvoiceHubMac
+        run: |
+          swift package resolve
+          swift test --disable-sandbox
+      - name: Check release shell syntax and repository whitespace
+        run: |
+          bash -n macos/InvoiceHubMac/script/*.sh
+          git diff --check
