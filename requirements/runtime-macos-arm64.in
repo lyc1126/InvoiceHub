@@ -6,5 +6,5 @@ pydantic==2.13.4
 openpyxl==3.1.5
 pymupdf==1.28.0
 pillow==12.3.0
-packaging==26.2
+packaging==26.3
 certifi==2026.7.22

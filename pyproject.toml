@@ -18,7 +18,7 @@ dependencies = [
   "pymupdf==1.28.0",
   "pillow==12.3.0",
   "watchdog==6.0.0; sys_platform == 'win32'",
-  "packaging==26.2",
+  "packaging==26.3",
   "certifi==2026.7.22",
 ]
 
