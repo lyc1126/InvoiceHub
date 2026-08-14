@@ -1,7 +1,7 @@
 # InvoiceHub 完整文件地图
 
-> 公共候选基线：经过审计的单一脱敏根提交；旧私有提交、Tag、包和验证材料不在公开图中。
-> 当前治理变化以 `docs/release/HISTORY_SANITIZATION_EXECUTION.md` 为真值。候选树、Git 对象和托管面验证通过后，`v0.3` Tauri 2 才从 `main` 开始。
+> 公共基线：经过审计的单一脱敏根提交及其公开后代；旧私有提交、Tag、包和验证材料不在公开图中。
+> 当前治理变化以 `docs/release/HISTORY_SANITIZATION_EXECUTION.md` 为真值。公开门槛已完成；`v0.3` Tauri 2 仍须从 `main` 创建专门开发分支后才开始。
 > 本表覆盖当前受版本控制的全部工程文件，包括架构文档与文档契约测试；运行态、投影和本机未跟踪内容只登记生成规则，不使用会随增删文件失真的固定数量。
 > 路径是导航键；职责和关系按符号而不是易漂移的行号描述。
 
@@ -43,7 +43,7 @@
 | `LICENSE` | AGPL-3.0-or-later 完整许可证文本。 | 进入源码快照和双平台成品；发布前仍需人工法律复核。 |
 | `NOTICE` | 版权、AGPL、商标、贡献者版权和用户数据边界声明。 | 与 LICENSE、THIRD_PARTY_NOTICES 和公开仓库治理一致；不把用户发票或生成物自动纳入 AGPL。 |
 | `CONTRIBUTING.md` | 贡献流程、最小验证和 DCO 说明。 | PR 必须带 sign-off；贡献者保留版权并按 AGPL-3.0-or-later 提交。 |
-| `SECURITY.md` | 私密漏洞报告与安全范围说明。 | 仓库 public 后启用 private vulnerability reporting；不得在公开 issue 贴秘密、发票或配置。 |
+| `SECURITY.md` | 私密漏洞报告与安全范围说明。 | 公开仓库已启用 private vulnerability reporting；不得在公开 issue 贴秘密、发票或配置。 |
 | `CODE_OF_CONDUCT.md` | 社区行为与处理边界。 | 适用于 issue、PR、review 和项目沟通。 |
 | `PRIVACY.md` | 本地数据处理、更新请求和 GitHub 交互的隐私说明。 | 不引入遥测；公开贡献不得附真实发票、公司资料或凭据。 |
 | `README.md` | 用户与开发者的首要运行说明。 | 链接正式入口、产物位置、测试和本架构文档。 |

@@ -2,7 +2,7 @@
 
 InvoiceHub macOS is the first local shell for the existing InvoiceHub Python/FastAPI core.
 
-The shared/platform responsibility split is documented in [`docs/architecture/PLATFORM_ARCHITECTURE.md`](../../docs/architecture/PLATFORM_ARCHITECTURE.md). The public repository is being prepared as a single sanitized root snapshot; retired private commits, packages, tags and validation material are not public release inputs. The existing SwiftUI/WKWebView/Sparkle code remains a development and migration reference for the shared-core boundary, but it is not a public release path. The next desktop implementation is Tauri 2 on `codex/tauri2-unified-desktop`, only after candidate-tree, Git-object and hosting verification, beginning at `0.3.0-alpha.1` and reusing Python/FastAPI/Web/monitor rather than rewriting business logic.
+The shared/platform responsibility split is documented in [`docs/architecture/PLATFORM_ARCHITECTURE.md`](../../docs/architecture/PLATFORM_ARCHITECTURE.md). The public repository begins from a single audited sanitized root snapshot; retired private commits, packages, tags and validation material are not public release inputs. The existing SwiftUI/WKWebView/Sparkle code remains a development and migration reference for the shared-core boundary, but it is not a public release path. The next desktop implementation is Tauri 2 on `codex/tauri2-unified-desktop`, beginning at `0.3.0-alpha.1` after its own branch and release gates, and reusing Python/FastAPI/Web/monitor rather than rewriting business logic.
 
 The first version keeps the current `v1 localhost` product model:
 

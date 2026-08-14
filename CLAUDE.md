@@ -4,11 +4,11 @@ This file is a concise entry point for coding agents. `AGENTS.md` is the authori
 
 ## Current Baseline
 
-- Public source and architecture baseline: a single sanitized root commit after the verification gate completes.
+- Public source and architecture baseline: a single sanitized root commit and its public descendants after the completed verification gate.
 - Retired private commits, packages, tags, receipts, and validation material are not public release inputs and must not be recreated or uploaded.
 - The next implementation branch is `codex/tauri2-unified-desktop` from the governance-complete, sanitized public `main`, beginning at `0.3.0-alpha.1`. Tauri 2 owns only desktop integration and continues to use the Python/FastAPI/Web/monitor core.
 - The original worktree, stashes, untracked assets, ignored runtime state, and user data remain outside this release worktree.
-- Public-release actions are blocked until the candidate tree, retained Git objects and hosting surface pass the approved history-sanitization gate. Do not make the repository public, upload an asset, create a Feed, or create the Tauri branch before that record passes.
+- The repository is public after the approved history-sanitization gate. This does not authorize a Release asset, Feed, or Tauri branch: each still requires its own documented gate.
 
 Always refresh the facts with:
 

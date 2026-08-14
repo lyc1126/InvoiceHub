@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- 2026-08-14 public repository transition: publish the audited sanitized root
+  in a new public repository, retain the retired original graph only in an
+  owner-controlled private archive, and enable public-repository security and
+  contribution governance. No retired package, tag, receipt, Release asset, or
+  update Feed was reused.
 - Prepare a sanitized public root: replace historical business fixtures with
   explicit synthetic data, retire pre-publication release evidence, and add
   the all-ref and hosting verification gate.

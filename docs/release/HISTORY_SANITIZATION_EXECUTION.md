@@ -2,38 +2,57 @@
 
 ## Status
 
-Authorized by the repository owner on 2026-08-14. A sanitized local root
-candidate has been created in an isolated repository. Its source tree passed
-the text, binary-container, spreadsheet-property, and credential gates before
-creation. The only credential scanner alert was a deterministic test-only
-ledger identifier; it is a non-secret false-positive category and its value is
-intentionally not recorded here. Public-ref replacement has not started. The
-repository remains private until the focused regression and post-rewrite
-verification described below pass.
+Authorized by the repository owner on 2026-08-14. The original repository was
+retained as an owner-controlled private archive, and a separate repository was
+created for the sanitized source. That source tree passed the text,
+binary-container, spreadsheet-property, and credential gates before its
+neutral root commit was created.
 
-## Remote Ref Policy
+The public repository was created from that root and made public on
+2026-08-14. Its root is
+`0b1061ff567a09981e2cef450a838b5073d55edb` (`Establish sanitized public
+source`); the original graph, packages, tags, receipts, and releases were not
+copied. Focused source checks passed (`33 passed, 5 skipped`). The only
+credential scanner alert was a deterministic test-only ledger identifier; it
+is a non-secret false-positive category and its value is intentionally not
+recorded here.
 
-The read-only inventory establishes the following replacement policy before
-any rewrite:
+The public repository has no public tag, Release asset, Pages deployment, or
+Tauri development branch. Its security governance enables DCO, Dependabot,
+Secret Scanning, Push Protection, and private vulnerability reporting. A
+post-public inventory remains required after any ref-creating governance work
+to prove every public ref is a descendant of the sanitized root.
 
-- `main` is replaced by the sanitized successor.
-- Every non-main remote branch is deleted from the public ref set.
-- Every pre-publication tag is deleted and is not recreated.
+## Published Ref Policy
 
-The final inventory must establish that no other public head or tag remains.
-Local-only refs, stashes, worktrees, and the private backup are not
-public-release inputs.
+The public repository follows this policy:
+
+- `main` begins at the sanitized root; every later public head or bot pull
+  request ref must be its descendant.
+- Pre-publication tags are not recreated; a future tag must identify a newly
+  built and audited public version.
+- The original repository and all of its refs remain private and untouched.
+
+The final inventory must establish that no public head, tag, pull-request ref,
+Release, asset, fork, cache, Pages deployment, or LFS object exposes the
+retired graph. Local-only refs, stashes, worktrees, and the private archive
+are not public-release inputs.
+
+At the public-transition inventory, only the sanitized `main` was a
+maintained public source branch. Later automation pull-request refs are
+permitted only when they descend from that root and remain subject to the same
+inventory rule.
 
 ## Public Graph Form
 
-The public `main` is replaced by one sanitized root snapshot rather than a
+The public repository begins with one sanitized root snapshot rather than a
 value-by-value rewrite of the existing commit graph. The scoped audit found
 interconnected business-validation narratives, identifiers, and factual
 records spread through historical documentation. A clean root prevents an
 incomplete textual replacement from leaving linkable historical facts in an
 otherwise public commit.
 
-The private backup retains the original graph for owner-only recovery. The
+The private archive retains the original graph for owner-only recovery. The
 clean public root has neutral commit identity and contains only the reviewed
 current source state; it makes no continuity claim about prior release
 identities.
@@ -71,8 +90,8 @@ are outside this replacement scope.
 - Access: the repository owner's local account only; it must never be pushed,
   attached to a Release, or copied into the public working tree.
 - Rollback owner: the repository owner. A rollback may restore the private
-  backup only while the repository remains private; it must not re-expose the
-  retired graph publicly.
+  archive only in a separately isolated private repository; it must not
+  re-expose the retired graph publicly.
 
 ## Replacement Version Policy
 
@@ -111,7 +130,7 @@ record is fixed here to avoid refresh-only scans:
 | Field | Record |
 | --- | --- |
 | Hypothesis | The rewritten `main` and retained public tags contain no values in the authorized transformation categories. |
-| Decision changed by result | Pass permits the repository to become public; any finding keeps it private and blocks Release, Feed, and Tauri-public-branch work. |
+| Decision changed by result | Pass permitted the repository to become public; any finding would have kept it private and blocked Release, Feed, and Tauri-public-branch work. |
 | Minimal sample | Every ref that will remain public after the ref replacement, including all reachable commits and tags. |
 | Stop condition | Stop on the first real sensitive finding; otherwise stop after one completed content scan and one credential scan. |
 
@@ -123,10 +142,11 @@ rotated as credentials.
 
 ## Hosting Inventory Gate
 
-Before a public-visibility change, inventory the repository's remote heads,
-tags, pull-request head refs, Releases and assets, LFS objects, and hosting
-fork/cache state where the hosting API exposes them. After the ref replacement,
-repeat the remote ref and hosting inventory: only the sanitized `main` may
-remain, with no tag or Release asset that points at the retired graph. A
-missing authenticated hosting API result is a blocker, not evidence that the
-hosting surface is empty.
+Before the public-visibility change, the inventory covered the repository's
+remote heads, tags, pull-request head refs, Releases and assets, LFS objects,
+and hosting fork/cache state where the hosting API exposes them. After the
+public transition, repeat the remote ref and hosting inventory whenever a
+governance action creates new refs: every ref must descend from the sanitized
+root, and no tag or Release asset may point at the retired graph. A missing
+authenticated hosting API result is a blocker, not evidence that the hosting
+surface is empty.

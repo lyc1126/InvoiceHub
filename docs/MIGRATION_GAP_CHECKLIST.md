@@ -10,7 +10,7 @@
 - [x] 将所有测试夹具确认或替换为明确的合成数据。
 - [x] 对候选源树完成一次文本、二进制容器和工作簿属性审计。
 - [x] 创建中性身份的根提交，并对所有保留对象完成一次 gitleaks 与业务数据分类审计。
-- [ ] 用托管 API 核对 heads、tags、PR refs、Release/asset、LFS 与可见 fork/cache 状态；通过后才重写远端并转 public。
+- [x] 用托管 API 核对 heads、tags、PR refs、Release/asset、LFS 与可见 fork/cache 状态；新公开仓库只包含脱敏根及其后代，原始图保留在 private archive。
 
 执行约束见 [历史净化执行记录](release/HISTORY_SANITIZATION_EXECUTION.md)。旧私有包和旧 Tag 绝不进入新的公开图或 Release。
 
