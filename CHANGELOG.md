@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Correct the interface-flow release boundary to record the completed public
+  transition while retaining the prohibition on reusing retired private assets.
 - Read the Windows CI release-version argument from `version.py` instead of
   the retired `0.2.0-beta.1` literal, keeping the source-identity gate aligned
   with the public release configuration.

@@ -289,10 +289,15 @@ def test_architecture_mermaid_and_markdown_fences_are_balanced() -> None:
 def test_current_baselines_and_non_drifting_facts_are_explicit() -> None:
     entry = ARCHITECTURE_ENTRY.read_text(encoding="utf-8")
     status = (ROOT / "IMPLEMENTATION_STATUS.md").read_text(encoding="utf-8")
+    flows = (ROOT / "docs" / "architecture" / "INTERFACES_AND_FLOWS.md").read_text(
+        encoding="utf-8"
+    )
     for text in (entry, status):
         assert "main" in text
         assert "脱敏" in text
         assert "0.3.0-alpha.1" in text
+    assert "候选树、Git 对象和托管面验证已通过" in flows
+    assert "验证通过前，仓库不得公开" not in flows
 
     stale_markers = (
         "59 tests",

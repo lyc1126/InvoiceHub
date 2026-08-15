@@ -1,9 +1,9 @@
 # InvoiceHub 接口与运行流程
 
 > 公共权威基线：经过审计的单一脱敏根提交；旧私有历史和发布资产不属于公开图。
-> 当前发行边界：候选树、Git 对象和托管面验证通过前，仓库不得公开或上传资产。Tauri 2 `v0.3` 才替换平台壳并新增 Host RPC/updater 行为。
+> 当前发行边界：候选树、Git 对象和托管面验证已通过，仓库已公开；旧私有历史、Tag 和资产仍不得公开或上传。Tauri 2 `v0.3` 才替换平台壳并新增 Host RPC/updater 行为。
 > 校验规则：精确的当前本地与 GitHub HEAD 以实时 Git 引用和双向差异为准。
-> 状态说明：OCR 服务类接口与 Windows desktop surface 属于“未启用能力”；当前只准备公开净化基线，尚未创建公开 Tag、Release 或 Feed。
+> 状态说明：OCR 服务类接口与 Windows desktop surface 属于“未启用能力”；当前尚未创建公开 Tag、Release、Feed 或 Tauri 开发分支。
 
 ## 1. 从页面到真值的完整链路
 
