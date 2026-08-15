@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- 2026-08-16 Tauri 2 foundation: add the public execution plan, single-source
+  version synchronizer, pinned pnpm Tauri dependencies, fixed-localhost host
+  scaffold, and non-installing Windows/macOS doctor/bootstrap entry points.
+  Diagnostics run from the requested project root, block Rustup/Corepack
+  auto-downloads, and fail closed for missing Windows interpreter, MSVC, or
+  SDK prerequisites. Rust/Cargo are absent on the current development host,
+  so Cargo dependency resolution, `Cargo.lock`, compilation, lifecycle, Host
+  RPC, and packaging remain explicitly blocked rather than being claimed as
+  complete.
 - Correct the interface-flow release boundary to record the completed public
   transition while retaining the prohibition on reusing retired private assets.
 - Read the Windows CI release-version argument from `version.py` instead of

@@ -3,7 +3,7 @@
 > 文档状态：当前跨平台实现的权威附录
 > 更新日期：2026-08-14
 > 公共基线：单一脱敏根提交。退休的私有提交、Tag、包和验证材料不属于公开发行输入。
-> 当前发行状态：候选树、保留 Git 对象和托管面验证已完成，仓库现为 public；Tauri 2 仍从 `v0.3.0-alpha.1` 开始，尚未建立其开发分支或 Release。
+> 当前发行状态：候选树、保留 Git 对象和托管面验证已完成，仓库现为 public；`codex/tauri2-unified-desktop` 已建立并含 `v0.3.0-alpha.1` Tauri foundation，但尚无可运行 host、Cargo lock 或 Release。
 
 本页只解释平台边界。领域模型、API、投影和 monitor 的详细契约分别见[开发架构总入口](../DEVELOPMENT_ARCHITECTURE.md)、[接口与运行流程](INTERFACES_AND_FLOWS.md)和[数据结构与算法](DATA_AND_ALGORITHMS.md)。
 

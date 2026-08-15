@@ -1,7 +1,7 @@
 # InvoiceHub 完整文件地图
 
 > 公共基线：经过审计的单一脱敏根提交及其公开后代；旧私有提交、Tag、包和验证材料不在公开图中。
-> 当前治理变化以 `docs/release/HISTORY_SANITIZATION_EXECUTION.md` 为真值。公开门槛已完成；`v0.3` Tauri 2 仍须从 `main` 创建专门开发分支后才开始。
+> 当前治理变化以 `docs/release/HISTORY_SANITIZATION_EXECUTION.md` 为真值。公开门槛已完成；`v0.3` Tauri 2 开发分支已从 `main` 建立，当前仅有不可运行的 foundation，尚无 Cargo lock 或 Release。
 > 本表覆盖当前受版本控制的全部工程文件，包括架构文档与文档契约测试；运行态、投影和本机未跟踪内容只登记生成规则，不使用会随增删文件失真的固定数量。
 > 路径是导航键；职责和关系按符号而不是易漂移的行号描述。
 
@@ -49,6 +49,9 @@
 | `README.md` | 用户与开发者的首要运行说明。 | 链接正式入口、产物位置、测试和本架构文档。 |
 | `THIRD_PARTY_NOTICES.md` | Python、Swift、字体与其它第三方依赖声明入口。 | 与依赖锁、SBOM、Sparkle/Python runtime 发行审查联动。 |
 | `pyproject.toml` | Python 版本、依赖、pytest 和包元数据。 | 被本地测试、Docker、Windows Python 入口和 core 包使用。 |
+| `package.json` | Tauri host 的 npm 产品身份、pnpm 版本和 JavaScript 直接依赖声明。 | 产品版本由 `tauri_version_sync.py` 从 `version.py` 派生；不承载业务前端。 |
+| `pnpm-lock.yaml` | Tauri CLI/API 的完整 JavaScript integrity lock。 | 仅在显式 `--install-js` 或开发者手动 pnpm 安装时消费；不得用它替代 Cargo lock。 |
+| `rust-toolchain.toml` | Rust/Cargo 1.85.0 与两首发 target 的固定工具链声明。 | `tauri_doctor.py` 诊断；无 Rust/Cargo 或 `src-tauri/Cargo.lock` 时 host 必须保持未就绪。 |
 | `requirements/runtime.in` | 双平台共享运行依赖输入。 | Windows/macOS 平台输入 include；不能直接替代哈希锁。 |
 | `requirements/runtime-windows-x64.in` | Windows x64 运行依赖输入，含 watchdog。 | 编译为 Windows Python 3.14 哈希锁。 |
 | `requirements/runtime-macos-arm64.in` | macOS arm64 运行依赖输入，不含 watchdog。 | 编译为 Mac Python 3.14 哈希锁；使用内置 polling observer。 |
@@ -85,6 +88,7 @@
 | `docs/MIGRATION_GAP_CHECKLIST.md` | 旧能力迁移缺口和验收状态。 | 功能迁移、验收口径和开发交接能力变化时更新。 |
 | `docs/MONITORING_AND_LOGGING.md` | monitor 状态、日志和诊断说明。 | 与 `monitoring/*`、MonitorBridge 和设置页运行状态联动。 |
 | `docs/release/HISTORY_SANITIZATION_EXECUTION.md` | 公开历史净化、私有备份、候选内容审计、全 ref 验证和托管面复核的执行记录。 | 公开 Git 图、发布资产、仓库可见性或 Tauri 开发线变化前必须更新。 |
+| `docs/release/TAURI2_EXECUTION_PLAN.md` | 公开 Tauri 2 分阶段计划、实验决策记录、重打边界和当前阻断项。 | 改动 Tauri host、依赖锁、生命周期、更新或平台验收时先更新实验记录。 |
 | `docs/release/UPDATE_SYSTEM.md` | About、Feed、cache、Sparkle、Windows 旁路升级的完整开发说明。 | 更新协议或 UI/安装流程变化时同步。 |
 | `docs/release/WINDOWS_REPACKAGE_CONFIG.json` | Windows 构建链的机器可读参数。 | 每个新 RC 都必须从 `version.py`、锁和 clean source commit 重新校验，不能复用退休发布身份。 |
 | `docs/jierui/view-voucher-page.selectors.md` | 公开树的外部页面自动化边界说明。 | 不保存真实选择器、地址、坐标或账套事实；W10 操作员必须在获授权的私有环境重新采集。 |
@@ -105,6 +109,13 @@
 | `scripts/dev/verify_release_source.ps1` | Windows 源码、身份、测试和文档预门禁。 | CI 与真机手册共用；要求 clean source commit，并在选择解释器前拒绝非精确 Python 3.14.6 patch。 |
 | `scripts/dev/run_docker_tests.sh` | Docker pytest 快捷入口。 | 调用 `docker compose run --rm test`；只用于开发/Mac 验证。 |
 | `scripts/dev/run_tests.ps1` | Windows 开发测试门禁。 | 可显式绑定隔离测试 Python，执行 pytest、`compileall src tests` 和全部前端 JS 语法检查。 |
+| `scripts/dev/tauri_version_sync.py` | 从 `version.py` 同步或校验 npm、Cargo 与 Tauri 配置的产品身份。 | `--check` fail closed；`--write` 是唯一允许写派生版本的入口。 |
+| `scripts/dev/tauri_doctor.py` | 不安装任何系统工具的 Tauri 环境、锁、固定 origin 与平台 SDK 诊断。 | `--require-ready` 在 Rust/Cargo/Cargo.lock 缺失时非零退出；不生成 lock。 |
+| `scripts/dev/tauri_bootstrap.py` | 先校验版本再运行 doctor 的显式 bootstrap。 | 默认只诊断；仅 `--install-js` 可安装已锁定 JavaScript 依赖，绝不安装 Rust/证书/Xcode/Visual Studio。 |
+| `scripts/dev/tauri-doctor.sh` | macOS/POSIX doctor 包装。 | 只转发到 Python doctor。 |
+| `scripts/dev/tauri-bootstrap.sh` | macOS/POSIX bootstrap 包装。 | 只转发到 Python bootstrap。 |
+| `scripts/dev/tauri-doctor.ps1` | Windows doctor 包装。 | 使用 `py -3` 或已解析的 `python` 转发；两者均缺失时明确 `exit 2`，不安装系统工具。 |
+| `scripts/dev/tauri-bootstrap.ps1` | Windows bootstrap 包装。 | 使用 `py -3` 或已解析的 `python` 转发；两者均缺失时明确 `exit 2`，不安装系统工具。 |
 | `scripts/tools/jierui_probe_template.py` | 捷锐模板探测辅助入口。 | 只生成或核对结构性事实，不写真实凭证状态。 |
 | `scripts/tools/jierui_voucher_import.py` | 随包 runner 包装。 | 转发到 `invoice_hub.runners.jierui_voucher_import`，要求显式 batch manifest。 |
 | `scripts/windows/run_monitor_status.ps1` | monitor 状态 CLI 包装。 | 解析 Python，调用 `invoice_hub.monitoring.control status`。 |
@@ -119,6 +130,18 @@
 | `scripts/windows/停止localhost服务.bat` | localhost 停止 BAT。 | 使用同一 Program Files/PATH PS7 选择规则调用 `run_stop_localhost.ps1`；保持“只停 WebUI”语义。 |
 | `scripts/windows/停止localhost服务并停止监控.bat` | stop-all BAT。 | 使用同一 PowerShell 选择规则先调 monitor stop，再调用 localhost stop BAT。 |
 | `scripts/windows/导入旧版设置.bat` | 包内设置迁移 BAT。 | 使用同一 Program Files/PATH PS7 与强制 5.1 规则；参数原样传给迁移 PS1。 |
+
+## 4.1 Tauri host foundation
+
+| 文件 | 职责与入口 | 关系与修改影响 |
+|---|---|---|
+| `src-tauri/Cargo.toml` | Tauri host package metadata and intentionally broad direct Tauri major declarations. | Version is derived by `tauri_version_sync.py`; it is not a Cargo lock or evidence that Rust compilation is enabled. |
+| `src-tauri/build.rs` | Tauri build-script entry point. | It may run only after direct crate versions and `Cargo.lock` are reviewed in a controlled Rust environment. |
+| `src-tauri/tauri.conf.json` | Derived product identity, fixed localhost development origin, inert boot asset, and disabled bundling configuration. | Must retain `http://127.0.0.1:8766`; lifecycle work later owns windows, tray, security, and bundling changes. |
+| `src-tauri/src/lib.rs` | Fixed backend host/port constants and their smallest unit contract. | Do not add business-core logic; future lifecycle/Host RPC modules must keep this origin invariant. |
+| `src-tauri/src/main.rs` | Explicit non-runnable host guard. | Generates the Tauri context then exits `78` until the lock and lifecycle gates are complete; it must not silently attach to an old service or select another port. |
+| `src-tauri/boot/index.html` | Inert local boot asset required by the minimal Tauri configuration. | It is not a replacement frontend; the real application remains the existing localhost Web UI. |
+| `src-tauri/README.md` | Foundation scope and non-runnable boundary. | Update together with the execution plan whenever Cargo, lifecycle, Host RPC, updater, or packaging status changes. |
 
 ## 5. Python 包入口与 API
 
@@ -309,6 +332,7 @@
 | `tests/test_runner_dryrun.py` | batch-bound dry-run 与禁止猜测最新文件。 | runners、scripts/tools。 |
 | `tests/test_summary_and_costs.py` | 金额防污染、同票纠偏、结构化成本、均价、参考状态和 schema 刷新。 | extraction、summary、cost_analysis、costs。 |
 | `tests/test_development_documentation.py` | 文件地图、链接、接口路由、基线、旧事实和敏感路径门禁。 | 本架构文档、README、AGENTS、CLAUDE 和 Git 指南。 |
+| `tests/test_tauri_foundation.py` | 版本派生、单点 drift 修复、doctor fail-closed、固定 origin、非安装 bootstrap 与 pnpm lock。 | Tauri foundation scripts, configuration, and plan; it does not claim a Rust build or platform smoke test. |
 
 ## 15. 前端公共资源
 

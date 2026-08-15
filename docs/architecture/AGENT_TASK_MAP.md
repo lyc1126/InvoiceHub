@@ -2,7 +2,7 @@
 
 > 作用：把自然语言任务转换成“先读哪里、从哪个符号开工、会影响什么、至少测什么”。
 > 公共权威基线：单一脱敏根提交；退休私有提交、Tag、包和验证材料不在公开图中。
-> 当前边界：候选树、Git 对象和托管面验证已完成；`v0.3.0-alpha.1` Tauri 2 可从公开后的 `main` 建立专门开发分支。
+> 当前边界：候选树、Git 对象和托管面验证已完成；`v0.3.0-alpha.1` Tauri 2 开发分支已从公开 `main` 建立，当前仅完成版本/环境 foundation。
 > 校验规则：精确的当前本地与 GitHub HEAD 以实时 Git 引用和双向差异为准。
 
 ## 1. 使用方法
@@ -195,10 +195,10 @@ flowchart TD
 | 导航项 | 内容 |
 |---|---|
 | 首先阅读 | 历史净化执行记录；AGENTS 开源冻结/Tauri 规则；接口流程第 6.11 至 6.13 节 |
-| 首要入口 | `version.py`、`release/*`、`HISTORY_SANITIZATION_EXECUTION.md`、`.github` 治理配置；`v0.3` 再增加 Tauri 版本同步、doctor/bootstrap 和 `src-tauri/` |
+| 首要入口 | `version.py`、`release/*`、`HISTORY_SANITIZATION_EXECUTION.md`、`.github` 治理配置；当前 `v0.3` foundation 使用 `scripts/dev/tauri_version_sync.py`、`tauri_doctor.py`、`tauri_bootstrap.py` 和 `src-tauri/` |
 | 必须联动 | LICENSE/NOTICE/贡献与安全文档、README/状态/架构地图、依赖锁、公开仓库设置、Release 元数据；Tauri 改动再联动 preferences/update API、Host RPC、monitor 生命周期和 Web 消费者 |
 | 产物与消费者 | 新的 `v0.3` 才产生 NSIS、DMG/更新归档、Feed、源码归档、SBOM 和发布收据 |
-| 最低自动化 | 公开基线运行文档/许可证、候选内容和 all-ref secret/业务数据扫描；`v0.3` 先跑命中 Rust/前端/API 的聚焦测试，每个 RC 最多一次完整回归 |
+| 最低自动化 | 公开基线运行文档/许可证、候选内容和 all-ref secret/业务数据扫描；foundation 先跑版本同步、doctor fail-closed 与 pnpm lock 测试；Rust 可用后再跑命中 Rust/前端/API 的聚焦测试，每个 RC 最多一次完整回归 |
 | 真实验收 | `v0.3` 每平台最终 RC 一次安装、启动、目录选择、托盘与更新烟测，失败后仅重跑受影响类别 |
 | 高风险提醒 | 退休预公开包、receipt 和 Tag 不得重打、复用或上传。已完成的历史净化不授权创建 Release、Feed 或 Tauri 线，它们仍须满足各自门槛。每项实验先写假设、决策、最小样本和停止条件；相同失败机制只取一个代表样本。Tauri 不重写业务核心，未知 `127.0.0.1:8766` 占用必须失败，Host RPC token 不得暴露网页，安装前 monitor 停止失败或用户取消都不得改变运行状态。 |
 

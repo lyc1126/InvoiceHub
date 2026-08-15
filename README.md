@@ -50,7 +50,7 @@ http://127.0.0.1:8766/
 
 普通导航面向日常操作，保留首页、成本分析、单据、做账、OCR、一致性和设置。`/settings` 按概览、目录与产物、运行与监控、单据、外观、偏好、OCR 和诊断分类展示当前系统状态；当前已开放安全配置、日常运行控制和低风险展示偏好：发票目录选择/检查/保存/最近目录删除、出库发票目录选择/保存/最近目录删除、入库单/出库单默认信息编辑、皮肤启用和恢复默认外观，刷新运行状态、启动/停止独立监控 daemon、手动重新汇总、打开监控日志、打开运行状态目录和关闭本系统，以及成本页默认显示行数、长路径显示方式、已导出单据处理策略、OCR 候选目录与系统关闭方式偏好。关闭方式默认“每次询问”，弹窗可选择“保留监控，仅关闭 WebUI”或“关闭 WebUI，并停止监控”，底部“记住本次选择”会保存所选方式；偏好分类可随时改回询问或切换固定行为。macOS 壳连接 `externalCompatible` 后端时会禁用 Web 设置页关闭及 monitor 启动/停止入口，原生菜单和侧栏也不会改变该未知服务；这限制当前壳的所有权动作，不把 localhost API 误当作多客户端权限系统。owned 壳的原生停止固定保留 monitor。目录选择仍保持“待保存目录”草稿，自动刷新和 SSE 重连不会覆盖未保存输入；偏好不改变发票源文件、普通汇总、成本 CSV/XLSX/JSON 或开票参考行级加价率口径；高级诊断中可复制摘要、运行配置健康检查并导出不含源发票和投影正文的支持包，备份恢复仍未开放。皮肤 ZIP 导入和替换继续保留在 `/skins`，从设置中心“外观”分类进入；皮肤异常时可用 `/settings?no_skin=1` 临时绕过当前皮肤。
 
-设置现另有“关于”分类：显示版本、更新通道、平台/架构、包类型、package ID、core build ID 和公开链接；`GET /api/v1/about` 只读本地信息，不会联网。用户点击“检查更新”或开启“启动后自动检查”后，系统才访问固定 HTTPS 白名单 Feed；发现更高 beta 时在关于标签和版本卡显示绿色上箭头，并列出版本、发布时间、包大小、SHA-256 和发行说明，由用户决定是否升级。Windows 首版只支持系统默认浏览器，桌面窗口选项明确禁用；macOS 可在“桌面窗口/系统默认浏览器”之间选择，下次启动生效。Windows 使用新目录解压与白名单设置迁移，macOS 安装交给 Sparkle，任何更新检查失败都不影响本地发票功能。
+设置现另有“关于”分类：显示版本、更新通道、平台/架构、包类型、package ID、core build ID 和公开链接；`GET /api/v1/about` 只读本地信息，不会联网。用户点击“检查更新”或开启“启动后自动检查”后，系统才访问固定 HTTPS 白名单 Feed；发现更高 beta 时在关于标签和版本卡显示绿色上箭头，并列出版本、发布时间、包大小、SHA-256 和发行说明，由用户决定是否升级。当前公开源码的 Windows 入口仍只支持系统默认浏览器，桌面窗口选项明确禁用；macOS 参考壳可在“桌面窗口/系统默认浏览器”之间选择，下次启动生效。`v0.3` Tauri host 只完成不可运行的基础脚手架，尚未替换任何用户入口、安装器或更新器。Windows 使用新目录解压与白名单设置迁移，macOS 安装交给现有 Sparkle 参考实现，任何更新检查失败都不影响本地发票功能。
 
 目录检查会递归统计当前目录下的 PDF/OFD/XML 发票源文件；如果目录能读取但只包含 `.zip/.rar/.7z` 压缩包、成本产物或其它文件，页面会显示 warning，并提示先解压或改选解压后的发票文件夹。点击“重新汇总”后若结果为 0 条，页面会直接显示这个原因，而不是只显示笼统完成。
 
@@ -118,7 +118,7 @@ W8/W9 技术与产品能力已完成，但当前真实公司资料夹中的 7 �
 
 ## 开发者与 Agent 阅读路线
 
-开发实现的权威入口是 [`docs/DEVELOPMENT_ARCHITECTURE.md`](docs/DEVELOPMENT_ARCHITECTURE.md)。公开 `main` 已从单一脱敏根提交开始，不继承旧的私有提交、Tag 或 Release 身份；旧图仅保留在私有归档。当前没有公开 Release、更新 Feed 或 Tauri 开发分支。后续从 `main` 创建 `codex/tauri2-unified-desktop` 时，以 `0.3.0-alpha.1` 开始用 Tauri 2 统一桌面壳，但仍复用 Python/FastAPI/Web/monitor 业务核心。共享核心与平台边界见[平台架构](docs/architecture/PLATFORM_ARCHITECTURE.md)，公开净化记录见[执行记录](docs/release/HISTORY_SANITIZATION_EXECUTION.md)。
+开发实现的权威入口是 [`docs/DEVELOPMENT_ARCHITECTURE.md`](docs/DEVELOPMENT_ARCHITECTURE.md)。公开 `main` 已从单一脱敏根提交开始，不继承旧的私有提交、Tag 或 Release 身份；旧图仅保留在私有归档。当前没有公开 Release 或更新 Feed。`codex/tauri2-unified-desktop` 已从公开 `main` 建立并以 `0.3.0-alpha.1` 开始；当前只含版本同步、pnpm lock、固定 localhost 合同和非安装式环境诊断，尚未形成可运行桌面 host。Tauri 仍将复用 Python/FastAPI/Web/monitor 业务核心，完整顺序与实验记录见 [Tauri 2 执行计划](docs/release/TAURI2_EXECUTION_PLAN.md)。共享核心与平台边界见[平台架构](docs/architecture/PLATFORM_ARCHITECTURE.md)，公开净化记录见[执行记录](docs/release/HISTORY_SANITIZATION_EXECUTION.md)。
 
 接手工程或定位任务时按以下顺序阅读：
 
@@ -130,6 +130,24 @@ W8/W9 技术与产品能力已完成，但当前真实公司资料夹中的 7 �
 文件地图记录逐文件职责、上下游、产物和测试；新增、删除或重命名工程文件时必须同步更新。架构文档不记录 `config/app.local.json` 的本机值，也不把运行态、真实发票或本机验收资产当作源码。
 
 ## 开发验证
+
+Tauri 2 foundation（尚不可运行或打包）：
+
+```bash
+python3 scripts/dev/tauri_version_sync.py --check
+./scripts/dev/tauri-doctor.sh --require-ready
+./scripts/dev/tauri-bootstrap.sh
+```
+
+`doctor` 和默认 `bootstrap` 只报告环境状态，不安装 Rust、证书、Xcode 或 Visual Studio。当前机器若缺少 Rust/Cargo 或 `src-tauri/Cargo.lock`，`--require-ready` 会以非零状态明确失败；在此前不要运行或宣称 `tauri dev`、安装器、Host RPC 或 updater 已验证。
+
+Windows 的同一 foundation 检查使用 PowerShell 包装器：
+
+```powershell
+.\.venv\Scripts\python.exe .\scripts\dev\tauri_version_sync.py --check
+.\scripts\dev\tauri-doctor.ps1 --require-ready
+.\scripts\dev\tauri-bootstrap.ps1
+```
 
 Windows：
 

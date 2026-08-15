@@ -72,6 +72,30 @@ LOCAL_EXTENSION_FILES = tuple(
         "tests/test_runner_dryrun.py",
     )
 )
+TAURI_FOUNDATION_FILES = tuple(
+    ROOT / path
+    for path in (
+        "package.json",
+        "pnpm-lock.yaml",
+        "rust-toolchain.toml",
+        "docs/release/TAURI2_EXECUTION_PLAN.md",
+        "scripts/dev/tauri_version_sync.py",
+        "scripts/dev/tauri_doctor.py",
+        "scripts/dev/tauri_bootstrap.py",
+        "scripts/dev/tauri-doctor.sh",
+        "scripts/dev/tauri-bootstrap.sh",
+        "scripts/dev/tauri-doctor.ps1",
+        "scripts/dev/tauri-bootstrap.ps1",
+        "src-tauri/Cargo.toml",
+        "src-tauri/build.rs",
+        "src-tauri/tauri.conf.json",
+        "src-tauri/src/lib.rs",
+        "src-tauri/src/main.rs",
+        "src-tauri/boot/index.html",
+        "src-tauri/README.md",
+        "tests/test_tauri_foundation.py",
+    )
+)
 CURRENT_FACT_DOCS = (
     *ARCHITECTURE_DOCS,
     ROOT / "AGENTS.md",
@@ -102,6 +126,8 @@ NEW_GOVERNED_FILES = {
     for path in (*MACOS_ENGINEERING_FILES, *LOCAL_EXTENSION_FILES)
 } | {
     path.relative_to(ROOT).as_posix() for path in PUBLIC_RELEASE_FILES
+} | {
+    path.relative_to(ROOT).as_posix() for path in TAURI_FOUNDATION_FILES
 } | {"tests/test_development_documentation.py"}
 
 MARKDOWN_LINK_RE = re.compile(r"!?\[[^\]]*\]\((?P<target><[^>]+>|[^\s)]+)")
