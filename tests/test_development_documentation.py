@@ -289,10 +289,15 @@ def test_architecture_mermaid_and_markdown_fences_are_balanced() -> None:
 def test_current_baselines_and_non_drifting_facts_are_explicit() -> None:
     entry = ARCHITECTURE_ENTRY.read_text(encoding="utf-8")
     status = (ROOT / "IMPLEMENTATION_STATUS.md").read_text(encoding="utf-8")
+    flows = (ROOT / "docs" / "architecture" / "INTERFACES_AND_FLOWS.md").read_text(
+        encoding="utf-8"
+    )
     for text in (entry, status):
         assert "main" in text
         assert "脱敏" in text
         assert "0.3.0-alpha.1" in text
+    assert "候选树、Git 对象和托管面验证已通过" in flows
+    assert "验证通过前，仓库不得公开" not in flows
 
     stale_markers = (
         "59 tests",
@@ -335,6 +340,14 @@ def test_public_history_sanitization_governance_is_consistent() -> None:
     assert "AGPL-3.0-or-later" in (ROOT / "CONTRIBUTING.md").read_text(encoding="utf-8")
     assert "Copyright (c) 2026 lyc1126 and contributors" in (ROOT / "NOTICE").read_text(encoding="utf-8")
     assert "Signed-off-by" in (ROOT / ".github" / "workflows" / "dco.yml").read_text(encoding="utf-8")
+
+
+def test_windows_ci_derives_release_version_from_version_source() -> None:
+    workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+
+    assert "0.2.0-beta.1" not in workflow
+    assert "runpy.run_path('src/invoice_hub/version.py')" in workflow
+    assert "-Version $version" in workflow
 
 
 def test_current_architecture_docs_do_not_expose_absolute_machine_paths() -> None:
