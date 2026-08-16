@@ -488,6 +488,11 @@ class UpdateService:
             "message": "更新检查正在进行，请稍后重试",
         }
 
+    def busy_result(self) -> dict:
+        """Return the non-persistent concurrent-check result for orchestration callers."""
+
+        return self._busy_result()
+
     def _artifact_key(self) -> str:
         target_platform = str(self.package_manifest.get("platform") or "")
         architecture = str(self.package_manifest.get("architecture") or "")
@@ -562,16 +567,18 @@ class UpdateService:
             "message": "发现可用新版本" if available else "当前已是最新版",
         }
 
-    def check(self, *, force: bool = False) -> dict:
+    def check(self, *, force: bool = False, require_fresh_body: bool = False) -> dict:
         # Do not serially queue user-triggered API calls behind a DNS/proxy
         # operation. The active check owns cache/state mutation; a concurrent
         # caller receives an immediate, non-persistent offline/busy result.
         if not self._check_lock.acquire(blocking=False):
-            return self._busy_result()
+            return self.busy_result()
         try:
             checked_at = _utc_now_text()
             cache = self._cache_payload()
-            if not force and self._cache_is_fresh(cache):
+            # Host-install approval must come from a new accepted metadata body;
+            # ordinary public checks retain the cache fast path.
+            if not require_fresh_body and not force and self._cache_is_fresh(cache):
                 cached_result = cache.get("result")
                 if isinstance(cached_result, dict):
                     with self._lock:
@@ -582,7 +589,11 @@ class UpdateService:
                 self._state = {**self._idle_state(), "status": "checking", "message": "正在检查更新"}
             headers = {"Accept": "application/json", "User-Agent": f"InvoiceHub/{PRODUCT_VERSION}"}
             etag = str(cache.get("etag") or "").strip()
-            if etag:
+            if require_fresh_body:
+                # Host approval must force a fresh Feed revalidation without
+                # sending any cached validator that could authorize a 304.
+                headers["Cache-Control"] = "no-cache"
+            elif etag:
                 headers["If-None-Match"] = etag
             try:
                 fetched = self.transport(
@@ -597,6 +608,8 @@ class UpdateService:
                 if len(fetched.body) > UPDATE_MAX_RESPONSE_BYTES:
                     raise UpdateCheckError("UPDATE_FEED_INVALID", "更新元数据超过 256KB 上限")
                 if fetched.status_code == 304:
+                    if require_fresh_body:
+                        raise UpdateCheckError("UPDATE_FEED_INVALID", "更新授权需要更新源返回新的 200 元数据")
                     feed = cache.get("feed")
                     if not isinstance(feed, dict):
                         raise UpdateCheckError("UPDATE_FEED_INVALID", "更新源返回 304，但本地没有可用缓存")

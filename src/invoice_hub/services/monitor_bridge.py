@@ -9,6 +9,7 @@ from typing import Any
 
 from invoice_hub.domain import TargetProfile
 from invoice_hub.monitoring.state import MonitorState, is_pid_alive
+from invoice_hub.platform import host_rpc
 from invoice_hub.storage import SQLiteRepository
 from invoice_hub.targets import AppConfig
 from invoice_hub.targets.paths import Layout
@@ -26,7 +27,7 @@ class MonitorBridge:
         return getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
     def _base_env(self) -> dict[str, str]:
-        env = os.environ.copy()
+        env = host_rpc.child_environment()
         env["INVOICE_HUB_ROOT"] = str(self.config.root_dir)
         env["INVOICE_HUB_CONFIG"] = str(self.config.config_path)
         env["PYTHONUTF8"] = "1"

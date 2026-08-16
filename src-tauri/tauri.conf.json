@@ -8,22 +8,16 @@
     "frontendDist": "../src-tauri/boot"
   },
   "app": {
-    "windows": [
-      {
-        "label": "main",
-        "title": "InvoiceHub",
-        "width": 1280,
-        "height": 860,
-        "minWidth": 1024,
-        "minHeight": 640,
-        "visible": false
-      }
-    ],
+    "windows": [],
     "security": {
+      "capabilities": ["no-webview-ipc"],
       "csp": null
     }
   },
   "bundle": {
-    "active": false
+    "active": false,
+    "macOS": {
+      "minimumSystemVersion": "13.0"
+    }
   }
 }

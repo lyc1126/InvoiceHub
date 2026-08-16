@@ -62,20 +62,50 @@ def _resolve(root: Path, raw: object, default: str) -> Path:
     return (root / path).resolve()
 
 
-def load_config(root_dir: Path, explicit_path: str | None = None) -> AppConfig:
+def _initial_desktop_defaults(
+    config_path: Path,
+    initial_state_dir: Path | None,
+) -> dict[str, str]:
+    if initial_state_dir is None:
+        return {
+            "watch_dir": "./发票文件",
+            "runtime_dir": "./runtime",
+        }
+
+    state_root = Path(initial_state_dir)
+    if not state_root.is_absolute():
+        raise ValueError("desktop initial state directory must be absolute")
+    state_root = state_root.resolve()
+    try:
+        config_path.relative_to(state_root)
+    except ValueError as exc:
+        raise ValueError("desktop config path must remain under its state directory") from exc
+    return {
+        "watch_dir": str(state_root / "发票文件"),
+        "runtime_dir": str(state_root / "runtime"),
+    }
+
+
+def load_config(
+    root_dir: Path,
+    explicit_path: str | None = None,
+    *,
+    initial_state_dir: Path | None = None,
+) -> AppConfig:
     root_dir = Path(root_dir).resolve()
     config_path = Path(explicit_path).resolve() if explicit_path else root_dir / DEFAULT_CONFIG_NAME
     if not config_path.exists():
+        initial_defaults = _initial_desktop_defaults(config_path, initial_state_dir)
         config_path.parent.mkdir(parents=True, exist_ok=True)
         config_path.write_text(
             json.dumps(
                 {
                     "host": "127.0.0.1",
                     "port": 8766,
-                    "watch_dir": "./发票文件",
+                    "watch_dir": initial_defaults["watch_dir"],
                     "outbound_invoice_dir": "",
                     "recent_outbound_invoice_dirs": [],
-                    "runtime_dir": "./runtime",
+                    "runtime_dir": initial_defaults["runtime_dir"],
                     "reference_markup_rate": "0.08",
                     "release_capabilities": {"local_ocr": False},
                 },

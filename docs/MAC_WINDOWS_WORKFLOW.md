@@ -2,7 +2,7 @@
 
 ## 当前公开基线
 
-脱敏根提交已发布到独立的公开仓库。候选树、保留 Git 对象、聚焦回归和托管面验证已通过；退休的预公开包、验证记录和本机验证目录只留在私有归档中，不能复用。`codex/tauri2-unified-desktop` 已建立并只包含不可运行的 foundation；当前仍未创建公开 Tag、Release 或 Feed。
+脱敏根提交已发布到独立的公开仓库。候选树、保留 Git 对象、聚焦回归和托管面验证已通过；退休的预公开包、验证记录和本机验证目录只留在私有归档中，不能复用。`codex/tauri2-unified-desktop` 已建立；其 schema-3 development assembly 已构建并隔离烟测一个本地 macOS arm64 `.app`，但尚未创建公开 Tag、Release 或 Feed。
 
 ## 共享与平台边界
 
@@ -18,6 +18,8 @@ Windows 源码开发入口：
 ```
 
 该命令只验证当前 checkout 的源码开发入口，不代表正式安装包或便携包已验收。
+
+Tauri macOS development `.app` 已有一次隔离运行证据：它使用 explicit venv launcher、schema-3 manifest 和仅 development profile 的外置 state root，固定绑定 `127.0.0.1:8766` 后完成 health/background、首页/静态资源、desktop 默认值和正常退出检查。该样本不覆盖 native picker、browser/tray、单实例、打印、updater 或任何 DMG/签名/公证项，也不改写真实 Application Support。
 
 ## Windows 新 RC
 

@@ -1,3 +1,6 @@
+pub mod backend;
+pub mod host_rpc;
+
 pub const FIXED_BACKEND_HOST: &str = "127.0.0.1";
 pub const FIXED_BACKEND_PORT: u16 = 8766;
 

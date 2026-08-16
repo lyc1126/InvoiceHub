@@ -3,7 +3,9 @@
 > 公共权威基线：经过审计的单一脱敏根提交；旧私有历史和发布资产不属于公开图。
 > 当前发行边界：候选树、Git 对象和托管面验证已通过，仓库已公开；旧私有历史、Tag 和资产仍不得公开或上传。Tauri 2 `v0.3` 才替换平台壳并新增 Host RPC/updater 行为。
 > 校验规则：精确的当前本地与 GitHub HEAD 以实时 Git 引用和双向差异为准。
-> 状态说明：OCR 服务类接口与 Windows desktop surface 属于“未启用能力”；当前尚未创建公开 Tag、Release 或 Feed。Tauri 开发分支已建立，但尚未实现 host 生命周期、Host RPC 或 updater API。
+> 状态说明：OCR 服务类接口与 Windows desktop surface 属于“未启用能力”；当前尚未创建公开 Tag、Release 或 Feed。Tauri 开发分支已有代码级 host 生命周期、Host RPC 和 update-install API，且 L6 已运行隔离 TestClient runtime contract。schema-3 development assembly 已构建且隔离烟测一个 macOS arm64 `.app`；裸 checkout 仍无 manifest 而 fail-closed，development updater 禁用，真实 updater 与平台 release smoke 尚未进行。
+
+Tauri L9 只验证一次 development-profile 运行流：host 用编译绑定的 manifest/launcher 启动 owned child，child 固定监听 `127.0.0.1:8766`，health/background ready 后加载首页和静态资源，并在正式 shutdown 后释放 PID 与端口。`INVOICE_HUB_DEV_STATE_ROOT` 只对 development host 可用，必须显式、绝对、已存在、canonicalize 后与 bundle/core 和完整 `.app` 容器双向不包含，`Contents` sibling 同样拒绝，且不传给 Python child；该流未调用真实 Feed/安装、原生 picker、browser/tray、单实例或打印，不能推断为任何发布接口已验收。
 
 ## 1. 从页面到真值的完整链路
 
@@ -50,6 +52,7 @@ flowchart LR
 | `GET /api/v1/health` | `health` | 运行状态、路径/PID、build/API/协议/能力，以及 `product_version/package_id/platform/architecture/package_type` 与 package manifest 状态 | 双平台启动器、设置页、macOS 严格握手；当前健康可先于后台同步完成 |
 | `GET /api/v1/about` | `about` | 纯本地返回产品、package、build、公开链接和最近更新状态 | 设置“关于”；绝不触发网络 I/O |
 | `POST /api/v1/update/check` | `check_for_updates` | JSON 只允许布尔 `force`；返回 `idle/checking/up_to_date/available/offline/invalid/unsupported` 与候选 artifact | 同源写请求；线程池执行；URL/主机不可由客户端覆盖 |
+| `POST /api/v1/update/install` | `install_update` | 只接受空 JSON 对象 `{}`；只消费本进程已批准且与 allowlisted Feed 最新版本完全一致的 host candidate | Tauri 配置时要求精确 host origin；当前 host 清除候选后 fail closed，直到 recovery/relaunch coordinator 完整实现；版本/URL/路径/签名一律拒绝；Host RPC 失败固定 `503 Update installation unavailable`，不得泄露 token 或候选元数据 |
 | `GET /api/v1/settings` | `settings` | 主机端口、活动 TargetProfile、普通/成本产物、最近目录、偏好、bridge、诊断路径 | 首页、设置页、backend |
 | `PUT /api/v1/settings` | `update_settings` | `{watch_dir}`；有效目录才切换，停止旧 monitor，写配置并触发后台同步 | 首页、设置页；业务失败通常返回 `ok=false` 而非 HTTP 4xx |
 | `GET /api/v1/preferences` | `preferences` | 成本显示、路径显示、单据策略、OCR 候选目录、关闭方式、`startup_surface`、`auto_check_updates` 及 `desktop_available` | costs/documents/OCR/settings 与 macOS 壳 |
@@ -119,6 +122,40 @@ preview 和 print 都以短期内存 job 输出，不能把 PNG、XML 文本或�
 | `POST /api/v1/documents/outbound/export` | `export_outbound_document` | `{invoice_number,defaults,mode}` | `404/400`；原子写 Excel |
 | `POST /api/v1/documents/outbound/open` | `open_outbound_document` | `{invoice_number}` | 只打开受控目录内文件 |
 | `POST /api/v1/documents/outbound/open-location` | `open_outbound_document_location` | `{invoice_number}` | 只打开受控目录 |
+
+### 3.4.1 Tauri 私有握手与原生选择器
+
+这不是新的浏览器公开能力。未来 bundle 的 Rust host 在创建 WebView 前，先以固定
+`127.0.0.1:8766` 启动自己的 backend child，并向仅该 child 知道的 256 位 secret
+提出新 challenge。`GET /api/v1/internal/desktop-host-proof` 不进入 OpenAPI；它只在
+secret 已捕获到 app state 且 challenge 是合法 64 位小写 hex 时返回 `204` 和
+`X-InvoiceHub-Desktop-Host-Response: HMAC-SHA256(secret, challenge)`。Host 在本地以
+常量时间验签，然后复核 child PID、manifest identity、`/` 和 OpenAPI 路径加方法；
+读取不受信任的 `startup_surface` 偏好后，host 必须再次使用新的 challenge/HMAC 和同一
+identity 检查确认 child 仍被拥有，才 arm 授权或创建 surface。未知监听者永远不会收到 secret
+或 WebView。
+
+四个既有 picker route 仍只把选择结果交回既有 `AppState` 草稿流程：
+
+| 路径 | Tauri host mode 的额外边界 |
+|---|---|
+| `POST /api/v1/settings/pick-watch-dir` | 必须精确 `Origin: http://127.0.0.1:8766` |
+| `POST /api/v1/documents/pick-outbound-dir` | 必须精确 `Origin: http://127.0.0.1:8766` |
+| `POST /api/v1/ocr/pick-file` | 必须精确 `Origin: http://127.0.0.1:8766` |
+| `POST /api/v1/ocr/pick-folder` | 必须精确 `Origin: http://127.0.0.1:8766` |
+
+在非 Tauri mode，它们保留既有同源写入检查。Tauri host 只将 token 传给其直接启动的
+Python backend；backend 启动时捕获 token 并从 descendant 环境清除。该 Python client 的 picker 面只将四种固定 picker enum
+发送到随机 loopback Host RPC listener，更新面独立地只允许 `update_check` / `update_install` 两个固定 enum；token 不会经过页面、
+Tauri command/event、API 响应或日志；Rust dialog 最多等待 120 秒，Python 以 125 秒预算保留响应余量。
+Host RPC 失败统一变为不含 token、URL 或 secret 的 `503 Native picker unavailable`；非
+Tauri 的 Tk 行为不变。授权先在 handshake 后 arm，backend child 退出后由 100 ms 有界
+Rust liveness watcher 撤销，watcher 不能重新授权已退出 child。握手完成后 host 才读取
+`GET /api/v1/preferences` 的严格 `{ok, preferences.startup_surface,
+allowed.desktop_available}` 形状并重新证明 ownership：desktop 创建空 IPC WebView，browser
+只由 host-only opener 打开固定 localhost origin；托盘和第二实例重开同一 surface，desktop
+close 只隐藏窗口且不会调用 monitor stop。当前这条流程只做 source/contract verification，
+尚未打开真实 native picker、浏览器、托盘或窗口。
 
 ### 3.5 业务资料夹与做账
 
@@ -569,23 +606,29 @@ sequenceDiagram
     participant UI as 设置/About
     participant API as AppState/UpdateService
     participant Feed as `v0.3` 固定 HTTPS Feed
-    participant Platform as Windows 用户或 Tauri updater
+    participant Platform as Windows 用户或 Tauri Host updater
+    participant Monitor as 独立 monitor
     UI->>API: GET /api/v1/about
     API-->>UI: 本地版本、包、构建和缓存状态
     UI->>API: POST /api/v1/update/check {force}
-    API->>Feed: If-None-Match，3s connect/5s total，最多 256KB
-    Feed-->>API: 304 或 latest.json
+    API->>Feed: 公共检查可 If-None-Match；Tauri approval 不带该头，3s connect/5s total，最多 256KB
+    Feed-->>API: 公共检查可 304/latest.json；Tauri approval 仅接受 fresh 200 latest.json
     API->>API: 白名单、schema、版本、契约、受影响平台 package ID/core build 校验
     API-->>UI: up_to_date / available / offline / invalid / unsupported
     alt Windows
         UI->>Platform: 用户打开 Release，下载 ZIP、新目录解压、白名单导入设置
     else Tauri host
-        UI->>Platform: `POST /api/v1/update/install` 委托当前 host updater
-        Platform->>Platform: 重验 token 后停 monitor、验签安装并重启；失败或取消不改变运行状态
+        API->>Platform: `update_check` 取得 host 验证候选（只回传版本）
+        API->>API: 仅版本完全一致时授予内存 approval
+        UI->>API: `POST /api/v1/update/install` `{}`
+        API->>Platform: `update_install`（不转发版本、URL、路径或签名）
+        Platform-->>API: 当前清除候选并返回 unavailable（不下载/不停止/不安装）
     end
 ```
 
-`v0.3` 起，自动检查只在有效发行 package manifest 且 `auto_check_updates=true` 时延迟执行；失败不会阻塞 localhost、扫描或汇总，也不会覆盖上次有效 ETag/feed/result。Tauri host 必须把随机 Host RPC token 保留在进程内部，只接受固定 localhost origin 的枚举命令；网页不得获知 token，也不能把安装或原生能力变成任意 URL、路径或命令代理。`latest.json` 与平台更新元数据由同一工具从真实产物、收据、源码归档与固定 release Tag commit 的受控树生成，并通过版本、URL、长度、签名、source commit、tree SHA、文件数和 core build 一致性校验后才可上线。安装前必须停止并确认 monitor 已停止；停止失败和用户取消均不能改变运行状态。
+`v0.3` 起，自动检查只在有效发行 package manifest 且 `auto_check_updates=true` 时延迟执行；失败不会阻塞 localhost、扫描或汇总，也不会覆盖上次有效 ETag/feed/result。Tauri host 只将随机 Host RPC token 传给其直接启动的 Python backend，backend 启动时捕获并从 descendant 环境清除；token 不得进入网页、Tauri command/event、API 响应或日志，携带 token 的 private loopback transport 必须显式禁用环境代理。更新命令面只有 `update_check/update_install`，backend ownership 使用新 challenge 的 HMAC-SHA256，而不是发送 bearer proof 给端口监听者。网页不得获知 token，也不能把安装或原生能力变成任意 URL、路径或命令代理。`latest.json` 与平台更新元数据由同一工具从真实产物、收据、源码归档与固定 release Tag commit 的受控树生成，并通过版本、URL、长度、签名、source commit、tree SHA、文件数和 core build 一致性校验后才可上线。同一进程具备 Tauri host marker 与 private RPC 时，API、设置页和后台 timer 的 `check_for_updates` 调用都属于 strict delegated-install preflight；只有非 Tauri/非 host 检查不获取 `_host_update_lock` 并保留 `UpdateService.check` 的 cache/ETag/nonblocking-busy 语义。host 检查锁竞争时立即返回不持久化 busy 结果，不访问 metadata/candidate 且不清除既有 approval；install 锁竞争立即以脱敏 `HostRpcError` 失败，不消费 approval 或发送第二次 private RPC。host approval 必须在该 session 取得显式携带 `Cache-Control: no-cache`、不带 ETag 的 fresh allowed Feed `200` body 并重新验证，缓存、`304`、离线和错误不授予 approval。Host updater metadata builder 固定 5 秒总时限；listener loop 主动清除到期 candidate。当前 host 的 install 路径再清除候选并 fail closed，直到 recovery/relaunch coordinator 能在任何失败后恢复既有 monitor/进程状态。未来 coordinator 才可按下载+Minisign、monitor stop/recheck、安装/restart 顺序实施。
+
+hosted check 的 lock-contended 分支在 busy 结果后直接返回，不能落入统一的 `updates.checked` 事件写入；这使响应不依赖 SQLite，其他检查与成功路径仍记录事件。
 
 ## 7. 接口变更检查表
 

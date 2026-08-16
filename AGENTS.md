@@ -207,6 +207,7 @@
 - macOS 工具栏、菜单或 Swift bridge 触发的保存目录、重新汇总、监控启停等原生命令，必须复用 `/api/v1` 后端返回值，并在成功或失败后刷新/诊断 WKWebView 可见状态；不得只在 Swift 状态栏写“操作已发送”而让页面保持旧汇总。
 - macOS 开发 `.app` 重跑脚本必须先收束旧 app 和旧 InvoiceHub 后端，再打开新版 app；不得让新壳连接到即将被旧壳退出钩子终止的 localhost。SwiftUI 壳运行中应禁用 AppKit 自动终止，避免系统在窗口/恢复状态短暂为空时结束 app 并带掉后端。
 - macOS 开发 `.app` 脚本必须明确准备或绑定可用 Python 后端环境；写入 `dev-python-path.txt` 后，Swift 端必须校验该路径可执行，失效时直接诊断，不得静默回退到缺少依赖的系统 Python。
+- Tauri development profile 的 `INVOICE_HUB_DEV_STATE_ROOT` 必须显式提供、绝对、已存在并 canonicalize；它与 bundle/core 根及 macOS `.app` 容器必须双向不包含，`Contents` 下与 `Resources` 同级的目录同样拒绝，避免把可写 state 放入资源或让 bundle 落入 state。release profile、缺失、相对路径或 child 继承一律 fail closed。它只能让 host 定位其自身运行态，启动 Python backend 前必须清除，且开发烟测不得读取或写入真实 Application Support。
 - macOS 壳不得只凭 `/api/v1/health` 的 `ok=true` 接入 localhost；必须同时核对打包 build ID、API 契约版本、必需能力、配置路径、运行目录和关键页面/API，任一不匹配都要拒绝连接并显示预期值、实际值、端口和日志路径。
 - macOS 严格握手必须同时校验构建 manifest、health 和 Swift required 三方的 API 契约、`w9-ledger-review-v1` 与完整 capabilities；manifest 缺失/无效、`build_manifest_present=false` 或任一能力集合漂移都必须拒绝连接。
 - macOS 严格握手只能实际读取 health 和无业务扫描的静态页面；必需 API 通过 `/openapi.json` 校验注册，不得为探测兼容性读取会扫描真实 `watch_dir` 的 documents/bookkeeping 等数据接口。Swift 与开发脚本的每次 HTTP 探测都必须设置连接和总时限。
@@ -256,7 +257,8 @@
 - 2026-08-14 的远端可达历史扫描确认存在真实目录及私有标识；用户已批准并完成历史净化。新公开仓库独立于原始私有归档；不得上传退休 Release、Tag、receipt 或包，也不得为其建立兼容 Feed。Tauri 开发分支、Release 与 Feed 仍须按各自门槛另行创建。
 - 每项实验开始前必须记录假设、结果会改变的决策、最小样本和停止条件；无法改变决策的实验不得执行。相同失败机制只用一个代表样本，结果矛盾、修改面扩大或机制不同才追加样本。
 - 每个 RC 最多一次完整回归；先运行命中变更面的聚焦验证。Tauri `v0.3` 的决策场景固定为两种启动方式、单实例与错误端口、Host RPC 授权边界、合法/篡改更新、安装前 monitor 停止；修复后只重跑受影响类别。
-- Tauri `src-tauri/` 只承担窗口、托盘、单实例、原生面板、打印、后端生命周期、随机令牌 Host RPC 与 updater。它只绑定 `127.0.0.1:8766`；未知占用必须明确失败，不能换端口或连接旧实例。Host RPC token 不得返回网页，只接受固定 localhost origin 的枚举命令。
+- Tauri `src-tauri/` 只承担窗口、托盘、单实例、原生面板、打印、后端生命周期、随机令牌 Host RPC 与 updater。它只绑定 `127.0.0.1:8766`；未知占用必须明确失败，不能换端口或连接旧实例。Host RPC token 只允许由 host 传给其直接启动的 Python backend；backend 必须启动时捕获，并从 descendant 环境清除，绝不得返回网页、Tauri command/event、API 响应或日志，只接受固定 localhost origin 的枚举命令。携带该 token 的 Python loopback 请求必须显式禁用环境/系统代理并直连私有 listener。成功握手后必须先 arm 授权、再启动有界 child liveness watcher；watcher 只能撤销授权，不能在 child 已退出后重新授权。
+- 在 recovery/relaunch coordinator 完整实现前，`update_install` 必须消费候选并 fail closed，绝不得下载、停止 monitor、替换或重启。Tauri updater metadata 请求必须设置 5 秒总时限，不能让插件默认的无时限请求占住 Host RPC operation。托盘 Quit 只负责触发统一退出；所有 Tauri `ExitRequested`（包括系统菜单和 Cmd-Q）都必须先请求结构化 `keep_monitor` shutdown 并等待 owned child 退出。API 错误或超时后必须显式 `kill + wait` 并确认 child 已退出；kill/wait 失败时必须阻止 host 退出，不得把 `Drop` 当作进程退出兜底。
 - 安装包只放 GitHub Releases；从 `v0.3` 起同仓库 GitHub Pages 提供更新 Feed。不使用 GitHub Packages 或 App Store。Rust/Cargo/pnpm/Tauri 依赖必须锁定，Windows/macOS `doctor` 与 `bootstrap` 只能诊断环境，不得自动安装证书、Xcode 或 Visual Studio。
 
 ## 验收规则

@@ -6,6 +6,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from invoice_hub.platform import host_rpc
+
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".webp"}
 OCR_EXTENSIONS = {".pdf", ".ofd", *IMAGE_EXTENSIONS}
@@ -21,7 +23,12 @@ def open_local_path(path: Path) -> None:
         os.startfile(str(resolved))  # type: ignore[attr-defined]
         return
     opener = "open" if sys.platform == "darwin" else "xdg-open"
-    subprocess.Popen([opener, str(resolved)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    subprocess.Popen(
+        [opener, str(resolved)],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        env=host_rpc.child_environment(),
+    )
 
 
 def run_native_dialog(command_name: str, initial_path: Path, title: str) -> dict:
@@ -39,7 +46,7 @@ def run_native_dialog(command_name: str, initial_path: Path, title: str) -> dict
     ]
     if str(initial_path):
         command.extend(["--initial-dir", str(initial_path)])
-    env = os.environ.copy()
+    env = host_rpc.child_environment()
     env["PYTHONUTF8"] = "1"
     env["PYTHONIOENCODING"] = "utf-8"
     result = subprocess.run(
@@ -62,9 +69,31 @@ def run_native_dialog(command_name: str, initial_path: Path, title: str) -> dict
     return payload
 
 
-def pick_directory(initial_dir: Path, title: str = "选择发票监控文件夹") -> dict:
+def pick_directory(
+    initial_dir: Path,
+    title: str = "选择发票监控文件夹",
+    *,
+    host_command: host_rpc.HostRpcCommand | None = None,
+) -> dict:
+    if host_rpc.is_configured():
+        if host_command is None:
+            raise host_rpc.HostRpcError("Tauri host native picker is unavailable")
+        payload = host_rpc.pick(host_command)
+        if payload is not None:
+            return payload
     return run_native_dialog("pick-directory", initial_dir, title)
 
 
-def pick_file(initial_dir: Path, title: str = "选择 OCR 识别文件") -> dict:
+def pick_file(
+    initial_dir: Path,
+    title: str = "选择 OCR 识别文件",
+    *,
+    host_command: host_rpc.HostRpcCommand | None = None,
+) -> dict:
+    if host_rpc.is_configured():
+        if host_command is None:
+            raise host_rpc.HostRpcError("Tauri host native picker is unavailable")
+        payload = host_rpc.pick(host_command)
+        if payload is not None:
+            return payload
     return run_native_dialog("pick-file", initial_dir, title)

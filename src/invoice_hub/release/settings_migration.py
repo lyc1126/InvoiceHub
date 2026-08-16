@@ -100,8 +100,6 @@ def import_settings(old_root: Path, new_root: Path) -> dict[str, Any]:
             for key in sorted(PREFERENCE_KEYS)
             if key in source_pref_payload
         }
-        if imported_preferences.get("startup_surface") == "desktop":
-            imported_preferences["startup_surface"] = "browser"
         preference_backup = _backup(target_preferences)
         _write_object(target_preferences, {**target_pref_payload, **imported_preferences})
 

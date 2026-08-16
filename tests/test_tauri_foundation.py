@@ -237,11 +237,15 @@ def test_tauri_scaffold_is_fixed_to_the_expected_localhost_origin() -> None:
     assert config["version"] == PRODUCT_VERSION
     assert config["identifier"] == TAURI_BUNDLE_IDENTIFIER
     assert config["build"]["devUrl"] == "http://127.0.0.1:8766"
-    assert config["bundle"] == {"active": False}
+    assert config["bundle"]["active"] is False
+    assert config["bundle"]["macOS"]["minimumSystemVersion"] == "13.0"
     assert icon.startswith(b"\x89PNG\r\n\x1a\n")
     assert struct.unpack(">II", icon[16:24]) == (512, 512)
-    assert "let _: tauri::Context<tauri::Wry> = tauri::generate_context!();" in source
-    assert "std::process::exit(78)" in source
+    assert icon[24:26] == b"\x08\x06"
+    assert "load_bundle_manifest" in source
+    assert "std::process::exit(78)" not in source
+    assert "fn main() -> ExitCode" in source
+    assert "return ExitCode::from(78);" in source
     assert 'FIXED_BACKEND_HOST: &str = "127.0.0.1"' in contract
     assert "FIXED_BACKEND_PORT: u16 = 8766" in contract
 

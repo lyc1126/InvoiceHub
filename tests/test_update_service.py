@@ -125,7 +125,55 @@ def test_update_check_reports_available_and_reuses_etag_cache(tmp_path: Path) ->
     assert first["latest_version"] == "0.3.0-alpha.2"
     assert first["artifact"]["size_bytes"] == 123
     assert calls[1]["If-None-Match"] == '"feed-v1"'
+    assert "Cache-Control" not in calls[0]
+    assert "Cache-Control" not in calls[1]
     assert second["status"] == "available"
+
+
+def test_required_fresh_body_rejects_cached_etag_and_304_metadata(tmp_path: Path) -> None:
+    calls: list[dict[str, str]] = []
+    responses = iter(
+        [
+            UpdateFetchResult(200, json.dumps(_feed()).encode(), '"cached"', UPDATE_FEED_URL),
+            UpdateFetchResult(304, b"", '"cached"', UPDATE_FEED_URL),
+            UpdateFetchResult(
+                200,
+                json.dumps(_feed("0.3.0-alpha.3")).encode(),
+                '"fresh"',
+                UPDATE_FEED_URL,
+            ),
+        ]
+    )
+
+    def transport(_url, headers, *_args):
+        calls.append(dict(headers))
+        return next(responses)
+
+    service = UpdateService(
+        cache_path=tmp_path / "update-cache.json",
+        package_manifest=_package(),
+        build_manifest={},
+        transport=transport,
+    )
+    cached = service.check(force=True)
+    cache = json.loads((tmp_path / "update-cache.json").read_text(encoding="utf-8"))
+    blocked = service.check(require_fresh_body=True)
+    fresh = service.check(require_fresh_body=True)
+
+    assert cached["status"] == "available"
+    assert cached["artifact"] is not None
+    assert cache["etag"] == '"cached"'
+    assert cache["feed"]["artifacts"]["windows-x86_64-portable"]["url"]
+    assert blocked["status"] == "invalid"
+    assert blocked["error_code"] == "UPDATE_FEED_INVALID"
+    assert fresh["status"] == "available"
+    assert fresh["latest_version"] == "0.3.0-alpha.3"
+    assert "If-None-Match" not in calls[0]
+    assert "If-None-Match" not in calls[1]
+    assert "If-None-Match" not in calls[2]
+    assert "Cache-Control" not in calls[0]
+    assert calls[1]["Cache-Control"] == "no-cache"
+    assert calls[2]["Cache-Control"] == "no-cache"
 
 
 def test_update_check_handles_prerelease_order_and_invalid_version(tmp_path: Path) -> None:
@@ -560,6 +608,24 @@ def test_update_check_returns_busy_without_waiting_for_an_active_transport(tmp_p
 
     assert not worker.is_alive()
     assert first_result[0]["status"] == "available"
+
+
+def test_public_busy_result_does_not_mutate_state_or_cache(tmp_path: Path) -> None:
+    cache_path = tmp_path / "cache.json"
+    service = UpdateService(
+        cache_path=cache_path,
+        package_manifest=_package(),
+        build_manifest={},
+    )
+
+    before = service.state()
+    busy = service.busy_result()
+
+    assert busy["ok"] is False
+    assert busy["status"] == "offline"
+    assert busy["error_code"] == "UPDATE_OFFLINE"
+    assert service.state() == before
+    assert not cache_path.exists()
 
 
 def test_unsupported_feed_preserves_last_success_result(tmp_path: Path) -> None:

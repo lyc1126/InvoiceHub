@@ -14,6 +14,54 @@ printing, backend lifecycle, the internal Host RPC boundary, and the updater.
 It must not reimplement invoice extraction, projections, cost analysis,
 bookkeeping, or monitoring.
 
+## Current P1 boundary
+
+`update_install` is deliberately unavailable while the host lacks a complete
+recovery/relaunch coordinator. It consumes any in-memory candidate and returns
+the existing redacted unavailable error; it must not download, stop monitor,
+install, or restart. The historical L6 order is a future coordinator
+requirement, not a currently executable flow. Tray Quit only requests the
+common application exit path. Every Tauri `ExitRequested`, including the
+system menu and Cmd-Q, first requests the existing structured `keep_monitor`
+backend shutdown and waits for the owned child. An API error or timeout uses
+an explicit `kill + wait`; failure to confirm child exit prevents host exit,
+and process `Drop` is not treated as a fallback. Host updater metadata checks
+have an explicit 5 秒 total timeout instead of the plugin's unbounded
+default. A
+development launch must explicitly supply an existing absolute state root that
+canonicalizes disjoint from the bundle/core in both containment directions, and
+the assembler labels dirty inputs `<HEAD>+dirty`.
+
+### P1-R: handoff repair verification
+
+| Field | Record |
+| --- | --- |
+| Hypothesis | The fail-closed install boundary, structured tray shutdown, dirty development provenance, and disjoint development state root compile and remain consistent with their focused Python/API/documentation contracts. |
+| Decision changed by result | A pass permits one DCO commit and a single clean-commit development app rebuild; a failure blocks publication and confines repair to the failing P1 category. |
+| Minimal sample | Locked `cargo fmt --check`, Rust library/lifecycle tests and desktop binary check; version-source synchronization; focused Python tests for the Tauri foundation, development assembler, Host RPC, lifecycle/API, update service, paths, settings migration, and current documentation; then `git diff --check`. |
+| Stop condition | Stop at the first formatting, compiler, lifecycle, API, provenance, state-root, or documentation failure. Do not run the full regression, start a real updater, stop a real monitor, create an installer, sign, publish, or change GitHub settings. |
+| Result (2026-08-17) | Passed. The locked Rust 1.85 environment completed `cargo fmt --check`, 16 library tests, 6 lifecycle integration tests, and the desktop binary `cargo check` without warnings. `tauri_version_sync.py --check` confirmed `0.3.0-alpha.1` and `com.invoicehub.desktop`; the focused Python foundation/development-app/Host-RPC/lifecycle/API/update/path/settings/documentation selection completed successfully with deprecations treated as errors. Python `compileall` and `git diff --check` also passed. The cleanup removed dormant monitor-stop/install-success fragments rather than suppressing dead-code warnings. This permits one DCO commit and one clean-commit development app rebuild only; it is not updater execution, an installer, signing, publication, or platform release evidence. |
+
+### P1-E: unified exit and updater timeout repair
+
+| Field | Record |
+| --- | --- |
+| Hypothesis | Routing tray, system-menu, Cmd-Q, and other Tauri exit requests through one structured backend shutdown, with explicit confirmed termination on failure, prevents an orphaned fixed-port child; setting the locked updater builder to a 5-second total timeout prevents a stalled Feed request from permanently owning Host RPC capacity. |
+| Decision changed by result | A pass removes the two final P1 blockers and permits the pending lifecycle delta to be committed and rebuilt once from the clean commit. A failure blocks the Draft PR and confines repair to the exit or updater-timeout mechanism that failed. |
+| Minimal sample | Locked `cargo fmt --check`; Rust library/lifecycle tests and desktop binary check; focused Python Tauri lifecycle, Host RPC, development documentation, API/update/path/settings/development-app tests; then `compileall` and `git diff --check`. The later clean-commit L9 rerun remains the single product-process sample. |
+| Stop condition | Stop at the first format, compile, lifecycle, timeout, API, documentation, or whitespace failure. Do not invoke a real updater, stop a real monitor for installation, build an installer, sign, publish, or broaden the repair into the shared business core. |
+| Result (2026-08-17) | Passed. Locked Rust 1.85 formatting, 16 library tests, 6 lifecycle integration tests, and the offline desktop binary check completed without compiler warnings; the socket-authorization test was rerun outside the restricted sandbox only because the sandbox denied its temporary loopback bind. The 153 unique focused Python Tauri/foundation/development-app/Host-RPC/lifecycle/API/update/path/settings/documentation contracts all passed after one rustfmt-sensitive static assertion was corrected and its lifecycle category rerun. `compileall` and `git diff --check` passed. No product process, real updater, monitor installation stop, installer, signature, publication, or platform release smoke was run. This removes the two review blockers and permits explicit-file staging plus one DCO commit. |
+
+### P1-S: public branch candidate content gate
+
+| Field | Record |
+| --- | --- |
+| Hypothesis | The two existing foundation commits and the pending Tauri lifecycle/development-app delta contain no credential, real business data, user-machine identity, tracked runtime, or release artifact. |
+| Decision changed by result | A pass permits explicit-file staging, a DCO commit, and pushing only `codex/tauri2-unified-desktop`; a real finding blocks the commit and confines repair to the affected candidate file. |
+| Minimal sample | One redacted gitleaks directory scan of the candidate worktree plus one tracked-delta search from public `main` for local absolute paths, runtime/artifact names, invoice/business-data markers, private-key material, and unexpected binary files. The already completed public-`main` all-ref audit is reused rather than refreshed. |
+| Stop condition | Stop at the first real credential, business-data, local-identity, runtime, or artifact finding. Do not clean the retired private graph, inspect ignored invoice outputs as release inputs, push, create a PR, alter repository settings, or publish. |
+| Result (2026-08-17) | Passed after one ambiguity-only classification rerun. The redacted directory scan reported four findings: three were generated, ignored `src-tauri/target` metadata from the locked `muda` dependency, and one was the already documented deterministic test-only ledger identifier false-positive category. The tracked/non-ignored candidate search found no user path, visualization/worktree path, private-key marker, credential pattern, certificate/key file, tracked runtime, invoice output, or release artifact. After P1-E expanded the source delta, a final temporary-index scan of exactly 50 modified/untracked non-ignored candidate files completed with no gitleaks finding, no local/worktree path, and no runtime or business-output path; its only non-text file is the expected 8-bit RGBA application icon. Ignored local CSV/XLSX outputs remain outside Git and release inputs. |
+
 ## Operating rules
 
 | Change | Required verification | Rebuild |
@@ -47,11 +95,14 @@ bookkeeping, or monitoring.
    a minimal `src-tauri/` project, and non-installing Windows/macOS
    `doctor/bootstrap` commands. Exact direct Cargo dependencies and the
    Rust-1.85-compatible `Cargo.lock` have been reviewed and compiled in the
-   controlled macOS environment; the host remains explicitly non-runnable.
-4. [ ] Implement fixed `127.0.0.1:8766` backend ownership, strict handshake,
-   single-instance handling, and the internal Host RPC boundary.
-5. [ ] Implement `startup_surface`, browser/tray behavior, update-install
-   delegation, and the five fixed decision scenarios.
+   controlled macOS environment.
+4. [x] Implement the code-level fixed `127.0.0.1:8766` backend ownership,
+   strict handshake, single-instance handling, and internal Host RPC boundary.
+   A bare checkout remains fail-closed until a compile-bound manifest exists.
+5. [x] Implement code-level `startup_surface`, browser/tray behavior, and
+   update-install delegation, then build one schema-3 macOS arm64 development
+   `.app` and run one isolated L9 smoke. The five final decision scenarios
+   still require real platform validation and are not claimed by that smoke.
 6. [ ] Build platform artifacts, perform each final RC smoke test once, and
    create the public Release and Pages Feed only after their separate gates.
 
@@ -175,6 +226,298 @@ single-instance, Host RPC, preferences/API changes, updater, packaging, or
 platform smoke tests. Those are later delivery steps, not evidence implied by
 this table.
 
+## Lifecycle and Host RPC experiments
+
+### L1: official lifecycle and dialog dependency selection
+
+| Field | Record |
+| --- | --- |
+| Hypothesis | Exact published Tauri 2-compatible pins for `tauri-plugin-single-instance`, `tauri-plugin-dialog`, `getrandom`, and `serde_json` can resolve with the existing exact `tauri 2.11.5`, Rust `1.85.0`, and MSRV fallback lock policy. `getrandom` supplies the Host RPC's 256-bit CSPRNG token; `serde_json` parses only manifest, health, OpenAPI, and fixed enum RPC payloads. |
+| Decision changed by result | A compatible, reviewed isolated resolution permits adding only these direct crates and updating `Cargo.lock`; an unavailable, incompatible, or higher-MS RV graph blocks lifecycle implementation instead of substituting a non-official single-instance/dialog mechanism, weaker random source, or hand-edited lock. |
+| Minimal sample | One temporary copy of `src-tauri` resolved with the existing checksum-verified isolated Rust/Cargo `1.85.0` environment, a temporary Cargo home/target directory, and the four exact direct declarations. |
+| Stop condition | Stop at the first registry, pin, MSRV, lock, or plugin API incompatibility. Do not run `tauri dev`, launch a binary, bind the product port, modify user Rust directories, or use an alternate registry/toolchain. |
+
+### L2: lifecycle and Host RPC focused contracts
+
+| Field | Record |
+| --- | --- |
+| Hypothesis | The host can reject an occupied fixed port, PID/identity mismatch, missing bundle manifest, invalid Host RPC token/origin/command, and still allow one exact token/origin/enum request without exposing the token to a Tauri command, event, WebView, log, error, or Python API response. |
+| Decision changed by result | A pass permits the fixed-port ownership and internal picker bridge code to enter review; any rejection-path failure blocks the corresponding boundary and must be repaired locally before other host features are attempted. |
+| Minimal sample | One Rust lifecycle integration test with one representative per failure class plus one allowed RPC dispatch, and one Python client test covering absent-channel Tk fallback, fixed request construction, unsafe endpoint rejection, and token-redacted errors. |
+| Stop condition | Stop at the first failed category. Do not add tray, browser `startup_surface`, updater, installer, arbitrary path/URL/shell forwarding, or real backend/Tauri smoke tests. |
+
+### L2-R1: ownership-challenge dependency selection
+
+| Field | Record |
+| --- | --- |
+| Hypothesis | Exact `hmac` and `sha2` crates can be added to the reviewed Rust 1.85/MSRV-fallback graph so the host verifies `HMAC-SHA256(secret, fresh_challenge)` locally instead of disclosing a bearer proof to a listener on the product port. |
+| Decision changed by result | A compatible lock permits the narrow challenge-response repair; an unavailable, incompatible, or higher-MSRV graph blocks the repair rather than accepting a bespoke hash construction or a bearer-token workaround. |
+| Minimal sample | One isolated temporary manifest resolution with exact `hmac` and `sha2` declarations using the authorized official Rust 1.85.0 environment and the existing fallback resolver. |
+| Stop condition | Stop at the first registry, pin, MSRV, or lock failure. Do not run a host, FastAPI, `tauri dev`, or bind `127.0.0.1:8766`; do not alter the user's Rust directories or use another registry. |
+
+### L2-R: startup-order and ownership-proof repair
+
+| Field | Record |
+| --- | --- |
+| Hypothesis | With no config-created WebView, a 256-bit secret supplied only to the spawned backend, a fresh host challenge, and a constant-time local verification of the backend's `HMAC-SHA256(secret, challenge)` response, an unknown listener cannot be treated as owned or receive the WebView even if it races the preliminary port check. A manifest-less checkout exits status 78 before Tauri startup, and authorization is armed before its bounded liveness watcher so an already-exited child cannot leave RPC authorized. The challenge never contains the secret; an explicit empty-permission Tauri capability prevents the dialog plugin from creating a WebView IPC path. |
+| Decision changed by result | A pass retains the lifecycle implementation for review; a failure blocks step 4 and confines repair to startup ordering, challenge-response handling, argument binding, or capability configuration. |
+| Minimal sample | One Rust unit sample for fixed argument rejection/append, fresh challenge generation, valid/tampered HMAC verification, and OpenAPI methods; one isolated `cargo check --locked --offline --bin invoicehub-desktop` of the checkout guard; one static Tauri configuration/order/capability contract; and one FastAPI internal challenge-response plus exact-origin contract. |
+| Stop condition | Stop at the first compiler, contract, or endpoint failure. Do not start a real Tauri/FastAPI process, bind the product port deliberately, add OS-specific socket-owner code, or advance to tray/browser/updater work. |
+
+### L3: locked focused verification
+
+| Field | Record |
+| --- | --- |
+| Hypothesis | The focused Rust and Python lifecycle contracts compile and pass against the reviewed lock without refreshing unrelated dependency or full-regression evidence. |
+| Decision changed by result | A pass records only the implemented ownership/handshake/RPC boundary; a failure leaves platform smoke, packaging, updater, and startup-surface work explicitly unverified. |
+| Minimal sample | One isolated `cargo test --locked --offline` limited to the lifecycle library/integration contract, plus targeted `pytest` for Tauri foundation, Host RPC, API picker, and documentation contracts. |
+| Stop condition | Stop after the first compiler, test, or documentation-contract failure in a category; rerun only the repaired category and clean temporary Cargo targets/caches before handoff. |
+
+## Lifecycle and Host RPC results (2026-08-16)
+
+| Experiment | Result | Decision and boundary retained |
+| --- | --- | --- |
+| L1 | Passed in the existing official isolated Rust 1.85 environment. Exact `tauri-plugin-single-instance 2.4.3`, `tauri-plugin-dialog 2.7.2`, `getrandom 0.3.4`, and `serde_json 1.0.151` remain locked. | Lifecycle work may use only the reviewed direct crates and the MSRV fallback lock. |
+| L2-R1 | Passed. One temporary copy resolved `hmac 0.12.1` and `sha2 0.10.9` through crates.io under the authorized isolated toolchain; the final source lock was generated offline after the exact sources were fetched into that isolated cache. | HMAC-SHA256 is the sole ownership-proof construction. No bearer proof is sent to a candidate listener and no handwritten hash construction is used. |
+| L2-R | Passed for source-level boundaries. The host generates a fresh 256-bit challenge, verifies the backend HMAC locally, requires PID/manifest/identity/OpenAPI methods before WebView creation, and requires the exact picker origin in host mode. A manifest-less checkout now returns status `78`; ownership is armed before the bounded liveness watcher starts, and the watcher only revokes it after child exit. Host credentials are cleared before child processes. | Unknown port occupants, response replay, wrong method/origin/token/command, and exited children remain fail-closed. No real backend or Tauri process was launched. |
+| L3 | The isolated `cargo check --locked --offline --bin invoicehub-desktop` compiled the checkout guard, and the focused Rust/Python source contracts passed. At this L3 point no FastAPI runtime evidence was collected because the current system Python lacked FastAPI and no dependency was installed. | Step 4 source implementation can enter review. L6 later superseded the API-runtime status with an isolated TestClient result; native dialogs, real updater lifecycle, packaging, signing, and platform smoke remain pending. |
+
+## Startup surface experiment
+
+### L4: startup-surface dependency and source contract
+
+| Field | Record |
+| --- | --- |
+| Hypothesis | The existing Tauri 2.11.5 runtime can retain a tray icon in both surface modes, while one exact published opener plugin can open the fixed localhost origin through the system browser without giving WebView code a shell, URL, or IPC capability. After the strict owned-backend handshake, the host can read the existing preferences endpoint and select `desktop` or `browser`; a backend child marked by the host defaults a missing preference to `desktop`, while a valid imported explicit preference remains unchanged. A non-Tauri Windows portable process remains browser-only. |
+| Decision changed by result | A compatible official plugin/API and passing focused contract permit the narrow preference, host-surface, tray, and browser-dispatch implementation. A missing or incompatible API, dependency, or contract blocks this slice and confines any repair to startup-surface selection or the chosen host integration; it does not authorize an alternate browser launcher, a WebView bridge, updater work, or a platform smoke claim. |
+| Minimal sample | One official isolated Rust 1.85 dependency lookup/resolution for the exact opener plugin, source inspection of the locked Tauri tray API, one pure Rust surface-policy contract, one Python preference/API contract, and one static source/documentation contract. |
+| Stop condition | Stop at the first dependency, MSRV, compiler, or focused-contract failure in a category. Do not launch Tauri/FastAPI, deliberately bind `127.0.0.1:8766`, open a real browser, show a native tray/menu/window, add updater/install code, create a bundle manifest, package, sign, or claim a platform smoke test. |
+
+## Startup surface results (2026-08-16)
+
+| Experiment | Result | Decision and boundary retained |
+| --- | --- | --- |
+| L4 initial transport | Blocked at the first JSON metadata lookup. The official `crates.io` metadata request for `tauri-plugin-opener` returned HTTP 403 both inside the sandbox and in one authorized non-sandbox retry; the existing isolated Cargo source cache had no opener-plugin source. | Do not add an unverified dependency, hand-written platform browser launcher, WebView capability, or tray/browser source implementation on the basis of the failed JSON API transport. The sparse-index follow-up below was required before changing this decision. |
+
+### L4-R: Cargo sparse-index resolution
+
+| Field | Record |
+| --- | --- |
+| Hypothesis | The failed crates.io JSON API is a different network mechanism from Cargo's actual sparse-index resolution. One isolated temporary manifest may therefore resolve the official `tauri-plugin-opener = "2"` family through the existing crates.io registry endpoint, revealing a single exact published plugin version and its Rust requirements without changing the project lock or using another registry. |
+| Decision changed by result | A compatible Cargo resolution permits review of the selected exact plugin and a separately scoped project-lock update. A sparse-index, download, lock, or MSRV failure confirms the source slice remains blocked; the JSON API failure alone must not be treated as proof of Cargo resolution behavior. |
+| Minimal sample | One temporary copy of `src-tauri/Cargo.toml` with the one tentative plugin declaration, a fresh temporary target directory, the already isolated Rust 1.85.0/Cargo homes, and one `cargo generate-lockfile` invocation against the official default registry. |
+| Stop condition | Stop at the first Cargo registry, crate-download, lock, or MSRV failure. Do not retry through another registry or mirror; do not modify the project dependency files, launch a host, or substitute a manual browser launcher. |
+
+| Experiment | Result | Decision and boundary retained |
+| --- | --- | --- |
+| L4-R | Passed. The same isolated Rust 1.85.0 Cargo used its official crates.io sparse-index path to resolve a temporary `tauri-plugin-opener = "2"` declaration. It selected unyanked `tauri-plugin-opener 2.5.4` from `registry+https://github.com/rust-lang/crates.io-index` and generated an MSRV-fallback lock without touching the project lock or a user Cargo directory. | The JSON API 403 is recorded as a distinct failed transport, not proof that Cargo cannot resolve an official crate. `2.5.4` is the only candidate for a source/API inspection before any project dependency change. |
+
+### L4-S: exact opener API and compile inspection
+
+| Field | Record |
+| --- | --- |
+| Hypothesis | The exact resolved `tauri-plugin-opener 2.5.4` downloads from the official Cargo crate source, compiles with the reviewed Rust 1.85 graph, and exposes a host-only opener API that accepts only the already fixed backend origin. The plugin can remain unavailable to WebView content through the existing empty capability configuration. |
+| Decision changed by result | A successful source inspection and isolated compile permits pinning only `=2.5.4` in the project and using its documented host API in the startup-surface implementation. A download, compile, API, or capability-boundary failure blocks the slice without a fallback launcher. |
+| Minimal sample | One `cargo check --locked --lib` of the temporary resolved manifest in a fresh temporary target directory, followed by source inspection of the downloaded exact plugin API and the existing empty Tauri capability. |
+| Stop condition | Stop at the first crate-download, compiler, exposed-API, or capability-boundary failure. Do not modify project dependencies, open a browser, create a tray/window, bind a backend port, or add updater/install behavior. |
+
+| Experiment | Result | Decision and boundary retained |
+| --- | --- | --- |
+| L4-S | Passed. A temporary locked `cargo check --lib` downloaded and compiled `tauri-plugin-opener 2.5.4` with the isolated Rust 1.85.0 graph. Its documented host API is `app.opener().open_url(fixed_url, None::<&str>)`; `Builder::open_js_links_on_click(false)` disables the plugin's default WebView JavaScript injection, and the existing `no-webview-ipc` capability remains empty. | The project may pin only `=2.5.4` and use the host-only API for the fixed backend origin. No opener permission is granted to the WebView, and no arbitrary URL/path forwarding is permitted. |
+
+### L4-I: startup-surface implementation and focused verification
+
+| Field | Record |
+| --- | --- |
+| Hypothesis | With the reviewed opener API and tray feature, the host can defer all surface creation until the owned-backend handshake succeeds, preserve a valid imported `desktop|browser` preference, and keep the independent monitor untouched when a desktop window hides or a browser surface is reopened. |
+| Decision changed by result | Passing compilation and source contracts permits this narrow code-level lifecycle boundary. A compiler or contract failure would have confined repair to the selected host integration and would not have authorized a fallback launcher, WebView bridge, updater, or platform smoke work. |
+| Minimal sample | The isolated `cargo check --locked --offline --bin invoicehub-desktop`, isolated `cargo test --locked --offline`, and Python static/Host RPC lifecycle contracts. |
+| Stop condition | Stop at the first compiler or focused-contract failure. Do not launch Tauri/FastAPI, bind `127.0.0.1:8766`, open a real browser, show a tray/menu/window, create a bundle manifest, package, sign, or claim a platform smoke test. |
+
+| Experiment | Result | Decision and boundary retained |
+| --- | --- | --- |
+| L4-I | Passed. Rust compilation and all focused Rust contracts passed in the isolated Rust 1.85 environment; the selected Python static/Host RPC contracts also passed. The source strictly parses the post-handshake preferences response, defaults a Tauri child to desktop while preserving valid imported preference values, selects an external WebView or the fixed-origin host-only opener, and uses tray/single-instance reopen plus desktop close-to-hide without calling monitor stop. The FastAPI preference/API contract was not run because the available Python lacks FastAPI; no dependency was installed. | This proves only source-level behavior. No Tauri/FastAPI process, product-port bind, browser, tray, native window, native picker, installer, signing, or platform smoke was run. |
+
+### L4-F: imported startup-surface migration correction
+
+| Field | Record |
+| --- | --- |
+| Hypothesis | Windows settings migration can preserve a valid imported `startup_surface=desktop` value while runtime policy still rejects new desktop selection in the portable edition. |
+| Decision changed by result | Whether this source slice may enter quality review. |
+| Minimal sample | One migration with an existing `desktop` preference and one migration with an existing `browser` preference. |
+| Stop condition | Stop at the first migration or contract failure. Do not modify the Rust host, tray, or API; do not start a service, install dependencies, or package. |
+| Result | Passed. Migration preserves explicit imported `desktop` and `browser`; Windows portable still rejects a new desktop selection at runtime. Three migration tests and nine documentation tests passed. |
+
+### L4-G: post-preference ownership revalidation
+
+| Field | Record |
+| --- | --- |
+| Hypothesis | If the child exits or the fixed port is replaced while the host reads post-handshake preferences, the host must use a fresh ownership challenge/HMAC and identity probe after that read before it can arm authorization or return a startup surface. |
+| Decision changed by result | Whether the startup-surface source boundary may remain in quality review. |
+| Minimal sample | One Rust mock or source contract representing a replacement failure after preference retrieval. |
+| Stop condition | Stop at the first identity or authorization failure. Do not start a real Tauri or FastAPI process, bind the product port, or show a browser, tray, window, or native panel. |
+| Result | Passed. `BackendHost::launch` now completes the initial retry probe, reads the strict preference response, then checks child liveness before and after a fresh direct ownership/identity/OpenAPI probe before arming authorization. The isolated offline `cargo check` passed; focused Rust tests passed with 7 library and 5 lifecycle-contract tests, including replacement and child-exit rejection. No Tauri or FastAPI process, product-port bind, browser, tray, window, or native panel was started. |
+
+### L4-H: picker response lifecycle
+
+| Field | Record |
+| --- | --- |
+| Hypothesis | The Python Host RPC wait budget will not expire before Rust's bounded 120-second picker dialog, and `HostRpcError` from all four picker routes will become a stable, diagnosable 5xx response without exposing a token, URL, or secret. |
+| Decision changed by result | Whether the picker bridge boundary may remain in quality review. |
+| Minimal sample | Python static or unit error-mapping and timeout contracts. |
+| Stop condition | Stop at the first contract failure. Do not open a real native panel or API server, install dependencies, or start/package a host. |
+| Result | Passed. Rust keeps the picker dialog at 120 seconds; Python waits 125 seconds with a five-second response margin. All four picker routes catch only `HostRpcError` and return the fixed redacted `503 Native picker unavailable`, while the unconfigured Tauri path retains the Tk fallback. The focused Python suite passed 26 tests; the available Python lacks FastAPI, so no endpoint-runtime or native-panel test was run. |
+
+### L5: updater dependency and API decision
+
+| Field | Record |
+| --- | --- |
+| Hypothesis | One official crates.io sparse-index temporary manifest, using the existing isolated Rust 1.85/Cargo homes and the repository MSRV fallback resolver, can select one exact published `tauri-plugin-updater` version compatible with `tauri = 2.11.5` and Rust 1.85. Its downloaded source and metadata will show a Rust API that (a) performs signed update checks, (b) keeps download separate from install/restart sufficiently for the host to stop and verify the monitor only immediately before installation, and (c) can be configured without embedding updater key material in the public checkout. |
+| Decision changed by result | A pass permits only a later minimal source implementation of the host-delegated updater slice. Any dependency, MSRV, API, or configuration inability blocks that slice: do not substitute a different updater, hand-roll signature verification, change the project `Cargo.lock`, package, sign, launch, or otherwise claim updater behavior. |
+| Minimal sample | Copy `src-tauri/` to one temporary directory outside the worktree and resolve a tentative `tauri-plugin-updater = "2"` only in that temporary manifest through Cargo's default official crates.io sparse index. Inspect the selected crate metadata and downloaded Rust source with the existing isolated Rust 1.85/Cargo homes and MSRV fallback; do not mutate this repository's `Cargo.toml` or `Cargo.lock`. |
+| Stop condition | Stop at the first registry, resolution, MSRV, API, or configuration failure. Do not retry via a mirror or another dependency family, install Python dependencies, launch Tauri/FastAPI, bind `127.0.0.1:8766`, open a browser/window/tray/native dialog, create a bundle/package, sign, publish, or claim a platform smoke test. |
+| Result | Passed for a later minimal source slice only. The official sparse-index temporary lock selected `tauri-plugin-updater 2.10.1` from `registry+https://github.com/rust-lang/crates.io-index`; its declared MSRV is Rust `1.77.2`, its `tauri = "2.10"` dependency resolved with the existing exact `tauri 2.11.5`, and the MSRV fallback graph remained Rust-1.85-compatible. `UpdaterExt::updater_builder().build().check().await` returns a candidate; `Update::download(...)` downloads and verifies the Minisign artifact signature against `Config.pubkey` before it returns bytes, while `Update::install(bytes)` is separate and performs the platform install/restart handoff. Later host code must not use `download_and_install`: it may download and verify first, then stop and re-check the independent monitor immediately before `install`. The plugin config requires a `pubkey` field during deserialization, but both plugin `Builder::pubkey(...)` and `UpdaterBuilder::pubkey(...)` override it at runtime; a public checkout can retain only a non-key placeholder and inject the actual public verification key from a controlled bundle input. No private signing key is requested or accepted by this plugin. `check()` itself parses HTTPS metadata; artifact signature verification occurs in `download`, so the existing fixed-feed metadata gate must remain in front of host installation. |
+
+### L6: host-delegated updater source boundary
+
+| Field | Record |
+| --- | --- |
+| Hypothesis | With the L5-reviewed exact plugin, the owned Tauri host can expose only fixed `update_check` and `update_install` Host RPC commands. The backend keeps its existing allowlisted feed check as the metadata gate, while the host stores one verified candidate, downloads and Minisign-verifies it before any monitor action, then stops and independently rechecks the monitor immediately before `install`. A missing candidate, stale/cancelled request, download/signature error, monitor-stop failure, or monitor still running aborts before installation and does not falsely report a runtime transition. |
+| Decision changed by result | A compatible official locked dependency plus focused source contracts permits adding `POST /api/v1/update/install` and Tauri-only delegation while preserving the existing check response. Any lock, compiler, contract, ownership, or state-order failure blocks this slice; it does not authorize a fallback updater, browser download, arbitrary URL/path/signature forwarding, package, signing, restart, or release claim. |
+| Minimal sample | First add only `tauri-plugin-updater = "=2.10.1"` to a temporary copy that also carries the root `.cargo/config.toml` MSRV-fallback policy, with the authorized official Rust 1.85/Cargo homes, and generate its lock through the default crates.io sparse index. Then update this checkout with the exact reviewed declaration and lock, compile only the locked offline desktop binary and focused Rust contracts, and run focused Python Host RPC/API-static tests. The implementation sample uses one allowed and one rejected request per failure category. |
+| Stop condition | Stop at the first registry, lock, MSRV, compiler, ownership, metadata-gate, signature/download-order, monitor-stop, or contract failure. Do not launch Tauri/FastAPI, bind `127.0.0.1:8766`, invoke a real updater, open browser/window/tray/native dialog, create an artifact, package, sign, publish, or claim a platform smoke test. |
+| Result (2026-08-16) | Passed as a source boundary. `backend.rs` reads the bundle manifest as raw bytes and requires its SHA-256 to equal the compile-time `INVOICE_HUB_BUNDLE_MANIFEST_SHA256`; the future packager injects that value only while compiling the signed desktop host from the staged manifest, so a source checkout has neither the value nor the manifest and remains exit `78`. The update-specific Host RPC surface accepts only `update_check` and `update_install`; a candidate lasts at most 300 seconds and is consumed before download. The install order is fixed: host-verified candidate -> download plus Minisign verification -> monitor stop -> independent stopped recheck -> install/restart. Expiry/cancellation, download/signature failure, monitor-stop failure, or a still-running monitor abort before install. In the controlled Rust 1.85 offline environment, `cargo test --locked --offline --lib --test lifecycle_contract` passed 12 library tests and 5 lifecycle tests, and `cargo check --locked --offline --bin invoicehub-desktop` passed. No Tauri/FastAPI product process, `127.0.0.1:8766` bind, real download/update, bundle, signature, package, restart, or platform smoke was run. |
+
+### L6-P: isolated Python API and Host RPC runtime contract
+
+| Field | Record |
+| --- | --- |
+| Hypothesis | An isolated temporary Python 3.14 virtual environment populated only from the official PyPI index with the project's exact runtime pins, `pytest`, and the FastAPI TestClient runtime can import the source tree and execute the L6 Host RPC and update-install endpoint contracts. |
+| Decision changed by result | A pass upgrades the prior static-only Python evidence to focused runtime API evidence for L6. A dependency resolution, import, or test failure blocks L6 at that category; it must be repaired in the smallest demonstrated module rather than treated as covered by the existing source assertions. |
+| Minimal sample | One fresh temporary virtual environment outside the worktree; one explicit official-index installation of the exact runtime pins plus `pytest==9.1.1` and `httpx2==2.9.1`; then `pytest -W error::DeprecationWarning tests/test_tauri_host_rpc.py tests/test_tauri_lifecycle_contract.py tests/test_api_contract.py::test_host_delegated_update_install_requires_an_empty_body_and_redacts_failures`, importing this checkout through `PYTHONPATH=src`. This replaces the obsolete first-round `httpx==0.28.1` sample. |
+| Stop condition | Stop at the first package-resolution/install failure, import failure, or failing test category. Do not modify the user Python, project dependency declarations, Rust lock, updater configuration, start FastAPI/Tauri, bind `127.0.0.1:8766`, or run a real update/install. |
+| Result (2026-08-16) | Passed. A clean temporary Python environment with the project exact runtime pins, `pytest==9.1.1`, and `httpx2==2.9.1` ran `pytest -W error::DeprecationWarning tests/test_tauri_host_rpc.py tests/test_tauri_lifecycle_contract.py tests/test_api_contract.py::test_host_delegated_update_install_requires_an_empty_body_and_redacts_failures`: 20 passed with deprecations treated as errors. This is isolated in-process FastAPI TestClient runtime evidence, replacing the prior static-only wording; it is not a started product FastAPI service or host updater. No Tauri process, product-port bind, real download/update, bundle/package/signature, restart, or platform smoke was run. |
+
+### L6-P-R: declared TestClient transport confirmation
+
+| Field | Record |
+| --- | --- |
+| Hypothesis | The repository's declared `httpx2==2.9.1` test transport, rather than the deprecated compatibility `httpx` transport, can execute the same isolated L6 API/Host RPC sample on Python 3.14. |
+| Decision changed by result | A pass makes the focused Python evidence match the declared test tooling. A resolver, import, warning-as-failure, or test failure blocks this evidence category and must be addressed as a dependency/test-harness issue without changing updater behavior. |
+| Minimal sample | One new temporary virtual environment under the existing disposable L6 directory; the same exact runtime pins and `pytest==9.1.1`, but `httpx2==2.9.1` in place of `httpx`; then rerun the exact L6-P pytest selection once. |
+| Stop condition | Stop at the first package-resolution/install failure, import failure, deprecation warning, or failing test category. Do not alter project dependency declarations, source, locks, product ports, or any real updater lifecycle. |
+| Result (2026-08-16) | Passed and is the authoritative L6-P transport record. With `httpx2==2.9.1`, the exact command `pytest -W error::DeprecationWarning tests/test_tauri_host_rpc.py tests/test_tauri_lifecycle_contract.py tests/test_api_contract.py::test_host_delegated_update_install_requires_an_empty_body_and_redacts_failures` completed with 20 passed and no accepted deprecation warning. It validates only the isolated TestClient transport and contracts; it does not start Tauri/FastAPI, bind `127.0.0.1:8766`, download or install an update, create a bundle, sign, package, restart, or provide platform smoke evidence. |
+
+### L6-R: fresh metadata approval and candidate expiry repair
+
+| Field | Record |
+| --- | --- |
+| Hypothesis | A Tauri host-install approval cannot be derived from a persisted cache, cached ETag, or `304` response: it must receive and revalidate one fresh `200` body from the fixed allowlisted Feed in the same serialized approval session. The host's stored candidate is also actively removed at its 300-second deadline without waiting for a later install request, while the Host RPC token remains confined to the host and its directly spawned backend rather than Web content or descendant processes. |
+| Decision changed by result | A pass permits the repaired L6 source boundary to return to specification review. A cache, expiry, token-boundary, compiler, or contract failure blocks only updater delegation and confines any repair to the demonstrated updater/Host RPC/documentation module. |
+| Minimal sample | One isolated Python contract with a representative fresh-looking persisted cache/ETag and one fresh `200` allowlisted metadata response, one Rust candidate-expiry unit/static contract, and the documentation contract. |
+| Stop condition | Stop at the first dependency, compiler, cache-authorization, candidate-expiry, token-boundary, or documentation-contract failure. Do not start Tauri/FastAPI, bind `127.0.0.1:8766`, invoke an actual updater, open a native surface, create an artifact, package, sign, publish, or claim a platform smoke test. |
+| Result (2026-08-16) | Passed. `UpdateService.check(require_fresh_body=True)` bypasses cache and `If-None-Match`, rejects `304`, and only returns an approval-eligible result after a fresh allowlisted `200` body; `AppState` uses that strict path only for the serialized Tauri host approval session. `HostUpdater` now has the existing bounded listener loop actively sweep the 300-second slot and generation-recheck removal, so an old sweep cannot clear a newer candidate. Current-fact documents now state the actual token handoff: host -> directly spawned Python backend -> startup capture and descendant scrub, never Web/Tauri command/event/API response/logs. In the isolated Python 3.14 `httpx2` environment, the existing L6 selection plus the fresh-body and documentation contracts passed: 31 tests with `DeprecationWarning` as errors. In the reviewed Rust 1.85 offline environment, 13 library tests and 5 lifecycle integration tests passed. The existing L6 binary `cargo check` was not rerun because `main.rs`, `backend.rs`, Cargo inputs, and public host interfaces were unchanged; the modified Rust library compiled in the focused test. No Tauri/FastAPI product process, `127.0.0.1:8766` bind, real update/download, bundle, signature, package, restart, or platform smoke was run. |
+
+### L6-RR: strict-request cache directive and command-surface clarification
+
+| Field | Record |
+| --- | --- |
+| Hypothesis | A strict Tauri host-approval metadata request must explicitly ask the fixed Feed to revalidate via `Cache-Control: no-cache`, while continuing to omit `If-None-Match` and reject `304`; non-host ordinary update checks must retain their existing cache/ETag behavior. The Host RPC documentation must distinguish the four picker enums from the separate, fixed `update_check` and `update_install` updater enums without widening the token boundary. |
+| Decision changed by result | A pass keeps L6-R's host-approval evidence suitable for specification review with an explicit on-wire freshness directive and a non-ambiguous command-surface contract. A header, cache-semantics, Host RPC, or documentation-contract failure blocks only this L6-RR evidence and confines repair to the demonstrated update/Host RPC/documentation surface. |
+| Minimal sample | In the existing isolated Python environment, run the targeted update-service, Host RPC, and documentation contracts with deprecations as errors. The sample asserts the strict request's `Cache-Control: no-cache`, absence of `If-None-Match`, `304` rejection, unchanged non-host cache/ETag path, and both architecture documents' four-picker/two-updater distinction. |
+| Stop condition | Stop at the first dependency, warning, strict-request header, ordinary-cache, Host RPC, or documentation-contract failure. Do not modify Rust, start Tauri/FastAPI, bind `127.0.0.1:8766`, invoke a real update, open a native surface, package, sign, publish, or claim a platform smoke test. |
+| Result (2026-08-16) | Passed. The strict host-approval branch now sends `Cache-Control: no-cache`, still omits `If-None-Match`, and rejects `304`; non-host checks retain their existing ETag cache behavior without the new header. The platform and interface documents explicitly separate the four fixed picker enums from the two fixed updater enums, and the documentation contract locks that distinction together with the direct-backend token handoff. In the isolated Python `httpx2` environment, `PYTHONPATH=src pytest -W error::DeprecationWarning -q tests/test_update_service.py tests/test_tauri_host_rpc.py tests/test_development_documentation.py` completed with 40 passed. No Rust test was rerun or modified, and no Tauri/FastAPI product process, product-port bind, real update, package, signing, or platform smoke test was run. |
+
+### L6-RRR: nonblocking host-approval contention (superseded by L6-RRRR)
+
+| Field | Record |
+| --- | --- |
+| Hypothesis | The initial experiment incorrectly generalized that every ordinary `/api/v1/update/check` could bypass `_host_update_lock`. L6-RRRR narrows that behavior to non-Tauri/non-host processes. A contended hosted-Tauri approval check must still return the same non-persistent busy result without touching metadata transport, the host candidate, or an existing approval. |
+| Decision changed by result | The 42-test pass is superseded for hosted-Tauri scope: it does not establish the public strict-preflight or install-contention behavior now required by L6-RRRR. |
+| Minimal sample | In the isolated Python environment, replace the queued-second-host-check contract with a held-host-lock immediate-busy sample that proves no metadata/candidate call and no approval reset; add an ordinary non-Tauri check while that host lock is held; retain the successful strict metadata -> candidate -> install sample and assert the AppState path delegates busy-result construction to `UpdateService`. |
+| Stop condition | Stop at the first dependency, warning, lock-contention, ordinary-check, approval-retention, metadata/candidate, API-contract, or documentation-contract failure. Do not modify Rust, start Tauri/FastAPI, bind `127.0.0.1:8766`, invoke a real update, open a native surface, package, sign, publish, or claim a platform smoke test. |
+| Result (2026-08-16) | Superseded by L6-RRRR. The 42-pass command is historical output only; it is not current evidence that hosted-Tauri public checks are strict preflight or that install lock contention is nonblocking. No Rust test was rerun or modified, and no Tauri/FastAPI product process, product-port bind, real update, package, signing, or platform smoke test was run. |
+
+### L6-RRRR: hosted-Tauri strict public checks and nonblocking install contention
+
+| Field | Record |
+| --- | --- |
+| Hypothesis | In a process with both the Tauri host marker and configured private Host RPC, every caller of `AppState.check_for_updates` (public API, settings, and background timer) is the delegated-install preflight: it must take the nonblocking host lock, require a fresh allowlisted Feed `200` body, and require the exact host candidate before approval. Only a non-Tauri/non-host process keeps `UpdateService` cache/ETag/busy semantics. `install_update` lock contention must fail immediately without consuming an approval or issuing a second private RPC, while an acquired install remains one-shot. |
+| Decision changed by result | A pass replaces L6-RRR as the current Python evidence for hosted-Tauri update orchestration. A strict-path, lock, approval-retention, second-RPC, or documentation failure blocks only this L6-RRRR slice and confines repair to `AppState`, its focused contracts, and current-fact documentation. |
+| Minimal sample | In the existing isolated Python environment, run only `tests/test_update_service.py`, `tests/test_tauri_host_rpc.py`, and `tests/test_development_documentation.py` with `DeprecationWarning` as errors. The host-RPC sample uses `force=False` to prove strict hosted public preflight, preserves the non-host held-lock cache path, holds a lifecycle lock to prove install retains approval, and blocks a first `update_install` RPC to prove a second request returns before that RPC completes and makes no second RPC. |
+| Stop condition | Stop at the first dependency, warning, strict-preflight, cache-scope, lock-contention, approval-retention, RPC-count, or documentation-contract failure. Do not modify Rust, start Tauri/FastAPI, bind `127.0.0.1:8766`, invoke a real update, open a native surface, package, sign, publish, or claim a platform smoke test. |
+| Result (2026-08-16) | Superseded by L6-RRRRR for the event-write and exception-release gap. The historical 44-pass sample did not prove a lock-contended hosted check bypasses `append_event`/SQLite, or that a private install RPC exception releases the host lock for a later approved install. No Rust test, Tauri/FastAPI product process, product-port bind, real update, package, signing, or platform smoke test was run. |
+
+### L6-RRRRR: lock-contended busy event bypass and exception-path release
+
+| Field | Record |
+| --- | --- |
+| Hypothesis | A hosted check that loses `_host_update_lock` must return its non-persistent busy result before `append_event`, otherwise its supposedly immediate path can block on SQLite. Separately, an acquired `install_update` must consume its one-shot approval even when private `update_install` raises, and its `finally` must release the lock so a newly granted approval can install later. |
+| Decision changed by result | A pass replaces L6-RRRR as the current Python evidence for these two independent failure modes. A busy-event, approval-consumption, exception-release, lock, or documentation failure blocks only L6-RRRRR and confines repair to `AppState`, focused Host RPC contracts, and current-fact documents. |
+| Minimal sample | In the declared isolated Python environment, run the same three targeted test files. One contended hosted-check worker receives a deliberately blocking `append_event` and must complete under the short budget without invoking it; this is distinct from L6-RRRR's lifecycle-lock and active-install samples because it detects a post-lock SQLite event write. A second sample makes the first private `update_install` raise `HostRpcError`, proves approval was consumed, then grants a new approval and succeeds to prove `finally` released the lock; this is distinct from ordinary install contention because it exercises the exception path. |
+| Stop condition | Stop at the first dependency, warning, event-write, immediate-return, approval-consumption, exception-release, lock, RPC, or documentation-contract failure. Do not modify Rust, start Tauri/FastAPI, bind `127.0.0.1:8766`, invoke a real update, open a native surface, package, sign, publish, or claim a platform smoke test. |
+| Result (2026-08-16) | Passed. The declared isolated Python command `PYTHONPATH=src /private/tmp/invoicehub-l6-python.eljPta/venv-httpx2/bin/pytest -W error::DeprecationWarning -q tests/test_update_service.py tests/test_tauri_host_rpc.py tests/test_development_documentation.py` completed with 45 passed. The blocked-`append_event` host-check sample returned before the event writer was invoked, while the private install exception sample consumed its first approval and completed a later approved install, proving `finally` released the lock. This replaces L6-RRRR's historical 44-pass result for the event-write and exception-release scope. No Rust test, Tauri/FastAPI product process, product-port bind, real update, package, signing, or platform smoke test was run. |
+
+### L6-R-E: isolated Rust toolchain PATH recovery
+
+| Field | Record |
+| --- | --- |
+| Hypothesis | Adding only the already reviewed official Rust 1.85 toolchain `bin` directory to this child process `PATH` lets Cargo locate its matching `rustc`, without downloading, installing, or changing any lock. |
+| Decision changed by result | Whether the Rust code-level evidence can resume; a failure blocks this category. |
+| Minimal sample | `rustc -vV` and one existing offline `cargo test --locked --offline --lib --test lifecycle_contract`. |
+| Stop condition | Stop at the first path, toolchain, or compiler failure; do not retry, download, install, change a lock, start a product process, bind `127.0.0.1:8766`, invoke an updater, package, sign, or publish. |
+| Result (2026-08-16) | Passed. With only the previously reviewed Rust 1.85 toolchain `bin` prepended to the child `PATH`, `rustc -vV` reported `rustc 1.85.0`, and the exact locked offline lifecycle test passed with 13 library tests and 5 integration tests. It used only a test-only `127.0.0.1:0` listener; it did not download/install, change a lock, start Tauri/FastAPI, bind `127.0.0.1:8766`, invoke an updater, package, sign, or publish. |
+
+### L7: release-input readiness audit
+
+| Field | Record |
+| --- | --- |
+| Hypothesis | The sanitized source tree contains enough deterministic, non-secret build inputs to identify the next smallest implementation task for the Windows NSIS and macOS DMG/update-archive release paths without creating an artifact. |
+| Decision changed by result | A complete input chain permits a later separately authorized build-preflight experiment; a missing staged manifest generator, platform builder, verifier, provenance input, or documented credential boundary narrows the next task to that missing source-level component rather than attempting a package or release. |
+| Minimal sample | Read-only inspection of `version.py`, the Tauri manifest/configuration, version synchronizer, release/build/verification scripts, dependency locks, package manifests, and their documented consumers for each target platform. |
+| Stop condition | Stop at the first mandatory missing or ambiguous release input. Do not generate a bundle or artifact, start Tauri/FastAPI, bind `127.0.0.1:8766`, use signing credentials, notarize, upload, publish, or create a Release/Feed. |
+| Result (2026-08-16) | Blocked at the first mandatory input at that time. `src-tauri/tauri.conf.json` deliberately kept `bundle.active=false`, while `backend.rs` required a schema-2 `invoicehub-desktop-host.json` whose raw SHA-256 had no generator or staged compiler input. The existing Windows script produced the retired portable ZIP identity and the existing macOS script built the legacy Swift/Sparkle app, so neither could supply Tauri NSIS or DMG/update-archive inputs. The next task was therefore the dynamic state-layout and manifest-path contract. L8-R, L8-S, and L9 below supersede this development-assembly blocker only; they do not supply NSIS, DMG/update archive, signing, notarization, Feed, Release, or platform-release evidence. |
+
+### L8: desktop state-layout and staged-manifest path contract
+
+| Field | Record |
+| --- | --- |
+| Hypothesis | The host can resolve a per-user desktop state root at launch, derive the config and runtime paths from that root, and bind the derived paths into the expected backend identity while accepting only bundle-relative core/launcher inputs from a future signed manifest. This prevents a compile-time manifest from embedding a workstation path or directing user writes into bundle resources. |
+| Decision changed by result | A passing pure source contract permits a later canonical staged-host-manifest generator to use fixed relative resource inputs and runtime-derived state paths. Any path-resolution, identity, or unsafe-relative-path failure keeps platform assembly blocked and confines repair to this host boundary. |
+| Minimal sample | One synthetic Windows local-app-data root, one synthetic macOS home root, and one representative traversal/absolute bundle-path rejection. |
+| Stop condition | Stop at the first platform-root, derived config/runtime, identity, or unsafe-path failure. Do not invoke `tauri build`, produce a bundle, start Tauri/FastAPI, bind `127.0.0.1:8766`, use credentials, sign, notarize, upload, publish, or create a Release/Feed. |
+| Result | Implementation present; focused verification is recorded separately in L8-R. The host derives Windows and macOS per-user state paths, rejects manifest-embedded config/runtime paths, and accepts only bundle-relative launcher/core inputs. The implementation uses schema 3; the earlier L7 schema-2 wording is superseded. |
+
+### L8-R: development profile and resource-root source contract
+
+| Field | Record |
+| --- | --- |
+| Hypothesis | A compile-bound schema-3 `development` profile can resolve a macOS `.app` executable to `Contents/Resources`, require a staged build manifest plus a hash-bound launcher/core, derive all writable state below the user state root, and explicitly disable updater delegation without weakening the `release` profile. |
+| Decision changed by result | A pass permits one separately bounded macOS development-app assembly experiment. Any resource-root, launcher hash, manifest profile, updater-disable, state-path, compiler, or focused Python contract failure keeps application assembly blocked and confines repair to this development host boundary. |
+| Minimal sample | `cargo fmt --check`; locked Rust library and lifecycle contracts covering the macOS resource root, release/development manifest validity, path containment, launcher hash and updater-disable boundary; focused Python Host RPC/update-disable and development-assembler contracts only. |
+| Stop condition | Stop at the first formatting, compiler, manifest, path, updater-disable, or focused Python failure. Do not start the product, bind `127.0.0.1:8766`, open a window/browser/dialog, build an `.app`, invoke an updater, sign, notarize, upload, publish, or create a Release/Feed. |
+| Result | Passed on 2026-08-16. Locked `rustfmt` completed without drift; the current affected suite passed 17 Rust library tests, 6 Rust lifecycle tests, and 149 focused Python contracts. The schema-3 development profile resolves `Contents/Resources`, requires the staged build manifest and launcher hash, rejects a package manifest, disables updater registration/delegation, and keeps the release profile strict. |
+
+### L8-S: isolated development smoke state
+
+| Field | Record |
+| --- | --- |
+| Hypothesis | A development-only absolute `INVOICE_HUB_DEV_STATE_ROOT` can replace the normal user state root for one clean smoke launch, while release manifests and relative overrides fail closed and the override is removed from the Python child environment. |
+| Decision changed by result | A pass permits the single L9 launch without reading or writing the existing `~/Library/Application Support/InvoiceHub`; a failure keeps L9 blocked rather than repurposing `HOME`, moving user state, or scanning an existing watch directory. |
+| Minimal sample | Pure Rust path-selection cases for development/default/release/relative inputs, one static child-environment removal contract, then the same single L9 application launch against one empty absolute temporary root. |
+| Stop condition | Stop at the first profile, absolute-path, child-environment, identity, or state-containment failure. Do not touch existing InvoiceHub user state, alter `HOME`, add a release override, or broaden the state path contract. |
+| Result | Passed on 2026-08-17. Development accepts one absolute isolated state root, rejects release/relative overrides, and removes the override before spawning Python. The single L9 launch used that clean root; the real user Application Support directory was neither read nor written. Stop after this representative sample. |
+
+### L9: one unsigned macOS development application
+
+| Field | Record |
+| --- | --- |
+| Hypothesis | After L8-R passes, the dev-only assembler can copy the explicit shared-core allowlist into ignored staging, generate the compile-bound schema-3 manifest, build one unsigned macOS `.app`, and run one owned backend at exactly `127.0.0.1:8766` with valid health/home identity before a clean host exit. |
+| Decision changed by result | A pass establishes the first runnable Tauri development artifact and permits review through a Draft PR. A staging, compile, bundle layout, fixed-port ownership, health, homepage, or shutdown failure blocks publication of this implementation and is repaired only in the demonstrated category. |
+| Minimal sample | One arm64 macOS development `.app` built from the reviewed branch with the explicit project virtual-environment Python; inspect `Contents/Resources`, manifest SHA and prohibited inputs; launch once against a clean development state root; check fixed-port ownership, `/api/v1/health`, `/`, and clean exit. |
+| Stop condition | Stop at the first staging, build, layout, port, handshake, page, or exit failure. Do not create a DMG/update archive, use signing credentials, invoke a real updater, notarize, upload, publish a Release/Feed, or claim Windows/platform-release coverage. |
+| Result | Passed on 2026-08-17. The assembler staged only the allowed shared core, generated a schema-3 development manifest and explicit venv launcher, then built one local macOS arm64 `InvoiceHub.app`. Resource inspection found the manifest/launcher SHA bindings and no package manifest, user configuration, runtime state, virtual environment, business data, or `node_modules`. The local artifact carried only a development ad-hoc linker mark, not Developer ID, Team ID, CMS, resource sealing, notarization, or release provenance. One isolated launch owned exactly `127.0.0.1:8766`; health and background startup became ready, homepage/static assets loaded, `desktop_available=true` and the default `desktop` surface were observed, and normal shutdown exited cleanly with the port released, PID removed, and server state stopped. The first launch exposed a tray initialization failure from a 16-bit RGBA icon; converting the icon to 8-bit RGBA and adding an IHDR contract repaired that same mechanism before the one accepted smoke. No DMG, NSIS, update archive, real updater/download/install, native picker, browser/tray/second-instance scenario, Developer ID, notarization, upload, Release, Feed, or Windows smoke was run. |
+
 ## Fixed scope and validation
 
 - The backend binds only `127.0.0.1:8766`. An unknown listener is a clear
@@ -182,13 +525,21 @@ this table.
 - `startup_surface` remains `desktop | browser`; a new Tauri installation
   defaults to desktop, while an imported explicit preference survives and is
   applied at the next start.
-- The Host RPC token remains inside the host process. Web content receives no
-  token and can access only enumerated commands from the expected localhost
-  origin.
-- `POST /api/v1/update/check` remains compatible. The future
-  `POST /api/v1/update/install` delegates only to a host that can stop and
-  verify the monitor; stop failure or user cancellation leaves runtime state
-  unchanged.
+- After the owned-backend handshake, desktop creates the WebView and browser
+  dispatches only the fixed origin through the host-only opener. Tray and a
+  second instance reopen that surface; desktop close hides it and does not
+  stop the independent monitor. L9 observed only the default desktop surface;
+  browser, tray, second-instance, native-panel, and print behavior remain
+  unexercised.
+- The host passes the Host RPC token only to its directly spawned Python backend,
+  which captures it at startup and scrubs it from descendant
+  environments. It never reaches Web content, a Tauri command/event, API
+  response, or logs; Web content can access only enumerated commands from the
+  expected localhost origin.
+- `POST /api/v1/update/check` remains compatible. `POST /api/v1/update/install`
+  accepts only `{}` but currently consumes its process-local candidate and
+  fails closed. It performs no download, monitor stop, installation, or restart
+  until a recovery/relaunch coordinator can restore failed paths safely.
 - The five final decision scenarios are startup surface, single instance and
   wrong port, Host RPC authorization, valid/tampered update, and monitor stop
   before install. They are not claimed by the foundation step.
