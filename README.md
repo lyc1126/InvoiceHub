@@ -118,7 +118,7 @@ W8/W9 技术与产品能力已完成，但当前真实公司资料夹中的 7 �
 
 ## 开发者与 Agent 阅读路线
 
-开发实现的权威入口是 [`docs/DEVELOPMENT_ARCHITECTURE.md`](docs/DEVELOPMENT_ARCHITECTURE.md)。公开 `main` 已从单一脱敏根提交开始，不继承旧的私有提交、Tag 或 Release 身份；旧图仅保留在私有归档。当前没有公开 Release 或更新 Feed。`codex/tauri2-unified-desktop` 已从公开 `main` 建立并以 `0.3.0-alpha.1` 开始；当前只含版本同步、pnpm lock、固定 localhost 合同和非安装式环境诊断，尚未形成可运行桌面 host。Tauri 仍将复用 Python/FastAPI/Web/monitor 业务核心，完整顺序与实验记录见 [Tauri 2 执行计划](docs/release/TAURI2_EXECUTION_PLAN.md)。共享核心与平台边界见[平台架构](docs/architecture/PLATFORM_ARCHITECTURE.md)，公开净化记录见[执行记录](docs/release/HISTORY_SANITIZATION_EXECUTION.md)。
+开发实现的权威入口是 [`docs/DEVELOPMENT_ARCHITECTURE.md`](docs/DEVELOPMENT_ARCHITECTURE.md)。公开 `main` 已从单一脱敏根提交开始，不继承旧的私有提交、Tag 或 Release 身份；旧图仅保留在私有归档。当前没有公开 Release 或更新 Feed。`codex/tauri2-unified-desktop` 已从公开 `main` 建立并以 `0.3.0-alpha.1` 开始；版本同步、pnpm/Cargo lock、固定 localhost 合同和非安装式环境诊断已完成受控验证，但尚未形成可运行桌面 host。Tauri 仍将复用 Python/FastAPI/Web/monitor 业务核心，完整顺序与实验记录见 [Tauri 2 执行计划](docs/release/TAURI2_EXECUTION_PLAN.md)。共享核心与平台边界见[平台架构](docs/architecture/PLATFORM_ARCHITECTURE.md)，公开净化记录见[执行记录](docs/release/HISTORY_SANITIZATION_EXECUTION.md)。
 
 接手工程或定位任务时按以下顺序阅读：
 

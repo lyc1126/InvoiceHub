@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import shutil
+import struct
 import subprocess
 import sys
 import tomllib
@@ -215,19 +216,31 @@ def test_doctor_rejects_windows_sdk_check_without_program_files_location(tmp_pat
 
 def test_tauri_scaffold_is_fixed_to_the_expected_localhost_origin() -> None:
     cargo = tomllib.loads((ROOT / "src-tauri/Cargo.toml").read_text(encoding="utf-8"))
+    cargo_config = tomllib.loads((ROOT / ".cargo" / "config.toml").read_text(encoding="utf-8"))
+    lock = tomllib.loads((ROOT / "src-tauri/Cargo.lock").read_text(encoding="utf-8"))
     config = json.loads((ROOT / "src-tauri/tauri.conf.json").read_text(encoding="utf-8"))
+    icon = (ROOT / "src-tauri/icons/icon.png").read_bytes()
     source = (ROOT / "src-tauri/src/main.rs").read_text(encoding="utf-8")
     contract = (ROOT / "src-tauri/src/lib.rs").read_text(encoding="utf-8")
+    locked_packages = {
+        (package["name"], package["version"])
+        for package in lock["package"]
+    }
 
-    assert not (ROOT / "src-tauri" / "Cargo.lock").exists()
     assert cargo["package"]["version"] == PRODUCT_VERSION
-    assert cargo["dependencies"]["tauri"]["version"] == "2"
-    assert cargo["build-dependencies"]["tauri-build"]["version"] == "2"
+    assert cargo["dependencies"]["tauri"]["version"] == "=2.11.5"
+    assert cargo["build-dependencies"]["tauri-build"]["version"] == "=2.6.3"
+    assert cargo_config["resolver"]["incompatible-rust-versions"] == "fallback"
+    assert ("tauri", "2.11.5") in locked_packages
+    assert ("tauri-build", "2.6.3") in locked_packages
     assert config["productName"] == PRODUCT_NAME
     assert config["version"] == PRODUCT_VERSION
     assert config["identifier"] == TAURI_BUNDLE_IDENTIFIER
     assert config["build"]["devUrl"] == "http://127.0.0.1:8766"
-    assert "tauri::generate_context!" in source
+    assert config["bundle"] == {"active": False}
+    assert icon.startswith(b"\x89PNG\r\n\x1a\n")
+    assert struct.unpack(">II", icon[16:24]) == (512, 512)
+    assert "let _: tauri::Context<tauri::Wry> = tauri::generate_context!();" in source
     assert "std::process::exit(78)" in source
     assert 'FIXED_BACKEND_HOST: &str = "127.0.0.1"' in contract
     assert "FIXED_BACKEND_PORT: u16 = 8766" in contract
@@ -272,7 +285,15 @@ def test_readme_lists_windows_tauri_foundation_entry_points() -> None:
 def test_tauri_foundation_plan_records_decision_gates_and_current_lock_boundary() -> None:
     plan = (ROOT / "docs/release/TAURI2_EXECUTION_PLAN.md").read_text(encoding="utf-8")
 
-    for record in ("F1: version derivation", "F2: non-installing environment gate", "F3: pnpm lock resolution", "F4: Cargo dependency selection", "F5: local Cargo cache fallback"):
+    for record in (
+        "F1: version derivation",
+        "F2: non-installing environment gate",
+        "F3: pnpm lock resolution",
+        "F4: Cargo dependency selection",
+        "F5: local Cargo cache fallback",
+        "F6: isolated official Rust toolchain",
+        "F7: MSRV-aware Cargo resolution",
+    ):
         assert record in plan
     for field in ("Hypothesis", "Decision changed by result", "Minimal sample", "Stop condition"):
         assert field in plan

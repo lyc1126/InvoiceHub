@@ -1,10 +1,10 @@
 # InvoiceHub 开发架构与工程导航
 
 > 文档状态：当前开发实现的权威架构入口
-> 更新日期：2026-08-14
+> 更新日期：2026-08-16
 > 公共权威基线：经过审计的单一脱敏根提交；旧私有提交、Tag、二进制和验证材料不在公开图中
 > 公开状态：候选树、保留 Git 对象和托管面已完成一次内容与凭据审计；公开图从脱敏根提交开始，详见 `docs/release/HISTORY_SANITIZATION_EXECUTION.md`
-> 当前开发线：`codex/tauri2-unified-desktop` 已从公开 `main` 建立，首个版本为 `0.3.0-alpha.1`；当前仅完成 Tauri foundation，尚未形成可运行 host 或 Release
+> 当前开发线：`codex/tauri2-unified-desktop` 已从公开 `main` 建立，首个版本为 `0.3.0-alpha.1`；Tauri foundation 已完成受控 lock/compile/test，尚未形成可运行 host 或 Release
 > 校验规则：精确的本地与 GitHub HEAD 以实时 `git rev-parse`、`git ls-remote` 和双向差异为准；发行源码候选不等于双平台成品 RC 或 GitHub 已发布版本
 
 ## 1. 这套文档解决什么问题

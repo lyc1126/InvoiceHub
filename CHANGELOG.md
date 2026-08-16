@@ -7,10 +7,11 @@
   scaffold, and non-installing Windows/macOS doctor/bootstrap entry points.
   Diagnostics run from the requested project root, block Rustup/Corepack
   auto-downloads, and fail closed for missing Windows interpreter, MSVC, or
-  SDK prerequisites. Rust/Cargo are absent on the current development host,
-  so Cargo dependency resolution, `Cargo.lock`, compilation, lifecycle, Host
-  RPC, and packaging remain explicitly blocked rather than being claimed as
-  complete.
+  SDK prerequisites. A checksum-verified isolated Rust 1.85.0 environment
+  now pins exact Tauri crates, generates the reviewed MSRV-compatible
+  `Cargo.lock`, and passes focused `cargo check`/fixed-origin Rust tests; the
+  normal user environment remains unmodified. Lifecycle, Host RPC, updater,
+  packaging, and platform smoke tests remain explicitly unimplemented.
 - Correct the interface-flow release boundary to record the completed public
   transition while retaining the prohibition on reusing retired private assets.
 - Read the Windows CI release-version argument from `version.py` instead of

@@ -1,7 +1,7 @@
 # InvoiceHub 完整文件地图
 
 > 公共基线：经过审计的单一脱敏根提交及其公开后代；旧私有提交、Tag、包和验证材料不在公开图中。
-> 当前治理变化以 `docs/release/HISTORY_SANITIZATION_EXECUTION.md` 为真值。公开门槛已完成；`v0.3` Tauri 2 开发分支已从 `main` 建立，当前仅有不可运行的 foundation，尚无 Cargo lock 或 Release。
+> 当前治理变化以 `docs/release/HISTORY_SANITIZATION_EXECUTION.md` 为真值。公开门槛已完成；`v0.3` Tauri 2 开发分支已从 `main` 建立，当前已有经审查的 Cargo lock 和不可运行 foundation，尚无 Release。
 > 本表覆盖当前受版本控制的全部工程文件，包括架构文档与文档契约测试；运行态、投影和本机未跟踪内容只登记生成规则，不使用会随增删文件失真的固定数量。
 > 路径是导航键；职责和关系按符号而不是易漂移的行号描述。
 
@@ -52,6 +52,7 @@
 | `package.json` | Tauri host 的 npm 产品身份、pnpm 版本和 JavaScript 直接依赖声明。 | 产品版本由 `tauri_version_sync.py` 从 `version.py` 派生；不承载业务前端。 |
 | `pnpm-lock.yaml` | Tauri CLI/API 的完整 JavaScript integrity lock。 | 仅在显式 `--install-js` 或开发者手动 pnpm 安装时消费；不得用它替代 Cargo lock。 |
 | `rust-toolchain.toml` | Rust/Cargo 1.85.0 与两首发 target 的固定工具链声明。 | `tauri_doctor.py` 诊断；无 Rust/Cargo 或 `src-tauri/Cargo.lock` 时 host 必须保持未就绪。 |
+| `.cargo/config.toml` | Cargo 的 MSRV-aware 解析策略。 | 必须保留 `fallback`，避免直接 Tauri 版本不变时被较新的传递依赖悄然抬高到 Rust 1.85 以上。 |
 | `requirements/runtime.in` | 双平台共享运行依赖输入。 | Windows/macOS 平台输入 include；不能直接替代哈希锁。 |
 | `requirements/runtime-windows-x64.in` | Windows x64 运行依赖输入，含 watchdog。 | 编译为 Windows Python 3.14 哈希锁。 |
 | `requirements/runtime-macos-arm64.in` | macOS arm64 运行依赖输入，不含 watchdog。 | 编译为 Mac Python 3.14 哈希锁；使用内置 polling observer。 |
@@ -135,12 +136,14 @@
 
 | 文件 | 职责与入口 | 关系与修改影响 |
 |---|---|---|
-| `src-tauri/Cargo.toml` | Tauri host package metadata and intentionally broad direct Tauri major declarations. | Version is derived by `tauri_version_sync.py`; it is not a Cargo lock or evidence that Rust compilation is enabled. |
-| `src-tauri/build.rs` | Tauri build-script entry point. | It may run only after direct crate versions and `Cargo.lock` are reviewed in a controlled Rust environment. |
+| `src-tauri/Cargo.toml` | Tauri host package metadata and exact direct Tauri crate versions. | Version is derived by `tauri_version_sync.py`; direct crates are pinned to published releases and must match `Cargo.lock`. |
+| `src-tauri/Cargo.lock` | Reviewed Rust 1.85-compatible Cargo dependency graph. | Generated only in the controlled toolchain with `.cargo/config.toml`; it locks dependency integrity but does not prove a runnable host. |
+| `src-tauri/build.rs` | Tauri build-script entry point. | It runs only with the exact direct crate versions and reviewed `Cargo.lock` in a controlled Rust environment. |
 | `src-tauri/tauri.conf.json` | Derived product identity, fixed localhost development origin, inert boot asset, and disabled bundling configuration. | Must retain `http://127.0.0.1:8766`; lifecycle work later owns windows, tray, security, and bundling changes. |
 | `src-tauri/src/lib.rs` | Fixed backend host/port constants and their smallest unit contract. | Do not add business-core logic; future lifecycle/Host RPC modules must keep this origin invariant. |
-| `src-tauri/src/main.rs` | Explicit non-runnable host guard. | Generates the Tauri context then exits `78` until the lock and lifecycle gates are complete; it must not silently attach to an old service or select another port. |
+| `src-tauri/src/main.rs` | Explicit non-runnable host guard. | Generates the Tauri context then exits `78` until lifecycle gates are complete; it must not silently attach to an old service or select another port. |
 | `src-tauri/boot/index.html` | Inert local boot asset required by the minimal Tauri configuration. | It is not a replacement frontend; the real application remains the existing localhost Web UI. |
+| `src-tauri/icons/icon.png` | Original local foundation icon required by Tauri's macOS context macro. | It satisfies compile-time context generation only; it does not authorize a bundle, Release, or final product-brand claim. |
 | `src-tauri/README.md` | Foundation scope and non-runnable boundary. | Update together with the execution plan whenever Cargo, lifecycle, Host RPC, updater, or packaging status changes. |
 
 ## 5. Python 包入口与 API
@@ -332,7 +335,7 @@
 | `tests/test_runner_dryrun.py` | batch-bound dry-run 与禁止猜测最新文件。 | runners、scripts/tools。 |
 | `tests/test_summary_and_costs.py` | 金额防污染、同票纠偏、结构化成本、均价、参考状态和 schema 刷新。 | extraction、summary、cost_analysis、costs。 |
 | `tests/test_development_documentation.py` | 文件地图、链接、接口路由、基线、旧事实和敏感路径门禁。 | 本架构文档、README、AGENTS、CLAUDE 和 Git 指南。 |
-| `tests/test_tauri_foundation.py` | 版本派生、单点 drift 修复、doctor fail-closed、固定 origin、非安装 bootstrap 与 pnpm lock。 | Tauri foundation scripts, configuration, and plan; it does not claim a Rust build or platform smoke test. |
+| `tests/test_tauri_foundation.py` | 版本派生、单点 drift 修复、doctor fail-closed、固定 origin、MSRV resolver、Cargo/pnpm lock 与非安装 bootstrap。 | Tauri foundation scripts, configuration, and plan; Rust compile is separately recorded, and no platform smoke test is claimed. |
 
 ## 15. 前端公共资源
 

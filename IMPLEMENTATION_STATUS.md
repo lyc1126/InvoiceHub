@@ -32,9 +32,9 @@
 ## Tauri 2 基础已建立但不可运行
 
 - `src-tauri/` 已提供固定 `127.0.0.1:8766` 的最小 host 合同、版本派生目标和明确的非零退出保护；它尚未启动或连接后端，不能作为桌面应用或发布产物使用。
-- `scripts/dev/tauri_version_sync.py` 从 `src/invoice_hub/version.py` 同步并校验 Cargo、Tauri 配置和 npm 的产品身份；`pnpm-lock.yaml` 已锁定 Tauri CLI/API 的 JavaScript 依赖。
-- `rust-toolchain.toml` 固定 Rust/Cargo `1.85.0`，Windows/macOS 的 `doctor/bootstrap` 只诊断或按显式 `--install-js` 安装已锁定的 JavaScript 依赖，绝不安装 Rust、证书、Xcode 或 Visual Studio。
-- 当前开发主机缺少 `rustc`、`cargo` 与 `src-tauri/Cargo.lock`。因此 Rust 依赖解析、编译、单实例、托盘、严格握手、Host RPC、updater 与打包仍未覆盖；详细决策记录见 [Tauri 2 执行计划](docs/release/TAURI2_EXECUTION_PLAN.md)。
+- `scripts/dev/tauri_version_sync.py` 从 `src/invoice_hub/version.py` 同步并校验 Cargo、Tauri 配置和 npm 的产品身份；`pnpm-lock.yaml` 与 `src-tauri/Cargo.lock` 已锁定对应 JavaScript/Rust 依赖。
+- `rust-toolchain.toml` 固定 Rust/Cargo `1.85.0`，`.cargo/config.toml` 固定 MSRV-aware resolver。Windows/macOS 的 `doctor/bootstrap` 只诊断或按显式 `--install-js` 安装已锁定的 JavaScript 依赖，绝不安装 Rust、证书、Xcode 或 Visual Studio。
+- 在不修改用户级 Rust 的官方隔离环境中，已解析精确 Tauri crate、审查 lock，并通过 macOS arm64 的 `cargo check`、fixed-origin Rust unit test 和 doctest。单实例、托盘、严格握手、Host RPC、updater 与打包仍未覆盖；详细决策记录见 [Tauri 2 执行计划](docs/release/TAURI2_EXECUTION_PLAN.md)。
 
 ## 发布与验证规则
 
@@ -45,7 +45,7 @@
 
 ## 尚未完成
 
-- Tauri 2 的后端生命周期、严格握手、单实例、托盘、原生面板/打印、Host RPC、原生更新安装和五个决策场景尚未实现；Rust/Cargo lock 和编译在可用的受控 Rust 工具链前也尚未执行。
+- Tauri 2 的后端生命周期、严格握手、单实例、托盘、原生面板/打印、Host RPC、原生更新安装和五个决策场景尚未实现；Rust/Cargo lock、编译和最小 origin unit test 已完成，但不构成桌面运行或平台安装验证。
 - 公开 Release、GitHub Pages Feed、正式 Windows 签名、macOS Developer ID/公证和最终用户安装烟测均尚未进行。
 - 真实业务做账迁移、审批、导出和外部账套操作必须在用户当回合明确授权后另行执行。
 

@@ -1,6 +1,6 @@
 # 迁移与公开缺口清单
 
-更新时间：2026-08-14
+更新时间：2026-08-16
 
 ## 公开历史净化
 
@@ -27,7 +27,7 @@
 
 - [x] 建立非运行态 `src-tauri/` foundation、固定 `127.0.0.1:8766` 合同和由 `version.py` 派生的 Cargo/Tauri/npm 产品身份；它尚未实现或宣称窗口、托盘、单实例、原生面板、打印、后端生命周期、Host RPC 或 updater。
 - [x] 锁定 pnpm 与 Tauri JavaScript 依赖，并提供不会自动安装 Rust、证书、Xcode 或 Visual Studio 的 Windows/macOS `doctor/bootstrap`。
-- [ ] 在受控 Rust/Cargo `1.85.0` 环境中解析直接 Tauri crate、生成并审查 `src-tauri/Cargo.lock`，随后才允许 Rust 编译或 host 生命周期实现。
+- [x] 在受控 Rust/Cargo `1.85.0` 环境中解析精确直接 Tauri crate、生成并审查 MSRV-compatible `src-tauri/Cargo.lock`，并通过最小 Rust compile/test；这只允许开始后续 host 生命周期实现，不等于已实现或发布。
 - [ ] 实现 `127.0.0.1:8766` 的严格启动/握手；未知端口占用必须失败。
 - [ ] 保持 `startup_surface=desktop|browser` 语义；新安装默认 desktop，既有显式偏好保持原值。
 - [ ] 以不返回网页的随机 token 限制 Host RPC，只开放枚举命令与预期 localhost origin。

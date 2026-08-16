@@ -31,3 +31,4 @@ Desktop.ini
 /macos/InvoiceHubMac/.backend-venv/
 /macos/InvoiceHubMac/dist/
 /macos/InvoiceHubMac/.swiftpm/
+/src-tauri/gen/

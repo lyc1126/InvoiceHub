@@ -9,8 +9,10 @@ The only executable contract currently present is the fixed backend origin
 the lifecycle, strict handshake, single-instance, tray, native-panel, print,
 Host RPC, and updater tasks are implemented.
 
-`Cargo.toml` permits the Tauri 2 major line, but the direct crate resolution
-and `Cargo.lock` are intentionally not claimed as complete: the pinned Rust
-toolchain and published crate metadata must be available before generating and
-reviewing that lock. `scripts/dev/tauri_doctor.py --require-ready` fails closed
-while that prerequisite is absent.
+`Cargo.toml` pins the direct crates to the published `tauri 2.11.5` and
+`tauri-build 2.6.3` releases. The matching `Cargo.lock` was generated and
+reviewed only with the pinned Rust toolchain in a controlled environment; its
+focused compile and fixed-origin Rust test passed there. This does not make
+the host runnable or authorize a bundle. `scripts/dev/tauri_doctor.py
+--require-ready` fails closed while the toolchain or lock prerequisite is
+absent.
