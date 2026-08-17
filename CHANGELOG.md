@@ -2,15 +2,19 @@
 
 ## Unreleased
 
-- 2026-08-17 Tauri exit/update timeout repair: tray Quit now only triggers the
-  common application exit path, while system Quit, Cmd-Q, and every other
-  `ExitRequested` first perform the structured `keep_monitor` backend shutdown.
+- 2026-08-17 Tauri exit/update timeout repair: the macOS application menu now
+  uses a custom Quit item with Cmd-Q, and both it and tray Quit request the
+  common `app.exit(0)` path. Every received `ExitRequested` first performs the
+  structured `keep_monitor` backend shutdown; the menu does not use the native
+  predefined Quit selector, which can bypass that event. External termination
+  paths are not claimed as orderly shutdown mechanisms.
   An API failure or timeout explicitly kills and waits for the owned child;
   failure to confirm termination prevents host exit instead of relying on
   process `Drop`. Host updater metadata checks now use a five-second total
   timeout so a stalled Feed cannot permanently own the updater mutex or Host
   RPC connection capacity. Focused verification is recorded in the Tauri
-  execution plan; this does not enable update installation.
+  execution plan; the clean-commit custom-menu/Cmd-Q runtime proof remains
+  pending, and this does not enable update installation.
 - 2026-08-17 Tauri P1 transport/container repair: private Python Host RPC
   requests now use an explicit no-proxy loopback transport, so a configured
   `HTTP_PROXY` cannot receive the bearer token. Development state-root
@@ -48,8 +52,10 @@
   development `InvoiceHub.app` was built once and smoke-tested once against an
   isolated development state root: the owned backend bound exactly
   `127.0.0.1:8766`, health and background startup became ready, the homepage
-  and static assets loaded, `desktop_available=true` with the default desktop
-  surface, and orderly shutdown released the port and PID state. The app is a
+  and static assets loaded, with `desktop_available=true` and the default
+  desktop surface. A later external AppleScript quit released the process,
+  port, and PID but bypassed structured shutdown and left server state stale,
+  so the original orderly-exit subclaim is withdrawn pending P1-Q. The app is a
   local ignored development artifact; it did not touch the real user
   Application Support state. The development profile disables updater
   delegation and rejects release/relative state-root overrides. An initial

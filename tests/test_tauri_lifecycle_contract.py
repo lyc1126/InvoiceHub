@@ -110,13 +110,48 @@ def test_tauri_setup_selects_surface_only_after_handshake_and_keeps_close_host_o
     assert "event.id() == TRAY_QUIT_ID" in main
     assert "quit_from_tray(app);" in main
     tray_quit = main[main.index("fn quit_from_tray") : main.index("fn prepare_backend_exit")]
-    assert "app.exit(0);" in tray_quit
+    assert "request_application_exit(app);" in tray_quit
     assert "shutdown_keep_monitor" not in tray_quit
     exit_handler = main[main.index("app.run(") :]
     assert "RunEvent::ExitRequested" in exit_handler
     assert "prepare_backend_exit(app_handle)" in exit_handler
     assert "api.prevent_exit();" in exit_handler
     assert "monitor.stop" not in main
+
+
+def test_tauri_macos_menu_and_tray_request_the_same_interceptable_exit() -> None:
+    main = (ROOT / "src-tauri" / "src" / "main.rs").read_text(encoding="utf-8")
+
+    assert (
+        '#[cfg(target_os = "macos")]\n'
+        'const APP_QUIT_ID: &str = "invoicehub-app-quit";'
+    ) in main
+    menu_builder = main[
+        main.index("fn build_application_menu") : main.index("fn prepare_backend_exit")
+    ]
+    assert "MenuItem::with_id(" in menu_builder
+    assert "APP_QUIT_ID" in menu_builder
+    assert 'Some("CmdOrCtrl+Q")' in menu_builder
+    assert "Submenu::with_items" in menu_builder
+    assert "&quit_item" in menu_builder
+    assert "Menu::with_items" in menu_builder
+    assert "&app_menu" in menu_builder
+    assert ".menu(build_application_menu)" in main
+    assert "event.id() == APP_QUIT_ID" in main
+    assert "PredefinedMenuItem" not in main
+
+    shared_exit = main[
+        main.index("fn request_application_exit") : main.index("fn prepare_backend_exit")
+    ]
+    assert shared_exit.count("app.exit(0);") == 1
+    assert "request_application_exit(app);" in shared_exit
+
+    app_menu = main[
+        main.index(".menu(build_application_menu)") : main.index(
+            "if let Some(public_key) = updater_public_key"
+        )
+    ]
+    assert "request_application_exit(app);" in app_menu
 
 
 def test_tauri_webview_is_created_only_after_the_owned_backend_handshake() -> None:

@@ -258,7 +258,7 @@
 - 每项实验开始前必须记录假设、结果会改变的决策、最小样本和停止条件；无法改变决策的实验不得执行。相同失败机制只用一个代表样本，结果矛盾、修改面扩大或机制不同才追加样本。
 - 每个 RC 最多一次完整回归；先运行命中变更面的聚焦验证。Tauri `v0.3` 的决策场景固定为两种启动方式、单实例与错误端口、Host RPC 授权边界、合法/篡改更新、安装前 monitor 停止；修复后只重跑受影响类别。
 - Tauri `src-tauri/` 只承担窗口、托盘、单实例、原生面板、打印、后端生命周期、随机令牌 Host RPC 与 updater。它只绑定 `127.0.0.1:8766`；未知占用必须明确失败，不能换端口或连接旧实例。Host RPC token 只允许由 host 传给其直接启动的 Python backend；backend 必须启动时捕获，并从 descendant 环境清除，绝不得返回网页、Tauri command/event、API 响应或日志，只接受固定 localhost origin 的枚举命令。携带该 token 的 Python loopback 请求必须显式禁用环境/系统代理并直连私有 listener。成功握手后必须先 arm 授权、再启动有界 child liveness watcher；watcher 只能撤销授权，不能在 child 已退出后重新授权。
-- 在 recovery/relaunch coordinator 完整实现前，`update_install` 必须消费候选并 fail closed，绝不得下载、停止 monitor、替换或重启。Tauri updater metadata 请求必须设置 5 秒总时限，不能让插件默认的无时限请求占住 Host RPC operation。托盘 Quit 只负责触发统一退出；所有 Tauri `ExitRequested`（包括系统菜单和 Cmd-Q）都必须先请求结构化 `keep_monitor` shutdown 并等待 owned child 退出。API 错误或超时后必须显式 `kill + wait` 并确认 child 已退出；kill/wait 失败时必须阻止 host 退出，不得把 `Drop` 当作进程退出兜底。
+- 在 recovery/relaunch coordinator 完整实现前，`update_install` 必须消费候选并 fail closed，绝不得下载、停止 monitor、替换或重启。Tauri updater metadata 请求必须设置 5 秒总时限，不能让插件默认的无时限请求占住 Host RPC operation。托盘 Quit 与 macOS 自定义应用菜单/Cmd-Q 只能调用同一个 `app.exit(0)` 请求，再由收到的 Tauri `ExitRequested` 先执行结构化 `keep_monitor` shutdown 并等待 owned child 退出；不得使用会直接绑定原生 `terminate:` 的 predefined Quit。API 错误或超时后必须显式 `kill + wait` 并确认 child 已退出；kill/wait 失败时必须阻止 host 退出，不得把 `Drop` 当作进程退出兜底。外部 AppleScript quit、Force Quit、SIGKILL、注销或断电可能绕过 `ExitRequested`，不得宣称这些路径可被 host 有序拦截。
 - 安装包只放 GitHub Releases；从 `v0.3` 起同仓库 GitHub Pages 提供更新 Feed。不使用 GitHub Packages 或 App Store。Rust/Cargo/pnpm/Tauri 依赖必须锁定，Windows/macOS `doctor` 与 `bootstrap` 只能诊断环境，不得自动安装证书、Xcode 或 Visual Studio。
 
 ## 验收规则

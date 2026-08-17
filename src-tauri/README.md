@@ -32,7 +32,10 @@ tests without reading or writing real user Application Support state.
 L8-S and L9 passed once on macOS arm64: an isolated app owned exactly
 `127.0.0.1:8766`, health and background startup reached ready, the homepage and
 static assets loaded, `desktop_available=true` and the default desktop surface
-were observed, and orderly shutdown released the port and PID state. The first
+were observed. A later external AppleScript quit released the process, port,
+and PID but bypassed structured shutdown and left stale server state, so the
+original orderly-exit subclaim is withdrawn pending the custom menu/Cmd-Q P1-Q
+sample. The first
 launch exposed a tray initialization failure caused by a 16-bit RGBA icon.
 `icons/icon.png` is now 8-bit RGBA and an IHDR-focused test locks that exact
 failure mechanism.
@@ -57,11 +60,14 @@ monitor, install, or restart. The later release coordinator must preserve the
 order download plus Minisign verification, monitor stop and independent recheck,
 then install/restart, with recovery on every failed path.
 
-Tray Quit only requests the common Tauri exit path. System Quit, Cmd-Q, and
-every other `ExitRequested` first request the structured `keep_monitor`
-shutdown and wait for the owned backend. API failure or timeout explicitly
-kills and waits for that child; inability to confirm termination prevents host
-exit. Process `Drop` is not an exit fallback.
+Tray Quit and the custom macOS application-menu Quit item/Cmd-Q both request
+`app.exit(0)`. The menu must not use the predefined native Quit selector,
+which can bypass Tauri's interceptable event. Every `ExitRequested` received
+by the host first requests the structured `keep_monitor` shutdown and waits
+for the owned backend. API failure or timeout explicitly kills and waits for
+that child; inability to confirm termination prevents host exit. Process
+`Drop` is not an exit fallback. External AppleScript quit, Force Quit, SIGKILL,
+logout, and power loss are outside this orderly-shutdown contract.
 
 The development app disables this updater path. L9 did not exercise browser,
 tray, second-instance, native-picker, printing, download, signature validation,

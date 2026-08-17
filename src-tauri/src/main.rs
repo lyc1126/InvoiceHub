@@ -1,6 +1,8 @@
 use std::error::Error;
 use std::process::ExitCode;
 
+#[cfg(target_os = "macos")]
+use tauri::menu::Submenu;
 use tauri::{
     menu::{Menu, MenuItem},
     tray::TrayIconBuilder,
@@ -13,6 +15,8 @@ use invoicehub_desktop::backend::{
 };
 
 const MAIN_WINDOW_LABEL: &str = "main";
+#[cfg(target_os = "macos")]
+const APP_QUIT_ID: &str = "invoicehub-app-quit";
 const TRAY_OPEN_ID: &str = "invoicehub-open";
 const TRAY_QUIT_ID: &str = "invoicehub-quit";
 
@@ -42,8 +46,25 @@ fn reopen_startup_surface(app: &tauri::AppHandle<tauri::Wry>) {
     }
 }
 
-fn quit_from_tray(app: &tauri::AppHandle<tauri::Wry>) {
+fn request_application_exit(app: &tauri::AppHandle<tauri::Wry>) {
     app.exit(0);
+}
+
+fn quit_from_tray(app: &tauri::AppHandle<tauri::Wry>) {
+    request_application_exit(app);
+}
+
+#[cfg(target_os = "macos")]
+fn build_application_menu(app: &tauri::AppHandle<tauri::Wry>) -> tauri::Result<Menu<tauri::Wry>> {
+    let quit_item = MenuItem::with_id(
+        app,
+        APP_QUIT_ID,
+        "Quit InvoiceHub",
+        true,
+        Some("CmdOrCtrl+Q"),
+    )?;
+    let app_menu = Submenu::with_items(app, "InvoiceHub", true, &[&quit_item])?;
+    Menu::with_items(app, &[&app_menu])
 }
 
 fn prepare_backend_exit(app: &tauri::AppHandle<tauri::Wry>) -> bool {
@@ -119,6 +140,16 @@ fn main() -> ExitCode {
                 }
             }
         });
+    #[cfg(target_os = "macos")]
+    {
+        builder = builder
+            .menu(build_application_menu)
+            .on_menu_event(|app, event| {
+                if event.id() == APP_QUIT_ID {
+                    request_application_exit(app);
+                }
+            });
+    }
     if let Some(public_key) = updater_public_key {
         builder = builder.plugin(
             tauri_plugin_updater::Builder::new()

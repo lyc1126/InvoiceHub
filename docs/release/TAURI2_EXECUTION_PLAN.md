@@ -20,12 +20,15 @@ bookkeeping, or monitoring.
 recovery/relaunch coordinator. It consumes any in-memory candidate and returns
 the existing redacted unavailable error; it must not download, stop monitor,
 install, or restart. The historical L6 order is a future coordinator
-requirement, not a currently executable flow. Tray Quit only requests the
-common application exit path. Every Tauri `ExitRequested`, including the
-system menu and Cmd-Q, first requests the existing structured `keep_monitor`
-backend shutdown and waits for the owned child. An API error or timeout uses
-an explicit `kill + wait`; failure to confirm child exit prevents host exit,
-and process `Drop` is not treated as a fallback. Host updater metadata checks
+requirement, not a currently executable flow. Tray Quit and the application
+menu/Cmd-Q must request `app.exit(0)`, which enters the common Tauri
+`ExitRequested` path. A native predefined Quit item or an external macOS
+termination request can bypass that event and therefore cannot be claimed as
+an orderly-shutdown path. Every `ExitRequested` that the host receives first
+requests the existing structured `keep_monitor` backend shutdown and waits for
+the owned child. An API error or timeout uses an explicit `kill + wait`;
+failure to confirm child exit prevents host exit, and process `Drop` is not
+treated as a fallback. Host updater metadata checks
 have an explicit 5 秒 total timeout instead of the plugin's unbounded
 default. A
 development launch must explicitly supply an existing absolute state root that
@@ -46,11 +49,21 @@ the assembler labels dirty inputs `<HEAD>+dirty`.
 
 | Field | Record |
 | --- | --- |
-| Hypothesis | Routing tray, system-menu, Cmd-Q, and other Tauri exit requests through one structured backend shutdown, with explicit confirmed termination on failure, prevents an orphaned fixed-port child; setting the locked updater builder to a 5-second total timeout prevents a stalled Feed request from permanently owning Host RPC capacity. |
+| Hypothesis | The then-assumed routing of tray, native system-menu, Cmd-Q, and other Tauri exit requests through one structured backend shutdown would prevent an orphaned fixed-port child; independently, setting the locked updater builder to a 5-second total timeout would prevent a stalled Feed request from permanently owning Host RPC capacity. The later product sample below disproved the native-menu part of this hypothesis. |
 | Decision changed by result | A pass removes the two final P1 blockers and permits the pending lifecycle delta to be committed and rebuilt once from the clean commit. A failure blocks the Draft PR and confines repair to the exit or updater-timeout mechanism that failed. |
 | Minimal sample | Locked `cargo fmt --check`; Rust library/lifecycle tests and desktop binary check; focused Python Tauri lifecycle, Host RPC, development documentation, API/update/path/settings/development-app tests; then `compileall` and `git diff --check`. The later clean-commit L9 rerun remains the single product-process sample. |
 | Stop condition | Stop at the first format, compile, lifecycle, timeout, API, documentation, or whitespace failure. Do not invoke a real updater, stop a real monitor for installation, build an installer, sign, publish, or broaden the repair into the shared business core. |
-| Result (2026-08-17) | Passed. Locked Rust 1.85 formatting, 16 library tests, 6 lifecycle integration tests, and the offline desktop binary check completed without compiler warnings; the socket-authorization test was rerun outside the restricted sandbox only because the sandbox denied its temporary loopback bind. The 153 unique focused Python Tauri/foundation/development-app/Host-RPC/lifecycle/API/update/path/settings/documentation contracts all passed after one rustfmt-sensitive static assertion was corrected and its lifecycle category rerun. `compileall` and `git diff --check` passed. No product process, real updater, monitor installation stop, installer, signature, publication, or platform release smoke was run. This removes the two review blockers and permits explicit-file staging plus one DCO commit. |
+| Result (2026-08-17) | Passed only for the source-level fallback and updater-timeout mechanisms. Locked Rust 1.85 formatting, 16 library tests, 6 lifecycle integration tests, and the offline desktop binary check completed without compiler warnings; the socket-authorization test was rerun outside the restricted sandbox only because the sandbox denied its temporary loopback bind. The 153 unique focused Python Tauri/foundation/development-app/Host-RPC/lifecycle/API/update/path/settings/documentation contracts all passed after one rustfmt-sensitive static assertion was corrected and its lifecycle category rerun. `compileall` and `git diff --check` passed. A later clean-commit product smoke showed that an external macOS application-quit request can bypass `RunEvent::ExitRequested`; therefore the native-menu portion of the hypothesis failed and no longer permits a Draft PR by itself. The updater timeout and explicit kill/wait fallback remain valid; P1-Q below owns the custom-menu/Cmd-Q repair. |
+
+### P1-Q: macOS application-menu quit routing repair
+
+| Field | Record |
+| --- | --- |
+| Hypothesis | A custom macOS application-menu Quit item with `CmdOrCtrl+Q`, plus tray Quit, can both call the same `app.exit(0)` request and therefore reach the existing `RunEvent::ExitRequested` structured-shutdown handler without using the native predefined Quit selector. |
+| Decision changed by result | A source-contract/compile pass permits one new DCO fix-forward commit and one development `.app` rebuild from that clean commit. The genuine menu/Cmd-Q runtime pass then permits a second evidence-only DCO commit and opening a Draft PR, without rewriting the three existing commits. Any compile, routing, shutdown-POST, stopped-state, child-exit, or port-release failure keeps the PR blocked and confines repair to the application-menu/exit path. |
+| Minimal sample | One static lifecycle contract that locks the custom application-menu ID, `CmdOrCtrl+Q`, shared exit-request helper, absence of `PredefinedMenuItem::quit`, and the existing `ExitRequested` handler; locked Rust formatting/tests/binary check; then one clean-commit macOS development `.app` launch against an empty isolated state root and one genuine application-menu or Cmd-Q exit, checking the shutdown POST, `server_state.status=stopped`, child exit, port release, and PID cleanup. |
+| Stop condition | Stop at the first source, compile, menu dispatch, structured shutdown, state, child, port, or PID failure. Do not treat `tell application ... to quit`, Force Quit, SIGKILL, logout, or power loss as this mechanism; do not run updater/install, native picker, DMG/NSIS, signing, notarization, Release, Feed, or shared-core regression. |
+| Result | Source gate passed on 2026-08-17; runtime gate remains pending. The custom macOS menu/shared-exit implementation passed 10 Python lifecycle contracts, locked Rust formatting, 16 library tests, 6 lifecycle integration tests, and the offline desktop binary check without warnings. The 12 documentation contracts passed after their one demonstrated omission—`tests/test_tauri_dev_app.py` absent from the architecture file map—was added and that category alone was rerun. Version synchronization and `git diff --check` passed. The prior clean-commit smoke used an external AppleScript application-quit request: the host and child exited and port/PID state cleared, but no shutdown POST was logged and `server_state.json` remained `ready`. That representative failure still blocks the Draft PR until one clean-commit custom menu/Cmd-Q runtime sample passes. |
 
 ### P1-S: public branch candidate content gate
 
@@ -103,8 +116,24 @@ the assembler labels dirty inputs `<HEAD>+dirty`.
    update-install delegation, then build one schema-3 macOS arm64 development
    `.app` and run one isolated L9 smoke. The five final decision scenarios
    still require real platform validation and are not claimed by that smoke.
-6. [ ] Build platform artifacts, perform each final RC smoke test once, and
-   create the public Release and Pages Feed only after their separate gates.
+6. [ ] Close P1-Q with one clean-commit custom application-menu/Cmd-Q smoke;
+   only then push `codex/tauri2-unified-desktop` and open a Draft PR.
+7. [ ] Let DCO, macOS and Windows CI identify the exact stable check names;
+   update the `main` ruleset only after those checks pass, and do not merge
+   without explicit owner approval.
+8. [ ] After the foundation PR is accepted, implement the missing
+   recovery/relaunch coordinator and deterministic Tauri NSIS/DMG/update-
+   archive assembly/verification as separate bounded development work. Do not
+   enable `update_install` before every failure path restores prior state.
+9. [ ] Exercise the five decision scenarios on development/alpha artifacts:
+   both startup surfaces; single instance and wrong port; Host RPC
+   authorization; valid/tampered update; and monitor stop before install.
+10. [ ] Only after the alpha/beta gates pass, cut a clean RC, run its one full
+    regression, build/sign/notarize both target-platform artifacts, and run
+    each platform's one final RC smoke.
+11. [ ] Create immutable Tag/Release assets and switch the GitHub Pages Feed
+    last, after provenance, redownload, source archive, SBOM and signature
+    checks all close.
 
 ## Foundation experiments
 
@@ -516,7 +545,7 @@ this table.
 | Decision changed by result | A pass establishes the first runnable Tauri development artifact and permits review through a Draft PR. A staging, compile, bundle layout, fixed-port ownership, health, homepage, or shutdown failure blocks publication of this implementation and is repaired only in the demonstrated category. |
 | Minimal sample | One arm64 macOS development `.app` built from the reviewed branch with the explicit project virtual-environment Python; inspect `Contents/Resources`, manifest SHA and prohibited inputs; launch once against a clean development state root; check fixed-port ownership, `/api/v1/health`, `/`, and clean exit. |
 | Stop condition | Stop at the first staging, build, layout, port, handshake, page, or exit failure. Do not create a DMG/update archive, use signing credentials, invoke a real updater, notarize, upload, publish a Release/Feed, or claim Windows/platform-release coverage. |
-| Result | Passed on 2026-08-17. The assembler staged only the allowed shared core, generated a schema-3 development manifest and explicit venv launcher, then built one local macOS arm64 `InvoiceHub.app`. Resource inspection found the manifest/launcher SHA bindings and no package manifest, user configuration, runtime state, virtual environment, business data, or `node_modules`. The local artifact carried only a development ad-hoc linker mark, not Developer ID, Team ID, CMS, resource sealing, notarization, or release provenance. One isolated launch owned exactly `127.0.0.1:8766`; health and background startup became ready, homepage/static assets loaded, `desktop_available=true` and the default `desktop` surface were observed, and normal shutdown exited cleanly with the port released, PID removed, and server state stopped. The first launch exposed a tray initialization failure from a 16-bit RGBA icon; converting the icon to 8-bit RGBA and adding an IHDR contract repaired that same mechanism before the one accepted smoke. No DMG, NSIS, update archive, real updater/download/install, native picker, browser/tray/second-instance scenario, Developer ID, notarization, upload, Release, Feed, or Windows smoke was run. |
+| Result | Partially passed on 2026-08-17. The assembler staged only the allowed shared core, generated a schema-3 development manifest and explicit venv launcher, then built one local macOS arm64 `InvoiceHub.app`. Resource inspection found the manifest/launcher SHA bindings and no package manifest, user configuration, runtime state, virtual environment, business data, or `node_modules`. The local artifact carried only a development ad-hoc linker mark, not Developer ID, Team ID, CMS, resource sealing, notarization, or release provenance. The isolated launch owned exactly `127.0.0.1:8766`; health and background startup became ready, homepage/static assets loaded, and `desktop_available=true` with the default `desktop` surface. The first launch exposed a tray initialization failure from a 16-bit RGBA icon; converting the icon to 8-bit RGBA and adding an IHDR contract repaired that mechanism. A later clean-commit exit recheck invalidated the original shutdown subclaim: an external AppleScript application-quit request bypassed the shutdown POST and left `server_state.json` at `ready`, even though host/child exit, port release, and PID cleanup occurred. P1-Q must replace only that failed exit evidence with a supported custom application-menu/Cmd-Q sample before a Draft PR. No DMG, NSIS, update archive, real updater/download/install, native picker, browser/tray/second-instance scenario, Developer ID, notarization, upload, Release, Feed, or Windows smoke was run. |
 
 ## Fixed scope and validation
 

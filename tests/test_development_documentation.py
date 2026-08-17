@@ -411,6 +411,33 @@ def test_current_tauri_docs_require_bounded_update_checks_and_confirmed_exit_cle
     assert "Drop kill fallback" not in plan
     assert "Drop fallback" not in platform
 
+    current_exit_docs = (
+        ROOT / "CHANGELOG.md",
+        ROOT / "README.md",
+        ROOT / "IMPLEMENTATION_STATUS.md",
+        ROOT / "docs" / "MIGRATION_GAP_CHECKLIST.md",
+        ROOT / "docs" / "MAC_WINDOWS_WORKFLOW.md",
+        ROOT / "docs" / "architecture" / "PLATFORM_ARCHITECTURE.md",
+        ROOT / "docs" / "release" / "UPDATE_SYSTEM.md",
+        ROOT / "src-tauri" / "README.md",
+    )
+    stale_exit_claims = (
+        "and orderly shutdown released the port and PID state",
+        "和正常退出，未触碰用户",
+        "启动和正常退出烟测",
+        "desktop 默认值和有序退出。",
+        "首页与有序退出",
+        "和正常 shutdown 后的端口/PID 清理",
+        "系统菜单、Cmd-Q 和其它 `ExitRequested` 都先",
+        "和正常退出检查",
+        "加载页面并正常退出",
+        "were observed, and orderly shutdown released",
+    )
+    for path in current_exit_docs:
+        text = path.read_text(encoding="utf-8")
+        for stale_claim in stale_exit_claims:
+            assert stale_claim not in text, f"{path.relative_to(ROOT)}: {stale_claim}"
+
 
 def test_public_history_sanitization_governance_is_consistent() -> None:
     record = HISTORY_SANITIZATION_EXECUTION.read_text(encoding="utf-8")

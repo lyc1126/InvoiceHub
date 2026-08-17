@@ -25,6 +25,6 @@
 
 ## 验证范围
 
-2026-08-16 的 L6-R 最小证据包含受控 Rust 1.85 离线 lifecycle contract（13 个 library、5 个 integration test），以及使用项目精确 runtime pins、`pytest==9.1.1`、`httpx2==2.9.1` 的隔离 Python 选择（31 个 tests，`DeprecationWarning` 视为错误）。后者证明的是进程内 API runtime/contract，不是 product FastAPI service 或 updater 运行。2026-08-17 的 L9 额外证明 development host 能在隔离 state root 启动 owned backend、加载页面并正常退出；development updater 被禁用，故 L9 不能成为下载、验签、monitor stop、安装、重启或 Feed 证据。精确命令、通过数量和未覆盖边界见 [Tauri 2 执行计划](TAURI2_EXECUTION_PLAN.md)。
+2026-08-16 的 L6-R 最小证据包含受控 Rust 1.85 离线 lifecycle contract（13 个 library、5 个 integration test），以及使用项目精确 runtime pins、`pytest==9.1.1`、`httpx2==2.9.1` 的隔离 Python 选择（31 个 tests，`DeprecationWarning` 视为错误）。后者证明的是进程内 API runtime/contract，不是 product FastAPI service 或 updater 运行。2026-08-17 的 L9 额外证明 development host 能在隔离 state root 启动 owned backend 并加载页面；外部 AppleScript quit 绕过结构化关闭，故旧退出子结论已撤回并等待 P1-Q 的自定义应用菜单/Cmd-Q 样本。development updater 被禁用，因此 L9 也不能成为下载、验签、monitor stop、安装、重启或 Feed 证据。精确命令、通过数量和未覆盖边界见 [Tauri 2 执行计划](TAURI2_EXECUTION_PLAN.md)。
 
 每个平台最终 RC 只执行一次真实更新烟测，覆盖合法更新、篡改签名、用户取消、monitor 停止失败和成功重启。此前先运行命中 API、前端、Rust 和元数据代码的聚焦测试；完整回归每个 RC 最多一次。

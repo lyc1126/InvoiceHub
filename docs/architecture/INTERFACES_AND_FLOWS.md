@@ -5,7 +5,7 @@
 > 校验规则：精确的当前本地与 GitHub HEAD 以实时 Git 引用和双向差异为准。
 > 状态说明：OCR 服务类接口与 Windows desktop surface 属于“未启用能力”；当前尚未创建公开 Tag、Release 或 Feed。Tauri 开发分支已有代码级 host 生命周期、Host RPC 和 update-install API，且 L6 已运行隔离 TestClient runtime contract。schema-3 development assembly 已构建且隔离烟测一个 macOS arm64 `.app`；裸 checkout 仍无 manifest 而 fail-closed，development updater 禁用，真实 updater 与平台 release smoke 尚未进行。
 
-Tauri L9 只验证一次 development-profile 运行流：host 用编译绑定的 manifest/launcher 启动 owned child，child 固定监听 `127.0.0.1:8766`，health/background ready 后加载首页和静态资源，并在正式 shutdown 后释放 PID 与端口。`INVOICE_HUB_DEV_STATE_ROOT` 只对 development host 可用，必须显式、绝对、已存在、canonicalize 后与 bundle/core 和完整 `.app` 容器双向不包含，`Contents` sibling 同样拒绝，且不传给 Python child；该流未调用真实 Feed/安装、原生 picker、browser/tray、单实例或打印，不能推断为任何发布接口已验收。
+Tauri L9 只验证一次 development-profile 组装与启动流：host 用编译绑定的 manifest/launcher 启动 owned child，child 固定监听 `127.0.0.1:8766`，health/background ready 后加载首页和静态资源。`INVOICE_HUB_DEV_STATE_ROOT` 只对 development host 可用，必须显式、绝对、已存在、canonicalize 后与 bundle/core 和完整 `.app` 容器双向不包含，`Contents` sibling 同样拒绝，且不传给 Python child。后续 clean-commit 外部 AppleScript quit 样本虽然释放了 child、PID 与端口，却绕过 shutdown POST 并留下 `server_state=ready`，因此原退出结论已撤回，等待 P1-Q 自定义应用菜单/Cmd-Q 样本重建；该流未调用真实 Feed/安装、原生 picker、browser/tray、单实例或打印，不能推断为任何发布接口已验收。
 
 ## 1. 从页面到真值的完整链路
 
@@ -156,6 +156,13 @@ allowed.desktop_available}` 形状并重新证明 ownership：desktop 创建空 
 只由 host-only opener 打开固定 localhost origin；托盘和第二实例重开同一 surface，desktop
 close 只隐藏窗口且不会调用 monitor stop。当前这条流程只做 source/contract verification，
 尚未打开真实 native picker、浏览器、托盘或窗口。
+
+macOS 应用菜单的 Quit 是自定义普通菜单项，显式绑定 `CmdOrCtrl+Q`；它与托盘 Quit
+只调用同一个 `app.exit(0)` 请求。不得使用会绑定 Cocoa `terminate:` 的 predefined
+Quit，因为该路径和外部 AppleScript quit 都可能绕过 Tauri `ExitRequested`。Host 收到
+`ExitRequested` 后，才调用结构化 `keep_monitor` shutdown；失败或超时后显式
+`kill + wait` owned child，无法确认退出则 `prevent_exit`。Force Quit、SIGKILL、注销和
+断电不属于这一有序退出协议。
 
 ### 3.5 业务资料夹与做账
 
