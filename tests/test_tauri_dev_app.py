@@ -169,7 +169,10 @@ def test_implicit_build_metadata_marks_dirty_worktrees(monkeypatch: pytest.Monke
     )
 
 
-def test_stage_rejects_non_venv_and_non_executable_python_paths(tmp_path: Path) -> None:
+def test_stage_rejects_non_venv_and_non_executable_python_paths(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
     module = _load_module()
     with pytest.raises(module.TauriDevAppError, match="absolute"):
         module.validate_venv_python(Path("python"))
@@ -186,6 +189,18 @@ def test_stage_rejects_non_venv_and_non_executable_python_paths(tmp_path: Path) 
     executable.parent.mkdir(parents=True)
     (venv / "pyvenv.cfg").write_text("home = test\n", encoding="utf-8")
     executable.write_text("not executable\n", encoding="utf-8")
+
+    # Windows does not apply POSIX execute-mode semantics to os.access(X_OK).
+    # Deny only this exact probe so every hosted platform exercises the same
+    # fail-closed production branch without weakening the surrounding checks.
+    real_access = module.os.access
+
+    def deny_broken_python(path: Path, mode: int) -> bool:
+        if Path(path) == executable and mode == module.os.X_OK:
+            return False
+        return real_access(path, mode)
+
+    monkeypatch.setattr(module.os, "access", deny_broken_python)
     with pytest.raises(module.TauriDevAppError, match="executable"):
         module.validate_venv_python(executable)
 

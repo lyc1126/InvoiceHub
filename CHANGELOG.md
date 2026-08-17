@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- 2026-08-17 Tauri Windows CI fixture repair: the development-app contract no
+  longer assumes that POSIX execute-mode bits control `os.access(..., X_OK)`
+  on Windows. Its non-executable virtual-environment sample now denies only
+  the exact executable-access probe, deterministically exercising the existing
+  fail-closed production branch on every hosted platform. Production staging,
+  validation, packaging, and runtime behavior are unchanged; focused and
+  hosted verification is recorded in the Tauri execution plan.
 - 2026-08-17 Tauri exit/update timeout repair: the macOS application menu now
   uses a custom Quit item with Cmd-Q, and both it and tray Quit request the
   common `app.exit(0)` path. Every received `ExitRequested` first performs the

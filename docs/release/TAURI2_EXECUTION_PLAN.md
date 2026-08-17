@@ -75,6 +75,16 @@ the assembler labels dirty inputs `<HEAD>+dirty`.
 | Stop condition | Stop at the first real credential, business-data, local-identity, runtime, or artifact finding. Do not clean the retired private graph, inspect ignored invoice outputs as release inputs, push, create a PR, alter repository settings, or publish. |
 | Result (2026-08-17) | Passed after one ambiguity-only classification rerun. The redacted directory scan reported four findings: three were generated, ignored `src-tauri/target` metadata from the locked `muda` dependency, and one was the already documented deterministic test-only ledger identifier false-positive category. The tracked/non-ignored candidate search found no user path, visualization/worktree path, private-key marker, credential pattern, certificate/key file, tracked runtime, invoice output, or release artifact. After P1-E expanded the source delta, a final temporary-index scan of exactly 50 modified/untracked non-ignored candidate files completed with no gitleaks finding, no local/worktree path, and no runtime or business-output path; its only non-text file is the expected 8-bit RGBA application icon. Ignored local CSV/XLSX outputs remain outside Git and release inputs. |
 
+### P1-W: Windows executable-path contract fixture repair
+
+| Field | Record |
+| --- | --- |
+| Hypothesis | The hosted Windows failure is confined to a POSIX-only test-fixture assumption: changing a temporary file's mode does not make `os.access(path, os.X_OK)` reject it on Windows. Replacing that host-filesystem assumption with a deterministic denial of the executable-access probe will exercise the existing fail-closed production branch on every platform without changing development-app behavior. |
+| Decision changed by result | A focused local pass permits one DCO fix-forward commit and a new branch push; the new hosted Windows pass then permits the three stable checks to become `main` ruleset requirements. Any failure keeps the ruleset unchanged and confines repair to `tests/test_tauri_dev_app.py` unless new evidence identifies a production defect. |
+| Minimal sample | One representative failing hosted Windows job log; one focused `tests/test_tauri_dev_app.py` run on the existing macOS environment; the documentation contract category and `git diff --check`; then the automatically triggered DCO, Windows, and macOS checks for the new commit. |
+| Stop condition | Stop at the first contradictory production-path finding, focused test failure, documentation failure, or new hosted failure mechanism. Do not rerun the old workflow, change `validate_venv_python`, expand into shared-core or release tests, rebuild the development `.app`, create an installer, merge, tag, release, or publish a Feed. |
+| Result | The source review and local portion passed on 2026-08-17. The development builder is macOS-arm64-only and its existing executable-access validation remains unchanged; only the POSIX-specific fixture was replaced. The focused development-app file passed 7 tests, the directly affected documentation selection passed 13 tests, and `git diff --check` passed. The two completed Windows runs for the previous head failed at the same single test, while DCO and macOS passed; only one Windows log is used as the representative sample. The new-head hosted DCO, Windows, and macOS result remains pending at this commit. |
+
 ## Operating rules
 
 | Change | Required verification | Rebuild |
@@ -117,8 +127,9 @@ the assembler labels dirty inputs `<HEAD>+dirty`.
    `.app` and run one isolated L9 smoke. The five final decision scenarios
    still require real platform validation and are not claimed by that smoke.
 6. [x] Close P1-Q with one clean-commit custom application-menu/Cmd-Q smoke.
-7. [ ] Push `codex/tauri2-unified-desktop`, open a Draft PR, and let DCO,
-   macOS, and Windows CI identify the exact stable check names.
+7. [x] Push `codex/tauri2-unified-desktop`, open Draft PR #7, and let DCO,
+   macOS, and Windows CI identify the exact stable check names. DCO and macOS
+   passed on the first PR head; Windows exposed the P1-W fixture defect above.
 8. [ ] Only after those checks pass, add them to the `main` ruleset and enable
    strict required-status policy; do not merge without explicit owner approval.
 9. [ ] After the foundation PR is accepted, implement the missing
