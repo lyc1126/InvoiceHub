@@ -1,4 +1,7 @@
+import json
 from pathlib import Path
+
+import pytest
 
 from invoice_hub.services.skins import SkinService
 from invoice_hub.targets import ensure_runtime_layout, load_config, target_profile_for
@@ -28,6 +31,37 @@ def test_runtime_layout_quarantines_file_conflict(tmp_path: Path) -> None:
 
     assert layout.runtime_dir.is_dir()
     assert any("conflicting file" in note for note in notes)
+
+
+def test_desktop_first_run_keeps_config_and_runtime_under_the_user_state_root(tmp_path: Path) -> None:
+    bundle_root = tmp_path / "bundle"
+    bundle_root.mkdir()
+    state_root = tmp_path / "user-state" / "InvoiceHub"
+    config_path = state_root / "config" / "app.local.json"
+
+    config = load_config(
+        bundle_root,
+        str(config_path),
+        initial_state_dir=state_root,
+    )
+    layout, _notes = ensure_runtime_layout(config)
+    stored = json.loads(config_path.read_text(encoding="utf-8"))
+
+    assert config.config_path == config_path.resolve()
+    assert config.watch_dir == (state_root / "发票文件").resolve()
+    assert layout.runtime_dir == (state_root / "runtime").resolve()
+    assert stored["watch_dir"] == str(state_root / "发票文件")
+    assert stored["runtime_dir"] == str(state_root / "runtime")
+    assert not layout.runtime_dir.is_relative_to(bundle_root.resolve())
+
+
+def test_desktop_initial_state_rejects_a_config_outside_its_user_root(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="must remain under"):
+        load_config(
+            tmp_path / "bundle",
+            str(tmp_path / "outside" / "app.local.json"),
+            initial_state_dir=tmp_path / "user-state" / "InvoiceHub",
+        )
 
 
 def test_skin_storage_uses_runtime_local_state_not_watch_dir(tmp_path: Path) -> None:

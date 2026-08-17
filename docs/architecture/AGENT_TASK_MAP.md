@@ -2,7 +2,7 @@
 
 > 作用：把自然语言任务转换成“先读哪里、从哪个符号开工、会影响什么、至少测什么”。
 > 公共权威基线：单一脱敏根提交；退休私有提交、Tag、包和验证材料不在公开图中。
-> 当前边界：候选树、Git 对象和托管面验证已完成；`v0.3.0-alpha.1` Tauri 2 可从公开后的 `main` 建立专门开发分支。
+> 当前边界：候选树、Git 对象和托管面验证已完成；`v0.3.0-alpha.1` Tauri 2 开发分支已从公开 `main` 建立，版本/环境/Cargo lock 与代码级 lifecycle/Host RPC/updater 和隔离 TestClient L6 contract 已通过受控验证。裸 checkout 仍缺经编译绑定 manifest；development assembler 已构建并隔离烟测一个 macOS arm64 `.app`，但尚无 Release。
 > 校验规则：精确的当前本地与 GitHub HEAD 以实时 Git 引用和双向差异为准。
 
 ## 1. 使用方法
@@ -185,9 +185,9 @@ flowchart TD
 | 首先阅读 | [平台架构](PLATFORM_ARCHITECTURE.md)第 5 至 8 节；接口流程第 3.2、6.12 节；`AGENTS.md` macOS 本地壳规则 |
 | 首要入口 | `BackendPaths.swift`、`LocalBackendController.swift`、`BuildHandshake.swift`、`InvoiceHubSparkleUpdater.swift`、`StartupSurface.swift`、`WebView.swift`、`InvoiceHubAPIClient.swift`、`InvoiceHubMacApp.swift`、开发与正式三个 release 脚本 |
 | 必须联动 | Python build/package/runtime manifest/health、OpenAPI 路由、API/做账协议/capabilities、固定端口、Application Support、owned/external、启动方式、Sparkle feed/key、升级标记与 monitor 恢复、原生面板和打印 identity |
-| 产物与消费者 | 开发 `.app`；正式 arm64 `.app/DMG/Sparkle ZIP`；三类 manifest/SBOM；Application Support 配置/runtime/PID/log；WKWebView 页面 |
-| 最低自动化 | `swift test`（更新恢复改动必须覆盖 marker 存在、verified owned startup release gate 后才可恢复，以及 external/失败拒绝）、build/release/update/Mac contract/API/前端测试、`bash -n`、JS syntax；开发构建改动再跑 `--build-only/--verify`，内部制品跑 `verify_macos_release.sh --expect-internal-adhoc`，正式制品跑 `--expect-notarized`；两模式必须互斥 |
-| 真实验收 | owned/external、desktop/browser、NSOpenPanel、单 ZIP、预览/打印、签名/notary/staple、quarantine、首次目录授权、Sparkle 旧版到新版且 monitor 恢复 |
+| 产物与消费者 | development schema-3 arm64 `.app`（本地 ignored）；正式 arm64 `.app/DMG/Sparkle ZIP`；三类 manifest/SBOM；Application Support 配置/runtime/PID/log；WKWebView 页面 |
+| 最低自动化 | `swift test`（更新恢复改动必须覆盖 marker 存在、verified owned startup release gate 后才可恢复，以及 external/失败拒绝）、build/release/update/Mac contract/API/前端测试、`bash -n`、JS syntax；Tauri development assembly 改动还跑 `tauri_dev_app.py` 的 stage/build contracts、manifest/launcher SHA、state-root 与 icon IHDR 测试，必要时一次隔离 launch；内部制品跑 `verify_macos_release.sh --expect-internal-adhoc`，正式制品跑 `--expect-notarized`；两模式必须互斥 |
+| 真实验收 | L9/P1-Q 已覆盖 development app 的 fixed-port owned backend、health/background、首页/静态资源、desktop 默认，以及真实 Cmd-Q 的 shutdown POST、stopped state、child/PID/端口清理；SSE 未及时退出时命中显式 kill+wait。外部终止仍不作可拦截承诺；仍需 owned/external、browser、NSOpenPanel、tray 点击/单实例、预览/打印、签名/notary/staple、quarantine、首次目录授权、Sparkle 旧版到新版且 monitor 恢复 |
 | 高风险提醒 | 不只凭 health.ok 连接；正式模式 core 只能来自 `Contents/Resources/invoice-hub-core`，无效时不得回退 checkout；握手不调用业务数据接口且请求有界；异步完成重验 generation/phase/PID；Sparkle、更新 monitor stop/restore 只接受 current owned token，外部不得有安装 bridge，且壳内菜单/侧栏/页面不得启用其 monitor 启停；marker 恢复必须等成功启动转为 verified owned running 并释放 startup gate，失败/external 仍走原启动收尾；不换端口或杀未知进程；只在确认 owned 进程退出后清 PID/ownership；通用 bridge 只开放给预期 localhost 主框架，打印子窗口只开放受限 print bridge |
 
 ## 13. 公开基线与新平台构建
@@ -195,12 +195,12 @@ flowchart TD
 | 导航项 | 内容 |
 |---|---|
 | 首先阅读 | 历史净化执行记录；AGENTS 开源冻结/Tauri 规则；接口流程第 6.11 至 6.13 节 |
-| 首要入口 | `version.py`、`release/*`、`HISTORY_SANITIZATION_EXECUTION.md`、`.github` 治理配置；`v0.3` 再增加 Tauri 版本同步、doctor/bootstrap 和 `src-tauri/` |
-| 必须联动 | LICENSE/NOTICE/贡献与安全文档、README/状态/架构地图、依赖锁、公开仓库设置、Release 元数据；Tauri 改动再联动 preferences/update API、Host RPC、monitor 生命周期和 Web 消费者 |
+| 首要入口 | `version.py`、`release/*`、`HISTORY_SANITIZATION_EXECUTION.md`、`.github` 治理配置；当前 `v0.3` 使用 `scripts/dev/tauri_version_sync.py`、`tauri_doctor.py`、`tauri_bootstrap.py`、`src-tauri/src/backend.rs` 和 `src-tauri/src/host_rpc.rs` |
+| 必须联动 | LICENSE/NOTICE/贡献与安全文档、README/状态/架构地图、依赖锁、公开仓库设置、Release 元数据；Tauri lifecycle/updater 改动再联动 `api/app.py` 的 install body/error/origin、`AppState` metadata approval、`platform/host_rpc.py`、monitor 子进程环境、Web consumers 与 Host RPC contracts |
 | 产物与消费者 | 新的 `v0.3` 才产生 NSIS、DMG/更新归档、Feed、源码归档、SBOM 和发布收据 |
-| 最低自动化 | 公开基线运行文档/许可证、候选内容和 all-ref secret/业务数据扫描；`v0.3` 先跑命中 Rust/前端/API 的聚焦测试，每个 RC 最多一次完整回归 |
+| 最低自动化 | 公开基线运行文档/许可证、候选内容和 all-ref secret/业务数据扫描；foundation 先跑版本同步、doctor fail-closed 与 pnpm lock 测试；lifecycle/updater 变更再跑 isolated Rust HMAC/identity/OpenAPI/post-preference revalidation/RPC revocation、manifest hash、candidate 主动 TTL/order、`.app/Contents` sibling state-root rejection、macOS custom menu/Cmd-Q 共用 `app.exit(0)` 且拒绝 predefined Quit，以及 Python host-RPC direct no-proxy transport、hosted strict `Cache-Control: no-cache` fresh-200/cache-ETag-304 rejection、host-check immediate-busy/approval-retention、non-host check bypass、install-lock immediate-error/approval-retention/no-second-RPC、empty-install-body/redacted-error TestClient contracts，每个 RC 最多一次完整回归 |
 | 真实验收 | `v0.3` 每平台最终 RC 一次安装、启动、目录选择、托盘与更新烟测，失败后仅重跑受影响类别 |
-| 高风险提醒 | 退休预公开包、receipt 和 Tag 不得重打、复用或上传。已完成的历史净化不授权创建 Release、Feed 或 Tauri 线，它们仍须满足各自门槛。每项实验先写假设、决策、最小样本和停止条件；相同失败机制只取一个代表样本。Tauri 不重写业务核心，未知 `127.0.0.1:8766` 占用必须失败，Host RPC token 不得暴露网页，安装前 monitor 停止失败或用户取消都不得改变运行状态。 |
+| 高风险提醒 | 退休预公开包、receipt 和 Tag 不得重打、复用或上传。已完成的历史净化不授权创建 Release、Feed 或 Tauri 线，它们仍须满足各自门槛。每项实验先写假设、决策、最小样本和停止条件；相同失败机制只取一个代表样本。Tauri 不重写业务核心，未知 `127.0.0.1:8766` 占用必须失败；owner proof 只可用 backend-private secret 加 fresh HMAC challenge，读取 preference 后必须再次复核才 arm，绝不可发送 bearer proof 给候选监听者；Host RPC token 只可由 host 传给直接启动的 backend，backend 捕获后必须从 descendant 环境清除，且不得暴露网页/API/日志，携带 token 的 Python loopback transport 必须禁用环境代理，picker timeout/error 不得泄露 host 细节。development state root 还必须与完整 `.app` 容器双向隔离，不能仅比较 `Contents/Resources`。同一进程具备 Tauri marker 与 private RPC 时，所有公开检查均为 strict install preflight；只有非 host 检查保留 cache/ETag/busy 路径。更新 approval 必须来自同一 session 内显式携带 `Cache-Control: no-cache` 的 fresh allowlisted Feed `200` body，cache/ETag/`304` 不可授权；检查锁竞争不得碰 metadata/candidate/既有 approval，安装锁竞争不得消费 approval 或发第二次 RPC；候选最多 300 秒并由 listener 主动清除。当前 install 只清除候选并 fail closed；完整 recovery/relaunch coordinator 实现后才可按下载+Minisign、停止并复核 monitor、安装/重启和失败恢复的顺序执行。 |
 
 归档身份补充：必须以 `text=auto` 把自动识别的普通文本固定 LF，不能用 `* text` 把二进制强制归类为文本；Windows 组装的 Git archive 必须显式禁用 `core.autocrlf`。最低自动化门禁同时要求 `autocrlf=true` 全新 checkout 无 tracked changes、二进制 blob/checkout/archive 字节一致，以及 true/false 两种 Git 配置实际导出后的 Core Build ID 相同；创建隔离 Git checkout 的动态契约还必须在普通源仓库和 `--depth 1 --no-local` 浅源仓库中都通过。
 
@@ -209,12 +209,14 @@ flowchart TD
 | 导航项 | 内容 |
 |---|---|
 | 首先阅读 | 发行计划、接口流程第 3.1/6.13 节；`docs/release/UPDATE_SYSTEM.md` |
-| 首要入口 | `services/update_service.py`、`release/update_metadata.py`、`version.py`、设置 About 模板/JS/CSS；`v0.3` 增加 Tauri updater 与 Host RPC adapter |
-| 必须联动 | package identity、preferences、启动后台 timer、事件、Feed、update install API、monitor lifecycle 和 Host RPC authorization |
+| 首要入口 | `services/update_service.py`、`services/app_state.py::check_for_updates/install_update`、`release/update_metadata.py`、`version.py`、`platform/host_rpc.py`、设置 About 模板/JS/CSS；`v0.3` 增加 Tauri updater 与 Host RPC adapter |
+| 必须联动 | package identity、preferences、启动后台 timer、事件、Feed、update install API 的 `{}` body/error、manifest hash、monitor lifecycle 和 Host RPC authorization |
 | 产物与消费者 | `v0.3` 生成 GitHub Pages Feed、签名更新资产和 Tauri 安装器 |
-| 最低自动化 | 覆盖合法/篡改更新和安装前 monitor 停止，另跑命中 API/前端/Rust 测试 |
+| 最低自动化 | 当前先覆盖 hosted fresh Feed `200` approval 与 cache/ETag/`304` rejection、host-check immediate-busy/approval-retention、non-host check bypass、install-lock immediate-error/approval-retention/no-second-RPC、candidate 主动过期/一次性清除、fail-closed install、空 install body/脱敏 503、自定义应用菜单/Cmd-Q 与 tray 共用 `app.exit(0)`、收到的 `ExitRequested` keep-monitor shutdown，以及 state-root/provenance 门禁；下载验签、monitor stop/recheck、安装/restart 只在 recovery/relaunch coordinator 实现后进入同一专题的最小测试 |
 | 真实验收 | 每平台对安装、取消、停止失败与成功重启进行一次最终 RC 烟测 |
-| 高风险提醒 | GET About 不联网，网页不能得到 Host RPC token 或任意 URL/路径/命令代理。`POST /api/v1/update/check` 保持兼容并委托 host，`POST /api/v1/update/install` 只在 host 能安全 stop monitor 后继续。 |
+| 高风险提醒 | GET About 不联网，token 只在 host 与其直接启动的 backend 私有通道中传递，绝不进入网页/API/日志或 descendant 环境，也不能成为任意 URL/路径/命令代理。同一进程具备 Tauri marker 与 private RPC 时，`POST /api/v1/update/check`、设置页和后台检查都必须走 strict preflight；只有非 host 检查不得被 host lifecycle 锁排队。host approval 锁竞争必须立即返回非持久化 busy，且不碰 metadata/candidate/既有 approval；install 锁竞争必须立即失败且不消费 approval 或发第二次 RPC。`POST /api/v1/update/install` 只接受 `{}`，且只由 fresh Feed `200` 与版本精确匹配的进程内 approval 委托 host。当前 host 取得请求后清除候选并返回不可用；未来 coordinator 才能先下载+Minisign 验签，再 stop/recheck monitor、安装并在失败时恢复。 |
+
+L6-RRRRR 追加门禁：hosted check 锁竞争必须在 busy 后直接返回，不能写 `updates.checked` 或等待 SQLite；该样本与 install 私有 RPC 抛错后的 `finally` 释放是不同的阻断机制，均需由 Host RPC Python 并发契约覆盖。
 
 ## 14. API、SQLite 与存储基础设施
 

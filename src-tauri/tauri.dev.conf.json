@@ -1,0 +1,12 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "bundle": {
+    "active": true,
+    "targets": ["app"],
+    "resources": {
+      ".dev-staging/invoice-hub-core": "invoice-hub-core",
+      ".dev-staging/invoice-hub-dev-launcher.sh": "invoice-hub-dev-launcher.sh",
+      ".dev-staging/invoicehub-desktop-host.json": "invoicehub-desktop-host.json"
+    }
+  }
+}

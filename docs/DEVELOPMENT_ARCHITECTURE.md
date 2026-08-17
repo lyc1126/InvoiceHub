@@ -1,10 +1,10 @@
 # InvoiceHub 开发架构与工程导航
 
 > 文档状态：当前开发实现的权威架构入口
-> 更新日期：2026-08-14
+> 更新日期：2026-08-17
 > 公共权威基线：经过审计的单一脱敏根提交；旧私有提交、Tag、二进制和验证材料不在公开图中
 > 公开状态：候选树、保留 Git 对象和托管面已完成一次内容与凭据审计；公开图从脱敏根提交开始，详见 `docs/release/HISTORY_SANITIZATION_EXECUTION.md`
-> 下一开发线：从公开 `main` 创建 `codex/tauri2-unified-desktop`，首个版本为 `0.3.0-alpha.1`
+> 当前开发线：`codex/tauri2-unified-desktop` 已从公开 `main` 建立，首个版本为 `0.3.0-alpha.1`；Tauri 已完成受控 lock、代码级生命周期/Host RPC/updater contracts、隔离 TestClient L6 API runtime，并构建且隔离烟测一个 macOS arm64 development `.app`。裸 checkout 仍缺经编译绑定 manifest 并 fail-closed；尚无 Release。
 > 校验规则：精确的本地与 GitHub HEAD 以实时 `git rev-parse`、`git ls-remote` 和双向差异为准；发行源码候选不等于双平台成品 RC 或 GitHub 已发布版本
 
 ## 1. 这套文档解决什么问题
@@ -51,6 +51,8 @@ InvoiceHub 不是只有一个 FastAPI 页面。它同时包含发票提取、文
 远端可达历史曾发现真实目录及私有标识。所有者已批准净化；在候选树、保留 Git 对象和托管面验证完成前，公开、Release、Feed 和 `v0.3` 分支创建均暂停。
 
 阻断解除后，`v0.3` 从公开后的 `main` 演进。Tauri 2 只提供窗口、托盘、单实例、原生面板、打印、后端生命周期、随机令牌 Host RPC 和 updater，继续复用 Python/FastAPI/Web/monitor 业务核心。它只能绑定 `127.0.0.1:8766`，未知端口占用必须失败；不能自动换端口或接入旧实例。
+
+当前代码边界已实现固定端口的 spawned-child ownership：Host 先读取 bundle manifest 的原始字节并要求 SHA-256 与编译期 `INVOICE_HUB_BUNDLE_MANIFEST_SHA256` 相等。裸源码 checkout 没有该输入，因此以状态 `78` 退出；development assembler 则从 allowlisted core、schema-3 manifest 和显式 venv launcher stage 资源后注入该哈希，release profile 仍需独立的正式发行输入。Host 以新 challenge 要求 backend 回传 HMAC-SHA256，随后复核 child PID、build/package identity、静态首页和 OpenAPI 的精确 HTTP 方法。读取严格的 `startup_surface` 偏好后，必须再次发起 fresh challenge/HMAC 与 identity 复核，才 arm 授权并选择 `desktop` 的无 IPC WebView 或 `browser` 的 host-only 固定 origin opener；托盘和单实例重开同一 surface，desktop 关闭只隐藏窗口且不停止 monitor。Tray Quit 与 macOS 自定义应用菜单/Cmd-Q 只请求同一个 `app.exit(0)`；应用菜单不使用会直接绑定原生 `terminate:` 的 predefined Quit。Host 收到 `ExitRequested` 后才请求结构化 `keep_monitor` shutdown 并有界等待 owned child，错误或超时后显式 `kill + wait`，无法确认 child 已退出则阻止 host 退出，不能依赖进程 `Drop`。外部 AppleScript quit、Force Quit 或信号可以绕过该事件，不属于有序退出承诺。Host 只把 Host RPC token 传给其直接启动的 Python backend，backend 启动时捕获并从 descendant 环境清除；token 不进入 Web、Tauri command/event、API 响应或日志，携带 token 的 private loopback 请求显式绕过环境代理。Rust dialog 最多 120 秒，Python 等待 125 秒并在四条 picker route 上把 private failure 固定映射为脱敏 503；release-host updater metadata 请求另有 5 秒总时限，不能永久占住 operation mutex。development profile 的 updater 委托明确禁用；它必须显式给出已存在、canonicalize 后与 bundle/core 及完整 macOS `.app` 容器双向不包含的绝对 `INVOICE_HUB_DEV_STATE_ROOT`，`Contents` sibling 同样拒绝，并在启动 Python child 前清除它。release-host `update_install` 也在 recovery/relaunch coordinator 完整实现前故意 fail closed：它只清除候选，不下载、不停 monitor、不安装或重启。L9/P1-Q 已使用隔离 state root 验证 `127.0.0.1:8766` owned backend、health/background ready、首页/静态资源、desktop 默认值，以及 clean-commit 样本上真实 Cmd-Q 的 shutdown POST、stopped state、host/backend/PID/端口清理；打开的 SSE 连接由显式 `kill + wait` 兜底收束，且未触碰真实 Application Support。外部终止仍不属于该结论。该样本没有覆盖原生面板、browser/tray、真实单实例、下载/安装、DMG、签名或任何平台 release smoke。
 
 源码采用单仓库共存，平台成品采用互斥边界：Windows 或 macOS 的 checkout 都可包含另一平台工程，但 Windows ZIP 与 macOS `.app/DMG/Sparkle ZIP` 的构建输入、依赖锁、运行时和启动器分别受独立白名单与反向平台拒绝门禁保护。共享 `src/`、`web/` 只避免业务分叉，不表示平台壳或 runtime 可以交叉进入成品。
 
@@ -254,7 +256,7 @@ BAT/页面/monitor 触发
 | 架构债务 | 路径规范化在 `targets`、`monitoring`、成本和选择合计中有不同语境实现 | 不能仅凭函数同名就机械合并 |
 | 架构债务 | `base_head.html` 存在，但页面仍各自维护 head 和资源版本 | 静态资源变更必须逐模板核对版本参数 |
 | 架构债务 | 当前前端自动化主要是静态契约测试 | UI 改动仍需要真实浏览器/DOM 验收 |
-| 架构债务 | Windows 首版没有内置桌面 WebView 壳 | `startup_surface=desktop` 必须在 Windows fail closed；不能让设置项暗示已实现 |
+| 架构债务 | Windows 首版没有内置桌面 WebView 壳 | macOS development `.app` 的单次 L9 smoke 不改变这一事实；`startup_surface=desktop` 仍须在当前 Windows source/portable 路径 fail closed，不能让设置项暗示已实现 |
 | 发布阻断 | Windows 与 macOS 正式脚本已实现但真机/签名证据未齐 | 自动化通过不等于 ZIP/DMG 已放行，必须分别执行平台手册 |
 | 未启用能力 | OCR 页面和 API 保留候选文件入口 | core 包未内置正式本地 OCR，提取接口返回禁用状态 |
 | 当前实现 | SQLite 建有 `settings` 和 `cache` 表 | 当前主要业务消费者集中在 `tasks/events`，不能误称已有数据库主存储 |

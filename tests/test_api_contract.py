@@ -1,4 +1,6 @@
 import importlib
+import hashlib
+import hmac
 import json
 import multiprocessing
 import os
@@ -13,6 +15,7 @@ from zipfile import ZipFile
 from fastapi.testclient import TestClient
 
 from invoice_hub.api.app import _resolve_event_stream_cursor, create_app
+from invoice_hub.platform import host_rpc
 from invoice_hub.monitoring.state import MonitorState
 from invoice_hub.projections.cost_analysis import DETAIL_HEADERS
 from invoice_hub.projections.summary import SUMMARY_HEADERS
@@ -93,6 +96,66 @@ raise SystemExit(main())
     assert payload["startup_calls"] == ["startup_sync"]
     assert payload["root_dir"] == str(tmp_path.resolve())
     assert payload["config_path"] == str(config_path.resolve())
+
+
+def test_cli_initial_state_dir_bootstraps_user_writable_config_and_runtime(tmp_path: Path) -> None:
+    script = r"""
+import json
+import sys
+
+from invoice_hub.services.app_state import AppState
+
+AppState.run_background_diagnostics = lambda self, trigger="startup_sync": None
+
+import uvicorn
+
+def fake_run(app, **kwargs):
+    config = app.state.invoice_hub.config
+    print(json.dumps({
+        "config_path": str(config.config_path),
+        "watch_dir": str(config.watch_dir),
+        "runtime_dir": str(app.state.invoice_hub.layout.runtime_dir),
+    }))
+
+uvicorn.run = fake_run
+sys.argv = [
+    "invoice-hub",
+    "--root", sys.argv[1],
+    "--config", sys.argv[2],
+    "--initial-state-dir", sys.argv[3],
+]
+from invoice_hub.api.main import main
+raise SystemExit(main())
+"""
+    bundle_root = tmp_path / "bundle"
+    state_root = tmp_path / "user-state" / "InvoiceHub"
+    config_path = state_root / "config" / "app.local.json"
+    (bundle_root / "web" / "templates").mkdir(parents=True)
+    (bundle_root / "web" / "static").mkdir(parents=True)
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(Path(__file__).resolve().parents[1] / "src")
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            script,
+            str(bundle_root),
+            str(config_path),
+            str(state_root),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+    payload = json.loads(result.stdout.strip().splitlines()[-1])
+    assert payload == {
+        "config_path": str(config_path.resolve()),
+        "watch_dir": str((state_root / "发票文件").resolve()),
+        "runtime_dir": str((state_root / "runtime").resolve()),
+    }
 
 
 def test_cli_rejects_abbreviated_long_options(tmp_path: Path) -> None:
@@ -413,6 +476,49 @@ def test_preferences_api_defaults_and_persistence(tmp_path: Path, monkeypatch) -
     assert "Windows 便携版" in unsupported_desktop.json()["detail"]
 
 
+def test_tauri_host_preferences_default_to_desktop_and_keep_explicit_surface(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr("invoice_hub.services.app_state.AppState.run_background_diagnostics", lambda self, trigger="startup_sync": None)
+    monkeypatch.setenv("INVOICE_HUB_DESKTOP_HOST", "tauri")
+
+    for platform in ("windows", "macos"):
+        app = create_app(tmp_path / platform)
+        app.state.invoice_hub._package_manifest["platform"] = platform
+        client = TestClient(app)
+        preferences_path = tmp_path / platform / "runtime" / "local_state" / "preferences.json"
+
+        initial = client.get("/api/v1/preferences").json()
+        assert initial["preferences"]["startup_surface"] == "desktop"
+        assert initial["allowed"]["desktop_available"] is True
+
+        preferences_path.parent.mkdir(parents=True, exist_ok=True)
+        preferences_path.write_text(json.dumps({"startup_surface": "browser"}), encoding="utf-8")
+        assert client.get("/api/v1/preferences").json()["preferences"]["startup_surface"] == "browser"
+
+        preferences_path.write_text(json.dumps({"startup_surface": "desktop"}), encoding="utf-8")
+        preserved = client.get("/api/v1/preferences").json()
+        assert preserved["preferences"]["startup_surface"] == "desktop"
+        assert preserved["allowed"]["desktop_available"] is True
+        assert client.put("/api/v1/preferences", json={"startup_surface": "desktop"}).status_code == 200
+
+
+def test_portable_windows_keeps_legacy_desktop_but_cannot_select_it(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr("invoice_hub.services.app_state.AppState.run_background_diagnostics", lambda self, trigger="startup_sync": None)
+    monkeypatch.delenv("INVOICE_HUB_DESKTOP_HOST", raising=False)
+    app = create_app(tmp_path)
+    app.state.invoice_hub._package_manifest["platform"] = "windows"
+    client = TestClient(app)
+    preferences_path = tmp_path / "runtime" / "local_state" / "preferences.json"
+    preferences_path.parent.mkdir(parents=True, exist_ok=True)
+    preferences_path.write_text(json.dumps({"startup_surface": "desktop"}), encoding="utf-8")
+
+    loaded = client.get("/api/v1/preferences").json()
+    assert loaded["preferences"]["startup_surface"] == "desktop"
+    assert loaded["allowed"]["desktop_available"] is False
+    rejected = client.put("/api/v1/preferences", json={"startup_surface": "desktop"})
+    assert rejected.status_code == 422
+    assert client.put("/api/v1/preferences", json={"startup_surface": "browser"}).status_code == 200
+
+
 def test_about_api_is_local_only_and_update_check_payload_is_strict(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr("invoice_hub.services.app_state.AppState.run_background_diagnostics", lambda self, trigger="startup_sync": None)
     app = create_app(tmp_path)
@@ -431,6 +537,51 @@ def test_about_api_is_local_only_and_update_check_payload_is_strict(tmp_path: Pa
 
     assert client.post("/api/v1/update/check", json={"force": "yes"}).status_code == 400
     assert client.post("/api/v1/update/check", json={"force": True, "url": "https://example.com"}).status_code == 400
+
+
+def test_host_delegated_update_install_requires_an_empty_body_and_redacts_failures(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr("invoice_hub.services.app_state.AppState.run_background_diagnostics", lambda self, trigger="startup_sync": None)
+    monkeypatch.setattr(host_rpc, "_captured_configuration", ("", ""))
+    monkeypatch.delenv(host_rpc.HOST_RPC_URL_ENV, raising=False)
+    monkeypatch.delenv(host_rpc.HOST_RPC_TOKEN_ENV, raising=False)
+    app = create_app(tmp_path)
+    client = TestClient(app)
+    calls: list[bool] = []
+
+    def successful_install() -> dict:
+        calls.append(True)
+        return {"ok": True}
+
+    monkeypatch.setattr(app.state.invoice_hub, "install_update", successful_install)
+
+    assert client.post("/api/v1/update/install", json={"version": "0.3.0-alpha.2"}).status_code == 400
+    assert client.post("/api/v1/update/install", json=[]).status_code == 400
+    assert client.post("/api/v1/update/install", content=b"{", headers={"Content-Type": "application/json"}).status_code == 400
+    assert client.post(
+        "/api/v1/update/install",
+        headers={"Origin": "https://attacker.example"},
+        json={},
+    ).status_code == 403
+    assert client.post("/api/v1/update/install", json={}).json() == {"ok": True}
+    assert calls == [True]
+
+    def unavailable_install() -> dict:
+        raise host_rpc.HostRpcError("token=should-not-reach-the-browser")
+
+    monkeypatch.setattr(app.state.invoice_hub, "install_update", unavailable_install)
+    unavailable = client.post("/api/v1/update/install", json={})
+    assert unavailable.status_code == 503
+    assert unavailable.json() == {"detail": "Update installation unavailable"}
+    assert "token=" not in unavailable.text
+
+    monkeypatch.setattr(host_rpc, "_captured_configuration", ("http://127.0.0.1:43123/v1/host-rpc", "a" * 64))
+    assert client.post("/api/v1/update/install", json={}).status_code == 403
+    monkeypatch.setattr(app.state.invoice_hub, "install_update", successful_install)
+    assert client.post(
+        "/api/v1/update/install",
+        headers={"Origin": host_rpc.HOST_RPC_EXPECTED_ORIGIN},
+        json={},
+    ).json() == {"ok": True}
 
 def test_server_shutdown_api_preserves_or_stops_monitor_and_finalizes_state(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr("invoice_hub.services.app_state.AppState.run_background_diagnostics", lambda self, trigger="startup_sync": None)
@@ -2717,6 +2868,55 @@ def test_native_picker_contract_can_be_mocked(tmp_path: Path, monkeypatch) -> No
     assert payload["ok"] is True
     assert payload["selected"] is True
     assert payload["validation"]["can_monitor"] is True
+
+
+def test_native_picker_routes_reject_cross_origin_writes(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr("invoice_hub.services.app_state.AppState.run_background_diagnostics", lambda self, trigger="startup_sync": None)
+    app = create_app(tmp_path)
+    client = TestClient(app)
+
+    for path in (
+        "/api/v1/settings/pick-watch-dir",
+        "/api/v1/documents/pick-outbound-dir",
+        "/api/v1/ocr/pick-file",
+        "/api/v1/ocr/pick-folder",
+    ):
+        response = client.post(path, headers={"Origin": "https://attacker.example"})
+        assert response.status_code == 403
+
+
+def test_tauri_picker_routes_require_the_exact_localhost_origin(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr("invoice_hub.services.app_state.AppState.run_background_diagnostics", lambda self, trigger="startup_sync": None)
+    monkeypatch.setattr(host_rpc, "_captured_configuration", ("", ""))
+    monkeypatch.setenv(host_rpc.HOST_RPC_URL_ENV, "http://127.0.0.1:43123/v1/host-rpc")
+    monkeypatch.setenv(host_rpc.HOST_RPC_TOKEN_ENV, "a" * 64)
+    client = TestClient(create_app(tmp_path))
+
+    for origin in ("", "https://127.0.0.1:8766", "http://127.0.0.1:8766/untrusted"):
+        headers = {"Origin": origin} if origin else {}
+        response = client.post("/api/v1/settings/pick-watch-dir", headers=headers)
+        assert response.status_code == 403
+
+
+def test_desktop_host_challenge_is_private_and_not_part_of_the_public_openapi(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr("invoice_hub.services.app_state.AppState.run_background_diagnostics", lambda self, trigger="startup_sync": None)
+    secret = "a" * 64
+    challenge = "b" * 64
+    monkeypatch.setenv(host_rpc.DESKTOP_HOST_SECRET_ENV, secret)
+    app = create_app(tmp_path)
+    client = TestClient(app)
+
+    assert client.get("/api/v1/internal/desktop-host-proof").status_code == 400
+    response = client.get(
+        "/api/v1/internal/desktop-host-proof",
+        headers={"X-InvoiceHub-Desktop-Host-Challenge": challenge},
+    )
+    assert response.status_code == 204
+    assert response.headers["X-InvoiceHub-Desktop-Host-Response"] == hmac.new(
+        bytes.fromhex(secret), challenge.encode("ascii"), hashlib.sha256
+    ).hexdigest()
+    assert host_rpc.DESKTOP_HOST_SECRET_ENV not in os.environ
+    assert "/api/v1/internal/desktop-host-proof" not in client.get("/openapi.json").json()["paths"]
 
 
 def test_settings_rename_invoice_files_keeps_manual_fields_and_rebuilds(tmp_path: Path) -> None:

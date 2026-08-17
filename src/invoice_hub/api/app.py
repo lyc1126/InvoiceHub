@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import hmac
 import html
 import json
 import os
+import re
 import signal
 import threading
 from collections.abc import Callable
@@ -16,6 +19,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
 
+from invoice_hub.platform import host_rpc
 from invoice_hub.projections.documents import DocumentError
 from invoice_hub.services import (
     AppState,
@@ -37,6 +41,14 @@ PREVIEW_CONTENT_HEADERS = {
     "Cache-Control": "private, no-store",
     "X-Content-Type-Options": "nosniff",
 }
+
+DESKTOP_HOST_CHALLENGE_HEADER = "x-invoicehub-desktop-host-challenge"
+DESKTOP_HOST_RESPONSE_HEADER = "X-InvoiceHub-Desktop-Host-Response"
+_DESKTOP_HOST_VALUE_PATTERN = re.compile(r"[0-9a-f]{64}")
+NATIVE_PICKER_FAILURE_STATUS = 503
+NATIVE_PICKER_FAILURE_DETAIL = "Native picker unavailable"
+UPDATE_INSTALL_FAILURE_STATUS = 503
+UPDATE_INSTALL_FAILURE_DETAIL = "Update installation unavailable"
 
 
 def _schedule_process_shutdown(state: AppState, delay_seconds: float = 0.8) -> None:
@@ -77,6 +89,70 @@ def _require_same_origin_write(request: Request) -> None:
     host = str(request.headers.get("host") or "").strip().casefold()
     if urlsplit(origin).netloc.casefold() != host:
         raise HTTPException(status_code=403, detail="跨来源写请求已拒绝")
+
+
+def _require_native_picker_origin(request: Request) -> None:
+    if host_rpc.is_configured():
+        origin = str(request.headers.get("origin") or "").strip()
+        if origin != host_rpc.HOST_RPC_EXPECTED_ORIGIN:
+            raise HTTPException(status_code=403, detail="Tauri 原生选择器请求来源无效")
+        return
+    _require_same_origin_write(request)
+
+
+def _require_host_update_origin(request: Request) -> None:
+    if host_rpc.is_configured():
+        origin = str(request.headers.get("origin") or "").strip()
+        if origin != host_rpc.HOST_RPC_EXPECTED_ORIGIN:
+            raise HTTPException(status_code=403, detail="Tauri 更新请求来源无效")
+        return
+    _require_same_origin_write(request)
+
+
+def _run_native_picker(action: Callable[[], dict]) -> dict:
+    try:
+        return action()
+    except host_rpc.HostRpcError:
+        # Host credentials or endpoint details must not cross the public API boundary.
+        raise HTTPException(
+            status_code=NATIVE_PICKER_FAILURE_STATUS,
+            detail=NATIVE_PICKER_FAILURE_DETAIL,
+        ) from None
+
+
+def _run_host_update_install(action: Callable[[], dict]) -> dict:
+    try:
+        return action()
+    except host_rpc.HostRpcError:
+        # Host candidate, endpoint, and updater failures stay outside the Web API.
+        raise HTTPException(
+            status_code=UPDATE_INSTALL_FAILURE_STATUS,
+            detail=UPDATE_INSTALL_FAILURE_DETAIL,
+        ) from None
+
+
+def _consume_desktop_host_secret() -> bytes | None:
+    raw = str(os.environ.pop(host_rpc.DESKTOP_HOST_SECRET_ENV, "") or "").strip()
+    if not _DESKTOP_HOST_VALUE_PATTERN.fullmatch(raw):
+        return None
+    return bytes.fromhex(raw)
+
+
+def _desktop_host_challenge_response(request: Request) -> Response:
+    secret = getattr(request.app.state, "desktop_host_secret", None)
+    challenge = str(request.headers.get(DESKTOP_HOST_CHALLENGE_HEADER) or "").strip()
+    if not isinstance(secret, bytes) or len(secret) != 32:
+        raise HTTPException(status_code=404, detail="桌面宿主证明未启用")
+    if not _DESKTOP_HOST_VALUE_PATTERN.fullmatch(challenge):
+        raise HTTPException(status_code=400, detail="桌面宿主挑战无效")
+    response = hmac.new(secret, challenge.encode("ascii"), hashlib.sha256).hexdigest()
+    return Response(
+        status_code=204,
+        headers={
+            DESKTOP_HOST_RESPONSE_HEADER: response,
+            "Cache-Control": "no-store",
+        },
+    )
 
 
 def _bookkeeping_error_response(exc: Exception) -> JSONResponse:
@@ -249,19 +325,29 @@ def create_app(
     root_dir: Path | None = None,
     config_path: str | None = None,
     shutdown_scheduler: Callable[[AppState], None] | None = None,
+    *,
+    initial_state_dir: Path | None = None,
 ) -> FastAPI:
     # Prime the bookkeeping package before FastAPI dispatches sync routes to
     # multiple worker threads. Concurrent first imports can deadlock on Python 3.14.
     import invoice_hub.bookkeeping
 
+    host_rpc.capture_environment()
+    desktop_host_secret = _consume_desktop_host_secret()
     root = Path(root_dir or os.environ.get("INVOICE_HUB_ROOT") or ROOT_DIR).resolve()
     explicit_config = config_path or os.environ.get("INVOICE_HUB_CONFIG")
-    state = create_state(root, explicit_config)
+    initial_state = initial_state_dir or os.environ.get("INVOICE_HUB_INITIAL_STATE_DIR")
+    state = create_state(
+        root,
+        explicit_config,
+        initial_state_dir=Path(initial_state).resolve() if initial_state else None,
+    )
     web_dir = root / "web"
     if not (web_dir / "templates").exists():
         web_dir = WEB_DIR
     app = FastAPI(title="一站式发票汇总系统", version=PRODUCT_VERSION)
     app.state.invoice_hub = state
+    app.state.desktop_host_secret = desktop_host_secret
     app.state.shutdown_scheduler = shutdown_scheduler or _schedule_process_shutdown
     app.mount("/static", StaticFiles(directory=str(web_dir / "static")), name="static")
 
@@ -368,6 +454,10 @@ def create_app(
     def health(request: Request) -> dict:
         return _state(request).health()
 
+    @app.get("/api/v1/internal/desktop-host-proof", include_in_schema=False)
+    def desktop_host_proof(request: Request) -> Response:
+        return _desktop_host_challenge_response(request)
+
     @app.get("/api/v1/about")
     def about(request: Request) -> dict:
         return _state(request).about()
@@ -385,6 +475,17 @@ def create_app(
         if not isinstance(force, bool):
             raise HTTPException(status_code=400, detail="force 必须是布尔值")
         return await run_in_threadpool(_state(request).check_for_updates, force=force)
+
+    @app.post("/api/v1/update/install")
+    async def install_update(request: Request) -> dict:
+        _require_host_update_origin(request)
+        try:
+            payload = await request.json()
+        except (json.JSONDecodeError, UnicodeError):
+            raise HTTPException(status_code=400, detail="更新安装参数必须是 JSON 对象")
+        if not isinstance(payload, dict) or payload:
+            raise HTTPException(status_code=400, detail="更新安装参数必须为空对象")
+        return await run_in_threadpool(_run_host_update_install, _state(request).install_update)
 
     @app.get("/api/v1/settings")
     def get_settings(request: Request) -> dict:
@@ -427,7 +528,8 @@ def create_app(
 
     @app.post("/api/v1/settings/pick-watch-dir")
     def pick_watch_dir(request: Request) -> dict:
-        return _state(request).pick_watch_dir()
+        _require_native_picker_origin(request)
+        return _run_native_picker(_state(request).pick_watch_dir)
 
     @app.post("/api/v1/settings/recent-watch-dirs/remove")
     async def remove_recent_watch_dir(request: Request) -> dict:
@@ -609,7 +711,8 @@ def create_app(
 
     @app.post("/api/v1/documents/pick-outbound-dir")
     def documents_pick_outbound_dir(request: Request) -> dict:
-        return _state(request).pick_outbound_invoice_dir()
+        _require_native_picker_origin(request)
+        return _run_native_picker(_state(request).pick_outbound_invoice_dir)
 
     @app.post("/api/v1/documents/validate-outbound-dir")
     async def documents_validate_outbound_dir(request: Request) -> dict:
@@ -1039,11 +1142,13 @@ def create_app(
 
     @app.post("/api/v1/ocr/pick-file")
     def ocr_pick_file(request: Request) -> dict:
-        return _state(request).pick_ocr_file()
+        _require_native_picker_origin(request)
+        return _run_native_picker(_state(request).pick_ocr_file)
 
     @app.post("/api/v1/ocr/pick-folder")
     def ocr_pick_folder(request: Request) -> dict:
-        return _state(request).pick_ocr_folder()
+        _require_native_picker_origin(request)
+        return _run_native_picker(_state(request).pick_ocr_folder)
 
     @app.post("/api/v1/ocr/list-files")
     async def ocr_list_files(request: Request) -> dict:

@@ -17,11 +17,14 @@ credential scanner alert was a deterministic test-only ledger identifier; it
 is a non-secret false-positive category and its value is intentionally not
 recorded here.
 
-The public repository has no public tag, Release asset, Pages deployment, or
-Tauri development branch. Its security governance enables DCO, Dependabot,
-Secret Scanning, Push Protection, and private vulnerability reporting. A
-post-public inventory remains required after any ref-creating governance work
-to prove every public ref is a descendant of the sanitized root.
+The public repository has no public tag, Release asset, or Pages deployment.
+The `codex/tauri2-unified-desktop` development line has been prepared from the
+sanitized public `main`; it remains a source/Draft-PR line and does not create
+binary, Tag, Release, Feed, or platform-release evidence. Security governance
+enables DCO, Dependabot, Secret Scanning, Push Protection, and private
+vulnerability reporting. A post-public inventory remains required after any
+ref-creating governance work to prove every public ref is a descendant of the
+sanitized root.
 
 ## Published Ref Policy
 

@@ -13,7 +13,7 @@ English project name: `InvoiceHub`.
 本项目采用 monorepo：无论在 Windows 还是 macOS 执行 `git clone`，源码目录都会同时包含共享的 `src/`、`web/`、Windows 入口 `scripts/windows/` 和 macOS 壳 `macos/InvoiceHubMac/`。看到另一平台源码不代表最终包体混合，也不应在 Windows checkout 中手工删除 `macos/`。
 
 - Windows 源码开发只通过根 BAT 的 `-Development` 模式调用当前 checkout；正式发布只运行 Windows 构建脚本，产出 `windows-x64-portable.zip`。验包器使用精确路径白名单，并拒绝 macOS 壳、Swift/bundle、Mac 依赖锁和 Unix Python runtime。
-- macOS 开发和发布只通过 `macos/InvoiceHubMac/` 下的脚本；正式 `.app`、DMG 和 Sparkle ZIP 只嵌入共享核心、Mac 锁和 arm64 Python。验包器扫描整个 `Resources`，拒绝 Windows BAT/PowerShell、Windows 锁与 `.exe/.dll/.pyd/.msi/.msix`。
+- 当前 Tauri macOS development `.app` 由 `scripts/dev/tauri_dev_app.py` 组装：它只复制允许的共享 core、使用显式 venv launcher 和 schema-3 development manifest，并只构建 arm64 `.app`。旧的 `macos/InvoiceHubMac/` SwiftUI/WKWebView 工程仍是平台参考实现；正式 `.app`、DMG 和更新归档仍需单独的 release assembly。所有 macOS 成品验包都扫描整个 `Resources`，拒绝 Windows BAT/PowerShell、Windows 锁与 `.exe/.dll/.pyd/.msi/.msix`。
 - 两个平台共享同一 `RC_SHA` 和 core build ID，但 package ID、运行时、启动器、可写目录和成品文件互不复用。源码共存用于避免业务算法分叉，成品互斥用于避免平台文件混包。
 
 ## 快速启动
@@ -50,7 +50,9 @@ http://127.0.0.1:8766/
 
 普通导航面向日常操作，保留首页、成本分析、单据、做账、OCR、一致性和设置。`/settings` 按概览、目录与产物、运行与监控、单据、外观、偏好、OCR 和诊断分类展示当前系统状态；当前已开放安全配置、日常运行控制和低风险展示偏好：发票目录选择/检查/保存/最近目录删除、出库发票目录选择/保存/最近目录删除、入库单/出库单默认信息编辑、皮肤启用和恢复默认外观，刷新运行状态、启动/停止独立监控 daemon、手动重新汇总、打开监控日志、打开运行状态目录和关闭本系统，以及成本页默认显示行数、长路径显示方式、已导出单据处理策略、OCR 候选目录与系统关闭方式偏好。关闭方式默认“每次询问”，弹窗可选择“保留监控，仅关闭 WebUI”或“关闭 WebUI，并停止监控”，底部“记住本次选择”会保存所选方式；偏好分类可随时改回询问或切换固定行为。macOS 壳连接 `externalCompatible` 后端时会禁用 Web 设置页关闭及 monitor 启动/停止入口，原生菜单和侧栏也不会改变该未知服务；这限制当前壳的所有权动作，不把 localhost API 误当作多客户端权限系统。owned 壳的原生停止固定保留 monitor。目录选择仍保持“待保存目录”草稿，自动刷新和 SSE 重连不会覆盖未保存输入；偏好不改变发票源文件、普通汇总、成本 CSV/XLSX/JSON 或开票参考行级加价率口径；高级诊断中可复制摘要、运行配置健康检查并导出不含源发票和投影正文的支持包，备份恢复仍未开放。皮肤 ZIP 导入和替换继续保留在 `/skins`，从设置中心“外观”分类进入；皮肤异常时可用 `/settings?no_skin=1` 临时绕过当前皮肤。
 
-设置现另有“关于”分类：显示版本、更新通道、平台/架构、包类型、package ID、core build ID 和公开链接；`GET /api/v1/about` 只读本地信息，不会联网。用户点击“检查更新”或开启“启动后自动检查”后，系统才访问固定 HTTPS 白名单 Feed；发现更高 beta 时在关于标签和版本卡显示绿色上箭头，并列出版本、发布时间、包大小、SHA-256 和发行说明，由用户决定是否升级。Windows 首版只支持系统默认浏览器，桌面窗口选项明确禁用；macOS 可在“桌面窗口/系统默认浏览器”之间选择，下次启动生效。Windows 使用新目录解压与白名单设置迁移，macOS 安装交给 Sparkle，任何更新检查失败都不影响本地发票功能。
+设置现另有“关于”分类：显示版本、更新通道、平台/架构、包类型、package ID、core build ID 和公开链接；`GET /api/v1/about` 只读本地信息，不会联网。用户点击“检查更新”或开启“启动后自动检查”后，系统才访问固定 HTTPS 白名单 Feed；发现更高 beta 时在关于标签和版本卡显示绿色上箭头，并列出版本、发布时间、包大小、SHA-256 和发行说明，由用户决定是否升级。当前公开源码的 Windows 入口仍只支持系统默认浏览器，桌面窗口选项明确禁用；macOS 参考壳可在“桌面窗口/系统默认浏览器”之间选择，下次启动生效。`v0.3` Tauri host 已有源码级 desktop/browser、托盘、单实例、close-to-hide 和 host 委托更新边界：在同一进程同时具备 Tauri marker 与 private Host RPC 时，关于页/API/后台 timer 的检查都是 strict install preflight；只有非 Tauri/非 host 检查不排队 host lifecycle 并保留 cache/ETag/busy 行为。host approval 只能来自同一 session 内显式携带 `Cache-Control: no-cache`、不带 ETag 的 fresh allowlisted Feed `200` body，检查锁竞争立即返回不持久化 busy 并保留既有 approval，install 锁竞争立即失败且不消费 approval 或发送第二次 RPC，缓存、ETag 和 `304` 均不可授权。Host updater metadata 请求固定 5 秒总时限；host candidate 由 listener 主动在 300 秒后清除。在完整 recovery/relaunch coordinator 出现前，install 请求只清除候选并返回不可用，不下载、不停止 monitor、不安装或重启。托盘 Quit 与 macOS 自定义应用菜单/Cmd-Q 共用 `app.exit(0)`；收到的 `ExitRequested` 使用结构化 `keep_monitor` 关闭，错误/超时后显式 kill+wait owned backend，无法确认退出时阻止 host 退出。应用菜单不使用会直接触发原生 `terminate:` 的 predefined Quit；外部 AppleScript quit、Force Quit 或信号可能绕过该事件，不属于有序退出承诺。下载+Minisign 验签、停止并独立复核 monitor、安装/重启是未来 coordinator 必须保持的顺序。checkout 缺少经编译绑定的 bundle manifest，尚未替换任何用户入口、安装器或真实 updater，也未做真实平台验收。Windows 使用新目录解压与白名单设置迁移，macOS 安装交给现有 Sparkle 参考实现，任何更新检查失败都不影响本地发票功能。
+
+hosted host-lock 竞争的 busy 响应在返回前不写 `updates.checked` 事件，也不等待 SQLite；正常成功或非竞争检查仍保留原有更新检查事件。
 
 目录检查会递归统计当前目录下的 PDF/OFD/XML 发票源文件；如果目录能读取但只包含 `.zip/.rar/.7z` 压缩包、成本产物或其它文件，页面会显示 warning，并提示先解压或改选解压后的发票文件夹。点击“重新汇总”后若结果为 0 条，页面会直接显示这个原因，而不是只显示笼统完成。
 
@@ -118,7 +120,7 @@ W8/W9 技术与产品能力已完成，但当前真实公司资料夹中的 7 �
 
 ## 开发者与 Agent 阅读路线
 
-开发实现的权威入口是 [`docs/DEVELOPMENT_ARCHITECTURE.md`](docs/DEVELOPMENT_ARCHITECTURE.md)。公开 `main` 已从单一脱敏根提交开始，不继承旧的私有提交、Tag 或 Release 身份；旧图仅保留在私有归档。当前没有公开 Release、更新 Feed 或 Tauri 开发分支。后续从 `main` 创建 `codex/tauri2-unified-desktop` 时，以 `0.3.0-alpha.1` 开始用 Tauri 2 统一桌面壳，但仍复用 Python/FastAPI/Web/monitor 业务核心。共享核心与平台边界见[平台架构](docs/architecture/PLATFORM_ARCHITECTURE.md)，公开净化记录见[执行记录](docs/release/HISTORY_SANITIZATION_EXECUTION.md)。
+开发实现的权威入口是 [`docs/DEVELOPMENT_ARCHITECTURE.md`](docs/DEVELOPMENT_ARCHITECTURE.md)。公开 `main` 已从单一脱敏根提交开始，不继承旧的私有提交、Tag 或 Release 身份；旧图仅保留在私有归档。当前没有公开 Release 或更新 Feed。`codex/tauri2-unified-desktop` 已从公开 `main` 建立并以 `0.3.0-alpha.1` 开始；版本同步、pnpm/Cargo lock、固定 localhost 合同、后端严格握手、私有 Host RPC，以及 handshake 后的 desktop/browser、托盘和单实例已完成受控验证。Host updater 目前只保留检查/preflight 边界：在完整 recovery/relaunch coordinator 出现前，`update_install` 会清除候选并返回不可用，不下载、不停 monitor、不安装或重启。裸源码 checkout 缺少经编译绑定 manifest 时仍以状态 `78` 失败；development assembler 已生成 schema-3 manifest 和显式 venv launcher，并从 clean source commit 构建本地 arm64 `.app`。隔离样本验证了 fixed-port owned backend、health/background ready、首页/静态资源、`desktop_available=true`，以及真实 Cmd-Q 触发 shutdown POST、stopped state、host/backend/PID/端口清理；打开的 SSE 连接由既定 `kill + wait` 兜底收束。外部 AppleScript quit 仍可能绕过结构化关闭，且全过程未触碰用户 Application Support。development profile 的 updater 明确禁用。它不证明原生面板、browser/tray、单实例、真实更新、安装器、DMG/NSIS、签名/公证或平台发布烟测。完整顺序、实验和未覆盖项见 [Tauri 2 执行计划](docs/release/TAURI2_EXECUTION_PLAN.md)。共享核心与平台边界见[平台架构](docs/architecture/PLATFORM_ARCHITECTURE.md)，公开净化记录见[执行记录](docs/release/HISTORY_SANITIZATION_EXECUTION.md)。
 
 接手工程或定位任务时按以下顺序阅读：
 
@@ -130,6 +132,24 @@ W8/W9 技术与产品能力已完成，但当前真实公司资料夹中的 7 �
 文件地图记录逐文件职责、上下游、产物和测试；新增、删除或重命名工程文件时必须同步更新。架构文档不记录 `config/app.local.json` 的本机值，也不把运行态、真实发票或本机验收资产当作源码。
 
 ## 开发验证
+
+Tauri 2 foundation 环境检查：
+
+```bash
+python3 scripts/dev/tauri_version_sync.py --check
+./scripts/dev/tauri-doctor.sh --require-ready
+./scripts/dev/tauri-bootstrap.sh
+```
+
+`doctor` 和默认 `bootstrap` 只报告环境状态，不安装 Rust、证书、Xcode 或 Visual Studio。当前机器若缺少 Rust/Cargo 或 `src-tauri/Cargo.lock`，`--require-ready` 会以非零状态明确失败。裸 checkout 没有可用 manifest，仍不能运行；development app 必须通过 `tauri_dev_app.py` 的显式 stage/build 流程生成，且 `--python` 必须是绝对 venv interpreter、`--pnpm` 必须是绝对 executable。一次 development `.app` smoke 已通过，但不能据此宣称安装器、原生面板、tray/browser、updater 或平台发布验收已完成。
+
+Windows 的同一 foundation 检查使用 PowerShell 包装器：
+
+```powershell
+.\.venv\Scripts\python.exe .\scripts\dev\tauri_version_sync.py --check
+.\scripts\dev\tauri-doctor.ps1 --require-ready
+.\scripts\dev\tauri-bootstrap.ps1
+```
 
 Windows：
 
@@ -152,6 +172,8 @@ INVOICE_HUB_TEST_IMAGE=<local-or-mirror-python-image> docker compose run --rm te
 
 Docker 只作为开发验证，不作为正式 Windows 离线包运行依赖。
 
+Tauri macOS development app：`scripts/dev/tauri_dev_app.py` 只会 stage 允许的共享 core 并构建 `.app`；不创建 DMG、更新归档、签名、公证、Release 或 Feed。L9/P1-Q 已对一个 clean-commit arm64 app 执行隔离启动和真实 Cmd-Q 结构化退出烟测；这不覆盖 tray 点击或外部终止。开发 profile 的 `INVOICE_HUB_DEV_STATE_ROOT` 必须显式提供一个已存在的绝对目录；host 会 canonicalize 它并拒绝其位于 bundle/core 内或包住 bundle/core 的情况，且不会将变量传给 Python child；release profile、缺失或相对路径会 fail closed。
+
 Mac 本地壳开发：
 
 ```bash
@@ -161,7 +183,7 @@ cd macos/InvoiceHubMac
 
 只构建或刷新本地 `.app`、不打开 App 且不停止当前 localhost/监控时，可执行 `./script/build_and_run.sh --build-only`。该模式仍会把当前仓库的 `src`、`web`、内置皮肤字体与纹理复制到 `dist/InvoiceHubMac.app/Contents/Resources/invoice-hub-core` 并重建 build ID。
 
-当前 macOS 第一版采用 SwiftUI + WKWebView 本地壳：Swift 负责 `.app` 窗口、菜单、目录/文件选择、Sparkle 更新和后端进程生命周期，业务核心继续复用现有 Python/FastAPI、`/api/v1`、持续监听、成本分析、单据生成和做账人审能力。开发脚本会生成本地 `macos/InvoiceHubMac/dist/InvoiceHubMac.app`；正式脚本则从精确 Git commit 复制只读 core、嵌入 Python 3.14.6 arm64 运行时和锁定依赖，生成签名 `.app`、Sparkle ZIP 与 DMG。正式模式只接受 `Contents/Resources/invoice-hub-core`，该 core 缺失或无效即拒绝启动，绝不回退 checkout。运行态配置、日志和 SQLite 写入 `~/Library/Application Support/InvoiceHub`，不写入 `.app`。WKWebView 页面里的目录选择通过 Swift bridge 调用 `NSOpenPanel`，皮肤页文件输入由 `WKUIDelegate` 提供单 ZIP 面板；bridge、导航和原生面板只对预期 localhost 主框架开放。正式工程路径已经建立，最终放行仍需真实 Developer ID、Apple 公证、staple、quarantine 干净机和 Sparkle 升级证据。详见 [更新体系开发说明](docs/release/UPDATE_SYSTEM.md)。
+现有 macOS SwiftUI + WKWebView 本地壳是 legacy/reference 工程：Swift 负责 `.app` 窗口、菜单、目录/文件选择、Sparkle 更新和后端进程生命周期，业务核心继续复用现有 Python/FastAPI、`/api/v1`、持续监听、成本分析、单据生成和做账人审能力。开发脚本会生成本地 `macos/InvoiceHubMac/dist/InvoiceHubMac.app`；正式脚本则从精确 Git commit 复制只读 core、嵌入 Python 3.14.6 arm64 运行时和锁定依赖，生成签名 `.app`、Sparkle ZIP 与 DMG。该说明保留用于既有工程边界，不是 `v0.3` Tauri 发布路径或 Tauri release evidence。正式模式只接受 `Contents/Resources/invoice-hub-core`，该 core 缺失或无效即拒绝启动，绝不回退 checkout。运行态配置、日志和 SQLite 写入 `~/Library/Application Support/InvoiceHub`，不写入 `.app`。WKWebView 页面里的目录选择通过 Swift bridge 调用 `NSOpenPanel`，皮肤页文件输入由 `WKUIDelegate` 提供单 ZIP 面板；bridge、导航和原生面板只对预期 localhost 主框架开放。正式工程路径已经建立，最终放行仍需真实 Developer ID、Apple 公证、staple、quarantine 干净机和 Sparkle 升级证据。详见 [更新体系开发说明](docs/release/UPDATE_SYSTEM.md)。
 
 目录切换统一使用页面里的“选择草稿 -> 后端校验 -> 保存生效”流程；工具栏和菜单不再直接保存目录。重新汇总、监控启停等原生命令仍复用同一套 `/api/v1` 后端，并在完成后刷新 WKWebView。异步控制结果绑定发起时的后端代次、阶段、health 与 Process/PID，旧请求不能覆盖后来发生的停止或重启。开发脚本重新运行 `.app` 前只会收束命令行为 `invoice_hub.api.main` 且配置路径精确匹配当前 Application Support 的旧服务；TERM 超时后也必须再次核验同一 PID、命令和配置才允许强制收束，未知端口占用会明确失败，不终止、不自动换端口。
 

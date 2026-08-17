@@ -64,7 +64,7 @@ def test_import_settings_copies_only_the_allowlist_and_preserves_backups(tmp_pat
         "cost_row_limit": 100,
         "long_path_display": "marquee",
         "new_package_only": True,
-        "startup_surface": "browser",
+        "startup_surface": "desktop",
     }
     assert Path(result["config_backup"]).is_file()
     assert Path(result["preferences_backup"]).is_file()
@@ -72,6 +72,31 @@ def test_import_settings_copies_only_the_allowlist_and_preserves_backups(tmp_pat
     assert not (new_root / "invoice.pdf").exists()
     assert "private_extension" not in result["config_keys"]
     assert "private_extension" not in result["preference_keys"]
+
+
+def test_import_settings_preserves_existing_browser_startup_surface(tmp_path: Path) -> None:
+    old_root = tmp_path / "old"
+    new_root = tmp_path / "new"
+    _write_json(
+        old_root / "config" / "app.local.json",
+        {"runtime_dir": "./old-state"},
+    )
+    _write_json(
+        old_root / "old-state" / "local_state" / "preferences.json",
+        {"startup_surface": "browser"},
+    )
+    _write_json(
+        new_root / "config" / "app.local.json",
+        {"runtime_dir": "./new-state"},
+    )
+
+    result = import_settings(old_root, new_root)
+
+    preferences = json.loads(
+        (new_root / "new-state" / "local_state" / "preferences.json").read_text(encoding="utf-8")
+    )
+    assert preferences == {"startup_surface": "browser"}
+    assert result["preference_keys"] == ["startup_surface"]
 
 
 def test_import_settings_rejects_same_root_and_missing_config(tmp_path: Path) -> None:

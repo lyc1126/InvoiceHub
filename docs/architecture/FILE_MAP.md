@@ -1,7 +1,7 @@
 # InvoiceHub 完整文件地图
 
 > 公共基线：经过审计的单一脱敏根提交及其公开后代；旧私有提交、Tag、包和验证材料不在公开图中。
-> 当前治理变化以 `docs/release/HISTORY_SANITIZATION_EXECUTION.md` 为真值。公开门槛已完成；`v0.3` Tauri 2 仍须从 `main` 创建专门开发分支后才开始。
+> 当前治理变化以 `docs/release/HISTORY_SANITIZATION_EXECUTION.md` 为真值。公开门槛已完成；`v0.3` Tauri 2 开发分支已从 `main` 建立，已有经审查的 Cargo lock 和代码级生命周期边界。裸 checkout 缺 manifest 而 fail-closed；development assembler 已构建并隔离烟测一个本地 macOS arm64 `.app`，尚无 Release。
 > 本表覆盖当前受版本控制的全部工程文件，包括架构文档与文档契约测试；运行态、投影和本机未跟踪内容只登记生成规则，不使用会随增删文件失真的固定数量。
 > 路径是导航键；职责和关系按符号而不是易漂移的行号描述。
 
@@ -49,6 +49,10 @@
 | `README.md` | 用户与开发者的首要运行说明。 | 链接正式入口、产物位置、测试和本架构文档。 |
 | `THIRD_PARTY_NOTICES.md` | Python、Swift、字体与其它第三方依赖声明入口。 | 与依赖锁、SBOM、Sparkle/Python runtime 发行审查联动。 |
 | `pyproject.toml` | Python 版本、依赖、pytest 和包元数据。 | 被本地测试、Docker、Windows Python 入口和 core 包使用。 |
+| `package.json` | Tauri host 的 npm 产品身份、pnpm 版本和 JavaScript 直接依赖声明。 | 产品版本由 `tauri_version_sync.py` 从 `version.py` 派生；不承载业务前端。 |
+| `pnpm-lock.yaml` | Tauri CLI/API 的完整 JavaScript integrity lock。 | 仅在显式 `--install-js` 或开发者手动 pnpm 安装时消费；不得用它替代 Cargo lock。 |
+| `rust-toolchain.toml` | Rust/Cargo 1.85.0 与两首发 target 的固定工具链声明。 | `tauri_doctor.py` 诊断；无 Rust/Cargo 或 `src-tauri/Cargo.lock` 时 host 必须保持未就绪。 |
+| `.cargo/config.toml` | Cargo 的 MSRV-aware 解析策略。 | 必须保留 `fallback`，避免直接 Tauri 版本不变时被较新的传递依赖悄然抬高到 Rust 1.85 以上。 |
 | `requirements/runtime.in` | 双平台共享运行依赖输入。 | Windows/macOS 平台输入 include；不能直接替代哈希锁。 |
 | `requirements/runtime-windows-x64.in` | Windows x64 运行依赖输入，含 watchdog。 | 编译为 Windows Python 3.14 哈希锁。 |
 | `requirements/runtime-macos-arm64.in` | macOS arm64 运行依赖输入，不含 watchdog。 | 编译为 Mac Python 3.14 哈希锁；使用内置 polling observer。 |
@@ -85,6 +89,7 @@
 | `docs/MIGRATION_GAP_CHECKLIST.md` | 旧能力迁移缺口和验收状态。 | 功能迁移、验收口径和开发交接能力变化时更新。 |
 | `docs/MONITORING_AND_LOGGING.md` | monitor 状态、日志和诊断说明。 | 与 `monitoring/*`、MonitorBridge 和设置页运行状态联动。 |
 | `docs/release/HISTORY_SANITIZATION_EXECUTION.md` | 公开历史净化、私有备份、候选内容审计、全 ref 验证和托管面复核的执行记录。 | 公开 Git 图、发布资产、仓库可见性或 Tauri 开发线变化前必须更新。 |
+| `docs/release/TAURI2_EXECUTION_PLAN.md` | 公开 Tauri 2 分阶段计划、实验决策记录、重打边界和当前阻断项。 | 改动 Tauri host、依赖锁、生命周期、更新或平台验收时先更新实验记录。 |
 | `docs/release/UPDATE_SYSTEM.md` | About、Feed、cache、Sparkle、Windows 旁路升级的完整开发说明。 | 更新协议或 UI/安装流程变化时同步。 |
 | `docs/release/WINDOWS_REPACKAGE_CONFIG.json` | Windows 构建链的机器可读参数。 | 每个新 RC 都必须从 `version.py`、锁和 clean source commit 重新校验，不能复用退休发布身份。 |
 | `docs/jierui/view-voucher-page.selectors.md` | 公开树的外部页面自动化边界说明。 | 不保存真实选择器、地址、坐标或账套事实；W10 操作员必须在获授权的私有环境重新采集。 |
@@ -105,6 +110,14 @@
 | `scripts/dev/verify_release_source.ps1` | Windows 源码、身份、测试和文档预门禁。 | CI 与真机手册共用；要求 clean source commit，并在选择解释器前拒绝非精确 Python 3.14.6 patch。 |
 | `scripts/dev/run_docker_tests.sh` | Docker pytest 快捷入口。 | 调用 `docker compose run --rm test`；只用于开发/Mac 验证。 |
 | `scripts/dev/run_tests.ps1` | Windows 开发测试门禁。 | 可显式绑定隔离测试 Python，执行 pytest、`compileall src tests` 和全部前端 JS 语法检查。 |
+| `scripts/dev/tauri_version_sync.py` | 从 `version.py` 同步或校验 npm、Cargo 与 Tauri 配置的产品身份。 | `--check` fail closed；`--write` 是唯一允许写派生版本的入口。 |
+| `scripts/dev/tauri_doctor.py` | 不安装任何系统工具的 Tauri 环境、锁、固定 origin 与平台 SDK 诊断。 | `--require-ready` 在 Rust/Cargo/Cargo.lock 缺失时非零退出；不生成 lock。 |
+| `scripts/dev/tauri_bootstrap.py` | 先校验版本再运行 doctor 的显式 bootstrap。 | 默认只诊断；仅 `--install-js` 可安装已锁定 JavaScript 依赖，绝不安装 Rust/证书/Xcode/Visual Studio。 |
+| `scripts/dev/tauri-doctor.sh` | macOS/POSIX doctor 包装。 | 只转发到 Python doctor。 |
+| `scripts/dev/tauri-bootstrap.sh` | macOS/POSIX bootstrap 包装。 | 只转发到 Python bootstrap。 |
+| `scripts/dev/tauri-doctor.ps1` | Windows doctor 包装。 | 使用 `py -3` 或已解析的 `python` 转发；两者均缺失时明确 `exit 2`，不安装系统工具。 |
+| `scripts/dev/tauri-bootstrap.ps1` | Windows bootstrap 包装。 | 使用 `py -3` 或已解析的 `python` 转发；两者均缺失时明确 `exit 2`，不安装系统工具。 |
+| `scripts/dev/tauri_dev_app.py` | macOS arm64 Tauri development `.app` 的 allowlisted staging 与 app-only build 入口。 | `stage` 需要显式绝对 venv Python，生成 schema-3 manifest、显式 launcher 和 SHA-256 绑定；`build` 还需要绝对 pnpm，只构建 ignored `.app`，不生成 DMG/更新归档、不签名/公证、不启动应用。 |
 | `scripts/tools/jierui_probe_template.py` | 捷锐模板探测辅助入口。 | 只生成或核对结构性事实，不写真实凭证状态。 |
 | `scripts/tools/jierui_voucher_import.py` | 随包 runner 包装。 | 转发到 `invoice_hub.runners.jierui_voucher_import`，要求显式 batch manifest。 |
 | `scripts/windows/run_monitor_status.ps1` | monitor 状态 CLI 包装。 | 解析 Python，调用 `invoice_hub.monitoring.control status`。 |
@@ -120,6 +133,24 @@
 | `scripts/windows/停止localhost服务并停止监控.bat` | stop-all BAT。 | 使用同一 PowerShell 选择规则先调 monitor stop，再调用 localhost stop BAT。 |
 | `scripts/windows/导入旧版设置.bat` | 包内设置迁移 BAT。 | 使用同一 Program Files/PATH PS7 与强制 5.1 规则；参数原样传给迁移 PS1。 |
 
+## 4.1 Tauri host lifecycle boundary
+
+| 文件 | 职责与入口 | 关系与修改影响 |
+|---|---|---|
+| `src-tauri/Cargo.toml` | Tauri host package metadata, including the explicit `tray-icon` feature and exact direct Tauri/plugin/HMAC dependencies. | Version is derived by `tauri_version_sync.py`; direct crates are pinned to published releases and must match `Cargo.lock`. |
+| `src-tauri/Cargo.lock` | Reviewed Rust 1.85-compatible Cargo dependency graph. | Generated only in the controlled toolchain with `.cargo/config.toml`; it locks dependency integrity. Runnable development behavior additionally requires the staged manifest/launcher binding, and remains distinct from release evidence. |
+| `src-tauri/build.rs` | Tauri build-script entry point. | It runs only with the exact direct crate versions and reviewed `Cargo.lock` in a controlled Rust environment. |
+| `src-tauri/tauri.conf.json` | Derived product identity, fixed localhost development origin, no config-created WebView, and disabled bundling configuration. | Must retain `http://127.0.0.1:8766`; `main.rs` creates a WebView only after the owned-backend handshake. |
+| `src-tauri/tauri.dev.conf.json` | Development-only bundle configuration. | Enables only the macOS arm64 app bundle used by `tauri_dev_app.py`; it cannot be reused for DMG/NSIS, release signing, or updater inputs. |
+| `src-tauri/capabilities/no-webview-ipc.json` | Explicit zero-permission capability for the future main WebView. | Native picker access cannot become Tauri command/event IPC. |
+| `src-tauri/src/lib.rs` | Fixed backend host/port constants and module exports. | Do not add business-core logic; lifecycle and Host RPC retain this origin invariant. |
+| `src-tauri/src/backend.rs` | Bundle-manifest parsing with raw-byte SHA-256 compile binding, fixed arguments, backend child ownership, HMAC challenge response, identity/OpenAPI handshake, post-preference fresh ownership revalidation, structured keep-monitor shutdown, explicit confirmed kill/wait fallback, and 100 ms bounded child-exit revocation. | The development assembler injects `INVOICE_HUB_BUNDLE_MANIFEST_SHA256` while compiling its staged schema-3 manifest; a bare checkout or mismatch exits `78`. Release assembly needs separate inputs. A failure kills only the spawned child; unknown port occupants or a child that exits/replaces the listener during preference retrieval never receive a WebView or ownership. Monitor stop/recheck for installation is deliberately absent until the recovery/relaunch coordinator is implemented. |
+| `src-tauri/src/host_rpc.rs` | Private random-loopback listener, exact-origin/token/enum authorization, native picker dispatch, and host updater candidate storage. | Host passes the token only to its directly spawned Python backend; it is not a Tauri command, event, WebView value, Python API response, log, or descendant environment value. The update surface is only `update_check/update_install`; the bounded listener actively clears a generation-checked 300-second candidate, and updater metadata requests have a 5-second total timeout. Current install consumes the candidate and fails closed without download or runtime changes; a future recovery/relaunch coordinator must preserve download+Minisign, monitor stop/recheck, install/restart, and failure recovery. |
+| `src-tauri/src/main.rs` | Loads a compiled-bound bundle manifest, installs single-instance/dialog/host-only-opener plugins, creates a custom macOS application Quit item with Cmd-Q, launches `BackendHost`, selects the desktop WebView or fixed-origin browser surface, and routes every received `ExitRequested` through confirmed backend shutdown. | A checkout without the manifest exits with status `78` before connection. Tray Quit and the custom application-menu/Cmd-Q item share `app.exit(0)` and must not use the native predefined Quit selector; kill/wait failure prevents host exit. External termination may bypass the event. L9/P1-Q completed one desktop/default launch and one real Cmd-Q exit; tray click/second-instance/browser behavior remain unexercised. |
+| `src-tauri/boot/index.html` | Inert local boot asset required by the minimal Tauri configuration. | It is not a replacement frontend; the real application remains the existing localhost Web UI. |
+| `src-tauri/icons/icon.png` | Local icon required by Tauri's macOS context macro and tray setup. | It must remain 8-bit RGBA: the prior 16-bit RGBA encoding caused tray initialization failure, so PNG IHDR has a focused regression. It does not authorize Release branding. |
+| `src-tauri/README.md` | Lifecycle scope, development assembly, and release boundary. | Update together with the execution plan whenever Cargo, lifecycle, Host RPC, updater, staging, or packaging status changes. |
+
 ## 5. Python 包入口与 API
 
 | 文件 | 职责与入口 | 关系与修改影响 |
@@ -127,7 +158,7 @@
 | `src/invoice_hub/__init__.py` | 包说明和 `__version__`。 | 被包导入和发布元数据使用；版本策略变化时同步发布文档。 |
 | `src/invoice_hub/version.py` | 产品/包版本、API 契约、通道、链接、白名单和 package ID 单一真值。 | Python、Swift 脚本、manifest、About、Feed 与测试必须一致。 |
 | `src/invoice_hub/api/__init__.py` | 惰性导出 `create_app`。 | 保持外部工厂入口，同时避免执行 `api.main` 前抢先实例化默认 AppState。 |
-| `src/invoice_hub/api/app.py` | FastAPI 应用、页面路由、API、错误码、静态资源和 SSE。 | 上游是浏览器；下游是 `AppState`、皮肤文件和模板；主要由 API/前端契约测试覆盖。 |
+| `src/invoice_hub/api/app.py` | FastAPI 应用、页面路由、API、错误码、静态资源和 SSE。 | 上游是浏览器；下游是 `AppState`、皮肤文件和模板；四条 Tauri picker route 将 private `HostRpcError` 映射为固定、脱敏的 503，update-install 只接受 `{}` 并将 host failure 映射为 `503 Update installation unavailable`；主要由 API/前端契约测试覆盖。 |
 | `src/invoice_hub/api/main.py` | 参数化 uvicorn CLI 入口。 | 读取 root/config/host/port 后通过模块应用只构造一个 AppState；正式 BAT 当前直接启动 uvicorn app。 |
 
 ## 6. 领域模型
@@ -207,7 +238,7 @@
 | 文件 | 职责与入口 | 关系与修改影响 |
 |---|---|---|
 | `src/invoice_hub/services/__init__.py` | 导出 `AppState`、过期选择、预览和打印异常及 `create_state`。 | API 应用工厂依赖。 |
-| `src/invoice_hub/services/app_state.py` | 当前统一用例门面：设置、诊断、发票、预览/打印、成本、单据、monitor、皮肤、OCR 占位和关闭。 | 上接 API，下接几乎全部子系统；改动必须按用例做相邻回归。 |
+| `src/invoice_hub/services/app_state.py` | 当前统一用例门面：设置、诊断、发票、预览/打印、成本、单据、monitor、皮肤、OCR 占位、更新 metadata/host approval 和关闭。 | 上接 API，下接几乎全部子系统；`_host_update_lock` 串行化 allowlisted Feed gate、host candidate 和一次性 install approval，改动必须按用例做相邻回归。 |
 | `src/invoice_hub/services/app_state.py` 的 business dossier 用例 | 解析当前公司资料夹、一次有界扫描快捷入口/统计并限制打开路径。 | `/api/v1/business-dossier*` 和首页消费；不得改变 `watch_dir` 扫描语义；截断统计必须明确为下界。 |
 | `src/invoice_hub/services/document_rendering.py` | MuPDF 文档打开和安全分页 PNG 渲染的共享适配。 | preview/print 共用；缺依赖、加密、空文档、页尺寸和渲染失败保持结构化错误。 |
 | `src/invoice_hub/services/file_preview.py` | 短期源文件预览 job、闲置续租、页面/文本缓存、SVG/XML/图片安全边界。 | 保留已选源文件顺序；15 分钟闲置 TTL、页数、像素、作业数和缓存上限防止内存滥用。 |
@@ -221,8 +252,9 @@
 | 文件 | 职责与入口 | 关系与修改影响 |
 |---|---|---|
 | `src/invoice_hub/platform/__init__.py` | 导出 Windows 平台 API。 | AppState 只通过此边界调用选择器和打开路径。 |
+| `src/invoice_hub/platform/host_rpc.py` | Tauri 私有 picker/updater client、直接 backend 启动时的凭据捕获与 descendant 环境清理。 | Host 只向直接启动的后端传递 private configuration；Python 125 秒请求预算必须覆盖 Rust 120 秒 dialog 和响应余量；updater 只接受固定 `update_check/update_install`，只回传版本或成功；monitor、同步和原生子进程不得继承 token/secret。 |
 | `src/invoice_hub/platform/native_dialogs.py` | Tk 原生目录/文件选择子进程。 | `platform/windows.py` 从项目根启动；取消选择也返回结构化结果。 |
-| `src/invoice_hub/platform/windows.py` | 打开文件/目录、运行原生选择器、OCR 扩展名。 | AppState 调用；Windows GUI 行为需真实系统验收。 |
+| `src/invoice_hub/platform/windows.py` | 打开文件/目录、运行原生选择器、OCR 扩展名。 | AppState 在 Tauri mode 通过 Host RPC 传入固定 picker enum；其它模式保留 Tk，所有子进程清除 host credentials。 |
 | `src/invoice_hub/release/__init__.py` | core 发布边界说明。 | 标记 release 包职责。 |
 | `src/invoice_hub/release/build_core.py` | 从精确 Git commit 组装确定性 Windows ZIP，写脱敏配置、清单、SBOM 和文件 SHA。 | Windows 构建脚本调用；不读取本机未跟踪/业务数据。 |
 | `src/invoice_hub/release/build_manifest.py` | 确定性 build ID、API 契约、做账协议和能力清单。 | health、macOS Swift 握手和 `build_and_run.sh --verify` 三方核对。 |
@@ -309,6 +341,11 @@
 | `tests/test_runner_dryrun.py` | batch-bound dry-run 与禁止猜测最新文件。 | runners、scripts/tools。 |
 | `tests/test_summary_and_costs.py` | 金额防污染、同票纠偏、结构化成本、均价、参考状态和 schema 刷新。 | extraction、summary、cost_analysis、costs。 |
 | `tests/test_development_documentation.py` | 文件地图、链接、接口路由、基线、旧事实和敏感路径门禁。 | 本架构文档、README、AGENTS、CLAUDE 和 Git 指南。 |
+| `tests/test_tauri_foundation.py` | 版本派生、单点 drift 修复、doctor fail-closed、固定 origin、MSRV resolver、Cargo/pnpm lock 与非安装 bootstrap。 | Tauri foundation scripts, configuration, and plan; Rust compile is separately recorded, and no platform smoke test is claimed. |
+| `tests/test_tauri_dev_app.py` | Development `.app` allowlist staging、schema-3 manifest/launcher 哈希绑定、state-root 隔离与 app-only 构建参数契约。 | `scripts/dev/tauri_dev_app.py`、`src-tauri/tauri.dev.conf.json`；只证明开发组装输入，不证明 DMG/NSIS、签名、公证或平台发布。 |
+| `tests/test_tauri_host_rpc.py` | Python Host RPC URL/token/enum、updater response narrowing、失败不回退和子进程凭据清理。 | `platform/host_rpc.py`、`platform/windows.py`。 |
+| `tests/test_tauri_lifecycle_contract.py` | Tauri 生命周期静态配置、无 WebView IPC、HMAC/liveness、manifest hash 与 updater candidate/order source contract。 | `src-tauri` lifecycle boundary。 |
+| `src-tauri/tests/lifecycle_contract.rs` | Fixed port、identity、OpenAPI methods、Host RPC authorization/revocation、manifest hash、candidate expiry and update order Rust integration contracts. | `backend.rs`、`host_rpc.rs`。 |
 
 ## 15. 前端公共资源
 

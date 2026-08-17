@@ -15,7 +15,7 @@ import re
 from invoice_hub.domain.models import TargetProfile, utc_now_text
 from invoice_hub.monitoring.state import MonitorState
 from invoice_hub.monitoring.sync import MonitorSynchronizer
-from invoice_hub.platform import OCR_EXTENSIONS, open_local_path, pick_directory, pick_file
+from invoice_hub.platform import HostRpcCommand, OCR_EXTENSIONS, host_rpc, open_local_path, pick_directory, pick_file
 from invoice_hub.projections.cost_analysis import invoice_cost_breakdown, selection_cost_breakdown
 from invoice_hub.projections.costs import CostProjectionService
 from invoice_hub.projections.documents import (
@@ -132,6 +132,7 @@ def _run_background_sync_process(
     result_sender,
 ) -> None:
     """Run the potentially native/Python-heavy first sync outside the API process."""
+    host_rpc.scrub_child_environment(os.environ)
     try:
         profile = TargetProfile.model_validate(profile_payload)
         repository = SQLiteRepository(Path(db_path))
@@ -182,6 +183,9 @@ class AppState:
         self.repo = SQLiteRepository(layout.db_path)
         self.repo.init_db()
         self._lock = threading.RLock()
+        self._host_update_lock = threading.Lock()
+        self._host_update_approval_version = ""
+        self._host_update_check_generation = 0
         self._background_status = "initializing"
         self._background_generation = 0
         self._background_process = None
@@ -841,10 +845,19 @@ class AppState:
         except OSError:
             return str(path.absolute())
 
+    def _tauri_desktop_host_enabled(self) -> bool:
+        return os.environ.get(host_rpc.DESKTOP_HOST_MODE_ENV) == "tauri"
+
+    def _desktop_surface_available(self) -> bool:
+        return self._tauri_desktop_host_enabled() or self._package_manifest.get("platform") == "macos"
+
+    def _portable_windows_mode(self) -> bool:
+        return self._package_manifest.get("platform") == "windows" and not self._tauri_desktop_host_enabled()
+
     def _clean_preferences(self, payload: dict | None = None) -> dict:
         source = payload if isinstance(payload, dict) else {}
         result = dict(DEFAULT_PREFERENCES)
-        result["startup_surface"] = "desktop" if self._package_manifest.get("platform") == "macos" else "browser"
+        result["startup_surface"] = "desktop" if self._desktop_surface_available() else "browser"
         try:
             row_limit = int(source.get("cost_row_limit", result["cost_row_limit"]))
         except (TypeError, ValueError):
@@ -866,8 +879,6 @@ class AppState:
 
         startup_surface = str(source.get("startup_surface", result["startup_surface"]) or "").strip()
         if startup_surface in PREFERENCE_STARTUP_SURFACES:
-            if self._package_manifest.get("platform") == "windows" and startup_surface == "desktop":
-                startup_surface = "browser"
             result["startup_surface"] = startup_surface
 
         auto_check_updates = source.get("auto_check_updates", result["auto_check_updates"])
@@ -889,7 +900,7 @@ class AppState:
                 "document_export_existing_strategy": sorted(PREFERENCE_DOCUMENT_EXPORT_STRATEGIES),
                 "system_shutdown_behavior": sorted(PREFERENCE_SYSTEM_SHUTDOWN_BEHAVIORS),
                 "startup_surface": sorted(PREFERENCE_STARTUP_SURFACES),
-                "desktop_available": self._package_manifest.get("platform") == "macos",
+                "desktop_available": self._desktop_surface_available(),
             },
         }
 
@@ -935,7 +946,7 @@ class AppState:
             value = str(source.get("startup_surface") or "").strip()
             if value not in PREFERENCE_STARTUP_SURFACES:
                 raise ValueError("启动方式不可用")
-            if self._package_manifest.get("platform") == "windows" and value == "desktop":
+            if self._portable_windows_mode() and value == "desktop":
                 raise UnsupportedStartupSurfaceError("Windows 便携版暂不提供桌面窗口，请选择浏览器")
             updated["startup_surface"] = value
             changed.append("startup_surface")
@@ -988,7 +999,49 @@ class AppState:
         }
 
     def check_for_updates(self, *, force: bool = False) -> dict:
-        result = self._update_service.check(force=force)
+        # API, settings, and scheduled checks share this method. In a configured
+        # Tauri host process they are all delegated-install preflight, not an
+        # ordinary cache-only public check.
+        host_approval_requested = (
+            self._tauri_desktop_host_enabled()
+            and host_rpc.is_configured()
+            and host_rpc.updater_enabled()
+        )
+        if not host_approval_requested:
+            # Only a non-host process has no delegated install preflight. Keep
+            # its ordinary cache/ETag and independent nonblocking busy behavior.
+            result = self._update_service.check(force=force)
+        elif not self._host_update_lock.acquire(blocking=False):
+            # Do not reset a valid approval, touch host metadata, or write an
+            # event while an owned host check/install lifecycle is in progress.
+            result = self._update_service.busy_result()
+            return {"ok": bool(result.get("ok")), "update": result}
+        else:
+            # Keep the strict metadata approval and host-owned candidate in one
+            # serialized session. The approval is process-local and never
+            # reaches the Web API.
+            try:
+                with self._lock:
+                    self._host_update_approval_version = ""
+                    self._host_update_check_generation += 1
+                    approval_generation = self._host_update_check_generation
+                result = self._update_service.check(force=force, require_fresh_body=True)
+                if (
+                    result.get("ok") is True
+                    and result.get("status") == "available"
+                ):
+                    latest_version = str(result.get("latest_version") or "").strip()
+                    if latest_version:
+                        try:
+                            host_candidate_version = host_rpc.update_check()
+                        except host_rpc.HostRpcError:
+                            host_candidate_version = None
+                        if host_candidate_version == latest_version:
+                            with self._lock:
+                                if approval_generation == self._host_update_check_generation:
+                                    self._host_update_approval_version = latest_version
+            finally:
+                self._host_update_lock.release()
         self.append_event(
             "updates.checked",
             {
@@ -999,6 +1052,31 @@ class AppState:
             },
         )
         return {"ok": bool(result.get("ok")), "update": result}
+
+    def install_update(self) -> dict:
+        """Delegate an already metadata-approved update to the owned Tauri host."""
+
+        if not self._host_update_lock.acquire(blocking=False):
+            # A competing lifecycle operation owns the one-shot approval. Do
+            # not consume it or make a second private RPC while it is active.
+            raise host_rpc.HostRpcError("Tauri host updater is unavailable")
+        try:
+            with self._lock:
+                approval = self._host_update_approval_version
+                # Install is one-shot even if the host rejects a stale candidate.
+                self._host_update_approval_version = ""
+            if not (
+                approval
+                and self._tauri_desktop_host_enabled()
+                and host_rpc.is_configured()
+                and host_rpc.updater_enabled()
+            ):
+                raise host_rpc.HostRpcError("Tauri host updater is unavailable")
+            host_rpc.update_install()
+        finally:
+            self._host_update_lock.release()
+        self.append_event("updates.install_requested", {"version": approval})
+        return {"ok": True}
 
     def schedule_background_update_check(self, delay_seconds: float = 15.0) -> bool:
         if not self._package_manifest.get("manifest_valid"):
@@ -1360,7 +1438,11 @@ class AppState:
 
     def pick_outbound_invoice_dir(self) -> dict:
         initial = Path(self._outbound_invoice_dir_text() or self.active_profile.watch_dir)
-        payload = pick_directory(initial, "选择开具发票文件夹")
+        payload = pick_directory(
+            initial,
+            "选择开具发票文件夹",
+            host_command=HostRpcCommand.PICK_OUTBOUND_INVOICE_DIRECTORY,
+        )
         selected_path = str(payload.get("path") or "").strip()
         if not selected_path:
             current = self._outbound_invoice_dir_text()
@@ -3445,7 +3527,11 @@ class AppState:
         }
 
     def pick_watch_dir(self) -> dict:
-        payload = pick_directory(Path(self.active_profile.watch_dir), "选择发票监控文件夹")
+        payload = pick_directory(
+            Path(self.active_profile.watch_dir),
+            "选择发票监控文件夹",
+            host_command=HostRpcCommand.PICK_WATCH_DIRECTORY,
+        )
         selected_path = str(payload.get("path") or "").strip()
         if not selected_path:
             return {"ok": True, "selected": False, "watch_dir": self.active_profile.watch_dir, "validation": self.inspect_watch_dir(Path(self.active_profile.watch_dir))}
@@ -3531,12 +3617,20 @@ class AppState:
         return {"ok": True, "opened": True, "path": str(path), "file_path": str(path), "file_name": path.name}
 
     def pick_ocr_file(self) -> dict:
-        payload = pick_file(Path(self.active_profile.watch_dir), "选择 OCR 识别文件")
+        payload = pick_file(
+            Path(self.active_profile.watch_dir),
+            "选择 OCR 识别文件",
+            host_command=HostRpcCommand.PICK_OCR_FILE,
+        )
         selected_path = str(payload.get("path") or "").strip()
         return {"ok": True, "selected": bool(selected_path), "path": selected_path}
 
     def pick_ocr_folder(self) -> dict:
-        payload = pick_directory(Path(self.active_profile.watch_dir), "选择 OCR 文件夹")
+        payload = pick_directory(
+            Path(self.active_profile.watch_dir),
+            "选择 OCR 文件夹",
+            host_command=HostRpcCommand.PICK_OCR_DIRECTORY,
+        )
         selected_path = str(payload.get("path") or "").strip()
         return {"ok": True, "selected": bool(selected_path), "path": selected_path}
 
@@ -5219,9 +5313,14 @@ class AppState:
         return self.repo.event_bounds()
 
 
-def create_state(root_dir: Path | None = None, config_path: str | None = None) -> AppState:
+def create_state(
+    root_dir: Path | None = None,
+    config_path: str | None = None,
+    *,
+    initial_state_dir: Path | None = None,
+) -> AppState:
     root = Path(root_dir or Path.cwd()).resolve()
-    config = load_config(root, config_path)
+    config = load_config(root, config_path, initial_state_dir=initial_state_dir)
     layout, _notes = ensure_runtime_layout(config)
     state = AppState(config, layout)
     atomic_write_json(

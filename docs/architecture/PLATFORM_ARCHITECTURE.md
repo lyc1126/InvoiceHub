@@ -1,9 +1,9 @@
 # InvoiceHub 平台架构：共享核心、Windows 与 macOS
 
 > 文档状态：当前跨平台实现的权威附录
-> 更新日期：2026-08-14
+> 更新日期：2026-08-17
 > 公共基线：单一脱敏根提交。退休的私有提交、Tag、包和验证材料不属于公开发行输入。
-> 当前发行状态：候选树、保留 Git 对象和托管面验证已完成，仓库现为 public；Tauri 2 仍从 `v0.3.0-alpha.1` 开始，尚未建立其开发分支或 Release。
+> 当前发行状态：候选树、保留 Git 对象和托管面验证已完成，仓库现为 public；`codex/tauri2-unified-desktop` 已建立并含通过受控 Rust lock/compile/test 的 `v0.3.0-alpha.1` Tauri foundation 与代码级 lifecycle/Host RPC 边界。一个 macOS arm64 development `.app` 已构建并完成隔离 L9 smoke；尚无 Release。
 
 本页只解释平台边界。领域模型、API、投影和 monitor 的详细契约分别见[开发架构总入口](../DEVELOPMENT_ARCHITECTURE.md)、[接口与运行流程](INTERFACES_AND_FLOWS.md)和[数据结构与算法](DATA_AND_ALGORITHMS.md)。
 
@@ -91,10 +91,20 @@ flowchart TB
 | 监控控制 | BAT/页面调用共享 bridge | 原生命令/页面调用共享 bridge；externalCompatible 禁用壳内启动/停止 | 关闭窗口或 WebUI 不等于停止 monitor |
 | 关闭 WebUI | 结构化 shutdown 或正式停止 BAT | `/api/v1/server/shutdown`，固定 `keep_monitor`、`remember=false` | monitor 停止必须是单独、明确的用户动作 |
 | 启动方式 | `v0.3` 新安装默认 `desktop` | `v0.3` 新安装默认 `desktop`，可选 `browser`，下次启动生效 | 已导入的显式偏好保持原值；关闭窗口/浏览器不停止 monitor |
-| 更新 | `v0.3` 由 Tauri updater 验签、下载、停 monitor、安装和重启 | `v0.3` 由 Tauri updater 验签、下载、停 monitor、安装和重启 | 停 monitor 失败或用户取消不改变运行状态；不静默迁移业务数据 |
+| 更新 | 当前只保留 Tauri check/preflight；install 明确不可用 | 当前只保留 Tauri check/preflight；install 明确不可用 | recovery/relaunch coordinator 完整实现前不得下载、停 monitor、安装或重启；不静默迁移业务数据 |
 | 构建兼容 | package/build/runtime manifest、正式启动 health | 三类 manifest、health、必需页面/API 严格握手 | 构建身份和能力不允许只凭 `health.ok` 判断 |
 | 发布形态 | `v0.3` 为 Windows 10/11 x64 NSIS `.exe` | `v0.3` 为 macOS 13+ arm64 `.dmg` 和更新归档 | 都不得携带本机配置、真实发票、运行态或业务资料 |
 | 验收 | `v0.3` 最终 RC 一次安装、启动、目录选择、托盘和更新烟测 | 同左 | Python/API/投影测试只能证明共享核心，不替代平台实测 |
+
+### 3.1 Tauri 生命周期与 development `.app` 边界
+
+裸 `src-tauri/` checkout 只保留可审查的 fail-closed 边界：`main.rs` 找不到经编译绑定 manifest 时以状态 `78` 退出，在插件初始化、端口连接和 WebView 创建之前停止。`scripts/dev/tauri_dev_app.py` 仅为 development profile 复制 allowlisted core、生成 schema-3 manifest 和显式 venv launcher，并把 manifest/launcher SHA-256 绑定到本地 arm64 `.app`。该 app 已完成一次隔离 L9 smoke；它不是 DMG、更新归档或 release 输入。有效 development manifest 才会固定使用 `127.0.0.1:8766`，拒绝未知占用，启动自己的 backend child，并以 backend-private 256 位 secret 与 fresh HMAC challenge 证明归属。初次 child PID、manifest identity、`/` 和 OpenAPI 精确方法通过后，host 读取 startup preference 并以新的 challenge/HMAC 和 identity 再次确认 ownership；只有第二次检查通过才创建空 IPC capability 的 WebView。
+
+该一次 smoke 使用 development-only 的显式、已存在、绝对外置 state root，不读写真实 Application Support；host 会 canonicalize 它并拒绝其位于 bundle/core 内或包住 bundle/core。它确认 health/background ready、首页/静态资源和 `desktop_available=true` 的默认 desktop。外部 AppleScript quit 曾绕过 shutdown POST 并留下 stale server state，该外部路径仍不作有序退出承诺；P1-Q 随后在 clean-commit 样本上以真实 Cmd-Q 确认 shutdown POST 200、stopped state、monitor 未运行、host/backend/PID/端口清理，SSE 未及时退出时由显式 kill+wait 兜底。development manifest 明确禁用 updater，且 state-root override 不会传给 Python child。browser、tray 点击、单实例、native picker、打印、下载/验签/安装、DMG、Developer ID、公证和 Windows 均未覆盖。
+
+Host RPC 是 host 的随机 loopback listener；host 只将 token 传给其直接启动的 Python backend，backend 启动时捕获并从 descendant 环境清除。网页没有 token、Tauri command 或 event 通道，token 也不进入 API 响应或日志；backend 的 picker 面只能发起四种固定 picker enum，更新面独立地只能发起 `update_check` / `update_install` 两个固定 enum。同一进程具备 Tauri marker 与 private RPC 时，API、设置页和后台 timer 的公开更新检查都是 strict delegated-install preflight；只有非 Tauri/非 host 检查不获取 `_host_update_lock` 并保留 cache/ETag/nonblocking-busy 语义。host 检查锁竞争立即返回不持久化 busy，且不会调用 metadata/candidate 或清除既有 approval；install 锁竞争立即抛脱敏 `HostRpcError`，不消费 approval 或发第二次 RPC。当前取得 install 锁后也只清除候选并返回不可用，直到 recovery/relaunch coordinator 完整实现。Rust dialog 最多等待 120 秒，Python 以 125 秒预算保留响应余量，并把 private `HostRpcError` 固定映射为脱敏 503；非 Tauri 的 Tk picker 不变。Updater metadata 请求固定 5 秒总时限，不能使用插件默认的无时限请求永久占住 operation mutex。成功握手和 post-preference revalidation 后才 arm 授权，再启动 100 ms 有界 child liveness watcher；watcher 只能在 child 退出后撤销授权，不能重新授权已退出 child。此后 host 严格使用 `startup_surface`：desktop 创建 WebView，browser 用无 WebView JS 注入的 host-only opener 派发固定 origin；托盘和第二实例重开当前 surface，desktop close 仅隐藏窗口而不停止 monitor。托盘 Quit 与 macOS 自定义应用菜单/Cmd-Q 只请求同一个 `app.exit(0)`；应用菜单不使用 predefined Quit。只有 host 实际收到的 `ExitRequested` 才先执行结构化 `keep_monitor` shutdown 并等待 owned child，错误/超时后显式 `kill + wait`，无法确认 child 已退出则阻止 host 退出；外部 AppleScript quit、Force Quit 或信号可能绕过该事件，不属于有序退出承诺。上述源码路径由隔离离线 contracts 和一个 clean-commit 真实 Cmd-Q 样本验证；原生面板、browser/tray 点击、单实例、updater、安装包或平台发布烟测仍未完成。
+
+hosted check 的 host-lock 竞争直接返回 busy，不调用 `append_event` 或 SQLite；正常成功与非竞争检查保留更新事件。
 
 ## 4. Windows 架构
 

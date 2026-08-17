@@ -72,6 +72,40 @@ LOCAL_EXTENSION_FILES = tuple(
         "tests/test_runner_dryrun.py",
     )
 )
+TAURI_FOUNDATION_FILES = tuple(
+    ROOT / path
+    for path in (
+        "package.json",
+        "pnpm-lock.yaml",
+        "rust-toolchain.toml",
+        ".cargo/config.toml",
+        "docs/release/TAURI2_EXECUTION_PLAN.md",
+        "scripts/dev/tauri_version_sync.py",
+        "scripts/dev/tauri_doctor.py",
+        "scripts/dev/tauri_bootstrap.py",
+        "scripts/dev/tauri-doctor.sh",
+        "scripts/dev/tauri-bootstrap.sh",
+        "scripts/dev/tauri-doctor.ps1",
+        "scripts/dev/tauri-bootstrap.ps1",
+        "src-tauri/Cargo.toml",
+        "src-tauri/Cargo.lock",
+        "src-tauri/build.rs",
+        "src-tauri/tauri.conf.json",
+        "src-tauri/capabilities/no-webview-ipc.json",
+        "src-tauri/src/lib.rs",
+        "src-tauri/src/backend.rs",
+        "src-tauri/src/host_rpc.rs",
+        "src-tauri/src/main.rs",
+        "src-tauri/tests/lifecycle_contract.rs",
+        "src-tauri/boot/index.html",
+        "src-tauri/icons/icon.png",
+        "src-tauri/README.md",
+        "src/invoice_hub/platform/host_rpc.py",
+        "tests/test_tauri_foundation.py",
+        "tests/test_tauri_host_rpc.py",
+        "tests/test_tauri_lifecycle_contract.py",
+    )
+)
 CURRENT_FACT_DOCS = (
     *ARCHITECTURE_DOCS,
     ROOT / "AGENTS.md",
@@ -102,6 +136,8 @@ NEW_GOVERNED_FILES = {
     for path in (*MACOS_ENGINEERING_FILES, *LOCAL_EXTENSION_FILES)
 } | {
     path.relative_to(ROOT).as_posix() for path in PUBLIC_RELEASE_FILES
+} | {
+    path.relative_to(ROOT).as_posix() for path in TAURI_FOUNDATION_FILES
 } | {"tests/test_development_documentation.py"}
 
 MARKDOWN_LINK_RE = re.compile(r"!?\[[^\]]*\]\((?P<target><[^>]+>|[^\s)]+)")
@@ -320,6 +356,87 @@ def test_current_baselines_and_non_drifting_facts_are_explicit() -> None:
         if HISTORICAL_GIT_OBJECT_RE.search(text):
             stale.append(f"{path.relative_to(ROOT)}: commit-like identifier")
     assert not stale, "stale current-fact markers:\n" + "\n".join(stale)
+
+
+def test_host_rpc_docs_describe_the_direct_backend_token_handoff() -> None:
+    update_system = (ROOT / "docs" / "release" / "UPDATE_SYSTEM.md").read_text(
+        encoding="utf-8"
+    )
+    plan = (ROOT / "docs" / "release" / "TAURI2_EXECUTION_PLAN.md").read_text(
+        encoding="utf-8"
+    )
+    host_rpc_architecture_docs = (
+        ROOT / "docs" / "architecture" / "PLATFORM_ARCHITECTURE.md",
+        ROOT / "docs" / "architecture" / "INTERFACES_AND_FLOWS.md",
+    )
+
+    assert "只留在 Tauri 进程内" not in update_system
+    assert "directly spawned Python backend" in plan
+    assert "descendant" in update_system
+    assert "网页、Tauri command/event、API 响应或日志" in update_system
+    for path in host_rpc_architecture_docs:
+        text = path.read_text(encoding="utf-8")
+        assert "直接启动的 Python backend" in text
+        assert "descendant 环境清除" in text
+        assert "四种固定 picker enum" in text
+        assert "`update_check` / `update_install` 两个固定 enum" in text
+
+
+def test_current_tauri_docs_keep_install_fail_closed_until_recovery_exists() -> None:
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    file_map = FILE_MAP.read_text(encoding="utf-8")
+    task_map = (ROOT / "docs" / "architecture" / "AGENT_TASK_MAP.md").read_text(
+        encoding="utf-8"
+    )
+
+    assert "install 请求只清除候选并返回不可用" in readme
+    assert "Current install consumes the candidate and fails closed" in file_map
+    assert "当前 install 只清除候选并 fail closed" in task_map
+    assert "随后才按下载+Minisign 验签" not in readme
+
+
+def test_current_tauri_docs_require_bounded_update_checks_and_confirmed_exit_cleanup() -> None:
+    agents = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
+    plan = (ROOT / "docs" / "release" / "TAURI2_EXECUTION_PLAN.md").read_text(
+        encoding="utf-8"
+    )
+    platform = (ROOT / "docs" / "architecture" / "PLATFORM_ARCHITECTURE.md").read_text(
+        encoding="utf-8"
+    )
+
+    for text in (agents, plan, platform):
+        assert "ExitRequested" in text
+        assert "kill" in text
+        assert "5 秒" in text
+    assert "Drop kill fallback" not in plan
+    assert "Drop fallback" not in platform
+
+    current_exit_docs = (
+        ROOT / "CHANGELOG.md",
+        ROOT / "README.md",
+        ROOT / "IMPLEMENTATION_STATUS.md",
+        ROOT / "docs" / "MIGRATION_GAP_CHECKLIST.md",
+        ROOT / "docs" / "MAC_WINDOWS_WORKFLOW.md",
+        ROOT / "docs" / "architecture" / "PLATFORM_ARCHITECTURE.md",
+        ROOT / "docs" / "release" / "UPDATE_SYSTEM.md",
+        ROOT / "src-tauri" / "README.md",
+    )
+    stale_exit_claims = (
+        "and orderly shutdown released the port and PID state",
+        "和正常退出，未触碰用户",
+        "启动和正常退出烟测",
+        "desktop 默认值和有序退出。",
+        "首页与有序退出",
+        "和正常 shutdown 后的端口/PID 清理",
+        "系统菜单、Cmd-Q 和其它 `ExitRequested` 都先",
+        "和正常退出检查",
+        "加载页面并正常退出",
+        "were observed, and orderly shutdown released",
+    )
+    for path in current_exit_docs:
+        text = path.read_text(encoding="utf-8")
+        for stale_claim in stale_exit_claims:
+            assert stale_claim not in text, f"{path.relative_to(ROOT)}: {stale_claim}"
 
 
 def test_public_history_sanitization_governance_is_consistent() -> None:
