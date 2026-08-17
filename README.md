@@ -120,7 +120,7 @@ W8/W9 技术与产品能力已完成，但当前真实公司资料夹中的 7 �
 
 ## 开发者与 Agent 阅读路线
 
-开发实现的权威入口是 [`docs/DEVELOPMENT_ARCHITECTURE.md`](docs/DEVELOPMENT_ARCHITECTURE.md)。公开 `main` 已从单一脱敏根提交开始，不继承旧的私有提交、Tag 或 Release 身份；旧图仅保留在私有归档。当前没有公开 Release 或更新 Feed。`codex/tauri2-unified-desktop` 已从公开 `main` 建立并以 `0.3.0-alpha.1` 开始；版本同步、pnpm/Cargo lock、固定 localhost 合同、后端严格握手、私有 Host RPC，以及 handshake 后的 desktop/browser、托盘和单实例已完成受控验证。Host updater 目前只保留检查/preflight 边界：在完整 recovery/relaunch coordinator 出现前，`update_install` 会清除候选并返回不可用，不下载、不停 monitor、不安装或重启。裸源码 checkout 缺少经编译绑定 manifest 时仍以状态 `78` 失败；但 development assembler 已生成 schema-3 manifest 和显式 venv launcher，并构建一次本地 arm64 `.app`。该 app 在隔离 state root 上只验证了 fixed-port owned backend、health/background ready、首页/静态资源和 `desktop_available=true`；后续外部 AppleScript quit 绕过结构化关闭，因此原退出子结论已撤回，等待 P1-Q 的自定义应用菜单/Cmd-Q 样本，且全过程未触碰用户 Application Support。development profile 的 updater 明确禁用。它不证明原生面板、browser/tray、单实例、真实更新、安装器、DMG/NSIS、签名/公证或平台烟测。完整顺序、实验和未覆盖项见 [Tauri 2 执行计划](docs/release/TAURI2_EXECUTION_PLAN.md)。共享核心与平台边界见[平台架构](docs/architecture/PLATFORM_ARCHITECTURE.md)，公开净化记录见[执行记录](docs/release/HISTORY_SANITIZATION_EXECUTION.md)。
+开发实现的权威入口是 [`docs/DEVELOPMENT_ARCHITECTURE.md`](docs/DEVELOPMENT_ARCHITECTURE.md)。公开 `main` 已从单一脱敏根提交开始，不继承旧的私有提交、Tag 或 Release 身份；旧图仅保留在私有归档。当前没有公开 Release 或更新 Feed。`codex/tauri2-unified-desktop` 已从公开 `main` 建立并以 `0.3.0-alpha.1` 开始；版本同步、pnpm/Cargo lock、固定 localhost 合同、后端严格握手、私有 Host RPC，以及 handshake 后的 desktop/browser、托盘和单实例已完成受控验证。Host updater 目前只保留检查/preflight 边界：在完整 recovery/relaunch coordinator 出现前，`update_install` 会清除候选并返回不可用，不下载、不停 monitor、不安装或重启。裸源码 checkout 缺少经编译绑定 manifest 时仍以状态 `78` 失败；development assembler 已生成 schema-3 manifest 和显式 venv launcher，并从 clean source commit 构建本地 arm64 `.app`。隔离样本验证了 fixed-port owned backend、health/background ready、首页/静态资源、`desktop_available=true`，以及真实 Cmd-Q 触发 shutdown POST、stopped state、host/backend/PID/端口清理；打开的 SSE 连接由既定 `kill + wait` 兜底收束。外部 AppleScript quit 仍可能绕过结构化关闭，且全过程未触碰用户 Application Support。development profile 的 updater 明确禁用。它不证明原生面板、browser/tray、单实例、真实更新、安装器、DMG/NSIS、签名/公证或平台发布烟测。完整顺序、实验和未覆盖项见 [Tauri 2 执行计划](docs/release/TAURI2_EXECUTION_PLAN.md)。共享核心与平台边界见[平台架构](docs/architecture/PLATFORM_ARCHITECTURE.md)，公开净化记录见[执行记录](docs/release/HISTORY_SANITIZATION_EXECUTION.md)。
 
 接手工程或定位任务时按以下顺序阅读：
 
@@ -172,7 +172,7 @@ INVOICE_HUB_TEST_IMAGE=<local-or-mirror-python-image> docker compose run --rm te
 
 Docker 只作为开发验证，不作为正式 Windows 离线包运行依赖。
 
-Tauri macOS development app：`scripts/dev/tauri_dev_app.py` 只会 stage 允许的共享 core 并构建 `.app`；不创建 DMG、更新归档、签名、公证、Release 或 Feed。L9 已对一个 arm64 app 执行一次隔离启动烟测，但旧退出结论已撤回；P1-Q 必须另用自定义应用菜单/Cmd-Q 验证结构化关闭。开发 profile 的 `INVOICE_HUB_DEV_STATE_ROOT` 必须显式提供一个已存在的绝对目录；host 会 canonicalize 它并拒绝其位于 bundle/core 内或包住 bundle/core 的情况，且不会将变量传给 Python child；release profile、缺失或相对路径会 fail closed。
+Tauri macOS development app：`scripts/dev/tauri_dev_app.py` 只会 stage 允许的共享 core 并构建 `.app`；不创建 DMG、更新归档、签名、公证、Release 或 Feed。L9/P1-Q 已对一个 clean-commit arm64 app 执行隔离启动和真实 Cmd-Q 结构化退出烟测；这不覆盖 tray 点击或外部终止。开发 profile 的 `INVOICE_HUB_DEV_STATE_ROOT` 必须显式提供一个已存在的绝对目录；host 会 canonicalize 它并拒绝其位于 bundle/core 内或包住 bundle/core 的情况，且不会将变量传给 Python child；release profile、缺失或相对路径会 fail closed。
 
 Mac 本地壳开发：
 

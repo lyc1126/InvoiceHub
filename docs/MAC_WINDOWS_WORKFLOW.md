@@ -19,7 +19,7 @@ Windows 源码开发入口：
 
 该命令只验证当前 checkout 的源码开发入口，不代表正式安装包或便携包已验收。
 
-Tauri macOS development `.app` 已有一次隔离启动证据：它使用 explicit venv launcher、schema-3 manifest 和仅 development profile 的外置 state root，固定绑定 `127.0.0.1:8766` 后完成 health/background、首页/静态资源和 desktop 默认值检查。外部 AppleScript quit 暴露出结构化关闭未执行，因此旧退出子结论已撤回，必须由 P1-Q 的自定义应用菜单/Cmd-Q 样本重建。该样本不覆盖 native picker、browser/tray、单实例、打印、updater 或任何 DMG/签名/公证项，也不改写真实 Application Support。
+Tauri macOS development `.app` 已有一次隔离启动与 Cmd-Q 退出证据：它使用 explicit venv launcher、schema-3 manifest 和仅 development profile 的外置 state root，固定绑定 `127.0.0.1:8766` 后完成 health/background、首页/静态资源和 desktop 默认值检查；clean-commit 样本的真实 Cmd-Q 触发 shutdown POST 并形成 stopped state，host/backend/PID/端口清理完成，SSE 未及时退出时由显式 `kill + wait` 兜底。外部 AppleScript quit 仍不属于这一可拦截路径。该样本不覆盖 native picker、browser/tray 点击、单实例、打印、updater 或任何 DMG/签名/公证项，也不改写真实 Application Support。
 
 ## Windows 新 RC
 

@@ -13,8 +13,12 @@
   process `Drop`. Host updater metadata checks now use a five-second total
   timeout so a stalled Feed cannot permanently own the updater mutex or Host
   RPC connection capacity. Focused verification is recorded in the Tauri
-  execution plan; the clean-commit custom-menu/Cmd-Q runtime proof remains
-  pending, and this does not enable update installation.
+  execution plan. A clean-commit macOS development sample sent a genuine
+  Cmd-Q to the foreground app and observed the shutdown POST, stopped state,
+  host/backend exit, fixed-port release, and PID cleanup. Open SSE connections
+  required the explicit kill-and-wait fallback after the backend had written
+  `stopped`; this proves only the supported custom-menu/Cmd-Q route and does
+  not enable update installation or extend the claim to external termination.
 - 2026-08-17 Tauri P1 transport/container repair: private Python Host RPC
   requests now use an explicit no-proxy loopback transport, so a configured
   `HTTP_PROXY` cannot receive the bearer token. Development state-root
@@ -55,8 +59,10 @@
   and static assets loaded, with `desktop_available=true` and the default
   desktop surface. A later external AppleScript quit released the process,
   port, and PID but bypassed structured shutdown and left server state stale,
-  so the original orderly-exit subclaim is withdrawn pending P1-Q. The app is a
-  local ignored development artifact; it did not touch the real user
+  so that unsupported exit subclaim remains withdrawn. P1-Q subsequently
+  rebuilt from clean commit `399b20c` and used a genuine Cmd-Q to establish the
+  supported structured-exit path only. The app is a local ignored development
+  artifact; it did not touch the real user
   Application Support state. The development profile disables updater
   delegation and rejects release/relative state-root overrides. An initial
   macOS tray initialization failure was traced to a 16-bit RGBA icon; the icon

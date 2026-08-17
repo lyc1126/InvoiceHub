@@ -29,13 +29,16 @@ manifests, missing or relative values fail closed, and the variable is removed
 before Python is spawned. It exists only to run isolated development smoke
 tests without reading or writing real user Application Support state.
 
-L8-S and L9 passed once on macOS arm64: an isolated app owned exactly
+L8-S, L9, and P1-Q passed their bounded macOS arm64 samples: an isolated app owned exactly
 `127.0.0.1:8766`, health and background startup reached ready, the homepage and
 static assets loaded, `desktop_available=true` and the default desktop surface
-were observed. A later external AppleScript quit released the process, port,
-and PID but bypassed structured shutdown and left stale server state, so the
-original orderly-exit subclaim is withdrawn pending the custom menu/Cmd-Q P1-Q
-sample. The first
+were observed. An external AppleScript quit released the process, port, and PID
+but bypassed structured shutdown and left stale server state, so that external
+path remains outside the contract. The clean-commit P1-Q sample sent a genuine
+Cmd-Q to the foreground app and observed the shutdown POST, stopped state,
+monitor remaining stopped, and host/backend/PID/port cleanup. Open SSE
+connections required the explicit kill-and-wait fallback after stopped state
+was written. The first
 launch exposed a tray initialization failure caused by a 16-bit RGBA icon.
 `icons/icon.png` is now 8-bit RGBA and an IHDR-focused test locks that exact
 failure mechanism.
@@ -69,7 +72,7 @@ that child; inability to confirm termination prevents host exit. Process
 `Drop` is not an exit fallback. External AppleScript quit, Force Quit, SIGKILL,
 logout, and power loss are outside this orderly-shutdown contract.
 
-The development app disables this updater path. L9 did not exercise browser,
-tray, second-instance, native-picker, printing, download, signature validation,
+The development app disables this updater path. L9/P1-Q did not exercise browser,
+tray clicking, second-instance, native-picker, printing, download, signature validation,
 monitor-stop-for-install, installation, restart, Windows, DMG, Developer ID,
 notarization, Release, or Feed behavior. It is not release evidence.
