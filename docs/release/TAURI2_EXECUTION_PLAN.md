@@ -568,6 +568,26 @@ this table.
 | Stop condition | Stop at the first marker, ownership, monitor-state, compiler, test, or documentation-contract failure. Do not start Tauri/FastAPI, bind `127.0.0.1:8766`, call a real updater, download or verify an update, stop a real monitor, build a bundle, sign, publish, or create a Release/Feed. |
 | Result (2026-08-18) | Stopped during the source-level safety review. The candidate could not bind each bridge operation to a captured lifecycle generation/phase/health PID/owned PID/process PID lease or require a released startup gate; its final marker publication and clear operations also remained path-based after parent checks, so a same-user parent/destination swap could not be ruled out. The candidate and its implementation claims were removed rather than committing an unaudited primitive. `update_install` remains candidate-consuming and fail-closed; no monitor, download, signature verification, installer replacement, relaunch, bundle, signing, or release smoke occurred. A later coordinator must define the lease and opened-directory/no-follow final-operation contract before retrying this experiment. |
 
+### P1-SC: setup-failure termination confirmation
+
+| Field | Record |
+| --- | --- |
+| Hypothesis | If tray or the chosen surface fails after `BackendHost::launch`, setup can retain its local host object and retry the existing graceful/forced shutdown path until the owned child exit is confirmed; it never returns the surface error while cleanup remains unconfirmed. |
+| Decision changed by result | A pass permits one DCO fix-forward commit and one rebuild of the development `.app`; a failure blocks that rebuild and confines repair to the setup-cleanup boundary. |
+| Minimal sample | One static lifecycle contract for local ownership, cleanup retry, no cleanup-error return to `Drop`, and order before `app.manage`; locked Rust formatting and offline desktop check; focused lifecycle/foundation/documentation contracts and `git diff --check`. |
+| Stop condition | Stop at the first cleanup-order, retry, format, compiler, contract, or documentation failure. Do not launch Tauri/FastAPI, bind the product port, invoke update/install, create a DMG/NSIS, sign, publish, or change release settings. |
+| Result (2026-08-18) | The first source-level implementation was rejected during review before commit: its post-shutdown polling used `child_is_running`, which treats a child mutex or `try_wait` error as false and could therefore accept an unconfirmed exit. The initial static test did not exercise that distinction. P1-SC-R below owns the narrowed repair; no DCO commit or rebuild is authorized by this rejected result. |
+
+### P1-SC-R: strict graceful child-exit confirmation
+
+| Field | Record |
+| --- | --- |
+| Hypothesis | The graceful shutdown polling can use a strict `Result<bool, BackendError>` confirmation helper, so child mutex or `try_wait` errors fall into the existing forced `kill + wait` path rather than being accepted as an exit. |
+| Decision changed by result | A pass permits one DCO fix-forward commit and one development-app rebuild; a failure blocks both and confines repair to child-exit confirmation. |
+| Minimal sample | One static lifecycle contract for the strict helper and graceful-loop propagation, plus the P1-SC setup-retry/order contract; locked Rust formatting and offline desktop check; focused lifecycle/foundation/documentation tests and `git diff --check`. |
+| Stop condition | Stop at the first child-confirmation, retry, format, compiler, contract, or documentation failure. Do not launch Tauri/FastAPI, bind the product port, invoke update/install, create a DMG/NSIS, sign, publish, or change release settings. |
+| Result (2026-08-18) | Passed for the narrowed source-level confirmation boundary. Locked Rust 1.85 `cargo fmt --check --all` and offline `cargo check --locked --offline --bin invoicehub-desktop` passed. The 40 focused Python lifecycle/foundation/documentation contracts passed with `DeprecationWarning` treated as errors; version synchronization and `git diff --check` also passed. This permits one DCO fix-forward commit and one rebuild of the development `.app` only. It does not exercise setup failure in a running app, enable updater/install, create a DMG/NSIS, sign, publish, or establish platform-release evidence. |
+
 ## Fixed scope and validation
 
 - The backend binds only `127.0.0.1:8766`. An unknown listener is a clear

@@ -83,6 +83,24 @@ fn prepare_backend_exit(app: &tauri::AppHandle<tauri::Wry>) -> bool {
     true
 }
 
+fn complete_setup_failure_cleanup(backend: &BackendHost) {
+    loop {
+        match backend.shutdown_keep_monitor_or_terminate() {
+            Ok(BackendShutdownOutcome::Graceful) => return,
+            Ok(BackendShutdownOutcome::Forced) => {
+                eprintln!("InvoiceHub backend required forced termination during desktop setup");
+                return;
+            }
+            Err(cleanup_error) => {
+                eprintln!(
+                    "InvoiceHub desktop setup remains blocked until owned backend termination is confirmed: {cleanup_error}"
+                );
+                std::thread::sleep(std::time::Duration::from_secs(1));
+            }
+        }
+    }
+}
+
 fn install_tray(app: &tauri::App<tauri::Wry>) -> Result<(), Box<dyn Error>> {
     let open_item = MenuItem::with_id(app, TRAY_OPEN_ID, "Open InvoiceHub", true, None::<&str>)?;
     let quit_item = MenuItem::with_id(app, TRAY_QUIT_ID, "Quit InvoiceHub", true, None::<&str>)?;
@@ -170,11 +188,7 @@ fn main() -> ExitCode {
                 Ok(())
             })();
             if let Err(error) = setup_result {
-                if let Err(cleanup_error) = backend.shutdown_keep_monitor_or_terminate() {
-                    eprintln!(
-                        "InvoiceHub backend cleanup after desktop setup failure failed: {cleanup_error}"
-                    );
-                }
+                complete_setup_failure_cleanup(&backend);
                 return Err(error);
             }
             app.manage(backend);

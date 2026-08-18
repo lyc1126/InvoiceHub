@@ -159,7 +159,8 @@ close 只隐藏窗口且不会调用 monitor stop。当前这条流程只做 sou
 
 `BackendHost` 在 Tauri `setup` 内先保持为局部 owned child：tray 或已选 desktop/browser
 surface 的任一可失败初始化失败时，host 必须在返回原 setup error 前调用同一结构化
-`keep_monitor` shutdown，并在失败或超时时以 `kill + wait` 清理 child；只有全部初始化成功后
+`keep_monitor` shutdown，并在失败或超时时以 `kill + wait` 清理 child；若仍不能确认 child
+退出，setup 保持阻塞并重试，child mutex 或 `try_wait` 错误也不得被当作退出，只有确认退出后才可返回原 setup error。只有全部初始化成功后
 才可以 `app.manage` backend 与 `startup_surface`。setup error 不经过正常 `ExitRequested`，因此
 不得依赖 exit handler 或 `Drop` 承担这一路径的清理。
 

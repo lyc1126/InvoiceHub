@@ -755,7 +755,7 @@ impl BackendHost {
         }
 
         let deadline = Instant::now() + BACKEND_SHUTDOWN_TIMEOUT;
-        while child_is_running(&self.child) {
+        while !child_exit_confirmed(&self.child)? {
             if Instant::now() >= deadline {
                 return Err(BackendError::GracefulShutdownTimedOut);
             }
@@ -840,6 +840,17 @@ fn child_is_running(child: &Mutex<Child>) -> bool {
     match child.lock() {
         Ok(mut child) => matches!(child.try_wait(), Ok(None)),
         Err(_) => false,
+    }
+}
+
+fn child_exit_confirmed(child: &Mutex<Child>) -> Result<bool, BackendError> {
+    let mut child = child
+        .lock()
+        .map_err(|_| BackendError::BackendTerminationFailed)?;
+    match child.try_wait() {
+        Ok(Some(_)) => Ok(true),
+        Ok(None) => Ok(false),
+        Err(_) => Err(BackendError::BackendTerminationFailed),
     }
 }
 

@@ -75,8 +75,10 @@ logout, and power loss are outside this orderly-shutdown contract.
 During Tauri `setup`, the spawned backend remains a local value until tray and
 the selected desktop/browser surface have initialized. If any of those steps
 fails, the host explicitly uses the same keep-monitor shutdown and kill/wait
-fallback before returning the original setup error. This path does not depend
-on the later `ExitRequested` handler or `Drop`.
+fallback. If termination is still not confirmed, setup remains blocked and
+retries instead of returning the original surface error to `Drop`; a child
+mutex or `try_wait` error cannot count as a graceful exit. This path does not
+depend on the later `ExitRequested` handler or `Drop`.
 
 The development app disables this updater path. L9/P1-Q did not exercise browser,
 tray clicking, second-instance, native-picker, printing, download, signature validation,
