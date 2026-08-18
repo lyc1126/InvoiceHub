@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- 2026-08-18 Tauri setup cleanup: after `BackendHost::launch`, tray or selected
+  desktop/browser-surface initialization can fail before the normal
+  `ExitRequested` handler exists. Setup now keeps the child local until all
+  fallible initialization succeeds; on failure it uses the existing structured
+  `keep_monitor` shutdown with explicit kill-and-wait fallback before returning
+  the original error. A focused lifecycle contract covers cleanup before
+  `app.manage`; this does not enable update installation or create release
+  evidence.
 - 2026-08-17 Tauri Windows CI fixture repair: the development-app contract no
   longer assumes that POSIX execute-mode bits control `os.access(..., X_OK)`
   on Windows. Its non-executable virtual-environment sample now denies only

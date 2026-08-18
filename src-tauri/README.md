@@ -72,6 +72,12 @@ that child; inability to confirm termination prevents host exit. Process
 `Drop` is not an exit fallback. External AppleScript quit, Force Quit, SIGKILL,
 logout, and power loss are outside this orderly-shutdown contract.
 
+During Tauri `setup`, the spawned backend remains a local value until tray and
+the selected desktop/browser surface have initialized. If any of those steps
+fails, the host explicitly uses the same keep-monitor shutdown and kill/wait
+fallback before returning the original setup error. This path does not depend
+on the later `ExitRequested` handler or `Drop`.
+
 The development app disables this updater path. L9/P1-Q did not exercise browser,
 tray clicking, second-instance, native-picker, printing, download, signature validation,
 monitor-stop-for-install, installation, restart, Windows, DMG, Developer ID,

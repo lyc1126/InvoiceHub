@@ -161,13 +161,24 @@ fn main() -> ExitCode {
         .setup(move |app| -> Result<(), Box<dyn Error>> {
             let backend = BackendHost::launch(manifest, app.handle().clone())?;
             let startup_surface = backend.startup_surface();
+            let setup_result = (|| -> Result<(), Box<dyn Error>> {
+                install_tray(app)?;
+                match startup_surface {
+                    StartupSurface::Desktop => create_desktop_window(app)?,
+                    StartupSurface::Browser => open_backend_in_browser(&app.handle())?,
+                }
+                Ok(())
+            })();
+            if let Err(error) = setup_result {
+                if let Err(cleanup_error) = backend.shutdown_keep_monitor_or_terminate() {
+                    eprintln!(
+                        "InvoiceHub backend cleanup after desktop setup failure failed: {cleanup_error}"
+                    );
+                }
+                return Err(error);
+            }
             app.manage(backend);
             app.manage(startup_surface);
-            install_tray(app)?;
-            match startup_surface {
-                StartupSurface::Desktop => create_desktop_window(app)?,
-                StartupSurface::Browser => open_backend_in_browser(&app.handle())?,
-            }
             Ok(())
         })
         .build(tauri::generate_context!())

@@ -119,6 +119,29 @@ def test_tauri_setup_selects_surface_only_after_handshake_and_keeps_close_host_o
     assert "monitor.stop" not in main
 
 
+def test_tauri_setup_cleans_up_an_owned_backend_before_returning_surface_failure() -> None:
+    main = (ROOT / "src-tauri" / "src" / "main.rs").read_text(encoding="utf-8")
+
+    setup = main[main.index(".setup(move |app|") : main.index(".build(tauri::generate_context!())")]
+    assert "let backend = BackendHost::launch" in setup
+    assert "let setup_result = (|| -> Result<(), Box<dyn Error>>" in setup
+    assert "install_tray(app)?;" in setup
+    assert "create_desktop_window(app)?" in setup
+    assert "open_backend_in_browser(&app.handle())?" in setup
+    assert "if let Err(error) = setup_result" in setup
+    assert "backend.shutdown_keep_monitor_or_terminate()" in setup
+    assert "return Err(error);" in setup
+    assert setup.index("backend.shutdown_keep_monitor_or_terminate()") < setup.index(
+        "app.manage(backend);"
+    )
+    assert setup.index("install_tray(app)?;") < setup.index("app.manage(backend);")
+    assert setup.index("create_desktop_window(app)?") < setup.index("app.manage(backend);")
+    assert setup.index("open_backend_in_browser(&app.handle())?") < setup.index(
+        "app.manage(backend);"
+    )
+    assert setup.index("app.manage(backend);") < setup.index("app.manage(startup_surface);")
+
+
 def test_tauri_macos_menu_and_tray_request_the_same_interceptable_exit() -> None:
     main = (ROOT / "src-tauri" / "src" / "main.rs").read_text(encoding="utf-8")
 
