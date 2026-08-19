@@ -134,8 +134,10 @@ the assembler labels dirty inputs `<HEAD>+dirty`.
    strict required-status policy; do not merge without explicit owner approval.
 9. [ ] After the foundation PR is accepted, implement the missing
    recovery/relaunch coordinator and deterministic Tauri NSIS/DMG/update-
-   archive assembly/verification as separate bounded development work. Do not
-   enable `update_install` before every failure path restores prior state.
+   archive assembly/verification as separate bounded development work. The
+   local L11-A internal-alpha App/DMG assembly is a non-public prerequisite
+   experiment; it does not close this formal release item or enable
+   `update_install` before every failure path restores prior state.
 10. [ ] Exercise the five decision scenarios on development/alpha artifacts:
    both startup surfaces; single instance and wrong port; Host RPC
    authorization; valid/tampered update; and monitor stop before install.

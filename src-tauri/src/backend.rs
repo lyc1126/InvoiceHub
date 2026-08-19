@@ -85,6 +85,7 @@ pub struct ExpectedBackendIdentity {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BundleProfile {
     Development,
+    InternalAlpha,
     Release,
 }
 
@@ -231,7 +232,7 @@ impl ExpectedBackendIdentity {
             BundleProfile::Development => {
                 !health.package_manifest_present && !health.package_manifest_valid
             }
-            BundleProfile::Release => {
+            BundleProfile::InternalAlpha | BundleProfile::Release => {
                 health.package_manifest_present && health.package_manifest_valid
             }
         };
@@ -468,6 +469,7 @@ fn load_bundle_manifest_for_state(
         .as_str()
     {
         "development" => BundleProfile::Development,
+        "internal-alpha" => BundleProfile::InternalAlpha,
         "release" => BundleProfile::Release,
         _ => return Err(BackendError::BundleManifestInvalid),
     };
@@ -861,7 +863,7 @@ fn state_paths_for_bundle_profile(
     development_root: Option<&Path>,
 ) -> Result<DesktopStatePaths, BackendError> {
     match profile {
-        BundleProfile::Release => {
+        BundleProfile::InternalAlpha | BundleProfile::Release => {
             if development_root.is_some() {
                 return Err(BackendError::BundleManifestInvalid);
             }
@@ -981,7 +983,7 @@ fn validate_backend_root(backend_root: &Path, profile: BundleProfile) -> Result<
         BundleProfile::Development if package_manifest_present => {
             Err(BackendError::BundleManifestInvalid)
         }
-        BundleProfile::Release if !package_manifest_present => {
+        BundleProfile::InternalAlpha | BundleProfile::Release if !package_manifest_present => {
             Err(BackendError::BundleManifestInvalid)
         }
         _ => Ok(()),
@@ -1072,7 +1074,9 @@ fn identity_from_json(
         BundleProfile::Development if package_id != "development" || package_type != "source" => {
             return Err(BackendError::BundleManifestInvalid)
         }
-        BundleProfile::Release if package_id == "development" || package_type == "source" => {
+        BundleProfile::InternalAlpha | BundleProfile::Release
+            if package_id == "development" || package_type == "source" =>
+        {
             return Err(BackendError::BundleManifestInvalid)
         }
         _ => {}
@@ -1100,7 +1104,7 @@ fn updater_from_json(
     let enabled =
         required_bool(fields, "enabled").map_err(|_| BackendError::BundleManifestInvalid)?;
     if !enabled {
-        if profile != BundleProfile::Development
+        if !matches!(profile, BundleProfile::Development | BundleProfile::InternalAlpha)
             || fields.len() != 1
             || fields.contains_key("endpoint")
             || fields.contains_key("public_key")
@@ -1113,7 +1117,7 @@ fn updater_from_json(
             public_key: None,
         });
     }
-    if profile != BundleProfile::Release {
+    if !matches!(profile, BundleProfile::InternalAlpha | BundleProfile::Release) {
         return Err(BackendError::BundleManifestInvalid);
     }
     let endpoint =

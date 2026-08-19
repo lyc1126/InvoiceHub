@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- 2026-08-19 Tauri internal-alpha assembly: add a bounded macOS arm64
+  `internal-alpha` profile, clean-snapshot staging, embedded Python 3.14.6
+  runtime inputs, manifest/launcher hash binding, receipt generation and an
+  independent fail-closed verifier. The builder accepts a direct locked Tauri
+  CLI path when the installed pnpm wrapper is unavailable. This work is local
+  validation only: no Release, Feed, updater installation, Developer ID,
+  notarization or GitHub mutation is enabled.
+- 2026-08-19 Tauri internal-alpha runtime gate: allow only relative runtime
+  symlinks whose resolved targets remain inside the embedded runtime; the
+  staging copy still dereferences them and the final artifact verifier rejects
+  symlinks. This accommodates the pinned python-build-standalone launcher
+  links without weakening bundle containment.
 - 2026-08-18 Tauri setup cleanup confirmation: after `BackendHost::launch`,
   tray or selected desktop/browser-surface initialization can fail before the
   normal `ExitRequested` handler exists. Setup keeps the child local until all

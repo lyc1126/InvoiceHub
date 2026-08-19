@@ -13,7 +13,7 @@ English project name: `InvoiceHub`.
 本项目采用 monorepo：无论在 Windows 还是 macOS 执行 `git clone`，源码目录都会同时包含共享的 `src/`、`web/`、Windows 入口 `scripts/windows/` 和 macOS 壳 `macos/InvoiceHubMac/`。看到另一平台源码不代表最终包体混合，也不应在 Windows checkout 中手工删除 `macos/`。
 
 - Windows 源码开发只通过根 BAT 的 `-Development` 模式调用当前 checkout；正式发布只运行 Windows 构建脚本，产出 `windows-x64-portable.zip`。验包器使用精确路径白名单，并拒绝 macOS 壳、Swift/bundle、Mac 依赖锁和 Unix Python runtime。
-- 当前 Tauri macOS development `.app` 由 `scripts/dev/tauri_dev_app.py` 组装：它只复制允许的共享 core、使用显式 venv launcher 和 schema-3 development manifest，并只构建 arm64 `.app`。旧的 `macos/InvoiceHubMac/` SwiftUI/WKWebView 工程仍是平台参考实现；正式 `.app`、DMG 和更新归档仍需单独的 release assembly。所有 macOS 成品验包都扫描整个 `Resources`，拒绝 Windows BAT/PowerShell、Windows 锁与 `.exe/.dll/.pyd/.msi/.msix`。
+- 当前 Tauri macOS development `.app` 由 `scripts/dev/tauri_dev_app.py` 组装：它只复制允许的共享 core、使用显式 venv launcher 和 schema-3 development manifest，并只构建 arm64 `.app`。`scripts/dev/tauri_alpha_release.py` 是隔离的 internal-alpha assembly：从 clean Git snapshot 组装锁定 Python 3.14.6 arm64 runtime、schema-4 receipt 和独立 verifier，目标仅为本地 ad-hoc `.app/.dmg` 评审；它不启用 updater、Feed、Release、Developer ID 或公证。旧的 `macos/InvoiceHubMac/` SwiftUI/WKWebView 工程仍是平台参考实现。所有 macOS 成品验包都扫描整个 `Resources`，拒绝 Windows BAT/PowerShell、Windows 锁与 `.exe/.dll/.pyd/.msi/.msix`。
 - 两个平台共享同一 `RC_SHA` 和 core build ID，但 package ID、运行时、启动器、可写目录和成品文件互不复用。源码共存用于避免业务算法分叉，成品互斥用于避免平台文件混包。
 
 ## 快速启动
