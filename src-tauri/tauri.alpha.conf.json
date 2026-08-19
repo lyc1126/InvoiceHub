@@ -19,6 +19,7 @@
     "targets": ["app"],
     "resources": {
       ".alpha-staging/invoice-hub-core": "invoice-hub-core",
+      ".alpha-staging/python": "python",
       ".alpha-staging/invoice-hub-alpha-launcher.sh": "invoice-hub-alpha-launcher.sh",
       ".alpha-staging/invoicehub-desktop-host.json": "invoicehub-desktop-host.json"
     },

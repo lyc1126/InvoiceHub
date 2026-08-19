@@ -18,6 +18,9 @@
   as a deterministic directory-tree digest and total file-byte count instead
   of treating the bundle directory as a regular file. DMG records remain
   regular-file hashes.
+- 2026-08-19 Tauri internal-alpha bundle mapping: include the validated
+  embedded Python runtime under `Contents/Resources/python`; the verifier now
+  checks the same launcher-visible path used by the App.
 - 2026-08-18 Tauri setup cleanup confirmation: after `BackendHost::launch`,
   tray or selected desktop/browser-surface initialization can fail before the
   normal `ExitRequested` handler exists. Setup keeps the child local until all
