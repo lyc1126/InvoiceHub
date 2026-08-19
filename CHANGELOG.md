@@ -14,6 +14,10 @@
   staging copy still dereferences them and the final artifact verifier rejects
   symlinks. This accommodates the pinned python-build-standalone launcher
   links without weakening bundle containment.
+- 2026-08-19 Tauri internal-alpha receipt repair: represent the signed `.app`
+  as a deterministic directory-tree digest and total file-byte count instead
+  of treating the bundle directory as a regular file. DMG records remain
+  regular-file hashes.
 - 2026-08-18 Tauri setup cleanup confirmation: after `BackendHost::launch`,
   tray or selected desktop/browser-surface initialization can fail before the
   normal `ExitRequested` handler exists. Setup keeps the child local until all

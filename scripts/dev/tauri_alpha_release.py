@@ -177,6 +177,16 @@ def _tree_digest(root: Path) -> str:
     return digest.hexdigest()
 
 
+def _tree_size(root: Path) -> int:
+    total = 0
+    for path in root.rglob("*"):
+        if path.is_symlink():
+            raise AlphaReleaseError(f"artifact directory contains a symlink: {path}")
+        if path.is_file():
+            total += path.stat().st_size
+    return total
+
+
 def _safe_member_name(name: str) -> Path:
     relative = Path(name)
     if relative.is_absolute() or any(part in {"", ".", ".."} for part in relative.parts):
@@ -612,11 +622,13 @@ def _receipt_payload(
     output_dir: Path,
 ) -> dict[str, Any]:
     def artifact(path: Path) -> dict[str, Any]:
+        is_directory = path.is_dir()
         return {
             "name": path.name,
             "path": str(path),
-            "size_bytes": path.stat().st_size,
-            "sha256": _sha256_file(path),
+            "kind": "directory" if is_directory else "file",
+            "size_bytes": _tree_size(path) if is_directory else path.stat().st_size,
+            "sha256": _tree_digest(path) if is_directory else _sha256_file(path),
         }
 
     payload: dict[str, Any] = {

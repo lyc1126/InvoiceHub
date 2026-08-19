@@ -1104,8 +1104,10 @@ fn updater_from_json(
     let enabled =
         required_bool(fields, "enabled").map_err(|_| BackendError::BundleManifestInvalid)?;
     if !enabled {
-        if !matches!(profile, BundleProfile::Development | BundleProfile::InternalAlpha)
-            || fields.len() != 1
+        if !matches!(
+            profile,
+            BundleProfile::Development | BundleProfile::InternalAlpha
+        ) || fields.len() != 1
             || fields.contains_key("endpoint")
             || fields.contains_key("public_key")
         {
@@ -1117,7 +1119,10 @@ fn updater_from_json(
             public_key: None,
         });
     }
-    if !matches!(profile, BundleProfile::InternalAlpha | BundleProfile::Release) {
+    if !matches!(
+        profile,
+        BundleProfile::InternalAlpha | BundleProfile::Release
+    ) {
         return Err(BackendError::BundleManifestInvalid);
     }
     let endpoint =

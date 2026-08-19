@@ -52,6 +52,33 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _tree_digest(root: Path) -> str:
+    digest = hashlib.sha256()
+    for path in sorted(root.rglob("*"), key=lambda item: item.relative_to(root).as_posix()):
+        if path.is_symlink():
+            raise AlphaVerificationError(f"artifact directory contains a symlink: {path}")
+        if not path.is_file():
+            continue
+        relative = path.relative_to(root).as_posix().encode("utf-8")
+        digest.update(relative)
+        digest.update(b"\0")
+        digest.update(str(path.stat().st_mode & 0o777).encode("ascii"))
+        digest.update(b"\0")
+        digest.update(bytes.fromhex(_sha256(path)))
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
+def _tree_size(root: Path) -> int:
+    total = 0
+    for path in root.rglob("*"):
+        if path.is_symlink():
+            raise AlphaVerificationError(f"artifact directory contains a symlink: {path}")
+        if path.is_file():
+            total += path.stat().st_size
+    return total
+
+
 def _json(path: Path, label: str) -> dict[str, Any]:
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
@@ -75,11 +102,17 @@ def _assert_artifact_record(path: Path, record: Any, label: str) -> None:
     expected_name = _required_text(record, "name", f"receipt.{label}")
     expected_hash = _required_text(record, "sha256", f"receipt.{label}").casefold()
     expected_size = record.get("size_bytes")
+    expected_kind = record.get("kind")
     if expected_name != path.name:
         raise AlphaVerificationError(f"receipt.{label}.name does not match the supplied artifact")
-    if not SHA256.fullmatch(expected_hash) or _sha256(path) != expected_hash:
+    actual_kind = "directory" if path.is_dir() else "file"
+    if expected_kind != actual_kind:
+        raise AlphaVerificationError(f"receipt.{label}.kind does not match the artifact")
+    actual_hash = _tree_digest(path) if actual_kind == "directory" else _sha256(path)
+    actual_size = _tree_size(path) if actual_kind == "directory" else path.stat().st_size
+    if not SHA256.fullmatch(expected_hash) or actual_hash != expected_hash:
         raise AlphaVerificationError(f"receipt.{label}.sha256 does not match the artifact")
-    if not isinstance(expected_size, int) or expected_size != path.stat().st_size:
+    if not isinstance(expected_size, int) or expected_size != actual_size:
         raise AlphaVerificationError(f"receipt.{label}.size_bytes does not match the artifact")
 
 
