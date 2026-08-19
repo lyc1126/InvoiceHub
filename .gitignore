@@ -34,4 +34,5 @@ Desktop.ini
 /macos/InvoiceHubMac/.swiftpm/
 /src-tauri/gen/
 /src-tauri/.dev-staging/
+/src-tauri/.alpha-staging/
 /src-tauri/target/

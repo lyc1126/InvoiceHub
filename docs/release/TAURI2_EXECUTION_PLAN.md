@@ -134,8 +134,10 @@ the assembler labels dirty inputs `<HEAD>+dirty`.
    strict required-status policy; do not merge without explicit owner approval.
 9. [ ] After the foundation PR is accepted, implement the missing
    recovery/relaunch coordinator and deterministic Tauri NSIS/DMG/update-
-   archive assembly/verification as separate bounded development work. Do not
-   enable `update_install` before every failure path restores prior state.
+   archive assembly/verification as separate bounded development work. The
+   local L11-A internal-alpha App/DMG assembly is a non-public prerequisite
+   experiment; it does not close this formal release item or enable
+   `update_install` before every failure path restores prior state.
 10. [ ] Exercise the five decision scenarios on development/alpha artifacts:
    both startup surfaces; single instance and wrong port; Host RPC
    authorization; valid/tampered update; and monitor stop before install.
@@ -557,6 +559,46 @@ this table.
 | Minimal sample | One arm64 macOS development `.app` built from the reviewed branch with the explicit project virtual-environment Python; inspect `Contents/Resources`, manifest SHA and prohibited inputs; launch once against a clean development state root; check fixed-port ownership, `/api/v1/health`, `/`, and clean exit. |
 | Stop condition | Stop at the first staging, build, layout, port, handshake, page, or exit failure. Do not create a DMG/update archive, use signing credentials, invoke a real updater, notarize, upload, publish a Release/Feed, or claim Windows/platform-release coverage. |
 | Result | Passed for this bounded development-app scope on 2026-08-17 after P1-Q. The assembler staged only the allowed shared core, generated a schema-3 development manifest and explicit venv launcher, then built one local macOS arm64 `InvoiceHub.app`. Resource inspection found the manifest/launcher SHA bindings and no package manifest, user configuration, runtime state, virtual environment, business data, or `node_modules`. The local artifact carried only a development ad-hoc linker mark, not Developer ID, Team ID, CMS, resource sealing, notarization, or release provenance. The isolated launch owned exactly `127.0.0.1:8766`; health and background startup became ready, homepage/static assets loaded, and `desktop_available=true` with the default `desktop` surface. The first launch exposed a tray initialization failure from a 16-bit RGBA icon; converting the icon to 8-bit RGBA and adding an IHDR contract repaired that mechanism. An external AppleScript quit later invalidated the original exit subclaim, so P1-Q rebuilt from clean commit `399b20c` and replaced only that failed evidence with a genuine Cmd-Q sample: shutdown POST 200, stopped state, monitor unchanged, process/PID/port cleanup, and explicit kill+wait fallback for open SSE connections all behaved as designed. No DMG, NSIS, update archive, real updater/download/install, native picker, browser/tray-click/second-instance scenario, Developer ID, notarization, upload, Release, Feed, or Windows smoke was run. |
+
+### L10: host-owned monitor recovery transaction
+
+| Field | Record |
+| --- | --- |
+| Hypothesis | A small host-owned recovery primitive can persist the fact that an owned monitor was running, stop it, and restore it only after a later owned status reports `running=true` and `ready=true`; marker corruption, symlink substitution, ownership loss, stop/status/start failure, and an originally stopped monitor must fail closed without changing an external monitor. |
+| Decision changed by result | A passing source-level transaction permits a DCO implementation commit and focused Rust/documentation verification, but does not authorize real download, signature verification, installer replacement, relaunch, or enabling `update_install`. Any failure blocks updater integration and confines repair to the marker/recovery module. |
+| Minimal sample | One representative owned running monitor, one originally stopped monitor, one stop/status/start failure path, one unowned backend, and one invalid/symlink marker; run focused Rust formatting/tests when the locked offline cache is available, plus the affected documentation contract and `git diff --check`. |
+| Stop condition | Stop at the first marker, ownership, monitor-state, compiler, test, or documentation-contract failure. Do not start Tauri/FastAPI, bind `127.0.0.1:8766`, call a real updater, download or verify an update, stop a real monitor, build a bundle, sign, publish, or create a Release/Feed. |
+| Result (2026-08-18) | Stopped during the source-level safety review. The candidate could not bind each bridge operation to a captured lifecycle generation/phase/health PID/owned PID/process PID lease or require a released startup gate; its final marker publication and clear operations also remained path-based after parent checks, so a same-user parent/destination swap could not be ruled out. The candidate and its implementation claims were removed rather than committing an unaudited primitive. `update_install` remains candidate-consuming and fail-closed; no monitor, download, signature verification, installer replacement, relaunch, bundle, signing, or release smoke occurred. A later coordinator must define the lease and opened-directory/no-follow final-operation contract before retrying this experiment. |
+
+### P1-SC: setup-failure termination confirmation
+
+| Field | Record |
+| --- | --- |
+| Hypothesis | If tray or the chosen surface fails after `BackendHost::launch`, setup can retain its local host object and retry the existing graceful/forced shutdown path until the owned child exit is confirmed; it never returns the surface error while cleanup remains unconfirmed. |
+| Decision changed by result | A pass permits one DCO fix-forward commit and one rebuild of the development `.app`; a failure blocks that rebuild and confines repair to the setup-cleanup boundary. |
+| Minimal sample | One static lifecycle contract for local ownership, cleanup retry, no cleanup-error return to `Drop`, and order before `app.manage`; locked Rust formatting and offline desktop check; focused lifecycle/foundation/documentation contracts and `git diff --check`. |
+| Stop condition | Stop at the first cleanup-order, retry, format, compiler, contract, or documentation failure. Do not launch Tauri/FastAPI, bind the product port, invoke update/install, create a DMG/NSIS, sign, publish, or change release settings. |
+| Result (2026-08-18) | The first source-level implementation was rejected during review before commit: its post-shutdown polling used `child_is_running`, which treats a child mutex or `try_wait` error as false and could therefore accept an unconfirmed exit. The initial static test did not exercise that distinction. P1-SC-R below owns the narrowed repair; no DCO commit or rebuild is authorized by this rejected result. |
+
+### P1-SC-R: strict graceful child-exit confirmation
+
+| Field | Record |
+| --- | --- |
+| Hypothesis | The graceful shutdown polling can use a strict `Result<bool, BackendError>` confirmation helper, so child mutex or `try_wait` errors fall into the existing forced `kill + wait` path rather than being accepted as an exit. |
+| Decision changed by result | A pass permits one DCO fix-forward commit and one development-app rebuild; a failure blocks both and confines repair to child-exit confirmation. |
+| Minimal sample | One static lifecycle contract for the strict helper and graceful-loop propagation, plus the P1-SC setup-retry/order contract; locked Rust formatting and offline desktop check; focused lifecycle/foundation/documentation tests and `git diff --check`. |
+| Stop condition | Stop at the first child-confirmation, retry, format, compiler, contract, or documentation failure. Do not launch Tauri/FastAPI, bind the product port, invoke update/install, create a DMG/NSIS, sign, publish, or change release settings. |
+| Result (2026-08-18) | Passed for the narrowed source-level confirmation boundary. Locked Rust 1.85 `cargo fmt --check --all` and offline `cargo check --locked --offline --bin invoicehub-desktop` passed. The 40 focused Python lifecycle/foundation/documentation contracts passed with `DeprecationWarning` treated as errors; version synchronization and `git diff --check` also passed. This permits one DCO fix-forward commit and one rebuild of the development `.app` only. It does not exercise setup failure in a running app, enable updater/install, create a DMG/NSIS, sign, publish, or establish platform-release evidence. |
+
+### L11-A: internal-alpha macOS arm64 assembly and isolated launch smoke
+
+| Field | Record |
+| --- | --- |
+| Hypothesis | A clean-snapshot Tauri assembly can embed the allowlisted shared core and pinned Python 3.14.6 arm64 runtime, produce a reviewable App/DMG/receipt, and start once from an isolated state root without touching user state. |
+| Decision changed by result | The pass permits retaining one internal-alpha App/DMG for controlled review. It does not close recovery/relaunch, updater, signing, notarization, public Release, Feed, or final platform-install gates. |
+| Minimal sample | One clean source commit (`1892a52bf5eba4ae3b24720fbc32899a4e6003a0`), one arm64 App, one same-source ad-hoc DMG, one schema-4 receipt, one independent verifier pass, and one temporary-HOME fixed-port launch smoke. |
+| Stop condition | Stop at the first staging, runtime, manifest, artifact, verifier, port, identity, state-containment, or cleanup failure. Do not retry with the real HOME, change the port, invoke updater/install, sign, notarize, upload, publish, or create a Release/Feed. |
+| Result (2026-08-19) | Passed. The App/DMG/receipt verifier passed with `core_build_id=9188334bf2d10a7a75d99b04683c946cd34139ba0061d64e20eb33e8c5c91f76`, `signature_mode=internal-adhoc`, `updater_enabled=false`, and `public_release=false`. The separate launch smoke reached `ready` on `127.0.0.1:8766`, matched package/build/source identity, left the real Application Support directory untouched, and terminated only its own process group. This is internal evidence, not a release or installation result. |
 
 ## Fixed scope and validation
 

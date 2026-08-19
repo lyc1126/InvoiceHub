@@ -2,7 +2,7 @@
 
 > 作用：把自然语言任务转换成“先读哪里、从哪个符号开工、会影响什么、至少测什么”。
 > 公共权威基线：单一脱敏根提交；退休私有提交、Tag、包和验证材料不在公开图中。
-> 当前边界：候选树、Git 对象和托管面验证已完成；`v0.3.0-alpha.1` Tauri 2 开发分支已从公开 `main` 建立，版本/环境/Cargo lock 与代码级 lifecycle/Host RPC/updater 和隔离 TestClient L6 contract 已通过受控验证。裸 checkout 仍缺经编译绑定 manifest；development assembler 已构建并隔离烟测一个 macOS arm64 `.app`，但尚无 Release。
+> 当前边界：候选树、Git 对象和托管面验证已完成；`v0.3.0-alpha.1` Tauri 2 开发分支已从公开 `main` 建立，版本/环境/Cargo lock 与代码级 lifecycle/Host RPC/updater 和隔离 TestClient L6 contract 已通过受控验证。裸 checkout 仍缺经编译绑定 manifest；development assembler 已构建并隔离烟测一个 macOS arm64 `.app`，internal-alpha 也已完成 arm64 App/DMG/receipt verifier 与隔离启动烟测，但尚无 Release。
 > 校验规则：精确的当前本地与 GitHub HEAD 以实时 Git 引用和双向差异为准。
 
 ## 1. 使用方法
@@ -183,10 +183,10 @@ flowchart TD
 | 导航项 | 内容 |
 |---|---|
 | 首先阅读 | [平台架构](PLATFORM_ARCHITECTURE.md)第 5 至 8 节；接口流程第 3.2、6.12 节；`AGENTS.md` macOS 本地壳规则 |
-| 首要入口 | `BackendPaths.swift`、`LocalBackendController.swift`、`BuildHandshake.swift`、`InvoiceHubSparkleUpdater.swift`、`StartupSurface.swift`、`WebView.swift`、`InvoiceHubAPIClient.swift`、`InvoiceHubMacApp.swift`、开发与正式三个 release 脚本 |
+| 首要入口 | `BackendPaths.swift`、`LocalBackendController.swift`、`BuildHandshake.swift`、`InvoiceHubSparkleUpdater.swift`、`StartupSurface.swift`、`WebView.swift`、`InvoiceHubAPIClient.swift`、`InvoiceHubMacApp.swift`、`src-tauri/src/main.rs`、开发与正式三个 release 脚本 |
 | 必须联动 | Python build/package/runtime manifest/health、OpenAPI 路由、API/做账协议/capabilities、固定端口、Application Support、owned/external、启动方式、Sparkle feed/key、升级标记与 monitor 恢复、原生面板和打印 identity |
 | 产物与消费者 | development schema-3 arm64 `.app`（本地 ignored）；正式 arm64 `.app/DMG/Sparkle ZIP`；三类 manifest/SBOM；Application Support 配置/runtime/PID/log；WKWebView 页面 |
-| 最低自动化 | `swift test`（更新恢复改动必须覆盖 marker 存在、verified owned startup release gate 后才可恢复，以及 external/失败拒绝）、build/release/update/Mac contract/API/前端测试、`bash -n`、JS syntax；Tauri development assembly 改动还跑 `tauri_dev_app.py` 的 stage/build contracts、manifest/launcher SHA、state-root 与 icon IHDR 测试，必要时一次隔离 launch；内部制品跑 `verify_macos_release.sh --expect-internal-adhoc`，正式制品跑 `--expect-notarized`；两模式必须互斥 |
+| 最低自动化 | Swift recovery contracts 必须覆盖 marker 存在、verified owned startup release gate 后才可恢复，以及 external/失败拒绝；Tauri setup/lifecycle 改动至少跑锁定 Rust `cargo fmt --check`、可用时的离线 focused library tests、setup error cleanup confirmation/retry/order 契约和 `git diff --check`。其余仍需 build/release/update/Mac contract/API/前端测试、`bash -n`、JS syntax；Tauri development assembly 改动还跑 `tauri_dev_app.py` 的 stage/build contracts、manifest/launcher SHA、state-root 与 icon IHDR 测试，必要时一次隔离 launch；内部制品跑 `verify_macos_release.sh --expect-internal-adhoc`，正式制品跑 `--expect-notarized`；两模式必须互斥 |
 | 真实验收 | L9/P1-Q 已覆盖 development app 的 fixed-port owned backend、health/background、首页/静态资源、desktop 默认，以及真实 Cmd-Q 的 shutdown POST、stopped state、child/PID/端口清理；SSE 未及时退出时命中显式 kill+wait。外部终止仍不作可拦截承诺；仍需 owned/external、browser、NSOpenPanel、tray 点击/单实例、预览/打印、签名/notary/staple、quarantine、首次目录授权、Sparkle 旧版到新版且 monitor 恢复 |
 | 高风险提醒 | 不只凭 health.ok 连接；正式模式 core 只能来自 `Contents/Resources/invoice-hub-core`，无效时不得回退 checkout；握手不调用业务数据接口且请求有界；异步完成重验 generation/phase/PID；Sparkle、更新 monitor stop/restore 只接受 current owned token，外部不得有安装 bridge，且壳内菜单/侧栏/页面不得启用其 monitor 启停；marker 恢复必须等成功启动转为 verified owned running 并释放 startup gate，失败/external 仍走原启动收尾；不换端口或杀未知进程；只在确认 owned 进程退出后清 PID/ownership；通用 bridge 只开放给预期 localhost 主框架，打印子窗口只开放受限 print bridge |
 

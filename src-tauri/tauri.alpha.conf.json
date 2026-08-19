@@ -1,0 +1,30 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "InvoiceHub",
+  "version": "0.3.0-alpha.1",
+  "identifier": "com.invoicehub.desktop",
+  "build": {
+    "devUrl": "http://127.0.0.1:8766",
+    "frontendDist": "../src-tauri/boot"
+  },
+  "app": {
+    "windows": [],
+    "security": {
+      "capabilities": ["no-webview-ipc"],
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["app"],
+    "resources": {
+      ".alpha-staging/invoice-hub-core": "invoice-hub-core",
+      ".alpha-staging/python": "python",
+      ".alpha-staging/invoice-hub-alpha-launcher.sh": "invoice-hub-alpha-launcher.sh",
+      ".alpha-staging/invoicehub-desktop-host.json": "invoicehub-desktop-host.json"
+    },
+    "macOS": {
+      "minimumSystemVersion": "13.0"
+    }
+  }
+}

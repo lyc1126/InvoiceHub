@@ -2,6 +2,44 @@
 
 ## Unreleased
 
+- 2026-08-19 Tauri internal-alpha assembly: add a bounded macOS arm64
+  `internal-alpha` profile, clean-snapshot staging, embedded Python 3.14.6
+  runtime inputs, manifest/launcher hash binding, receipt generation and an
+  independent fail-closed verifier. The builder accepts a direct locked Tauri
+  CLI path when the installed pnpm wrapper is unavailable. This work is local
+  validation only: no Release, Feed, updater installation, Developer ID,
+  notarization or GitHub mutation is enabled.
+- 2026-08-19 Tauri internal-alpha evidence: built one arm64 `.app` and same-source
+  ad-hoc `.dmg` from clean commit `1892a52bf5eba4ae3b24720fbc32899a4e6003a0`;
+  the independent App/DMG/receipt verifier passed, and a separate temporary
+  HOME launch smoke reached fixed-port `ready` with matching package/build/source
+  identity. The artifacts remain internal-only and do not enable Release, Feed,
+  updater installation, signing, notarization or end-user installation claims.
+- 2026-08-19 Tauri internal-alpha runtime gate: allow only relative runtime
+  symlinks whose resolved targets remain inside the embedded runtime; the
+  staging copy still dereferences them and the final artifact verifier rejects
+  symlinks. This accommodates the pinned python-build-standalone launcher
+  links without weakening bundle containment.
+- 2026-08-19 Tauri internal-alpha receipt repair: represent the signed `.app`
+  as a deterministic directory-tree digest and total file-byte count instead
+  of treating the bundle directory as a regular file. DMG records remain
+  regular-file hashes.
+- 2026-08-19 Tauri internal-alpha bundle mapping: include the validated
+  embedded Python runtime under `Contents/Resources/python`; the verifier now
+  checks the same launcher-visible path used by the App.
+- 2026-08-19 Tauri internal-alpha receipt privacy: store artifact names rather
+  than local absolute build paths in the receipt; hashes, source identity and
+  verification fields remain unchanged.
+- 2026-08-18 Tauri setup cleanup confirmation: after `BackendHost::launch`,
+  tray or selected desktop/browser-surface initialization can fail before the
+  normal `ExitRequested` handler exists. Setup keeps the child local until all
+  fallible initialization succeeds; on failure it retries the existing
+  structured `keep_monitor` shutdown with explicit kill-and-wait fallback until
+  owned-child termination is confirmed; child lock or `try_wait` errors count
+  as unconfirmed and enter forced termination rather than a graceful exit.
+  Only then does it return the original surface error. A focused lifecycle
+  contract forbids returning a cleanup error to `Drop`; this does not enable
+  update installation or create release evidence.
 - 2026-08-17 Tauri Windows CI fixture repair: the development-app contract no
   longer assumes that POSIX execute-mode bits control `os.access(..., X_OK)`
   on Windows. Its non-executable virtual-environment sample now denies only

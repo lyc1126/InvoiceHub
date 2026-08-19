@@ -157,6 +157,13 @@ allowed.desktop_available}` 形状并重新证明 ownership：desktop 创建空 
 close 只隐藏窗口且不会调用 monitor stop。当前这条流程只做 source/contract verification，
 尚未打开真实 native picker、浏览器、托盘或窗口。
 
+`BackendHost` 在 Tauri `setup` 内先保持为局部 owned child：tray 或已选 desktop/browser
+surface 的任一可失败初始化失败时，host 必须在返回原 setup error 前调用同一结构化
+`keep_monitor` shutdown，并在失败或超时时以 `kill + wait` 清理 child；若仍不能确认 child
+退出，setup 保持阻塞并重试，child mutex 或 `try_wait` 错误也不得被当作退出，只有确认退出后才可返回原 setup error。只有全部初始化成功后
+才可以 `app.manage` backend 与 `startup_surface`。setup error 不经过正常 `ExitRequested`，因此
+不得依赖 exit handler 或 `Drop` 承担这一路径的清理。
+
 macOS 应用菜单的 Quit 是自定义普通菜单项，显式绑定 `CmdOrCtrl+Q`；它与托盘 Quit
 只调用同一个 `app.exit(0)` 请求。不得使用会绑定 Cocoa `terminate:` 的 predefined
 Quit，因为该路径和外部 AppleScript quit 都可能绕过 Tauri `ExitRequested`。Host 收到

@@ -119,6 +119,44 @@ def test_tauri_setup_selects_surface_only_after_handshake_and_keeps_close_host_o
     assert "monitor.stop" not in main
 
 
+def test_tauri_setup_cleans_up_an_owned_backend_before_returning_surface_failure() -> None:
+    main = (ROOT / "src-tauri" / "src" / "main.rs").read_text(encoding="utf-8")
+
+    cleanup = main[
+        main.index("fn complete_setup_failure_cleanup") : main.index("fn install_tray")
+    ]
+    assert "loop {" in cleanup
+    assert "match backend.shutdown_keep_monitor_or_terminate()" in cleanup
+    assert "Ok(BackendShutdownOutcome::Graceful) => return" in cleanup
+    assert "Ok(BackendShutdownOutcome::Forced)" in cleanup
+    assert "Err(cleanup_error)" in cleanup
+    assert "std::thread::sleep(std::time::Duration::from_secs(1));" in cleanup
+    assert "setup remains blocked until owned backend termination is confirmed" in cleanup
+
+    setup = main[main.index(".setup(move |app|") : main.index(".build(tauri::generate_context!())")]
+    assert "let backend = BackendHost::launch" in setup
+    assert "let setup_result = (|| -> Result<(), Box<dyn Error>>" in setup
+    assert "install_tray(app)?;" in setup
+    assert "create_desktop_window(app)?" in setup
+    assert "open_backend_in_browser(&app.handle())?" in setup
+    assert "if let Err(error) = setup_result" in setup
+    assert "complete_setup_failure_cleanup(&backend);" in setup
+    assert "if let Err(cleanup_error)" not in setup
+    assert "return Err(error);" in setup
+    assert setup.index("complete_setup_failure_cleanup(&backend);") < setup.index(
+        "app.manage(backend);"
+    )
+    assert setup.index("complete_setup_failure_cleanup(&backend);") < setup.index(
+        "return Err(error);"
+    )
+    assert setup.index("install_tray(app)?;") < setup.index("app.manage(backend);")
+    assert setup.index("create_desktop_window(app)?") < setup.index("app.manage(backend);")
+    assert setup.index("open_backend_in_browser(&app.handle())?") < setup.index(
+        "app.manage(backend);"
+    )
+    assert setup.index("app.manage(backend);") < setup.index("app.manage(startup_surface);")
+
+
 def test_tauri_macos_menu_and_tray_request_the_same_interceptable_exit() -> None:
     main = (ROOT / "src-tauri" / "src" / "main.rs").read_text(encoding="utf-8")
 
@@ -213,6 +251,20 @@ def test_tauri_all_exit_requests_use_structured_shutdown_with_confirmed_terminat
     assert "is_keep_monitor_shutdown_ack" in backend
     assert "GracefulShutdownTimedOut" in backend
     assert "pub fn shutdown_keep_monitor_or_terminate" in backend
+    graceful = backend[
+        backend.index("pub fn shutdown_keep_monitor") : backend.index(
+            "pub fn shutdown_keep_monitor_or_terminate"
+        )
+    ]
+    assert "while !child_exit_confirmed(&self.child)?" in graceful
+    confirmation = backend[
+        backend.index("fn child_exit_confirmed") : backend.index("fn state_paths_for_bundle_profile")
+    ]
+    assert "Result<bool, BackendError>" in confirmation
+    assert ".map_err(|_| BackendError::BackendTerminationFailed)?" in confirmation
+    assert "Ok(Some(_)) => Ok(true)" in confirmation
+    assert "Ok(None) => Ok(false)" in confirmation
+    assert "Err(_) => Err(BackendError::BackendTerminationFailed)" in confirmation
     shutdown = backend[
         backend.index("pub fn shutdown_keep_monitor_or_terminate") : backend.index(
             "pub fn startup_surface"

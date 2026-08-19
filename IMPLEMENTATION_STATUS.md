@@ -1,6 +1,6 @@
 # IMPLEMENTATION_STATUS
 
-更新时间：2026-08-17
+更新时间：2026-08-19
 
 ## 公开基线
 
@@ -32,6 +32,7 @@
 ## Tauri 2 生命周期边界与开发 `.app`
 
 - `src-tauri/` 已提供固定 `127.0.0.1:8766` 的后端生命周期代码：未知占用失败、host 启动的 child PID/manifest/identity/OpenAPI 方法严格握手、单实例恢复窗口，以及仅在成功后创建 WebView。初次握手后严格读取 `startup_surface`，再以新的 HMAC challenge 和 identity probe 复核归属才 arm 授权：`desktop` 创建 WebView，`browser` 只由 host-only opener 打开固定 origin；托盘和第二实例重新打开既定 surface，desktop 关闭只隐藏窗口且不停止 monitor。裸源码 checkout 仍因没有经编译绑定的 manifest 以状态 `78` fail-closed；`scripts/dev/tauri_dev_app.py` 只为开发 profile 生成 schema-3 staged manifest、允许清单内 core 与显式 venv launcher，并将 manifest/launcher SHA-256 绑定进本地 arm64 host。它不产生 release manifest、DMG、NSIS 或正式发布输入。
+- internal-alpha 发行准备已落地并完成一次真实 arm64 构建：`scripts/dev/tauri_alpha_release.py` 从精确 Git snapshot 复制 allowlist core，校验并嵌入 Python 3.14.6 arm64 runtime，生成 schema-3 host manifest、launcher/build/package/runtime manifest 和 schema-4 receipt；`scripts/dev/verify_tauri_alpha.py` 对工作区副本的 App、DMG、哈希、布局、平台污染和 ad-hoc 模式做 fail-closed 校验并通过。完整 `source_commit` 与 `core_build_id` 留在 [L11-A 执行记录](docs/release/L11_A_INTERNAL_ALPHA_PLAN.md)和交付 receipt；该 artifact 明确为 `updater_enabled=false`、`public_release=false`。另以临时 HOME/state root 完成一次独立启动烟测：固定端口 health 到达 `ready`，身份匹配且未触碰真实 Application Support；该结果仍仅是内部评审证据，不是正式签名、公证、发布或最终用户安装证据。
 - 归属证明使用后端独有的 256 位 secret、宿主每次新建 challenge 和 HMAC-SHA256 响应；secret 不发送给端口监听者。Host RPC token 只由 host 传给其直接启动的 Python backend，backend 启动时捕获并从 descendant 环境清除，绝不进入 WebView、Tauri command/event、API 响应或日志。私有随机 loopback listener 的 picker 面仅保留四种原生选择器枚举，更新命令面独立地仅为 `update_check/update_install`，WebView 没有 IPC 权限；host candidate 最多保留 300 秒，由 listener loop 主动清除，当前 install 请求会立即清除候选并返回脱敏不可用，直到完整 recovery/relaunch coordinator 出现。同一进程同时具备 Tauri marker 与 configured private RPC 时，API、设置页和后台 timer 均通过 `check_for_updates` 进入 strict host preflight；只有非 Tauri/非 host 检查不获取 `_host_update_lock` 并保留 `UpdateService` 的 cache/ETag/nonblocking-busy 语义。host 检查锁竞争返回不持久化 busy 且不触发 metadata/candidate、不会清除既有 approval；install 锁竞争立即抛脱敏错误，不消费 approval 或发送第二次 RPC。host approval 必须来自同一 session 内显式携带 `Cache-Control: no-cache`、不带 ETag 的 fresh `200` body，缓存、ETag、`304`、离线或错误不授予 approval，随后才要求版本完全一致。安装接口只接受 `{}`，错误固定为脱敏 `503 Update installation unavailable`。Host updater metadata 请求固定 5 秒总时限。托盘 Quit 与 macOS 自定义应用菜单/Cmd-Q 共用 `app.exit(0)` 请求；应用菜单不使用会直达原生 `terminate:` 的 predefined Quit。Host 收到 `ExitRequested` 后才请求 `POST /api/v1/server/shutdown` 的 `keep_monitor` 结构化关闭并有界等待 owned child，API 错误或超时后显式 `kill + wait`，无法确认 child 已退出则阻止 host 退出，不依赖进程 `Drop`。外部 AppleScript quit、Force Quit、SIGKILL 等可绕过该事件，不属于有序退出承诺。Rust picker 最多等待 120 秒，Python 保留 125 秒响应预算，四条 picker API 的私有错误固定为脱敏 `503 Native picker unavailable`。授权在 post-preference revalidation 后先 arm，随后由 100 ms 有界 child liveness watcher 撤销。Python 启动后捕获并清除 secret/token，monitor、后台同步和原生子进程不会继承它们。
 - `scripts/dev/tauri_version_sync.py` 从 `src/invoice_hub/version.py` 同步并校验 Cargo、Tauri 配置和 npm 的产品身份；`pnpm-lock.yaml` 与 `src-tauri/Cargo.lock` 已锁定对应 JavaScript/Rust 依赖。
 - `rust-toolchain.toml` 固定 Rust/Cargo `1.85.0`，`.cargo/config.toml` 固定 MSRV-aware resolver。Windows/macOS 的 `doctor/bootstrap` 只诊断或按显式 `--install-js` 安装已锁定的 JavaScript 依赖，绝不安装 Rust、证书、Xcode 或 Visual Studio。
@@ -40,6 +41,7 @@
 - L8-S/L9 已通过受控 macOS arm64 development `.app` 的组装、资源、固定端口、health/background、首页/静态资源、`desktop_available=true` 和默认 desktop 验证。开发 manifest 使用 schema 3，显式 venv launcher 与 manifest 原始字节均受 SHA-256 绑定；development profile 必须显式给出已存在的绝对 `INVOICE_HUB_DEV_STATE_ROOT`，host canonicalize 后要求它与 bundle/core 双向不包含，release、缺失或相对覆盖 fail-closed，且该变量不会传给 Python child。外部 AppleScript quit 曾绕过 shutdown POST 并留下 stale `ready`，该不受支持路径的有序退出结论仍撤回；P1-Q 随后从 clean source commit 重建并向前台 app 发送真实 Cmd-Q，确认 shutdown POST 200、`server_state=stopped`、monitor 保持停止、host/backend 退出、8766 释放且 server PID 清理。打开的 SSE 连接使 host 在 stopped state 后使用了显式 `kill + wait` 兜底。真实用户 Application Support 目录未被读取或写入，`.app` 及 staging/target 都未加入 Git。最初 tray 初始化因 16-bit RGBA `icon.png` 失败，已改为 8-bit RGBA，并用 PNG IHDR 回归锁定同类问题。该 development profile 明确禁用 updater，不证明原生 picker、browser/tray、单实例、打印、下载/验签/安装或任何发布流程。
 - P1-R 接管复核已通过锁定 Rust 格式、16 项 library、6 项 lifecycle integration、desktop binary check、版本同步、聚焦 Python contracts、`compileall` 与 diff whitespace 门禁，Rust 编译无 warning。复核删除了 fail-closed 后不再可达的 monitor-stop/install-success 片段，没有用 dead-code allow 掩盖半实现。该结果只允许形成 DCO 开发提交并从 clean commit 重建一次 development `.app`，不扩大为真实 updater、安装器或平台发布证据。
 - P1-RR 进一步修复了两个先前未被代表样本覆盖的私有边界：Python Host RPC 对 private loopback listener 的 bearer 请求显式禁用 `HTTP_PROXY/http_proxy` 等环境代理；development state root 以整个 macOS `.app` 容器为 containment boundary，`Contents/state` 这类不在 `Resources` 内的 sibling 也 fail closed。16 项 Rust library、6 项 lifecycle integration 与 16 项 Host RPC Python contracts 通过；这只允许继续受控开发，不构成真实 native panel、updater、安装器或平台发布证据。
+- P1 setup cleanup：`BackendHost::launch` 后的 tray、desktop window 或 browser surface 初始化若失败，host 会在返回原始 setup error 前调用既有 `keep_monitor` shutdown，并在失败/超时时使用显式 `kill + wait`；无法确认 owned child 退出时 setup 保持阻塞并定期重试，child mutex 或 `try_wait` 错误也不得被当作 graceful exit，绝不把 cleanup error 交给 `Drop` 后退出。backend 与 `startup_surface` 只有在全部可失败初始化成功后才会 `app.manage`。该修复不改变当前 `update_install` 的 candidate-consuming fail-closed 语义，也不构成真实 updater、安装器或平台发布证据。
 
 ## 发布与验证规则
 
@@ -50,7 +52,7 @@
 
 ## 尚未完成
 
-- 开发 `.app` 烟测只覆盖 schema-3 development assembly、固定端口 owned backend、health/background、首页/静态资源、desktop 默认值，以及一个真实 Cmd-Q 的结构化退出样本；tray 点击、外部终止和其它平台退出机制没有因此获得同等结论。原生打印、原生 picker、browser/tray、真实单实例与错误端口、合法/篡改更新、真实下载/验签/monitor 停止、安装/重启和其余决策场景仍未在桌面运行环境验证；development artifact 不构成平台安装验证。
+- development `.app` 烟测覆盖 schema-3 development assembly、固定端口 owned backend、health/background、首页/静态资源、desktop 默认值，以及一个真实 Cmd-Q 的结构化退出样本；internal-alpha 另完成了 App/DMG/receipt 独立 verifier 和一次隔离启动烟测。tray 点击、外部终止和其它平台退出机制没有因此获得同等结论。原生打印、原生 picker、browser/tray、真实单实例与错误端口、合法/篡改更新、真实下载/验签/monitor 停止、安装/重启和其余决策场景仍未在桌面运行环境验证；development/internal-alpha artifact 均不构成平台安装验证。
 - 公开 Release、GitHub Pages Feed、正式 Windows 签名、macOS Developer ID/公证和最终用户安装烟测均尚未进行。
 - 真实业务做账迁移、审批、导出和外部账套操作必须在用户当回合明确授权后另行执行。
 
