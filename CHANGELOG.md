@@ -9,6 +9,12 @@
   CLI path when the installed pnpm wrapper is unavailable. This work is local
   validation only: no Release, Feed, updater installation, Developer ID,
   notarization or GitHub mutation is enabled.
+- 2026-08-19 Tauri internal-alpha evidence: built one arm64 `.app` and same-source
+  ad-hoc `.dmg` from clean commit `1892a52bf5eba4ae3b24720fbc32899a4e6003a0`;
+  the independent App/DMG/receipt verifier passed, and a separate temporary
+  HOME launch smoke reached fixed-port `ready` with matching package/build/source
+  identity. The artifacts remain internal-only and do not enable Release, Feed,
+  updater installation, signing, notarization or end-user installation claims.
 - 2026-08-19 Tauri internal-alpha runtime gate: allow only relative runtime
   symlinks whose resolved targets remain inside the embedded runtime; the
   staging copy still dereferences them and the final artifact verifier rejects

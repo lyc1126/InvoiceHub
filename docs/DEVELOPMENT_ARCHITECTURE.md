@@ -4,7 +4,7 @@
 > 更新日期：2026-08-18
 > 公共权威基线：经过审计的单一脱敏根提交；旧私有提交、Tag、二进制和验证材料不在公开图中
 > 公开状态：候选树、保留 Git 对象和托管面已完成一次内容与凭据审计；公开图从脱敏根提交开始，详见 `docs/release/HISTORY_SANITIZATION_EXECUTION.md`
-> 当前开发线：`codex/tauri2-unified-desktop` 已从公开 `main` 建立，首个版本为 `0.3.0-alpha.1`；Tauri 已完成受控 lock、代码级生命周期/Host RPC/updater contracts、隔离 TestClient L6 API runtime，并构建且隔离烟测一个 macOS arm64 development `.app`。裸 checkout 仍缺经编译绑定 manifest 并 fail-closed；尚无 Release。
+> 当前开发线：`codex/tauri2-unified-desktop` 已从公开 `main` 建立，首个版本为 `0.3.0-alpha.1`；Tauri 已完成受控 lock、代码级生命周期/Host RPC/updater contracts、隔离 TestClient L6 API runtime，并构建且隔离烟测一个 macOS arm64 development `.app`。随后在独立 `codex/tauri-macos-internal-alpha` 线上构建并验证了一个 internal-alpha arm64 `.app/.dmg`，另完成一次临时 state root 启动烟测；裸 checkout 仍缺经编译绑定 manifest 并 fail-closed；尚无 Release。
 > 校验规则：精确的本地与 GitHub HEAD 以实时 `git rev-parse`、`git ls-remote` 和双向差异为准；发行源码候选不等于双平台成品 RC 或 GitHub 已发布版本
 
 ## 1. 这套文档解决什么问题

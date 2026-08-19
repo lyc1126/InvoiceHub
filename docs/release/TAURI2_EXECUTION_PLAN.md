@@ -590,6 +590,16 @@ this table.
 | Stop condition | Stop at the first child-confirmation, retry, format, compiler, contract, or documentation failure. Do not launch Tauri/FastAPI, bind the product port, invoke update/install, create a DMG/NSIS, sign, publish, or change release settings. |
 | Result (2026-08-18) | Passed for the narrowed source-level confirmation boundary. Locked Rust 1.85 `cargo fmt --check --all` and offline `cargo check --locked --offline --bin invoicehub-desktop` passed. The 40 focused Python lifecycle/foundation/documentation contracts passed with `DeprecationWarning` treated as errors; version synchronization and `git diff --check` also passed. This permits one DCO fix-forward commit and one rebuild of the development `.app` only. It does not exercise setup failure in a running app, enable updater/install, create a DMG/NSIS, sign, publish, or establish platform-release evidence. |
 
+### L11-A: internal-alpha macOS arm64 assembly and isolated launch smoke
+
+| Field | Record |
+| --- | --- |
+| Hypothesis | A clean-snapshot Tauri assembly can embed the allowlisted shared core and pinned Python 3.14.6 arm64 runtime, produce a reviewable App/DMG/receipt, and start once from an isolated state root without touching user state. |
+| Decision changed by result | The pass permits retaining one internal-alpha App/DMG for controlled review. It does not close recovery/relaunch, updater, signing, notarization, public Release, Feed, or final platform-install gates. |
+| Minimal sample | One clean source commit (`1892a52bf5eba4ae3b24720fbc32899a4e6003a0`), one arm64 App, one same-source ad-hoc DMG, one schema-4 receipt, one independent verifier pass, and one temporary-HOME fixed-port launch smoke. |
+| Stop condition | Stop at the first staging, runtime, manifest, artifact, verifier, port, identity, state-containment, or cleanup failure. Do not retry with the real HOME, change the port, invoke updater/install, sign, notarize, upload, publish, or create a Release/Feed. |
+| Result (2026-08-19) | Passed. The App/DMG/receipt verifier passed with `core_build_id=9188334bf2d10a7a75d99b04683c946cd34139ba0061d64e20eb33e8c5c91f76`, `signature_mode=internal-adhoc`, `updater_enabled=false`, and `public_release=false`. The separate launch smoke reached `ready` on `127.0.0.1:8766`, matched package/build/source identity, left the real Application Support directory untouched, and terminated only its own process group. This is internal evidence, not a release or installation result. |
+
 ## Fixed scope and validation
 
 - The backend binds only `127.0.0.1:8766`. An unknown listener is a clear

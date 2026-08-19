@@ -2,7 +2,7 @@
 
 > 作用：把自然语言任务转换成“先读哪里、从哪个符号开工、会影响什么、至少测什么”。
 > 公共权威基线：单一脱敏根提交；退休私有提交、Tag、包和验证材料不在公开图中。
-> 当前边界：候选树、Git 对象和托管面验证已完成；`v0.3.0-alpha.1` Tauri 2 开发分支已从公开 `main` 建立，版本/环境/Cargo lock 与代码级 lifecycle/Host RPC/updater 和隔离 TestClient L6 contract 已通过受控验证。裸 checkout 仍缺经编译绑定 manifest；development assembler 已构建并隔离烟测一个 macOS arm64 `.app`，但尚无 Release。
+> 当前边界：候选树、Git 对象和托管面验证已完成；`v0.3.0-alpha.1` Tauri 2 开发分支已从公开 `main` 建立，版本/环境/Cargo lock 与代码级 lifecycle/Host RPC/updater 和隔离 TestClient L6 contract 已通过受控验证。裸 checkout 仍缺经编译绑定 manifest；development assembler 已构建并隔离烟测一个 macOS arm64 `.app`，internal-alpha 也已完成 arm64 App/DMG/receipt verifier 与隔离启动烟测，但尚无 Release。
 > 校验规则：精确的当前本地与 GitHub HEAD 以实时 Git 引用和双向差异为准。
 
 ## 1. 使用方法

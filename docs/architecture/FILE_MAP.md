@@ -1,7 +1,7 @@
 # InvoiceHub 完整文件地图
 
 > 公共基线：经过审计的单一脱敏根提交及其公开后代；旧私有提交、Tag、包和验证材料不在公开图中。
-> 当前治理变化以 `docs/release/HISTORY_SANITIZATION_EXECUTION.md` 为真值。公开门槛已完成；`v0.3` Tauri 2 开发分支已从 `main` 建立，已有经审查的 Cargo lock 和代码级生命周期边界。裸 checkout 缺 manifest 而 fail-closed；development assembler 已构建并隔离烟测一个本地 macOS arm64 `.app`，尚无 Release。
+> 当前治理变化以 `docs/release/HISTORY_SANITIZATION_EXECUTION.md` 为真值。公开门槛已完成；`v0.3` Tauri 2 开发分支已从 `main` 建立，已有经审查的 Cargo lock 和代码级生命周期边界。裸 checkout 缺 manifest 而 fail-closed；development assembler 已构建并隔离烟测一个本地 macOS arm64 `.app`，internal-alpha 也已完成 arm64 App/DMG/receipt verifier 与隔离启动烟测，尚无 Release。
 > 本表覆盖当前受版本控制的全部工程文件，包括架构文档与文档契约测试；运行态、投影和本机未跟踪内容只登记生成规则，不使用会随增删文件失真的固定数量。
 > 路径是导航键；职责和关系按符号而不是易漂移的行号描述。
 
@@ -90,6 +90,7 @@
 | `docs/MONITORING_AND_LOGGING.md` | monitor 状态、日志和诊断说明。 | 与 `monitoring/*`、MonitorBridge 和设置页运行状态联动。 |
 | `docs/release/HISTORY_SANITIZATION_EXECUTION.md` | 公开历史净化、私有备份、候选内容审计、全 ref 验证和托管面复核的执行记录。 | 公开 Git 图、发布资产、仓库可见性或 Tauri 开发线变化前必须更新。 |
 | `docs/release/TAURI2_EXECUTION_PLAN.md` | 公开 Tauri 2 分阶段计划、实验决策记录、重打边界和当前阻断项。 | 改动 Tauri host、依赖锁、生命周期、更新或平台验收时先更新实验记录。 |
+| `docs/release/L11_A_INTERNAL_ALPHA_PLAN.md` | internal-alpha macOS arm64 App/DMG 的受限实验、构建身份与隔离启动烟测记录。 | 只记录内部评审证据；artifact、verifier、启动边界或保留/清理决策变化时同步，不能作为公开 Release、Feed、签名或公证依据。 |
 | `docs/release/UPDATE_SYSTEM.md` | About、Feed、cache、Sparkle、Windows 旁路升级的完整开发说明。 | 更新协议或 UI/安装流程变化时同步。 |
 | `docs/release/WINDOWS_REPACKAGE_CONFIG.json` | Windows 构建链的机器可读参数。 | 每个新 RC 都必须从 `version.py`、锁和 clean source commit 重新校验，不能复用退休发布身份。 |
 | `docs/jierui/view-voucher-page.selectors.md` | 公开树的外部页面自动化边界说明。 | 不保存真实选择器、地址、坐标或账套事实；W10 操作员必须在获授权的私有环境重新采集。 |

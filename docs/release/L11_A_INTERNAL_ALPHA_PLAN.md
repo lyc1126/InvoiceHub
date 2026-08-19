@@ -1,6 +1,7 @@
 # L11-A Internal Tauri macOS arm64 Alpha
 
-Status: bounded implementation record, started from clean source baseline
+Status: passed bounded implementation record and separate isolated launch smoke
+on 2026-08-19; started from clean source baseline
 `9912004f62fc62fa16c6bc2e5c71b3f6fbdab2c3` on 2026-08-18.
 
 ## Hypothesis
@@ -51,3 +52,33 @@ compatibility, or product smoke. Internal mode must be explicit and mutually
 exclusive with formal notarized verification. A future formal release must use
 the separate package/runtime manifest, Developer ID, notarization, Sparkle and
 provenance gates.
+
+## Result (2026-08-19)
+
+- The bounded assembly passed from clean source commit
+  `1892a52bf5eba4ae3b24720fbc32899a4e6003a0`. It produced one macOS arm64
+  internal-alpha `.app`, a same-source ad-hoc `.dmg`, and a schema-4 receipt.
+- The independent verifier passed over the worktree copy of all three
+  artifacts. The receipt records `core_build_id`
+  `9188334bf2d10a7a75d99b04683c946cd34139ba0061d64e20eb33e8c5c91f76`,
+  `signature_mode=internal-adhoc`, `updater_enabled=false`, and
+  `public_release=false`.
+- A separate, bounded post-build smoke used a temporary HOME/state root. The
+  packaged launcher reached `127.0.0.1:8766`, reported `ready`, and matched the
+  build/package/source identity without reading or writing the real InvoiceHub
+  Application Support directory. The smoke terminated only the process group
+  started for that sample.
+- This result authorizes internal review of the retained artifacts only. It does
+  not authorize a public Tag/Release, Feed, updater installation, Developer ID,
+  notarization, or a claim of native picker, browser/tray, single-instance,
+  monitor-stop, or end-user installation coverage.
+
+## Separate post-build launch-smoke record
+
+| Field | Record |
+| --- | --- |
+| Hypothesis | The newly built internal-alpha package can start its embedded backend from an isolated temporary state root and expose the expected fixed-port health identity without touching the user's existing state. |
+| Decision changed by result | A pass permits retaining the package as a reviewable internal artifact; a failure would block internal handoff and confine repair to launcher, embedded runtime, manifest identity, or startup cleanup. |
+| Minimal sample | One arm64 `.app`, one temporary HOME/state root, one fixed-port launch, and one health/identity check. |
+| Stop condition | Stop at the first package, port, identity, state-containment, or cleanup failure; do not retry with the real HOME, change the port, or continue into picker/update/install testing. |
+| Result | Passed. Health reached `ready`, package/build/source identity matched, the real Application Support directory was untouched, and only the sample's process group was terminated. |
