@@ -21,6 +21,9 @@
 - 2026-08-19 Tauri internal-alpha bundle mapping: include the validated
   embedded Python runtime under `Contents/Resources/python`; the verifier now
   checks the same launcher-visible path used by the App.
+- 2026-08-19 Tauri internal-alpha receipt privacy: store artifact names rather
+  than local absolute build paths in the receipt; hashes, source identity and
+  verification fields remain unchanged.
 - 2026-08-18 Tauri setup cleanup confirmation: after `BackendHost::launch`,
   tray or selected desktop/browser-surface initialization can fail before the
   normal `ExitRequested` handler exists. Setup keeps the child local until all

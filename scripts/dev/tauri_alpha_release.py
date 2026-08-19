@@ -625,7 +625,7 @@ def _receipt_payload(
         is_directory = path.is_dir()
         return {
             "name": path.name,
-            "path": str(path),
+            "path": path.name,
             "kind": "directory" if is_directory else "file",
             "size_bytes": _tree_size(path) if is_directory else path.stat().st_size,
             "sha256": _tree_digest(path) if is_directory else _sha256_file(path),
