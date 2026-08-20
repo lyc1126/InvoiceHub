@@ -16,6 +16,6 @@
   "default_host": "127.0.0.1",
   "default_port": 8766,
   "minimum_free_disk_gib": 10,
-  "reproducibility_builds": 2,
-  "offline_rebuild_required": true
+  "reproducibility_builds": 1,
+  "offline_rebuild_required": false
 }

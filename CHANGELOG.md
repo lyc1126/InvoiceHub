@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- 2026-08-20 Windows portable release path: make the normal x64 portable
+  handoff one locked runtime build, static package verification and one formal
+  root-BAT smoke in a temporary Chinese-space path. The default command locks
+  the current clean HEAD, while automation may still provide an exact SHA. The
+  smoke records package identity, `/`, health and stop evidence, and records an
+  excluded default TCP port before using a de-identified fallback config.
+  Reproducible double ZIP comparison, offline rebuild and isolated source-test
+  setup remain explicit audits; this source change does not create a Windows
+  artifact, tag or Release.
 - 2026-08-19 Tauri internal-alpha assembly: add a bounded macOS arm64
   `internal-alpha` profile, clean-snapshot staging, embedded Python 3.14.6
   runtime inputs, manifest/launcher hash binding, receipt generation and an

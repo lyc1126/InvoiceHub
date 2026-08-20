@@ -1,6 +1,6 @@
 # 迁移与公开缺口清单
 
-更新时间：2026-08-18
+更新时间：2026-08-20
 
 ## 公开历史净化
 
@@ -39,6 +39,7 @@
 
 ## 发布缺口
 
+- [x] 公开来源的 Windows x64 便携候选已有精简源码交付链：默认锁定当前 clean HEAD（自动化可显式 SHA）、哈希锁 runtime/manifest/SBOM/清单、一次静态验包和正式根 BAT 中文空格路径烟测；双组装、离线重建和隔离测试仍是可选审计。尚未在 Windows 真机运行，未生成公开资产或 Release。
 - [ ] Windows 10/11 x64 NSIS 安装器与新的公开构建/签名证据。
 - [ ] macOS 13+ arm64 DMG、更新归档、Developer ID、Hardened Runtime、公证、staple、quarantine 与升级证据。
 - [ ] 同仓库 GitHub Pages 更新 Feed、真实资产签名、源码归档、SBOM、收据与最终 provenance 闭环。

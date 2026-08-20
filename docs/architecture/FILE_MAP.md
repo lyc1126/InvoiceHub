@@ -100,12 +100,14 @@
 
 | 文件 | 职责与入口 | 关系与修改影响 |
 |---|---|---|
-| `scripts/dev/build_core.ps1` | 开发侧 core 构建包装。 | 选择 `.venv` 或 `py -3`，调用 `invoice_hub.release.build_core`。 |
+| `scripts/dev/build_core.ps1` | Windows portable 构建兼容包装。 | 转发精确 source commit、可选离线模式和可选双构建审计。 |
 | `scripts/dev/windows_release_config.ps1` | 读取并校验 Windows 机器打包配置。 | 在下载、Python 选择和 staging 清理前核对 `version.py`、派生路径、锁与安全相对路径；输出配置 SHA。 |
 | `scripts/dev/initialize_windows_repackage.ps1` | Windows 真机打包会话初始化门禁。 | 强制 remote release tip、HEAD、独立交付 RC_SHA 三者相等，核对工具/磁盘/clean 状态并写会话证据。 |
 | `scripts/dev/prepare_windows_test_environment.ps1` | 准备隔离的 CPython 3.14.6 x64 源码测试环境。 | 同时安装 Windows runtime 锁与 test-tools 锁，使用独立 wheelhouse，并以环境内受边界校验的 `.pth` 绑定当前 RC `src`；成品 runtime 不携带该绑定。 |
 | `scripts/dev/prepare_windows_runtime.ps1` | 准备精确 Python 3.14.6 x64、wheelhouse 和 runtime manifest。 | 每次从只读 `base-python` 复制产品 runtime，保留基线 `Doc`、裁剪产品 `Doc`，固定锁定安装时间并恢复环境，再规范产品 `Scripts/RECORD`；不能回退未知 Python。 |
-| `scripts/dev/build_windows_portable.ps1` | Windows portable 总编排与双构建 SHA 比较。 | 接受精确 source commit；以禁用 `core.autocrlf` 的 Git archive 取源码，再调用 runtime 准备、core 组装与验包。 |
+| `scripts/dev/build_windows_portable.ps1` | Windows portable 单次构建与静态验包。 | 接受精确 source commit；以禁用 `core.autocrlf` 的 Git archive 取源码，准备锁定 runtime、组装、验包并写 hash receipt；`-VerifyReproducibility` 才追加第二次 ZIP SHA 比对。 |
+| `scripts/dev/build_windows_portable_release.ps1` | Windows x64 便携包默认单命令交付入口。 | 默认锁定当前 clean `HEAD`，编排一次构建/静态验包及随后正式 BAT 烟测；自动化可显式提交 SHA，`-Offline`、`-Clean` 与双构建审计保持显式。 |
+| `scripts/dev/smoke_windows_portable.ps1` | Windows 便携包正式根 BAT 烟测。 | 临时解压到中文空格路径，检查默认 TCP 排除端口，验证 `/`、health、身份和停止，并写脱敏 JSON 证据。 |
 | `scripts/dev/generate_synthetic_release_fixture.py` | 生成不含真实业务信息的 PDF/XML/OFD 发布验收目录和 SHA manifest。 | Windows 真机 monitor/投影/预览验收使用；未知文件目录拒绝写入。 |
 | `scripts/dev/verify_windows_portable.ps1` | 解压并验证 Windows 候选 ZIP。 | 调用 Python 静态验证并检查包内解释器/import/Tk/pip。 |
 | `scripts/dev/verify_release_source.ps1` | Windows 源码、身份、测试和文档预门禁。 | CI 与真机手册共用；要求 clean source commit，并在选择解释器前拒绝非精确 Python 3.14.6 patch。 |

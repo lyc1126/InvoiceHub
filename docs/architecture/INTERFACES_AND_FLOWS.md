@@ -547,36 +547,26 @@ sequenceDiagram
 
 ### 6.11 Windows 自包含包构建
 
-本流程适用于新的 Windows RC 构建。每个公开候选必须以其自身的包 SHA、依赖锁、source commit、core build ID 和环境建立证据；文档或治理设置不能替代这些证据，也不授权复用退休预公开包。
+本流程适用于公开来源的 Windows x64 便携候选。默认链只做一次组装、一次静态验包和一次正式 BAT 烟测；每个候选仍须以自己的 ZIP SHA、依赖锁、source commit、core build ID 和运行证据绑定，不能复用退休预公开包。
 
 ```mermaid
 flowchart LR
-    Config["机器配置 JSON"] --> Init["remote tip = HEAD = 独立 RC_SHA"]
-    Init --> Commit["clean RC_SHA"]
-    Config --> TestEnv["隔离 Python 3.14.6 + 两份锁 + 当前 RC .pth"]
-    TestEnv --> Tests["release gate + full pytest/compileall/JS"]
-    Tests --> Archive["Git archive 白名单快照"]
-    Lock["Windows x64 哈希锁"] --> Runtime["只读 base-python + 离线 wheelhouse"]
-    Runtime --> ProductRuntime["复制产品 runtime + 删除 Doc"]
-    ProductRuntime --> Install["固定时间安装产品锁"]
-    Install --> Normalize["删除 Scripts + 规范 RECORD"]
-    Normalize --> RuntimeManifest["pip/import 检查 + runtime manifest + tree SHA"]
-    Archive --> Assemble["确定性组装"]
+    Commit["精确 clean RC_SHA"] --> Archive["Git archive 白名单快照"]
+    Lock["Windows x64 哈希锁"] --> Runtime["Python 3.14.6 runtime"]
+    Runtime --> RuntimeManifest["pip/import 检查 + runtime manifest"]
+    Archive --> Assemble["一次 ZIP 组装"]
     RuntimeManifest --> Assemble
-    Assemble --> Meta["build/package manifest + SBOM + files SHA"]
-    Meta --> Zip1["ZIP build A"]
-    Meta --> Zip2["ZIP build B"]
-    Zip1 --> Equal{"SHA-256 相同?"}
-    Zip2 --> Equal
-    Equal -->|是| Verify["静态 + 包内 Python 验包"]
-    Equal -->|否| Stop["阻断发布"]
-    Verify --> Offline["断网 wheelhouse 重装 + 再次双组装"]
-    Offline --> Parity{"联网/离线 SHA 相同?"}
-    Parity -->|是| Machine["正式 BAT/PS7/PS5.1/Tk/monitor 真机验收"]
-    Parity -->|否| Stop
+    Assemble --> Meta["build/package manifest + SBOM + files SHA + ZIP SHA"]
+    Meta --> Verify["静态 + 包内 Python 验包"]
+    Verify --> Smoke["中文空格路径\n正式根 BAT: / + health + stop"]
+    Smoke --> Evidence["windows-portable-smoke.json"]
+    Verify -. "可选审计" .-> Repro["第二次 ZIP SHA 比对"]
+    Repro -. "可选审计" .-> Offline["断网 runtime 重建"]
 ```
 
-机器配置固定版本、Python、架构、包名、锁、staging、证据目录和两次/离线策略，但故意不保存会自引用的 `RC_SHA`；初始化器要求发布协调方单独交付的 40 位 SHA 与远端发布分支 tip、detached HEAD 相同。原生命令的输出必须先完整捕获并立即保存 `$LASTEXITCODE`，通过后才允许使用 `Select-Object -First 1` 等可能提前终止上游的处理；不得用预设退出码制造假通过，完整消费的 `Tee-Object` 实时日志不受此限制。源码测试环境独立安装产品锁和 test-tools 锁，只在自身 site-packages 用受边界校验的 `.pth` 绑定当前 RC `src`，确保 monitor/API 子进程仍导入同一源码；成品 runtime 不携带 pytest 或该绑定。产品 runtime 每次从保留官方 `Doc` 的只读 `base-python` 重建，只删除产品 `Doc`；哈希锁安装期间强制固定 `SOURCE_DATE_EPOCH` 并恢复调用者环境，随后删除内嵌 staging 路径的顶层 `Scripts`、结构化规范对应 RECORD，再执行 `pip check`、import smoke 和 runtime manifest。验包器必须反向拒绝任何大小写变体的 `python/Doc` 与 `python/Scripts`；`tests` 只允许出现在 `python/Lib/site-packages/**/tests/**`，项目源码、web、脚本、基础 runtime 和其它位置仍 fail closed。获准的依赖测试继续执行依赖范围的秘密与绝对路径扫描，并进入 runtime tree、逐文件 manifest、SBOM/依赖锁身份和 ZIP SHA；不得裁剪 wheel、改写其 RECORD、按包名硬编码例外或从哈希排除。Task 4 还必须保存 ZIP 成员与 wheel 锁 SHA 的来源闭环。构建收据追加机器配置 SHA 与 online/offline 模式。构建器不读取本机 `config/app.local.json`、未跟踪文件、真实业务数据或运行态。包内脱敏默认配置固定指向相对 `./发票文件` 与 `./运行状态`；Windows 运行时、依赖锁、package/build identity 和 SBOM 必须互相闭环。自动化、联网/离线同哈希和静态验包仍不能替代真实 Windows BAT、Tk、浏览器、monitor 与失败矩阵。
+机器配置固定版本、Python、架构、包名、锁、staging 和证据目录，但故意不保存会自引用的 `RC_SHA`。默认入口启动时读取当前 clean `HEAD`，自动化仍可显式传入 40 位 SHA；构建器会再次拒绝不同 HEAD 或 tracked 修改。产品 runtime 每次从 `base-python` 复制、删除产品 `Doc`，以哈希锁固定时间安装依赖、删除不使用的 `Scripts` 并规范 RECORD，再执行 `pip check`、import smoke 和 runtime manifest。验包器继续拒绝 `python/Doc`、`python/Scripts`、macOS 内容、本机配置、业务数据、运行态、缓存和项目测试；合法 wheel 自带的 `python/Lib/site-packages/**/tests/**` 仍计入所有清单和哈希。烟测只调用正式根 BAT，不触发浏览器、原生选择器、monitor 或 stop-all；`Get-IHHealth` 和 `Test-IHHealthIdentity` 同时确认首页、health、PID、路径和 build/package identity。若默认端口被 Windows TCP 排除范围覆盖，先记录默认启动的输出和 `server_stderr.log`，再用包内无业务路径的相邻端口配置继续；不能把这种 fallback 写成默认配置原样通过。
+
+`-VerifyReproducibility`、`-Offline`、`initialize_windows_repackage.ps1` 和 `prepare_windows_test_environment.ps1` 是可选审计工具：它们保留远端 tip 绑定、隔离源码测试、双 ZIP 比对和离线重建能力，但不再阻塞普通便携包交付。它们也不能替代浏览器、原生选择器、monitor 与失败矩阵的独立 Windows 验收。
 
 Windows 的精确 commit 源码快照必须在 `.gitattributes` 以 `text=auto` 固定自动识别的普通文本为 LF、保持二进制 `-text` 的前提下，以 `git -c core.autocrlf=false archive` 导出。发布契约必须先以 `core.autocrlf=true` 做全新 checkout 并要求无 tracked changes、二进制 blob/checkout 字节相同，再以 true/false 的实际 archive 复算 Core Build ID 并要求二进制字节与身份都一致；构建主机的 Git 配置不得改变发行身份或工作树清洁度。该隔离 checkout 契约必须同时兼容完整源仓库和 GitHub Actions 的浅源仓库；临时 fetch 应显式接受已知浅边界，不能通过要求 CI 拉取完整历史来掩盖测试夹具依赖。
 

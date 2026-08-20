@@ -196,28 +196,19 @@ cd macos/InvoiceHubMac
 
 ## 构建 Windows 便携包
 
-以下流程只适用于新的 Windows RC；不复用退休预公开包的构建输入、收据或 Tag。固定打包参数由 [`docs/release/WINDOWS_REPACKAGE_CONFIG.json`](docs/release/WINDOWS_REPACKAGE_CONFIG.json) 提供，最终 `RC_SHA` 由发布协调方单独交付。Windows 真机先运行初始化门禁并建立与成品 runtime 隔离的锁定测试环境：
+以下是 Windows x64 便携包的默认交付链：从当前精确、干净的公开 Git `HEAD` 组装一次，静态验包一次，再以正式根 BAT 做一次真实启动和停止烟测。它不复用退休预公开包、receipt 或 Tag，也不执行 GitHub 写入。
 
 ```powershell
-pwsh -NoProfile -File .\scripts\dev\initialize_windows_repackage.ps1 `
-  -SourceCommit <40位小写RC_SHA>
-pwsh -NoProfile -File .\scripts\dev\prepare_windows_test_environment.ps1 -Clean
+pwsh -NoProfile -File .\scripts\dev\build_windows_portable_release.ps1
 ```
 
-初始化器要求指定的 release ref、detached `HEAD` 与交付 SHA 完全相同，并写入会话证据；测试环境同时消费 Windows runtime 锁和 test-tools 锁，并以环境内受边界校验的 `.pth` 精确绑定当前 RC `src`，保证测试子进程导入相同源码。正式 runtime 不安装该绑定或 pytest 等测试包。
+脚本会在开始时记录当前 `HEAD`，并由构建器再次确认该提交及 tracked 工作树干净；自动化需要指定提交时仍可传 `-SourceCommit <40位小写SHA>`。默认交付只给用户 ZIP 与同名 `.sha256`；runtime/build/package manifest、依赖锁、SBOM 和逐文件 SHA-256 留在 ZIP 内作为完整性信息，不需要单独上传。正式 BAT 烟测证据写入 `dist/evidence/windows-v<version>/windows-portable-smoke.json`。
 
-```powershell
-.\scripts\dev\build_windows_portable.ps1 `
-  -Version <new-release-version> `
-  -PythonVersion 3.14.6 `
-  -Architecture x64 `
-  -SourceCommit <40位小写RC_SHA> `
-  -Clean
-```
+烟测会解压到临时中文空格路径，以根 `启动一站式发票汇总系统.bat -NoBrowser` 启动，验证 `/`、`/api/v1/health` 和 build/package/PID/路径身份，再以根 `停止一站式发票汇总系统.bat` 停止。它只使用包内脱敏空目录，不读取业务目录。若默认 `8766` 落入 Windows TCP 排除范围，证据会保留原始默认配置的启动结果和系统错误，再以包内无业务路径的临时配置选择相邻可用端口继续烟测；这种结果不会宣称默认配置已原样通过。
 
-脚本先校验机器配置，再准备哈希锁定的 Python 3.14.6 x64 运行时和 wheelhouse，以离线安装结果组装两次确定性 ZIP 并比较 SHA-256。`base-python` 保留 Python Manager 的原始文档用于证明在线/离线基线相同；每次复制出产品 `python` 后先删除产品副本的 `Doc`，锁定安装期间强制固定 `SOURCE_DATE_EPOCH`，再删除内嵌 staging 绝对路径的产品 `Scripts` 并规范对应 RECORD，最后执行 `pip check`、import smoke 和 runtime manifest。正式源码预门禁、隔离测试环境与实际组包链都拒绝非精确 `3.14.6` patch。Windows package manifest 的 source commit 必须与 build manifest 一致；构建收据记录 ZIP 的文件名、大小、SHA、source/core/package/lock identity、机器配置 SHA、联网/离线模式和 `reproducibility_checked=true`，否则最终 Feed 门禁拒绝。正式流程还要求断网后从既有 wheelhouse 重装 runtime、再次双组装，并与联网 ZIP SHA 完全相同。默认包清单包含共享核心、web、正式 Windows 入口、结构性 facts/runner、LICENSE/第三方声明、构建/包/runtime manifest、SBOM、脱敏默认配置和空 `发票文件/运行状态`。验包器只允许这些精确文件和子树，大小写不敏感地拒绝 `python/Doc` 与 `python/Scripts`，并反向拒绝 macOS 壳、Mac 锁、Swift/bundle 与 Mac runtime；`macos/`、`scripts/dev`、测试、普通项目文档、运行态、缓存、真实业务数据和本机 `config/app.local.json` 均不进入包。旧版本只能通过 `导入旧版设置.bat` 白名单迁移设置和偏好；具体版本由 `version.py` 和该 RC 的发布记录决定。
+默认链不再强制第二次 ZIP 比对、断网 wheelhouse 重建、隔离源码测试环境或同时覆盖 PS7/PS5.1。它们仍保留为高级审计：在同一默认命令上追加 `-VerifyReproducibility` 可执行第二次 ZIP SHA 比对；已有 base runtime 和 wheelhouse 时可追加 `-Offline` 做离线运行时重建（不能与 `-Clean` 同用）；`initialize_windows_repackage.ps1` 与 `prepare_windows_test_environment.ps1` 继续用于需要远端 tip 绑定、完整源码回归或供应链复核的场景。
 
-上段“测试不进入包”专指项目自身测试和 Python 基础 runtime 测试。哈希锁定 wheel 在 `python/Lib/site-packages` 内自带的 `tests` 可以原样保留，不按当前包名维护白名单，也不为缩小包体修改 wheel/RECORD；这些文件仍使用依赖范围扫描，并完整计入 runtime tree、逐文件 manifest 和 ZIP SHA。任何其它位置或缓存目录中的大小写变体仍由验包器拒绝。
+包内不包含项目测试、开发脚本、运行态、缓存、真实业务数据或本机 `config/app.local.json`。哈希锁定 wheel 自带的 `python/Lib/site-packages/**/tests/**` 可以保留并继续计入 runtime tree、逐文件 manifest、SBOM 和 ZIP SHA；其它位置的测试/缓存目录仍会被验包器拒绝。旧版本只能通过 `导入旧版设置.bat` 白名单迁移设置和偏好。
 
 正式 Windows BAT 会优先验证 `%ProgramFiles%\PowerShell\7\pwsh.exe`；该固定位置不存在时，再通过 `where.exe pwsh.exe` 使用当前 `PATH`，因此 Microsoft Store 的 App Execution Alias 也是有效 PS7 来源。只有没有可运行的 7.x 时才回退 Windows PowerShell 5.1，`INVOICE_HUB_FORCE_PS51=1` 仍用于兼容验收。共享启动模块从 localhost health 的原始响应字节显式按 UTF-8 解码，避免 PS5.1 在响应未声明 charset 时损坏中文配置和运行目录；解码后仍执行完整 PID、路径、build/package 身份校验。
 

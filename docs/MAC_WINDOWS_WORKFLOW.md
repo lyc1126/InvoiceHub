@@ -21,12 +21,15 @@ Windows 源码开发入口：
 
 Tauri macOS development `.app` 已有一次隔离启动与 Cmd-Q 退出证据：它使用 explicit venv launcher、schema-3 manifest 和仅 development profile 的外置 state root，固定绑定 `127.0.0.1:8766` 后完成 health/background、首页/静态资源和 desktop 默认值检查；clean-commit 样本的真实 Cmd-Q 触发 shutdown POST 并形成 stopped state，host/backend/PID/端口清理完成，SSE 未及时退出时由显式 `kill + wait` 兜底。外部 AppleScript quit 仍不属于这一可拦截路径。该样本不覆盖 native picker、browser/tray 点击、单实例、打印、updater 或任何 DMG/签名/公证项，也不改写真实 Application Support。
 
-## Windows 新 RC
+## Windows 便携包
 
-1. 从精确 clean `RC_SHA` 建立隔离环境，核对版本、依赖锁、源码快照和 SBOM。
-2. 按平台锁准备 runtime，组装两次并核对 SHA；断网重装后重复该验证。
-3. 静态验包必须拒绝本机配置、业务数据、运行态、日志、缓存、秘密和 macOS 内容。
-4. 最终 RC 在 Windows 10/11 x64 执行一次安装、启动、目录选择、托盘、更新和停止 monitor 烟测。
+默认 Windows x64 便携包不是安装器验收，也不替代 Tauri/NSIS 的后续发行链。它只需要一台 Windows x64 主机执行：
+
+1. 在目标公开提交的 clean checkout 直接运行 `build_windows_portable_release.ps1`；它默认锁定当前 `HEAD`，自动化仍可显式传入 `RC_SHA`。
+2. 以 Windows 哈希锁准备 Python 3.14.6 runtime，生成 runtime/build/package manifest、SBOM、文件与 ZIP SHA-256，并静态验包。
+3. 将 ZIP 解压到临时中文空格路径，调用正式根 BAT，验证首页、health、身份和正式停止；写入 JSON 证据。
+
+默认不要求双组装、断网重装、独立测试环境、PS7/PS5.1 双烟测、目录选择、托盘、更新或 monitor/stop-all。双组装 SHA 比对、离线重建和源码预门禁仍可显式执行，适用于供应链审计或正式平台发行。任何未执行的 Windows 真机行为必须如实标为未覆盖。
 
 ## macOS 新 RC
 

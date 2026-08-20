@@ -92,8 +92,12 @@ function Get-IHWindowsReleaseConfig {
     if ([string]$config.default_host -ne "127.0.0.1") { throw "Windows release host must be 127.0.0.1." }
     if ([int]$config.default_port -ne 8766) { throw "Windows release default port must be 8766." }
     if ([int]$config.minimum_free_disk_gib -lt 10) { throw "Windows release requires at least 10 GiB free disk." }
-    if ([int]$config.reproducibility_builds -ne 2) { throw "Windows release requires exactly two reproducibility builds." }
-    if ($config.offline_rebuild_required -ne $true) { throw "Windows release requires an offline rebuild." }
+    if ([int]$config.reproducibility_builds -notin @(1, 2)) {
+        throw "Windows release reproducibility_builds must be 1 or 2."
+    }
+    if ($config.offline_rebuild_required -isnot [bool]) {
+        throw "Windows release offline_rebuild_required must be a boolean."
+    }
     if ([string]$config.source_branch -notmatch '^[A-Za-z0-9._/-]+$' -or [string]$config.source_branch -match '(^|/)\.\.(/|$)') {
         throw "Windows release source_branch is invalid."
     }

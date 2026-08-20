@@ -23,7 +23,7 @@ Windows 和 macOS 不是两个长期分叉的源码仓库。任一系统执行 `
 
 成品边界则必须互斥并 fail closed：
 
-- Windows 真机固定参数由机器可读 JSON 提供，并在 effectful 步骤前与 `version.py`、锁和派生路径核对；动态 RC_SHA 由发布协调方独立交付，初始化器要求 remote tip、detached HEAD 与该 SHA 相等。源码测试 Python 独立消费产品/test 两份锁，并只在自身 site-packages 用受边界校验的 `.pth` 绑定当前 RC `src`；正式 runtime 从只读 `base-python` 重建，删除产品 `Doc`，固定安装时间，再删除不可迁移的 `Scripts` 并规范 RECORD；它只消费产品锁且不携带测试源码绑定。构建器只收集 `src/`、`web/`、`scripts/windows/`、结构性 facts/runner、Windows 锁和固定根文件；ZIP 验证器不再按宽泛顶层目录放行，而是使用精确文件/子树白名单，并显式拒绝 `macos/`、Swift/bundle、Mac 锁、`python/bin` runtime 和大小写变体的 `python/Doc`、`python/Scripts`。
+- Windows 真机固定参数由机器可读 JSON 提供，并在 effectful 步骤前与 `version.py`、锁和派生路径核对；默认 portable 入口自动锁定当前 clean HEAD，自动化可显式提供 RC_SHA。它只要求一次锁定 runtime 组装、静态 ZIP 验包和中文空格路径的根 BAT 启停烟测；双 ZIP 比对、离线重建、remote-tip 初始化与独立 test Python 保留为显式审计。正式 runtime 从只读 `base-python` 重建，删除产品 `Doc`，固定安装时间，再删除不可迁移的 `Scripts` 并规范 RECORD；它只消费产品锁且不携带测试源码绑定。构建器只收集 `src/`、`web/`、`scripts/windows/`、结构性 facts/runner、Windows 锁和固定根文件；ZIP 验证器不再按宽泛顶层目录放行，而是使用精确文件/子树白名单，并显式拒绝 `macos/`、Swift/bundle、Mac 锁、`python/bin` runtime 和大小写变体的 `python/Doc`、`python/Scripts`。
 - macOS 构建器只把共享核心、Mac 锁和 arm64 Python 放入 `.app`；runtime 准备阶段在 manifest 前精确移除 python-build-standalone 固定携带的三个 shell helper 与 pip/distlib 六个 Windows launcher，然后全树拒绝任何其它 BAT/CMD/PS1/PSM1 或 EXE/DLL/PYD/MSI/MSIX。同一个布局验证仍分别作用于 staging App、Sparkle ZIP 解包 App 和 DMG 挂载 App，并在整个 `Resources` 中拒绝 `scripts/windows`、Windows 锁、BAT/PowerShell 和 `.exe/.dll/.pyd/.msi/.msix`。验证器对这些已签名 App 执行的 Python/pip/import/content scan 同时使用 `PYTHONDONTWRITEBYTECODE=1` 与 `-B` 禁写字节码，保证普通验证可重复且不破坏 seal；不能忽略 `-I` 会屏蔽环境变量的语义。内部模式还必须在验证前对 DMG 容器做 ad-hoc 签名，并用互斥的 `--expect-internal-adhoc` 验证三份 App 加 DMG 都无 Developer ID Authority/Team ID；正式模式使用 `--expect-notarized`，不弱化 Developer ID/Team ID/Hardened Runtime/notary 门禁。
 - 新的多平台 RC 仍必须来自同一 clean `RC_SHA` 并具有同一 core build ID；平台 package ID、依赖锁、runtime manifest、启动器和成品名保持不同。退休预公开包不属于新 RC 输入或公开证据。源码共存不是包体混合，某个平台的真机结果也不能替代另一个平台验收。
 
@@ -216,7 +216,7 @@ monitor 的两次启动同步和 `ready/observer_active` 时序见[接口与运�
 | 验证层 | 共通 | Windows 追加 | macOS 追加 |
 |---|---|---|---|
 | 静态/单元 | pytest、compileall、JS syntax、文档契约 | BAT/PS1 编码和语法 | `swift test`、脚本 `bash -n` |
-| 构建 | 三类 manifest、依赖锁、SBOM、敏感路径、资源版本 | 配置/RC preflight、隔离测试环境、产品 `python/Doc` 裁剪与基线保留、固定安装时间、`python/Scripts`/RECORD 规范、联网与离线各两次确定性 portable ZIP 且 SHA 相同 | `--build-only`；developer-local internal 的三份 ad-hoc App + ad-hoc DMG；正式 Release/arm64 Developer ID/notarized `.app/DMG/Sparkle ZIP` |
+| 构建 | 三类 manifest、依赖锁、SBOM、敏感路径、资源版本 | 默认：一次确定性 portable ZIP、静态验包和根 BAT 中文空格路径烟测；产品 `python/Doc` 裁剪、固定安装时间、`python/Scripts`/RECORD 规范；双 ZIP 比对、离线重建、隔离测试环境和 RC preflight 为显式审计 | `--build-only`；developer-local internal 的三份 ad-hoc App + ad-hoc DMG；正式 Release/arm64 Developer ID/notarized `.app/DMG/Sparkle ZIP` |
 | 运行 | health、API、投影、monitor ready | 正式 BAT、浏览器前台、Tk | `--verify`、WKWebView、NSOpenPanel、owned/external |
 | 发布 | 不携带本机/业务数据；新 RC 同一 source/core identity；Feed finalizer 复核实际资产/收据/源码与 release Tag | `v0.3` 需要 NSIS 安装/启动/托盘/更新烟测 | `v0.3` 需要 DMG/更新归档、签名、quarantine 与 Tauri updater 烟测 |
 

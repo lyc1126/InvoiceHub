@@ -1,7 +1,7 @@
 # InvoiceHub 开发架构与工程导航
 
 > 文档状态：当前开发实现的权威架构入口
-> 更新日期：2026-08-18
+> 更新日期：2026-08-20
 > 公共权威基线：经过审计的单一脱敏根提交；旧私有提交、Tag、二进制和验证材料不在公开图中
 > 公开状态：候选树、保留 Git 对象和托管面已完成一次内容与凭据审计；公开图从脱敏根提交开始，详见 `docs/release/HISTORY_SANITIZATION_EXECUTION.md`
 > 当前开发线：`codex/tauri2-unified-desktop` 已从公开 `main` 建立，首个版本为 `0.3.0-alpha.1`；Tauri 已完成受控 lock、代码级生命周期/Host RPC/updater contracts、隔离 TestClient L6 API runtime，并构建且隔离烟测一个 macOS arm64 development `.app`。随后在独立 `codex/tauri-macos-internal-alpha` 线上构建并验证了一个 internal-alpha arm64 `.app/.dmg`，另完成一次临时 state root 启动烟测；裸 checkout 仍缺经编译绑定 manifest 并 fail-closed；尚无 Release。
@@ -259,6 +259,7 @@ BAT/页面/monitor 触发
 | 架构债务 | `base_head.html` 存在，但页面仍各自维护 head 和资源版本 | 静态资源变更必须逐模板核对版本参数 |
 | 架构债务 | 当前前端自动化主要是静态契约测试 | UI 改动仍需要真实浏览器/DOM 验收 |
 | 架构债务 | Windows 首版没有内置桌面 WebView 壳 | macOS development `.app` 的单次 L9 smoke 不改变这一事实；`startup_surface=desktop` 仍须在当前 Windows source/portable 路径 fail closed，不能让设置项暗示已实现 |
+| 当前实现 | Windows x64 portable 默认交付只做一次锁定 runtime 组装、静态验包与根 BAT 中文空格路径烟测 | ZIP/依赖锁/manifests/SBOM/清单/烟测 JSON 仍必须闭环；双 ZIP 比对、离线重建和独立测试环境是显式审计，尚无 Windows 真机产物或证据 |
 | 发布阻断 | Windows 与 macOS 正式脚本已实现但真机/签名证据未齐 | 自动化通过不等于 ZIP/DMG 已放行，必须分别执行平台手册 |
 | 未启用能力 | OCR 页面和 API 保留候选文件入口 | core 包未内置正式本地 OCR，提取接口返回禁用状态 |
 | 当前实现 | SQLite 建有 `settings` 和 `cache` 表 | 当前主要业务消费者集中在 `tasks/events`，不能误称已有数据库主存储 |

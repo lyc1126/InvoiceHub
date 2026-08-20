@@ -7,7 +7,7 @@ param(
     [switch]$Clean,
     [switch]$Offline,
     [switch]$SkipRuntimePreparation,
-    [switch]$SkipReproducibilityCheck
+    [switch]$VerifyReproducibility
 )
 
 $ErrorActionPreference = "Stop"
@@ -29,6 +29,8 @@ $runtimeDir = Join-Path $runtimeRoot "python"
 $lock = Join-Path $root ([string]$releaseConfig.dependency_lock)
 $expectedArtifact = Join-Path $dist ([string]$releaseConfig.artifact_name)
 $receiptPath = Join-Path $root ([string]$releaseConfig.build_receipt)
+$reproducibilityChecked = [bool]$VerifyReproducibility -or ([int]$releaseConfig.reproducibility_builds -ge 2)
+$reproducibilityBuildCount = if ($reproducibilityChecked) { 2 } else { 1 }
 
 if (-not $IsWindows -and $PSVersionTable.PSVersion.Major -ge 6) {
     throw "build_windows_portable.ps1 must run on Windows x64."
@@ -93,7 +95,7 @@ if ($LASTEXITCODE -ne 0) { throw "Offline portable assembly failed." }
 $build = $buildJson | ConvertFrom-Json
 if ([string]$build.archive_path -ne $expectedArtifact) { throw "Assembler returned an unexpected artifact path." }
 
-if (-not $SkipReproducibilityCheck) {
+if ($reproducibilityChecked) {
     $reproDir = Join-Path $staging "reproducibility"
     if ([System.IO.Directory]::Exists($reproDir)) { Remove-Item -LiteralPath $reproDir -Recurse -Force }
     [System.IO.Directory]::CreateDirectory($reproDir) | Out-Null
@@ -131,7 +133,9 @@ $receipt = [ordered]@{
     built_at = (Get-Date).ToUniversalTime().ToString("o")
     builder_os = [Environment]::OSVersion.VersionString
     powershell_version = [string]$PSVersionTable.PSVersion
-    reproducibility_checked = -not $SkipReproducibilityCheck
+    portable_verification_checked = $true
+    reproducibility_checked = [bool]$reproducibilityChecked
+    reproducibility_builds = $reproducibilityBuildCount
     offline_build = [bool]$Offline
     runtime_preparation_skipped = [bool]$SkipRuntimePreparation
 }
