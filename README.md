@@ -55,6 +55,8 @@ http://127.0.0.1:8766/
 
 hosted host-lock 竞争的 busy 响应在返回前不写 `updates.checked` 事件，也不等待 SQLite；正常成功或非竞争检查仍保留原有更新检查事件。Tauri `setup` 在启动 owned backend 后先完成 tray 与已选 surface 的可失败初始化；任何失败均先通过既有 keep-monitor shutdown 和必要的 kill+wait 收束该 child，若仍不能确认退出则保持 setup 阻塞并重试，child mutex 或 `try_wait` 错误也不算退出，只有确认退出后才返回原 setup error，因此不会依赖尚未注册的退出 handler 或进程 Drop。
 
+L10-R 目前只提供 future recovery/relaunch coordinator 可复用的 Rust 基础件：它将 released owned lifecycle 的 generation、phase、health/owned/process PID 和 state scope 固定为 lease；每次 marker 或未来 monitor bridge 操作前后都必须复核。只允许暂停 `running && ready` 的 owned monitor，已有 marker、corrupt/cross-scope marker、ownership 丢失或任何 bridge failure 都保留标记并 fail closed。Unix 使用 descriptor-pinned/no-follow marker store；Windows 当前明确返回 unavailable。它没有接入 `update_install`、真实 monitor、下载、安装或重启，因此不构成任一平台 updater 验收。
+
 目录检查会递归统计当前目录下的 PDF/OFD/XML 发票源文件；如果目录能读取但只包含 `.zip/.rar/.7z` 压缩包、成本产物或其它文件，页面会显示 warning，并提示先解压或改选解压后的发票文件夹。点击“重新汇总”后若结果为 0 条，页面会直接显示这个原因，而不是只显示笼统完成。
 
 macOS 未签名开发 `.app` 重建后，系统可能因应用代码身份变化重新要求“下载”等受保护目录的访问权限。若 localhost 严格握手成功，但页面出现 `Load failed` 或 health 的 `background_status=failed`，应在用户明确允许后通过首页原生 `NSOpenPanel` 重新选择并保存当前目录，再确认 `background_status=ready`、手动重新汇总成功且源文件预览可打开；仅有 `health.ok=true` 不能证明业务目录已经获权。

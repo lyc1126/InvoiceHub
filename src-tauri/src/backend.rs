@@ -19,6 +19,7 @@ use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
 
 use crate::host_rpc::{HostRpcServer, HostRpcServerError};
+use crate::monitor_recovery::{LifecycleAuthority, LifecycleLease, LifecyclePhase, RecoveryError};
 use crate::{FIXED_BACKEND_HOST, FIXED_BACKEND_PORT};
 
 pub const BACKEND_BUNDLE_MANIFEST_FILE: &str = "invoicehub-desktop-host.json";
@@ -159,6 +160,7 @@ pub enum BackendError {
     GracefulShutdownFailed,
     GracefulShutdownTimedOut,
     BackendTerminationFailed,
+    LifecycleUnavailable,
     Handshake(HandshakeError),
     HostRpc(HostRpcServerError),
 }
@@ -191,6 +193,7 @@ impl fmt::Display for BackendError {
             Self::BackendTerminationFailed => {
                 "InvoiceHub backend could not be terminated before the desktop host exits"
             }
+            Self::LifecycleUnavailable => "InvoiceHub backend lifecycle is no longer owned",
             Self::Handshake(error) => {
                 return write!(formatter, "InvoiceHub backend handshake failed: {error}")
             }
@@ -620,6 +623,7 @@ pub struct BackendHost {
     child_pid: u32,
     expected_identity: ExpectedBackendIdentity,
     ownership_verified: Arc<AtomicBool>,
+    lifecycle: Arc<Mutex<BackendLifecycleState>>,
     liveness_shutdown: Arc<AtomicBool>,
     liveness_worker: Mutex<Option<JoinHandle<()>>>,
     startup_surface: StartupSurface,
@@ -630,6 +634,52 @@ pub struct BackendHost {
 pub enum BackendShutdownOutcome {
     Graceful,
     Forced,
+}
+
+#[derive(Clone, Debug)]
+struct BackendLifecycleState {
+    generation: u64,
+    phase: LifecyclePhase,
+    health_pid: u32,
+    owned_pid: u32,
+    process_pid: u32,
+    startup_gate_released: bool,
+    state_scope: String,
+}
+
+impl BackendLifecycleState {
+    fn new(child_pid: u32, expected_identity: &ExpectedBackendIdentity) -> Self {
+        Self {
+            generation: 1,
+            phase: LifecyclePhase::StartupGateHeld,
+            health_pid: child_pid,
+            owned_pid: child_pid,
+            process_pid: child_pid,
+            startup_gate_released: false,
+            state_scope: lifecycle_scope_for_identity(expected_identity),
+        }
+    }
+
+    fn lease(&self) -> LifecycleLease {
+        LifecycleLease {
+            generation: self.generation,
+            phase: self.phase,
+            health_pid: self.health_pid,
+            owned_pid: self.owned_pid,
+            process_pid: self.process_pid,
+            startup_gate_released: self.startup_gate_released,
+            state_scope: self.state_scope.clone(),
+        }
+    }
+
+    fn invalidate(&mut self, phase: LifecyclePhase) {
+        self.generation = self.generation.wrapping_add(1);
+        if self.generation == 0 {
+            self.generation = 1;
+        }
+        self.phase = phase;
+        self.startup_gate_released = false;
+    }
 }
 
 impl BackendHost {
@@ -698,11 +748,16 @@ impl BackendHost {
             return Err(error);
         }
         let liveness_shutdown = Arc::new(AtomicBool::new(false));
+        let lifecycle = Arc::new(Mutex::new(BackendLifecycleState::new(
+            child_pid,
+            &manifest.expected_identity,
+        )));
         // Arm before the watcher starts so an already-exited child cannot re-enable Host RPC.
         ownership_verified.store(true, Ordering::Release);
         let liveness_worker = spawn_backend_liveness_watcher(
             Arc::clone(&child),
             Arc::clone(&ownership_verified),
+            Arc::clone(&lifecycle),
             Arc::clone(&liveness_shutdown),
         );
         Ok(Self {
@@ -710,6 +765,7 @@ impl BackendHost {
             child_pid,
             expected_identity: manifest.expected_identity,
             ownership_verified,
+            lifecycle,
             liveness_shutdown,
             liveness_worker: Mutex::new(Some(liveness_worker)),
             startup_surface,
@@ -725,13 +781,35 @@ impl BackendHost {
             Err(HandshakeError::BackendNotReady)
         };
         if result.is_err() {
-            self.ownership_verified.store(false, Ordering::Release);
+            self.revoke_lifecycle(LifecyclePhase::Invalid);
         }
         result
     }
 
     pub fn owns_backend(&self) -> bool {
         self.ownership_verified.load(Ordering::Acquire)
+    }
+
+    pub fn release_startup_gate(&self) -> Result<(), BackendError> {
+        if !self.owns_backend() || current_child_pid(&self.child)? != self.child_pid {
+            self.revoke_lifecycle(LifecyclePhase::Invalid);
+            return Err(BackendError::LifecycleUnavailable);
+        }
+        let mut lifecycle = self
+            .lifecycle
+            .lock()
+            .map_err(|_| BackendError::LifecycleUnavailable)?;
+        if lifecycle.phase != LifecyclePhase::StartupGateHeld
+            || lifecycle.startup_gate_released
+            || lifecycle.health_pid != self.child_pid
+            || lifecycle.owned_pid != self.child_pid
+            || lifecycle.process_pid != self.child_pid
+        {
+            return Err(BackendError::LifecycleUnavailable);
+        }
+        lifecycle.phase = LifecyclePhase::OwnedRunning;
+        lifecycle.startup_gate_released = true;
+        Ok(())
     }
 
     pub fn shutdown_keep_monitor(&self) -> Result<(), BackendError> {
@@ -741,7 +819,7 @@ impl BackendHost {
 
         // The desktop host is about to exit. Revoke private Host RPC before asking the
         // child to perform its structured shutdown and release its PID state.
-        self.ownership_verified.store(false, Ordering::Release);
+        self.revoke_lifecycle(LifecyclePhase::Terminating);
         let response = local_post_json(
             SERVER_SHUTDOWN_PATH,
             br#"{"shutdown_behavior":"keep_monitor","remember":false}"#,
@@ -797,7 +875,7 @@ impl BackendHost {
     }
 
     fn terminate_backend(&self) -> Result<(), BackendError> {
-        self.ownership_verified.store(false, Ordering::Release);
+        self.revoke_lifecycle(LifecyclePhase::Terminating);
         self.stop_liveness_worker();
         let mut child = match self.child.lock() {
             Ok(child) => child,
@@ -814,6 +892,60 @@ impl BackendHost {
             .map(|_| ())
             .map_err(|_| BackendError::BackendTerminationFailed)
     }
+
+    fn revoke_lifecycle(&self, phase: LifecyclePhase) {
+        self.ownership_verified.store(false, Ordering::Release);
+        if let Ok(mut lifecycle) = self.lifecycle.lock() {
+            lifecycle.invalidate(phase);
+        }
+    }
+}
+
+impl LifecycleAuthority for BackendHost {
+    fn capture_released_lease(&self) -> Result<LifecycleLease, RecoveryError> {
+        if !self.owns_backend() {
+            return Err(RecoveryError::OwnershipLost);
+        }
+        let process_pid =
+            current_child_pid(&self.child).map_err(|_| RecoveryError::OwnershipLost)?;
+        let lifecycle = self
+            .lifecycle
+            .lock()
+            .map_err(|_| RecoveryError::OwnershipLost)?;
+        let lease = lifecycle.lease();
+        if !lease.startup_gate_released {
+            return Err(RecoveryError::StartupGateHeld);
+        }
+        if process_pid != self.child_pid
+            || lease.health_pid != self.child_pid
+            || lease.owned_pid != self.child_pid
+            || lease.process_pid != process_pid
+            || !lease.is_recovery_eligible()
+        {
+            return Err(RecoveryError::LeaseInvalid);
+        }
+        Ok(lease)
+    }
+
+    fn revalidate_lease(&self, lease: &LifecycleLease) -> Result<(), RecoveryError> {
+        if !self.owns_backend() {
+            return Err(RecoveryError::OwnershipLost);
+        }
+        let process_pid =
+            current_child_pid(&self.child).map_err(|_| RecoveryError::OwnershipLost)?;
+        let lifecycle = self
+            .lifecycle
+            .lock()
+            .map_err(|_| RecoveryError::OwnershipLost)?;
+        if lifecycle.lease() != *lease
+            || process_pid != self.child_pid
+            || lease.process_pid != process_pid
+            || !lease.is_recovery_eligible()
+        {
+            return Err(RecoveryError::OwnershipLost);
+        }
+        Ok(())
+    }
 }
 
 impl Drop for BackendHost {
@@ -825,17 +957,54 @@ impl Drop for BackendHost {
 fn spawn_backend_liveness_watcher(
     child: Arc<Mutex<Child>>,
     ownership_verified: Arc<AtomicBool>,
+    lifecycle: Arc<Mutex<BackendLifecycleState>>,
     shutdown: Arc<AtomicBool>,
 ) -> JoinHandle<()> {
     thread::spawn(move || {
         while !shutdown.load(Ordering::Acquire) {
             if !child_is_running(&child) {
                 ownership_verified.store(false, Ordering::Release);
+                if let Ok(mut lifecycle) = lifecycle.lock() {
+                    lifecycle.invalidate(LifecyclePhase::Invalid);
+                }
                 return;
             }
             thread::sleep(BACKEND_LIVENESS_POLL_INTERVAL);
         }
     })
+}
+
+fn current_child_pid(child: &Mutex<Child>) -> Result<u32, BackendError> {
+    let mut child = child
+        .lock()
+        .map_err(|_| BackendError::LifecycleUnavailable)?;
+    match child.try_wait() {
+        Ok(None) => Ok(child.id()),
+        Ok(Some(_)) | Err(_) => Err(BackendError::LifecycleUnavailable),
+    }
+}
+
+fn lifecycle_scope_for_identity(expected_identity: &ExpectedBackendIdentity) -> String {
+    let mut digest = Sha256::new();
+    digest.update(b"invoicehub-monitor-recovery-scope-v1\0");
+    digest.update(expected_identity.package_id.as_bytes());
+    digest.update([0]);
+    digest.update(
+        expected_identity
+            .config_path
+            .as_os_str()
+            .to_string_lossy()
+            .as_bytes(),
+    );
+    digest.update([0]);
+    digest.update(
+        expected_identity
+            .runtime_dir
+            .as_os_str()
+            .to_string_lossy()
+            .as_bytes(),
+    );
+    hex_encode(&digest.finalize())
 }
 
 fn child_is_running(child: &Mutex<Child>) -> bool {

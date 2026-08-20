@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- 2026-08-20 Tauri L10-R monitor recovery foundation: add a source-only,
+  fail-closed transaction for a future host-owned monitor recovery coordinator.
+  It captures a released owned lifecycle lease (generation, phase, health,
+  owned and process PIDs plus a state scope), refuses an existing recovery
+  obligation or an unready monitor, and requires a later owned `running &&
+  ready` observation before clearing the marker. Unix marker persistence uses
+  a pinned directory descriptor with no-follow `openat`/atomic no-clobber
+  `linkat`/`unlinkat`;
+  non-Unix builds explicitly return unavailable. The transaction has no Host
+  RPC, real monitor, downloader, installer, restart, bundle, signing, or
+  release integration, and `update_install` remains candidate-consuming and
+  fail-closed.
 - 2026-08-19 Tauri internal-alpha assembly: add a bounded macOS arm64
   `internal-alpha` profile, clean-snapshot staging, embedded Python 3.14.6
   runtime inputs, manifest/launcher hash binding, receipt generation and an

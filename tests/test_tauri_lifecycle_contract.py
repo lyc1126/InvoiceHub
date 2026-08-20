@@ -33,6 +33,7 @@ def test_tauri_lifecycle_uses_exact_official_plugins_and_has_no_webview_command_
     assert "DESKTOP_HOST_CHALLENGE_HEADER" in backend
     assert "DESKTOP_HOST_PROOF_HEADER" not in backend
     assert "spawn_backend_liveness_watcher" in backend
+    assert "pub mod monitor_recovery;" in (ROOT / "src-tauri" / "src" / "lib.rs").read_text(encoding="utf-8")
 
 
 def test_tauri_updater_manifest_and_candidate_guards_fail_closed() -> None:
@@ -216,6 +217,40 @@ def test_tauri_checkout_guard_and_liveness_order_fail_closed() -> None:
     assert backend.index("ownership_verified.store(true, Ordering::Release);") < backend.index(
         "let liveness_worker = spawn_backend_liveness_watcher"
     )
+
+
+def test_tauri_monitor_recovery_foundation_requires_a_released_lifecycle_lease_and_pinned_marker_store() -> None:
+    cargo = tomllib.loads((ROOT / "src-tauri" / "Cargo.toml").read_text(encoding="utf-8"))
+    backend = (ROOT / "src-tauri" / "src" / "backend.rs").read_text(encoding="utf-8")
+    main = (ROOT / "src-tauri" / "src" / "main.rs").read_text(encoding="utf-8")
+    recovery = (ROOT / "src-tauri" / "src" / "monitor_recovery.rs").read_text(encoding="utf-8")
+
+    assert cargo["target"]["cfg(unix)"]["dependencies"]["libc"]["version"] == "=0.2.189"
+    assert "pub fn release_startup_gate" in backend
+    assert "impl LifecycleAuthority for BackendHost" in backend
+    assert "capture_released_lease" in backend
+    assert "revalidate_lease" in backend
+    assert main.index("backend.release_startup_gate()") < main.index("app.manage(backend);")
+    for token in (
+        "LifecycleLease",
+        "MonitorRecoveryTransaction",
+        "RecoveryMarkerStore",
+        "RecoveryPending",
+        "fn load_marker",
+        "fn publish_marker",
+        "fn clear_marker",
+        "libc::openat",
+        "libc::O_NOFOLLOW",
+        "libc::linkat",
+        "libc::unlinkat",
+        "libc::AT_SYMLINK_NOFOLLOW",
+        "MarkerStoreError::UnsupportedPlatform",
+        "MarkerStoreError::MarkerChanged",
+    ):
+        assert token in recovery
+    install = (ROOT / "src-tauri" / "src" / "host_rpc.rs").read_text(encoding="utf-8")
+    install = install[install.index("fn install(&self)") :]
+    assert "Err(HostRpcServerError::UpdaterUnavailable)" in install
 
 
 def test_tauri_manifest_uses_runtime_derived_user_state_paths() -> None:

@@ -191,6 +191,10 @@ fn main() -> ExitCode {
                 complete_setup_failure_cleanup(&backend);
                 return Err(error);
             }
+            if let Err(error) = backend.release_startup_gate() {
+                complete_setup_failure_cleanup(&backend);
+                return Err(Box::new(error));
+            }
             app.manage(backend);
             app.manage(startup_surface);
             Ok(())

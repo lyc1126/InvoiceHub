@@ -133,6 +133,8 @@ CSV 使用 UTF-8 BOM 方便 Excel/WPS；XLSX 的活动 sheet 为“发票汇总�
 
 macOS 将这组可写运行态映射到用户的 Application Support，而不是 `.app/Contents`；TargetProfile 和投影语义不变。Windows 正式 core 仍使用包内运行态布局。平台差异只影响根位置，不改变各文件的真值角色。
 
+Tauri L10-R 定义的 `.invoicehub-monitor-recovery.json` 是 future coordinator 的 host-local recovery marker schema，不是发票、投影、SQLite 主数据或安装授权。当前 host 没有选定生产 marker root 或写入调用点；未来只有 released owned lifecycle lease 才能在其 host-owned root 操作该标记。Unix store 已实现 descriptor-pinned/no-follow 读写，非 Unix 明确 unavailable，因此当前 Windows 路径不产生该文件。
+
 ### 4.5 业务资料夹与做账真值
 
 业务资料夹是当前公司资料的导航边界，不替代 `watch_dir`。当活动扫描目录位于公司资料夹子目录时，`/api/v1/business-dossier` 可以暴露成本发票、银行流水、进项抵扣、开具发票和成本产物等受控入口；open API 仍要求目标位于当前业务资料夹或 `watch_dir` 内。它的元数据统计不是发票业务扫描：一次 `os.scandir` 深度遍历最多检查 4,000 个目录项或 1.25 秒，跳过隐藏项和符号链接，并在同一遍中得出快捷子目录与统计，避免为每个链接重复递归。达到边界或遇到不可读目录时返回 `scan.complete=false`，此时 `stats` 和目录 `file_count` 都只是可诊断的下界，不能用于业务汇总或做账判断。

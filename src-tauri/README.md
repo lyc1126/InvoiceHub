@@ -63,6 +63,16 @@ monitor, install, or restart. The later release coordinator must preserve the
 order download plus Minisign verification, monitor stop and independent recheck,
 then install/restart, with recovery on every failed path.
 
+L10-R adds only the source-level recovery primitive that a later coordinator
+must use. It captures a released owned lifecycle lease containing generation,
+phase, health/owned/process PIDs, and a state scope, and revalidates it around
+every marker or future bridge operation. A pause requires a ready owned monitor,
+will not overwrite an existing recovery marker, and preserves the marker on any
+failure; restore clears only after a later owned status is both running and
+ready. Unix persistence is descriptor-pinned and no-follow; non-Unix builds
+return unavailable. This module is not wired to Host RPC, the monitor service,
+download, install, restart, or `update_install`.
+
 Tray Quit and the custom macOS application-menu Quit item/Cmd-Q both request
 `app.exit(0)`. The menu must not use the predefined native Quit selector,
 which can bypass Tauri's interceptable event. Every `ExitRequested` received

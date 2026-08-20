@@ -83,7 +83,7 @@ the assembler labels dirty inputs `<HEAD>+dirty`.
 | Decision changed by result | A focused local pass permits one DCO fix-forward commit and a new branch push; the new hosted Windows pass then permits the three stable checks to become `main` ruleset requirements. Any failure keeps the ruleset unchanged and confines repair to `tests/test_tauri_dev_app.py` unless new evidence identifies a production defect. |
 | Minimal sample | One representative failing hosted Windows job log; one focused `tests/test_tauri_dev_app.py` run on the existing macOS environment; the documentation contract category and `git diff --check`; then the automatically triggered DCO, Windows, and macOS checks for the new commit. |
 | Stop condition | Stop at the first contradictory production-path finding, focused test failure, documentation failure, or new hosted failure mechanism. Do not rerun the old workflow, change `validate_venv_python`, expand into shared-core or release tests, rebuild the development `.app`, create an installer, merge, tag, release, or publish a Feed. |
-| Result | The source review and local portion passed on 2026-08-17. The development builder is macOS-arm64-only and its existing executable-access validation remains unchanged; only the POSIX-specific fixture was replaced. The focused development-app file passed 7 tests, the directly affected documentation selection passed 13 tests, and `git diff --check` passed. The two completed Windows runs for the previous head failed at the same single test, while DCO and macOS passed; only one Windows log is used as the representative sample. The new-head hosted DCO, Windows, and macOS result remains pending at this commit. |
+| Result | Passed. The development builder is macOS-arm64-only and its existing executable-access validation remains unchanged; only the POSIX-specific fixture was replaced. The focused development-app file passed 7 tests, the directly affected documentation selection passed 13 tests, and `git diff --check` passed. Fix commit `097ea8a` then passed DCO, Windows x64, and macOS arm64; foundation PR #7 merged at `673062d`, and `main` now requires those three stable checks. No development `.app`, installer, release, tag, or Feed action was part of this repair. |
 
 ## Operating rules
 
@@ -128,23 +128,27 @@ the assembler labels dirty inputs `<HEAD>+dirty`.
    still require real platform validation and are not claimed by that smoke.
 6. [x] Close P1-Q with one clean-commit custom application-menu/Cmd-Q smoke.
 7. [x] Push `codex/tauri2-unified-desktop`, open Draft PR #7, and let DCO,
-   macOS, and Windows CI identify the exact stable check names. DCO and macOS
-   passed on the first PR head; Windows exposed the P1-W fixture defect above.
-8. [ ] Only after those checks pass, add them to the `main` ruleset and enable
-   strict required-status policy; do not merge without explicit owner approval.
-9. [ ] After the foundation PR is accepted, implement the missing
-   recovery/relaunch coordinator and deterministic Tauri NSIS/DMG/update-
-   archive assembly/verification as separate bounded development work. The
-   local L11-A internal-alpha App/DMG assembly is a non-public prerequisite
-   experiment; it does not close this formal release item or enable
-   `update_install` before every failure path restores prior state.
-10. [ ] Exercise the five decision scenarios on development/alpha artifacts:
+   macOS, and Windows CI identify the exact stable check names. P1-W was
+   repaired at `097ea8a`; all three checks passed and PR #7 merged at `673062d`.
+8. [x] Add the passing DCO, Windows x64, and macOS arm64 checks to the `main`
+   ruleset as required status checks.
+9. [x] Complete L10-R as a source-only monitor recovery foundation: a released
+   lifecycle lease, fail-closed transaction, and Unix descriptor-pinned marker
+   store. It has no Host RPC, real monitor, installer, or restart integration,
+   and non-Unix marker storage remains unavailable.
+10. [ ] Implement the missing complete recovery/relaunch coordinator and
+   deterministic Tauri NSIS/DMG/update-archive assembly/verification as
+   separate bounded development work. The local L11-A internal-alpha App/DMG
+   assembly is a non-public prerequisite experiment; it does not close this
+   formal release item or enable `update_install` before every failure path
+   restores prior state.
+11. [ ] Exercise the five decision scenarios on development/alpha artifacts:
    both startup surfaces; single instance and wrong port; Host RPC
    authorization; valid/tampered update; and monitor stop before install.
-11. [ ] Only after the alpha/beta gates pass, cut a clean RC, run its one full
+12. [ ] Only after the alpha/beta gates pass, cut a clean RC, run its one full
     regression, build/sign/notarize both target-platform artifacts, and run
     each platform's one final RC smoke.
-12. [ ] Create immutable Tag/Release assets and switch the GitHub Pages Feed
+13. [ ] Create immutable Tag/Release assets and switch the GitHub Pages Feed
     last, after provenance, redownload, source archive, SBOM and signature
     checks all close.
 
@@ -568,7 +572,7 @@ this table.
 | Decision changed by result | A passing source-level transaction permits a DCO implementation commit and focused Rust/documentation verification, but does not authorize real download, signature verification, installer replacement, relaunch, or enabling `update_install`. Any failure blocks updater integration and confines repair to the marker/recovery module. |
 | Minimal sample | One representative owned running monitor, one originally stopped monitor, one stop/status/start failure path, one unowned backend, and one invalid/symlink marker; run focused Rust formatting/tests when the locked offline cache is available, plus the affected documentation contract and `git diff --check`. |
 | Stop condition | Stop at the first marker, ownership, monitor-state, compiler, test, or documentation-contract failure. Do not start Tauri/FastAPI, bind `127.0.0.1:8766`, call a real updater, download or verify an update, stop a real monitor, build a bundle, sign, publish, or create a Release/Feed. |
-| Result (2026-08-18) | Stopped during the source-level safety review. The candidate could not bind each bridge operation to a captured lifecycle generation/phase/health PID/owned PID/process PID lease or require a released startup gate; its final marker publication and clear operations also remained path-based after parent checks, so a same-user parent/destination swap could not be ruled out. The candidate and its implementation claims were removed rather than committing an unaudited primitive. `update_install` remains candidate-consuming and fail-closed; no monitor, download, signature verification, installer replacement, relaunch, bundle, signing, or release smoke occurred. A later coordinator must define the lease and opened-directory/no-follow final-operation contract before retrying this experiment. |
+| Result (2026-08-20) | Passed as L10-R source foundation only. `BackendHost` now exposes a released lifecycle lease containing generation, phase, health PID, owned PID, process PID and a state scope; child exit, failed health revalidation and shutdown invalidate it, and the startup gate is released only after tray/surface setup succeeds. The transaction revalidates before and after every marker or future bridge operation, never overwrites a pending marker, pauses only an owned `running && ready` monitor, and clears only after a later owned `running && ready` status. Marker JSON is strict and scope-bound; Unix persistence keeps an opened directory descriptor and performs no-follow `openat`, atomic no-clobber `linkat`, `fstatat` and `unlinkat` final operations. Non-Unix marker storage returns unavailable. Focused Rust contracts cover running/stopped, pending/corrupt/cross-scope markers, held gate, ownership loss, unready/stop/start failures and Unix symlink/no-clobber marker cases; no real bridge, monitor, updater, download, signature verification, installer replacement, relaunch, bundle, signing or release smoke was run. `update_install` remains candidate-consuming and fail-closed. |
 
 ### P1-SC: setup-failure termination confirmation
 
@@ -622,6 +626,12 @@ this table.
   accepts only `{}` but currently consumes its process-local candidate and
   fails closed. It performs no download, monitor stop, installation, or restart
   until a recovery/relaunch coordinator can restore failed paths safely.
+- L10-R supplies only a source-level recovery primitive for that later
+  coordinator. Every marker or bridge operation must carry and revalidate a
+  released owned lifecycle lease; Unix marker operations are descriptor-pinned
+  and no-follow, while non-Unix storage returns unavailable. It is not wired to
+  Host RPC, a real monitor, download, installation or restart, and therefore
+  cannot relax the current `update_install` fail-closed path.
 - The five final decision scenarios are startup surface, single instance and
   wrong port, Host RPC authorization, valid/tampered update, and monitor stop
   before install. They are not claimed by the foundation step.
