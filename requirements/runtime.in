@@ -1,7 +1,7 @@
 # Runtime dependencies are exact by design. Platform lock files add transitive
 # dependencies and hashes; release installers never resolve from this file.
 fastapi==0.141.1
-uvicorn==0.52.1
+uvicorn==0.52.3
 pydantic==2.13.4
 openpyxl==3.1.5
 pymupdf==1.28.0
