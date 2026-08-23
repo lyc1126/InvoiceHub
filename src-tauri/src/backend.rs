@@ -28,6 +28,7 @@ pub const OPENAPI_PATH: &str = "/openapi.json";
 pub const PREFERENCES_PATH: &str = "/api/v1/preferences";
 pub const BRIDGE_STATUS_PATH: &str = "/api/v1/bridge/status";
 pub const BRIDGE_STOP_PATH: &str = "/api/v1/bridge/stop";
+pub const BRIDGE_START_PATH: &str = "/api/v1/bridge/start";
 pub const SERVER_SHUTDOWN_PATH: &str = "/api/v1/server/shutdown";
 pub const DESKTOP_HOST_PROOF_PATH: &str = "/api/v1/internal/desktop-host-proof";
 pub const DESKTOP_HOST_CHALLENGE_HEADER: &str = "X-InvoiceHub-Desktop-Host-Challenge";
@@ -65,6 +66,7 @@ const REQUIRED_OPENAPI_OPERATIONS: &[(&str, &str)] = &[
     (SERVER_SHUTDOWN_PATH, "post"),
     (BRIDGE_STATUS_PATH, "get"),
     (BRIDGE_STOP_PATH, "post"),
+    (BRIDGE_START_PATH, "post"),
 ];
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -630,6 +632,14 @@ pub struct BackendHost {
     _host_rpc: HostRpcServer,
 }
 
+#[derive(Clone)]
+pub struct BackendLifecycleAuthority {
+    child: Arc<Mutex<Child>>,
+    child_pid: u32,
+    ownership_verified: Arc<AtomicBool>,
+    lifecycle: Arc<Mutex<BackendLifecycleState>>,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BackendShutdownOutcome {
     Graceful,
@@ -683,6 +693,15 @@ impl BackendLifecycleState {
 }
 
 impl BackendHost {
+    pub fn lifecycle_authority(&self) -> BackendLifecycleAuthority {
+        BackendLifecycleAuthority {
+            child: Arc::clone(&self.child),
+            child_pid: self.child_pid,
+            ownership_verified: Arc::clone(&self.ownership_verified),
+            lifecycle: Arc::clone(&self.lifecycle),
+        }
+    }
+
     pub fn launch(
         manifest: BackendBundleManifest,
         app_handle: tauri::AppHandle<tauri::Wry>,
@@ -901,9 +920,9 @@ impl BackendHost {
     }
 }
 
-impl LifecycleAuthority for BackendHost {
+impl LifecycleAuthority for BackendLifecycleAuthority {
     fn capture_released_lease(&self) -> Result<LifecycleLease, RecoveryError> {
-        if !self.owns_backend() {
+        if !self.ownership_verified.load(Ordering::Acquire) {
             return Err(RecoveryError::OwnershipLost);
         }
         let process_pid =
@@ -928,7 +947,7 @@ impl LifecycleAuthority for BackendHost {
     }
 
     fn revalidate_lease(&self, lease: &LifecycleLease) -> Result<(), RecoveryError> {
-        if !self.owns_backend() {
+        if !self.ownership_verified.load(Ordering::Acquire) {
             return Err(RecoveryError::OwnershipLost);
         }
         let process_pid =
@@ -945,6 +964,16 @@ impl LifecycleAuthority for BackendHost {
             return Err(RecoveryError::OwnershipLost);
         }
         Ok(())
+    }
+}
+
+impl LifecycleAuthority for BackendHost {
+    fn capture_released_lease(&self) -> Result<LifecycleLease, RecoveryError> {
+        self.lifecycle_authority().capture_released_lease()
+    }
+
+    fn revalidate_lease(&self, lease: &LifecycleLease) -> Result<(), RecoveryError> {
+        self.lifecycle_authority().revalidate_lease(lease)
     }
 }
 
@@ -1600,7 +1629,8 @@ fn thread_sleep_until(deadline: Instant) {
 mod tests {
     use std::fs;
     use std::path::Path;
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::sync::{Arc, Mutex};
 
     use serde_json::{Map, Value};
     use sha2::{Digest, Sha256};
@@ -1611,8 +1641,50 @@ mod tests {
         generate_ownership_secret, identity_from_json, is_keep_monitor_shutdown_ack,
         ownership_response_for_test, ownership_response_matches, retry_probe,
         revalidate_backend_after_preferences, state_paths_for_bundle_profile, BackendError,
-        BackendHealth, BundleProfile, DesktopStatePaths, DesktopStatePlatform, HandshakeError,
+        BackendHealth, BackendLifecycleAuthority, BackendLifecycleState, BundleProfile,
+        DesktopStatePaths, DesktopStatePlatform, HandshakeError, LifecycleAuthority,
+        LifecyclePhase, RecoveryError,
     };
+
+    #[cfg(unix)]
+    struct TestAuthority {
+        authority: BackendLifecycleAuthority,
+    }
+
+    #[cfg(unix)]
+    impl Drop for TestAuthority {
+        fn drop(&mut self) {
+            if let Ok(mut child) = self.authority.child.lock() {
+                let _ = child.kill();
+                let _ = child.wait();
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    fn test_authority() -> TestAuthority {
+        let child = std::process::Command::new("sleep")
+            .arg("60")
+            .spawn()
+            .expect("spawn a non-network test child");
+        let child_pid = child.id();
+        TestAuthority {
+            authority: BackendLifecycleAuthority {
+                child: Arc::new(Mutex::new(child)),
+                child_pid,
+                ownership_verified: Arc::new(AtomicBool::new(true)),
+                lifecycle: Arc::new(Mutex::new(BackendLifecycleState {
+                    generation: 7,
+                    phase: LifecyclePhase::OwnedRunning,
+                    health_pid: child_pid,
+                    owned_pid: child_pid,
+                    process_pid: child_pid,
+                    startup_gate_released: true,
+                    state_scope: "a".repeat(64),
+                })),
+            },
+        }
+    }
 
     fn health() -> BackendHealth {
         BackendHealth {
@@ -1634,6 +1706,74 @@ mod tests {
             config_path: "/config".into(),
             runtime_dir: "/runtime".into(),
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn lifecycle_authority_accepts_an_owned_released_lease() {
+        let fixture = test_authority();
+
+        let lease = fixture
+            .authority
+            .capture_released_lease()
+            .expect("owned released lease");
+
+        assert_eq!(lease.phase, LifecyclePhase::OwnedRunning);
+        fixture
+            .authority
+            .revalidate_lease(&lease)
+            .expect("unchanged lease remains valid");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn lifecycle_authority_preserves_startup_gate_and_fails_closed_on_ownership_loss() {
+        let fixture = test_authority();
+        {
+            let mut lifecycle = fixture.authority.lifecycle.lock().expect("lifecycle lock");
+            lifecycle.phase = LifecyclePhase::StartupGateHeld;
+            lifecycle.startup_gate_released = false;
+        }
+        assert_eq!(
+            fixture.authority.capture_released_lease(),
+            Err(RecoveryError::StartupGateHeld)
+        );
+
+        fixture
+            .authority
+            .ownership_verified
+            .store(false, Ordering::Release);
+        assert_eq!(
+            fixture.authority.capture_released_lease(),
+            Err(RecoveryError::OwnershipLost)
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn lifecycle_authority_fails_closed_on_child_pid_mismatch_and_clone_shares_handles() {
+        let mut fixture = test_authority();
+        let clone = fixture.authority.clone();
+        let lease = fixture
+            .authority
+            .capture_released_lease()
+            .expect("owned released lease");
+
+        fixture.authority.child_pid += 1;
+        assert_eq!(
+            fixture.authority.capture_released_lease(),
+            Err(RecoveryError::LeaseInvalid)
+        );
+        assert_eq!(
+            fixture.authority.revalidate_lease(&lease),
+            Err(RecoveryError::OwnershipLost)
+        );
+
+        clone.ownership_verified.store(false, Ordering::Release);
+        assert_eq!(
+            fixture.authority.capture_released_lease(),
+            Err(RecoveryError::OwnershipLost)
+        );
     }
 
     #[test]

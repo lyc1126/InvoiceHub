@@ -253,6 +253,34 @@ def test_tauri_monitor_recovery_foundation_requires_a_released_lifecycle_lease_a
     assert "Err(HostRpcServerError::UpdaterUnavailable)" in install
 
 
+def test_tauri_backend_lifecycle_authority_is_cloneable_and_delegated() -> None:
+    backend = (ROOT / "src-tauri" / "src" / "backend.rs").read_text(encoding="utf-8")
+
+    assert "#[derive(Clone)]\npub struct BackendLifecycleAuthority" in backend
+    assert "pub fn lifecycle_authority(&self) -> BackendLifecycleAuthority" in backend
+    factory = backend[
+        backend.index("pub fn lifecycle_authority") : backend.index("    pub fn launch", backend.index("pub fn lifecycle_authority"))
+    ]
+    for handle in ("child", "ownership_verified", "lifecycle"):
+        assert f"Arc::clone(&self.{handle})" in factory
+    assert "self.child_pid" in factory
+
+    authority_impl = backend[
+        backend.index("impl LifecycleAuthority for BackendLifecycleAuthority") : backend.index(
+            "impl LifecycleAuthority for BackendHost"
+        )
+    ]
+    assert "self.ownership_verified.load(Ordering::Acquire)" in authority_impl
+    assert "current_child_pid(&self.child)" in authority_impl
+    assert "RecoveryError::StartupGateHeld" in authority_impl
+    assert "RecoveryError::LeaseInvalid" in authority_impl
+    assert "RecoveryError::OwnershipLost" in authority_impl
+
+    host_impl = backend[backend.index("impl LifecycleAuthority for BackendHost") :]
+    assert "self.lifecycle_authority().capture_released_lease()" in host_impl
+    assert "self.lifecycle_authority().revalidate_lease(lease)" in host_impl
+
+
 def test_tauri_manifest_uses_runtime_derived_user_state_paths() -> None:
     backend = (ROOT / "src-tauri" / "src" / "backend.rs").read_text(encoding="utf-8")
 

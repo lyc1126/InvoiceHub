@@ -1,9 +1,9 @@
 # InvoiceHub 平台架构：共享核心、Windows 与 macOS
 
 > 文档状态：当前跨平台实现的权威附录
-> 更新日期：2026-08-20
+> 更新日期：2026-08-23
 > 公共基线：单一脱敏根提交。退休的私有提交、Tag、包和验证材料不属于公开发行输入。
-> 当前发行状态：候选树、保留 Git 对象和托管面验证已完成，仓库现为 public；`codex/tauri2-unified-desktop` 已建立并含通过受控 Rust lock/compile/test 的 `v0.3.0-alpha.1` Tauri foundation 与代码级 lifecycle/Host RPC 边界。一个 macOS arm64 development `.app` 已构建并完成隔离 L9 smoke；另一个 internal-alpha arm64 `.app/.dmg` 已通过独立 verifier 和隔离启动烟测；尚无 Release。
+> 当前发行状态：候选树、保留 Git 对象和托管面验证已完成，仓库现为 public；当前工作线是基于当前公开 `origin/main` 稳定基线建立的 `codex/tauri2-update-recovery`。此前 `codex/tauri2-unified-desktop` 的 `v0.3.0-alpha.1` Tauri foundation 与代码级 lifecycle/Host RPC 边界、以及 `codex/tauri-macos-internal-alpha` 的 arm64 `.app/.dmg` verifier/隔离启动结果均保留为历史上下文；该分支实现不表示 `main` 或公开 Release 已更新。尚无 Release。
 
 本页只解释平台边界。领域模型、API、投影和 monitor 的详细契约分别见[开发架构总入口](../DEVELOPMENT_ARCHITECTURE.md)、[接口与运行流程](INTERFACES_AND_FLOWS.md)和[数据结构与算法](DATA_AND_ALGORITHMS.md)。
 
@@ -104,7 +104,7 @@ flowchart TB
 
 Host RPC 是 host 的随机 loopback listener；host 只将 token 传给其直接启动的 Python backend，backend 启动时捕获并从 descendant 环境清除。网页没有 token、Tauri command 或 event 通道，token 也不进入 API 响应或日志；backend 的 picker 面只能发起四种固定 picker enum，更新面独立地只能发起 `update_check` / `update_install` 两个固定 enum。同一进程具备 Tauri marker 与 private RPC 时，API、设置页和后台 timer 的公开更新检查都是 strict delegated-install preflight；只有非 Tauri/非 host 检查不获取 `_host_update_lock` 并保留 cache/ETag/nonblocking-busy 语义。host 检查锁竞争立即返回不持久化 busy，且不会调用 metadata/candidate 或清除既有 approval；install 锁竞争立即抛脱敏 `HostRpcError`，不消费 approval 或发第二次 RPC。当前取得 install 锁后也只清除候选并返回不可用，直到 recovery/relaunch coordinator 完整实现。Rust dialog 最多等待 120 秒，Python 以 125 秒预算保留响应余量，并把 private `HostRpcError` 固定映射为脱敏 503；非 Tauri 的 Tk picker 不变。Updater metadata 请求固定 5 秒总时限，不能使用插件默认的无时限请求永久占住 operation mutex。成功握手和 post-preference revalidation 后才 arm 授权，再启动 100 ms 有界 child liveness watcher；watcher 只能在 child 退出后撤销授权，不能重新授权已退出 child。此后 host 严格使用 `startup_surface`：desktop 创建 WebView，browser 用无 WebView JS 注入的 host-only opener 派发固定 origin；托盘和第二实例重开当前 surface，desktop close 仅隐藏窗口而不停止 monitor。托盘 Quit 与 macOS 自定义应用菜单/Cmd-Q 只请求同一个 `app.exit(0)`；应用菜单不使用 predefined Quit。只有 host 实际收到的 `ExitRequested` 才先执行结构化 `keep_monitor` shutdown 并等待 owned child，错误/超时后显式 `kill + wait`，无法确认 child 已退出则阻止 host 退出；外部 AppleScript quit、Force Quit 或信号可能绕过该事件，不属于有序退出承诺。上述源码路径由隔离离线 contracts 和一个 clean-commit 真实 Cmd-Q 样本验证；原生面板、browser/tray 点击、单实例、updater、安装包或平台发布烟测仍未完成。
 
-L10-R 只把 recovery 的最小安全底座放入 Tauri host：`BackendHost` 在所有 setup surface 成功后、`app.manage` 前释放 startup gate，并可生成带 generation、phase、health/owned/process PID 与 state scope 的 released lease。transaction 在每次 marker 或 future bridge 操作前后复核租约；暂停要求 owned monitor 已 `running && ready`，已有/损坏/跨 scope marker、ownership loss 或失败均不继续。当前只有 Unix 的 descriptor-pinned/no-follow marker store，Windows 返回 unavailable。它不是跨平台 updater 入口，也不改变 install 的 fail-closed 状态。
+L10-R/C 把 recovery 的最小安全底座和后续 source-level hardening 放入 Tauri host：`BackendHost` 在所有 setup surface 成功后、`app.manage` 前释放 startup gate，并可生成带 generation、phase、health/owned/process PID 与 state scope 的 released lease。transaction 在每次 marker 或 future bridge 操作前后复核租约；暂停要求 owned monitor 已 `running && ready`，已有/损坏/跨 scope marker、ownership loss 或失败均不继续。Unix 使用 descriptor-pinned/no-follow marker store，并由遵循目录锁协议的参与者以 `flock` 串行化整段操作、在 stale-clear 时锁内重读以及在 publish/clear 后同步目录元数据。Windows 仅提供相对已打开目录句柄、拒绝 reparse point 的 source-level marker store；最小 `x86_64-pc-windows-msvc` 临时 crate cross-compile 已通过，但没有 Windows runtime，完整 Tauri Windows target check 仍因 `ring` 的 `assert.h` 依赖阻塞。其它非 Unix marker storage 返回 unavailable。它不是跨平台 updater 入口，也不改变 install 的 fail-closed 状态。
 
 hosted check 的 host-lock 竞争直接返回 busy，不调用 `append_event` 或 SQLite；正常成功与非竞争检查保留更新事件。
 

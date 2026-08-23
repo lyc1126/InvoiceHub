@@ -1,10 +1,10 @@
 # InvoiceHub 开发架构与工程导航
 
 > 文档状态：当前开发实现的权威架构入口
-> 更新日期：2026-08-20
+> 更新日期：2026-08-23
 > 公共权威基线：经过审计的单一脱敏根提交；旧私有提交、Tag、二进制和验证材料不在公开图中
 > 公开状态：候选树、保留 Git 对象和托管面已完成一次内容与凭据审计；公开图从脱敏根提交开始，详见 `docs/release/HISTORY_SANITIZATION_EXECUTION.md`
-> 当前开发线：`codex/tauri2-unified-desktop` 已从公开 `main` 建立，首个版本为 `0.3.0-alpha.1`；Tauri 已完成受控 lock、代码级生命周期/Host RPC/updater contracts、隔离 TestClient L6 API runtime，并构建且隔离烟测一个 macOS arm64 development `.app`。随后在独立 `codex/tauri-macos-internal-alpha` 线上构建并验证了一个 internal-alpha arm64 `.app/.dmg`，另完成一次临时 state root 启动烟测；裸 checkout 仍缺经编译绑定 manifest 并 fail-closed；尚无 Release。
+> 当前开发线：`codex/tauri2-update-recovery` 基于当前公开 `origin/main` 的稳定基线建立，承接 `0.3.0-alpha.1` 的 Tauri foundation。此前 `codex/tauri2-unified-desktop` 的统一桌面工作与 `codex/tauri-macos-internal-alpha` 的 internal-alpha 构建/验证结果均作为历史上下文保留在该基线中；该分支实现不表示 `main` 或公开 Release 已更新。裸 checkout 仍缺经编译绑定 manifest 并 fail-closed；尚无 Release。
 > 校验规则：精确的本地与 GitHub HEAD 以实时 `git rev-parse`、`git ls-remote` 和双向差异为准；发行源码候选不等于双平台成品 RC 或 GitHub 已发布版本
 
 ## 1. 这套文档解决什么问题
@@ -41,7 +41,7 @@ InvoiceHub 不是只有一个 FastAPI 页面。它同时包含发票提取、文
 
 文中使用四种状态：
 
-- **当前实现**：已存在于当前脱敏源码快照，或明确标注为后续 `codex/tauri2-unified-desktop` 开发候选，并有源码或测试证据。
+- **当前实现**：已存在于当前脱敏源码快照，或明确标注为当前 `codex/tauri2-update-recovery` 开发候选，并有源码或测试证据。
 - **历史原因**：用于解释设计形成过程，不表示旧实现仍然存在。
 - **未启用能力**：保留接口或页面，但当前正式产品明确禁用。
 - **架构债务**：当前可以运行，但结构、重复或测试覆盖仍有维护风险。
@@ -56,7 +56,9 @@ InvoiceHub 不是只有一个 FastAPI 页面。它同时包含发票提取、文
 
 Tauri `setup` 在 `BackendHost::launch` 后也不立即将 child 放入 app state：tray 或选定 surface 的任何初始化失败都会先通过同一 structured keep-monitor shutdown 及必要的 kill+wait 收束 owned child；若仍不能确认 child 已退出，setup 会保持阻塞并重试，child mutex 或 `try_wait` 错误也不能伪装成 graceful exit，绝不返回错误后交给 `Drop`。只有确认清理且全部初始化成功后才会 `app.manage`，因为 setup failure 不经过正常 `ExitRequested`，且 Drop 不构成可靠收尾。
 
-L10-R 现在仅增加一层 source-only monitor recovery primitive：全部 marker 或未来 bridge 操作必须携带并前后复核 released owned lifecycle lease（generation、phase、health/owned/process PID、state scope）。它只暂停已 `running && ready` 的 owned monitor，已有/损坏/跨 scope marker、ownership loss 或操作失败都保留恢复义务并 fail closed；Unix marker store 的最终读写/删除固定使用 opened-directory descriptor 和 no-follow `openat`/atomic no-clobber `linkat`/`unlinkat`，非 Unix 返回 unavailable。它没有接入 Host RPC、真实 monitor、下载、安装或重启，故 `update_install` 仍只清除 candidate 后返回 unavailable。
+L10-R/C 现在仅增加 source-only monitor recovery foundation：全部 marker 或未来 bridge 操作必须携带并前后复核 released owned lifecycle lease（generation、phase、health/owned/process PID、state scope）。它只暂停已 `running && ready` 的 owned monitor，已有/损坏/跨 scope marker、ownership loss 或操作失败都保留恢复义务并 fail closed；Unix marker store 的最终读写/删除固定使用 opened-directory descriptor 和 no-follow `openat`/atomic no-clobber `linkat`/`unlinkat`，遵循目录锁协议的整段 load/publish/clear 串行化已闭合，stale-clear 在锁内重读，publish/clear 在最终 link/unlink 后同步目录元数据，绕过协议的同用户直接文件编辑不在保证内；Windows 已有相对已打开目录句柄、拒绝 reparse point 的 source-level marker store，最小 `x86_64-pc-windows-msvc` 临时 crate 交叉编译已通过，但没有 Windows runtime 证据，完整 Tauri Windows target check 仍因 `ring` 的 `assert.h` 依赖阻塞，其它非 Unix 返回 unavailable。L10-C 另提供固定 `127.0.0.1:8766` 的 monitor adapter、只接受已验证 artifact 的 pure update coordinator，以及共享现有 child/ownership/lifecycle `Arc` 的 cloneable `BackendLifecycleAuthority`。这些 seams 尚未接入 Host RPC、updater、startup restore 或真实 monitor，故 `update_install` 仍只清除 candidate 后返回 unavailable。后续 updater 接线必须以 public candidate reservation -> private fixed-enum commit 两阶段执行 download+verify -> pause -> install -> relaunch，并显式处理 commit 丢失与失败恢复；锁定 updater `2.10.1` 在 Windows `Update::install()` 可能直接退出进程，macOS 安装后仍需 `request_restart`。
+
+该 fixed-loopback bridge 当前没有请求级 ownership authentication，固定 endpoint/method/origin 不是 ownership proof；真实接线前必须用 backend-private secret 的 fresh challenge/HMAC（或等价 authenticated header）绑定每次请求和响应，保留同一 lifecycle lease 的请求前后 revalidation，并且不得向候选固定端口发送 bearer secret。
 
 源码采用单仓库共存，平台成品采用互斥边界：Windows 或 macOS 的 checkout 都可包含另一平台工程，但 Windows ZIP 与 macOS `.app/DMG/Sparkle ZIP` 的构建输入、依赖锁、运行时和启动器分别受独立白名单与反向平台拒绝门禁保护。共享 `src/`、`web/` 只避免业务分叉，不表示平台壳或 runtime 可以交叉进入成品。
 

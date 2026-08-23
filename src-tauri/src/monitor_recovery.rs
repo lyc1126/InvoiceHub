@@ -415,7 +415,11 @@ pub fn open_platform_marker_store(
     {
         return Ok(Box::new(UnixRecoveryMarkerStore::open(root)?));
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
+    {
+        return Ok(Box::new(WindowsRecoveryMarkerStore::open(root)?));
+    }
+    #[cfg(not(any(unix, windows)))]
     {
         let _ = root;
         Err(MarkerStoreError::UnsupportedPlatform)
@@ -482,6 +486,38 @@ pub struct UnixRecoveryMarkerStore {
 }
 
 #[cfg(unix)]
+struct UnixMarkerOperationLock {
+    descriptor: std::os::fd::RawFd,
+}
+
+#[cfg(unix)]
+impl UnixMarkerOperationLock {
+    fn acquire(descriptor: std::os::fd::RawFd) -> Result<Self, MarkerStoreError> {
+        loop {
+            let result = unsafe { libc::flock(descriptor, libc::LOCK_EX) };
+            if result == 0 {
+                return Ok(Self { descriptor });
+            }
+            let error = std::io::Error::last_os_error();
+            if error.raw_os_error() == Some(libc::EINTR) {
+                continue;
+            }
+            return Err(marker_error_from_os_error(&error));
+        }
+    }
+}
+
+#[cfg(unix)]
+impl Drop for UnixMarkerOperationLock {
+    fn drop(&mut self) {
+        // The guard owns no descriptor; the store keeps it open for its whole
+        // lifetime. Drop cannot report an unlock failure; closing the store's
+        // descriptor will release the lock if the unlock call itself fails.
+        let _ = unsafe { libc::flock(self.descriptor, libc::LOCK_UN) };
+    }
+}
+
+#[cfg(unix)]
 impl UnixRecoveryMarkerStore {
     pub fn open(root: &Path) -> Result<Self, MarkerStoreError> {
         use std::ffi::CString;
@@ -506,6 +542,17 @@ impl UnixRecoveryMarkerStore {
         }
         let directory = unsafe { std::fs::File::from_raw_fd(descriptor) };
         Ok(Self { directory })
+    }
+
+    fn operation_lock(&self) -> Result<UnixMarkerOperationLock, MarkerStoreError> {
+        use std::os::fd::AsRawFd;
+
+        // This advisory mutex serializes every operation performed by stores
+        // that follow this protocol, including other processes holding their
+        // own pinned descriptor for the same directory. It does not prevent a
+        // same-user process that ignores the protocol from editing or deleting
+        // the marker directly.
+        UnixMarkerOperationLock::acquire(self.directory.as_raw_fd())
     }
 
     fn read_named(&self, name: &str) -> Result<Option<RecoveryMarker>, MarkerStoreError> {
@@ -576,6 +623,18 @@ impl UnixRecoveryMarkerStore {
     }
 
     fn remove_named(&self, name: &str) -> Result<(), MarkerStoreError> {
+        self.remove_named_with_policy(name, false)
+    }
+
+    fn remove_named_strict(&self, name: &str) -> Result<(), MarkerStoreError> {
+        self.remove_named_with_policy(name, true)
+    }
+
+    fn remove_named_with_policy(
+        &self,
+        name: &str,
+        missing_is_changed: bool,
+    ) -> Result<(), MarkerStoreError> {
         use std::ffi::CString;
         use std::os::fd::AsRawFd;
 
@@ -586,11 +645,23 @@ impl UnixRecoveryMarkerStore {
         } else {
             let error = std::io::Error::last_os_error();
             if error.raw_os_error() == Some(libc::ENOENT) {
-                Ok(())
+                if missing_is_changed {
+                    Err(MarkerStoreError::MarkerChanged)
+                } else {
+                    Ok(())
+                }
             } else {
                 Err(last_marker_error())
             }
         }
+    }
+
+    fn sync_directory(&self) -> Result<(), MarkerStoreError> {
+        // The marker file's sync only makes its contents durable. The recovery
+        // obligation is not durable until the directory entry update is synced.
+        self.directory
+            .sync_all()
+            .map_err(|_| MarkerStoreError::StorageUnavailable)
     }
 
     fn temporary_name(&self, purpose: &str) -> Result<String, MarkerStoreError> {
@@ -604,6 +675,7 @@ impl UnixRecoveryMarkerStore {
 #[cfg(unix)]
 impl RecoveryMarkerStore for UnixRecoveryMarkerStore {
     fn load(&mut self) -> Result<Option<RecoveryMarker>, MarkerStoreError> {
+        let _lock = self.operation_lock()?;
         self.read_named(RECOVERY_MARKER_FILE)
     }
 
@@ -612,6 +684,7 @@ impl RecoveryMarkerStore for UnixRecoveryMarkerStore {
         use std::io::Write;
         use std::os::fd::{AsRawFd, FromRawFd};
 
+        let _lock = self.operation_lock()?;
         let bytes = marker.encode()?;
         let temporary_name = self.temporary_name("pending")?;
         let temporary =
@@ -661,6 +734,9 @@ impl RecoveryMarkerStore for UnixRecoveryMarkerStore {
         if let Err(error) = self.remove_named(&temporary_name) {
             return Err(error);
         }
+        // Publish is not successful until both the final link and temporary
+        // entry removal are durable in the pinned directory.
+        self.sync_directory()?;
         match self.read_named(RECOVERY_MARKER_FILE)? {
             Some(written) if written == *marker => Ok(()),
             _ => Err(MarkerStoreError::MarkerChanged),
@@ -668,6 +744,10 @@ impl RecoveryMarkerStore for UnixRecoveryMarkerStore {
     }
 
     fn clear(&mut self, expected: &RecoveryMarker) -> Result<(), MarkerStoreError> {
+        let _lock = self.operation_lock()?;
+        // Re-read while holding the advisory directory lock. A stale clear
+        // therefore cannot validate the old value, yield to a protocol
+        // publish, then unlink the newly published obligation by name.
         match self.read_named(RECOVERY_MARKER_FILE)? {
             Some(current) if current == *expected => {}
             _ => return Err(MarkerStoreError::MarkerChanged),
@@ -675,7 +755,8 @@ impl RecoveryMarkerStore for UnixRecoveryMarkerStore {
         self.entry_is_regular(RECOVERY_MARKER_FILE)?;
         // `unlinkat` acts on the fixed entry in the already-open directory; it
         // never traverses a replacement symlink or an ancestor path.
-        self.remove_named(RECOVERY_MARKER_FILE)
+        self.remove_named_strict(RECOVERY_MARKER_FILE)?;
+        self.sync_directory()
     }
 }
 
@@ -692,3 +773,10 @@ fn marker_error_from_os_error(error: &std::io::Error) -> MarkerStoreError {
         MarkerStoreError::StorageUnavailable
     }
 }
+
+#[cfg(windows)]
+#[path = "monitor_recovery/windows_marker_store.rs"]
+mod windows_marker_store;
+
+#[cfg(windows)]
+pub use windows_marker_store::WindowsRecoveryMarkerStore;

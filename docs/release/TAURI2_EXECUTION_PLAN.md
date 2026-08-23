@@ -134,8 +134,9 @@ the assembler labels dirty inputs `<HEAD>+dirty`.
    ruleset as required status checks.
 9. [x] Complete L10-R as a source-only monitor recovery foundation: a released
    lifecycle lease, fail-closed transaction, and Unix descriptor-pinned marker
-   store. It has no Host RPC, real monitor, installer, or restart integration,
-   and non-Unix marker storage remains unavailable.
+   store. At the L10-R checkpoint, it had no Host RPC, real monitor, installer,
+   or restart integration, and non-Unix marker storage remained unavailable;
+   the later L10-C source slice below supersedes this narrow platform note.
 10. [ ] Implement the missing complete recovery/relaunch coordinator and
    deterministic Tauri NSIS/DMG/update-archive assembly/verification as
    separate bounded development work. The local L11-A internal-alpha App/DMG
@@ -572,7 +573,18 @@ this table.
 | Decision changed by result | A passing source-level transaction permits a DCO implementation commit and focused Rust/documentation verification, but does not authorize real download, signature verification, installer replacement, relaunch, or enabling `update_install`. Any failure blocks updater integration and confines repair to the marker/recovery module. |
 | Minimal sample | One representative owned running monitor, one originally stopped monitor, one stop/status/start failure path, one unowned backend, and one invalid/symlink marker; run focused Rust formatting/tests when the locked offline cache is available, plus the affected documentation contract and `git diff --check`. |
 | Stop condition | Stop at the first marker, ownership, monitor-state, compiler, test, or documentation-contract failure. Do not start Tauri/FastAPI, bind `127.0.0.1:8766`, call a real updater, download or verify an update, stop a real monitor, build a bundle, sign, publish, or create a Release/Feed. |
-| Result (2026-08-20) | Passed as L10-R source foundation only. `BackendHost` now exposes a released lifecycle lease containing generation, phase, health PID, owned PID, process PID and a state scope; child exit, failed health revalidation and shutdown invalidate it, and the startup gate is released only after tray/surface setup succeeds. The transaction revalidates before and after every marker or future bridge operation, never overwrites a pending marker, pauses only an owned `running && ready` monitor, and clears only after a later owned `running && ready` status. Marker JSON is strict and scope-bound; Unix persistence keeps an opened directory descriptor and performs no-follow `openat`, atomic no-clobber `linkat`, `fstatat` and `unlinkat` final operations. Non-Unix marker storage returns unavailable. Focused Rust contracts cover running/stopped, pending/corrupt/cross-scope markers, held gate, ownership loss, unready/stop/start failures and Unix symlink/no-clobber marker cases; no real bridge, monitor, updater, download, signature verification, installer replacement, relaunch, bundle, signing or release smoke was run. `update_install` remains candidate-consuming and fail-closed. |
+| Result (2026-08-20) | Passed as L10-R source foundation only. `BackendHost` now exposes a released lifecycle lease containing generation, phase, health PID, owned PID, process PID and a state scope; child exit, failed health revalidation and shutdown invalidate it, and the startup gate is released only after tray/surface setup succeeds. The transaction revalidates before and after every marker or future bridge operation, never overwrites a pending marker, pauses only an owned `running && ready` monitor, and clears only after a later owned `running && ready` status. Marker JSON is strict and scope-bound; Unix persistence keeps an opened directory descriptor and performs no-follow `openat`, atomic no-clobber `linkat`, `fstatat` and `unlinkat` final operations. At this checkpoint, non-Unix marker storage returned unavailable; the later L10-C entry below records the Windows source-level marker store and Unix whole-operation protocol hardening. Focused Rust contracts cover running/stopped, pending/corrupt/cross-scope markers, held gate, ownership loss, unready/stop/start failures and Unix symlink/no-clobber marker cases; no real bridge, monitor, updater, download, signature verification, installer replacement, relaunch, bundle, signing or release smoke was run. `update_install` remains candidate-consuming and fail-closed. |
+
+### L10-C: source-level recovery/update foundation slices
+
+| Field | Record |
+| --- | --- |
+| Hypothesis | The recovery foundation can expose injectable fixed-loopback monitor, verified-artifact update, shared lifecycle-authority, and Windows marker-store seams without widening Host RPC, updater, startup-restore, or real-monitor authority. |
+| Decision changed by result | A passing source-level slice permits documentation and focused-contract review only. It does not authorize real Host RPC, updater download/install/restart, startup restore, monitor control, or platform runtime claims. |
+| Minimal sample | Rust: 56 focused checks (backend authority 14, bridge 9, coordinator unit 2 plus contract 12, recovery 17, Windows host static 1, strict OpenAPI 1); Python: 42 contracts (lifecycle 13, development documentation 12, foundation 17); plus one minimal `x86_64-pc-windows-msvc` temporary-crate cross-compile. |
+| Stop condition | Stop at the first source, contract, compiler, or documentation failure. Do not launch Tauri/FastAPI, bind `127.0.0.1:8766`, run a real monitor or updater, download/install/restart, create an artifact, package, sign, publish, or claim Windows runtime coverage. |
+| Security boundary | The fixed-loopback bridge has no request-level ownership authentication and is not an ownership proof. Before real wiring, bind each request/response to a backend-private fresh challenge/HMAC or equivalent authenticated header, retain lifecycle revalidation before and after the request, and never send a bearer secret to a candidate fixed port. |
+| Result (2026-08-23) | Passed as source-level seams only: 56 Rust focused checks passed (backend authority 14, bridge 9, coordinator unit 2 plus contract 12, recovery 17, Windows host static 1, strict OpenAPI 1), and 42 Python contracts passed (lifecycle 13, development documentation 12, foundation 17). The strict OpenAPI handshake requires `GET /api/v1/bridge/status`, `POST /api/v1/bridge/stop`, and `POST /api/v1/bridge/start`; missing or wrong `/bridge/start` methods are rejected. The minimal `x86_64-pc-windows-msvc` temporary-crate cross-compile passed; no Windows runtime was run, and the full Tauri Windows target check remains blocked by `ring` requiring `assert.h`. No HostRpc/updater/startup-restore/real-monitor integration was added. The Unix marker-store protocol now closes whole-operation `load/publish/clear` serialization with directory `flock`, stale-clear re-read, and durable directory metadata sync after publish/clear link operations; direct edits bypassing the protocol remain outside the guarantee. |
 
 ### P1-SC: setup-failure termination confirmation
 
@@ -626,12 +638,31 @@ this table.
   accepts only `{}` but currently consumes its process-local candidate and
   fails closed. It performs no download, monitor stop, installation, or restart
   until a recovery/relaunch coordinator can restore failed paths safely.
-- L10-R supplies only a source-level recovery primitive for that later
-  coordinator. Every marker or bridge operation must carry and revalidate a
-  released owned lifecycle lease; Unix marker operations are descriptor-pinned
-  and no-follow, while non-Unix storage returns unavailable. It is not wired to
-  Host RPC, a real monitor, download, installation or restart, and therefore
-  cannot relax the current `update_install` fail-closed path.
+- L10-R/C supplies only source-level seams for that later coordinator. Every
+  marker or bridge operation must carry and revalidate a released owned lifecycle
+  lease; Unix marker operations are descriptor-pinned and no-follow, and stores
+  following the marker-store protocol serialize whole `load/publish/clear`
+  operations with directory `flock`, re-read stale clears under the lock, and
+  sync directory metadata after publish/clear link operations. Direct edits that
+  bypass the protocol remain outside the guarantee. The minimal Windows
+  `x86_64-pc-windows-msvc` temporary-crate cross-compile passed, but Windows
+  runtime is unverified and the full Tauri Windows target check remains blocked
+  by `ring` requiring `assert.h`; Windows marker storage is source-level only,
+  and other non-Unix storage returns unavailable.
+  These seams are not wired to Host RPC, a real monitor, download, installation
+  or restart, and therefore cannot relax the current `update_install` fail-closed
+  path.
+- The fixed-loopback bridge currently has no request-level ownership
+  authentication and is not an ownership proof. Before real wiring, every
+  request/response must bind to a backend-private fresh challenge/HMAC or an
+  equivalent authenticated header, while the same lifecycle lease is
+  revalidated before and after the request; no bearer secret may be sent to a
+  candidate fixed port.
+- Future updater wiring must use a public candidate reservation followed by a
+  private fixed-enum commit. The commit must perform download+verify -> pause ->
+  install -> relaunch, account for Windows updater `2.10.1` potentially exiting
+  from `Update::install()` while macOS still needs `request_restart`, and expose
+  commit loss and failed recovery as explicit diagnosable outcomes.
 - The five final decision scenarios are startup surface, single instance and
   wrong port, Host RPC authorization, valid/tampered update, and monitor stop
   before install. They are not claimed by the foundation step.

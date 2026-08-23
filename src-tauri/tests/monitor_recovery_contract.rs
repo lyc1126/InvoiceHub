@@ -382,6 +382,84 @@ fn held_startup_gate_blocks_marker_and_monitor_operations() {
     assert!(bridge.calls.is_empty());
 }
 
+#[test]
+fn unix_marker_store_serializes_each_whole_operation_before_marker_access() {
+    let source = std::fs::read_to_string(
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("src")
+            .join("monitor_recovery.rs"),
+    )
+    .expect("monitor recovery source");
+    let implementation = source
+        .split("impl RecoveryMarkerStore for UnixRecoveryMarkerStore")
+        .nth(1)
+        .and_then(|body| body.split("fn last_marker_error").next())
+        .expect("Unix marker-store implementation");
+
+    let load = implementation
+        .split("fn load(&mut self)")
+        .nth(1)
+        .and_then(|body| body.split("fn publish(&mut self").next())
+        .expect("Unix marker-store load");
+    let load_lock = load
+        .find("let _lock = self.operation_lock()?;")
+        .expect("load lock");
+    let load_read = load
+        .find("self.read_named(RECOVERY_MARKER_FILE)")
+        .expect("load read");
+    assert!(load_lock < load_read);
+
+    let publish = implementation
+        .split("fn publish(&mut self")
+        .nth(1)
+        .and_then(|body| body.split("fn clear(&mut self").next())
+        .expect("Unix marker-store publish");
+    let publish_lock = publish
+        .find("let _lock = self.operation_lock()?;")
+        .expect("publish lock");
+    let publish_encode = publish.find("marker.encode()").expect("publish encode");
+    assert!(publish_lock < publish_encode);
+
+    let publish_link = publish.find("libc::linkat").expect("publish link");
+    let publish_cleanup = publish
+        .rfind("self.remove_named(&temporary_name)")
+        .expect("publish temporary cleanup");
+    let publish_sync = publish
+        .find("self.sync_directory()?;")
+        .expect("publish directory sync");
+    let publish_read = publish
+        .find("self.read_named(RECOVERY_MARKER_FILE)")
+        .expect("publish verification read");
+    assert!(publish_link < publish_cleanup);
+    assert!(publish_cleanup < publish_sync && publish_sync < publish_read);
+
+    let clear = implementation
+        .split("fn clear(&mut self")
+        .nth(1)
+        .expect("Unix marker-store clear");
+    let lock = clear
+        .find("let _lock = self.operation_lock()?;")
+        .expect("clear lock");
+    let read = clear
+        .find("self.read_named(RECOVERY_MARKER_FILE)")
+        .expect("clear re-read");
+    let remove = clear
+        .find("self.remove_named_strict(RECOVERY_MARKER_FILE)")
+        .expect("strict clear remove");
+    let clear_sync = clear
+        .find("self.sync_directory()")
+        .expect("clear directory sync");
+    assert!(lock < read && read < remove && remove < clear_sync);
+
+    let sync_directory = source
+        .split("fn sync_directory(&self)")
+        .nth(1)
+        .and_then(|body| body.split("fn temporary_name").next())
+        .expect("pinned directory sync helper");
+    assert!(sync_directory.contains("sync_all()"));
+    assert!(sync_directory.contains("map_err(|_| MarkerStoreError::StorageUnavailable)"));
+}
+
 #[cfg(unix)]
 #[test]
 fn unix_marker_store_rejects_a_symlink_marker_without_following_it() {
@@ -469,5 +547,81 @@ fn unix_marker_store_atomically_refuses_to_replace_an_existing_marker() {
     drop(store);
 
     fs::remove_file(root.join(RECOVERY_MARKER_FILE)).expect("remove own marker");
+    fs::remove_dir(root).expect("remove own test directory");
+}
+
+#[cfg(unix)]
+#[test]
+fn unix_marker_store_stale_clear_cannot_delete_a_republished_marker() {
+    use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    use invoicehub_desktop::monitor_recovery::{UnixRecoveryMarkerStore, RECOVERY_MARKER_FILE};
+
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!(
+        "invoicehub-monitor-recovery-stale-clear-{}-{unique}",
+        std::process::id()
+    ));
+    fs::create_dir(&root).expect("create isolated marker root");
+    let first = valid_marker();
+    let second = RecoveryMarker::new("c".repeat(32), valid_lease()).expect("second marker");
+
+    let mut clearer = UnixRecoveryMarkerStore::open(&root).expect("open clearer store");
+    let mut republisher = UnixRecoveryMarkerStore::open(&root).expect("open republisher store");
+    clearer.publish(&first).expect("publish first marker");
+    let stale_clear = clearer
+        .load()
+        .expect("read stale clear value")
+        .expect("first marker exists");
+    let stale_republisher = republisher
+        .load()
+        .expect("read stale republisher value")
+        .expect("first marker exists for second store");
+    assert_eq!(stale_clear, first);
+    assert_eq!(stale_republisher, first);
+
+    clearer.clear(&stale_clear).expect("clear first marker");
+    republisher.publish(&second).expect("republish new marker");
+
+    assert_eq!(
+        clearer.clear(&stale_republisher),
+        Err(MarkerStoreError::MarkerChanged)
+    );
+    assert_eq!(clearer.load(), Ok(Some(second.clone())));
+    drop(clearer);
+    drop(republisher);
+
+    fs::remove_file(root.join(RECOVERY_MARKER_FILE)).expect("remove own marker");
+    fs::remove_dir(root).expect("remove own test directory");
+}
+
+#[cfg(unix)]
+#[test]
+fn unix_marker_store_clear_rejects_a_missing_marker() {
+    use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    use invoicehub_desktop::monitor_recovery::{UnixRecoveryMarkerStore, RECOVERY_MARKER_FILE};
+
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!(
+        "invoicehub-monitor-recovery-missing-clear-{}-{unique}",
+        std::process::id()
+    ));
+    fs::create_dir(&root).expect("create isolated marker root");
+    let marker = valid_marker();
+
+    let mut store = UnixRecoveryMarkerStore::open(&root).expect("open pinned marker root");
+    assert_eq!(store.clear(&marker), Err(MarkerStoreError::MarkerChanged));
+    drop(store);
+
+    assert!(!root.join(RECOVERY_MARKER_FILE).exists());
     fs::remove_dir(root).expect("remove own test directory");
 }

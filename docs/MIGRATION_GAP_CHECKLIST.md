@@ -1,6 +1,6 @@
 # 迁移与公开缺口清单
 
-更新时间：2026-08-18
+更新时间：2026-08-23
 
 ## 公开历史净化
 
@@ -36,7 +36,8 @@
 - [x] L8-S/L9：development profile 仅接受显式、已存在、绝对且 canonicalize 后与 bundle/core 及完整 macOS `.app` 容器双向不包含的 `INVOICE_HUB_DEV_STATE_ROOT`，`Contents` sibling 同样 fail-closed，release、缺失或相对覆盖 fail-closed，变量不传给 Python child；在隔离 state root 构建并启动一次 unsigned/ad-hoc macOS arm64 development `.app`。固定端口、health/background、首页/静态资源和 desktop 默认值通过；真实 Application Support 未被触碰。16-bit RGBA 图标导致的 tray 初始化失败已改为 8-bit RGBA，并有 IHDR 回归。
 - [x] P1-Q：clean-commit 外部 AppleScript quit 绕过 shutdown POST 并留下 `server_state=ready`，因此该外部路径仍不作有序退出承诺。修复后的自定义 macOS 应用菜单 Quit/Cmd-Q 与 tray 共用 `app.exit(0)` 且禁止 predefined Quit；隔离的 clean-commit 真实 Cmd-Q 样本已确认 shutdown POST 200、stopped state、monitor 未启动、host/backend/PID/端口清理，SSE 未及时退出时由显式 `kill + wait` 兜底。该结果允许推送开发分支并创建 Draft PR，但不覆盖 tray 点击、Force Quit、SIGKILL 或平台发布。
 - [x] P1 setup cleanup：BackendHost 启动后若 tray、desktop window 或 browser surface 初始化失败，host 在返回原始 setup error 前调用既有 keep-monitor shutdown，并在失败/超时时 kill+wait owned child；如果终止尚不可确认则 setup 保持阻塞并重试，child mutex 或 `try_wait` 错误也不算退出，绝不返回后依赖 Drop。只有成功初始化后才把 backend/surface 注册到 app state。该路径不依赖 `ExitRequested`，且不改变 updater fail-closed 语义。
-- [x] L10-R source foundation：future coordinator 可使用 released owned lifecycle lease（generation/phase/health/owned/process PID/state scope）围住每次 marker/bridge 操作；暂停只接受 `running && ready` 的 owned monitor，已有/损坏/跨 scope marker、ownership loss 和任一 failure 都 fail closed。Unix marker store 用 opened-directory + `O_NOFOLLOW` 的 `openat`/atomic no-clobber `linkat`/`unlinkat` 固定最终操作，非 Unix 返回 unavailable。它未接入 Host RPC、真实 monitor、下载、安装或 restart，`update_install` 仍清除 candidate 后返回 unavailable。
+- [x] L10-R source foundation：future coordinator 可使用 released owned lifecycle lease（generation/phase/health/owned/process PID/state scope）围住每次 marker/bridge 操作；暂停只接受 `running && ready` 的 owned monitor，已有/损坏/跨 scope marker、ownership loss 和任一 failure 都 fail closed。Unix marker store 用 opened-directory + `O_NOFOLLOW` 的 `openat`/atomic no-clobber `linkat`/`unlinkat` 固定最终操作；在该 L10-R 阶段其它非 Unix 平台返回 unavailable。下方 L10-C source-level slices 后续补充 Windows handle-relative/no-reparse marker store 与 Unix whole-operation protocol hardening。它未接入 Host RPC、真实 monitor、下载、安装或 restart，`update_install` 仍清除 candidate 后返回 unavailable。
+- [x] L10-C foundation slices：新增 fixed-loopback `PythonMonitorRecoveryBridge`、只接收已验证 artifact 的 pure `UpdateCoordinator`、共享既有 child/ownership/lifecycle `Arc` 的 cloneable `BackendLifecycleAuthority`，并补充 Windows handle-relative marker 的 source/static contract。它们只形成可注入 source-level seams，未接 HostRpc、updater、startup restore 或真实 monitor。Rust 聚焦验证共 56 项通过：backend authority 14、bridge 9、coordinator unit 2 + contract 12、recovery 17、Windows host static 1、strict OpenAPI 1；Python 共 42 项通过：lifecycle 13、development documentation 12、foundation 17。严格 OpenAPI 握手要求 `GET /api/v1/bridge/status`、`POST /api/v1/bridge/stop` 和 `POST /api/v1/bridge/start`，缺少或使用错误方法的 `/bridge/start` 均拒绝。最小 `x86_64-pc-windows-msvc` 临时 crate 交叉编译已通过，但没有 Windows runtime 证据，完整 Tauri Windows target check 仍因 `ring` 的 `assert.h` 依赖阻塞。后续 updater 接线必须采用 public candidate reservation -> private fixed-enum commit 的两阶段协议，commit 执行 download+verify -> pause -> install -> relaunch，并显式处理 commit 丢失与失败恢复；锁定 updater `2.10.1` 在 Windows `Update::install()` 可能直接 `std::process::exit(0)`，macOS 安装后仍需 `request_restart`。这些切片不改变 `update_install` 的 candidate-consuming fail-closed 语义。
 
 ## 发布缺口
 

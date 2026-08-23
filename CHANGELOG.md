@@ -2,6 +2,38 @@
 
 ## Unreleased
 
+- 2026-08-23 Tauri L10-C foundation slices: add the fixed-loopback
+  `PythonMonitorRecoveryBridge`, the pure verified-artifact update coordinator,
+  and a cloneable `BackendLifecycleAuthority` that shares the existing child,
+  ownership, and lifecycle handles. Add a Windows marker-store source contract
+  using handles relative to an already-open directory and refusing reparse
+  points, while retaining the Unix descriptor-pinned marker primitives. These
+  are source-level seams only: the Unix store serializes whole load/publish/clear
+  operations for stores following its directory-lock protocol, re-reads stale
+  clears while holding that lock, and durably syncs directory metadata after the
+  final publish/clear link operation (direct edits that bypass the protocol
+  remain outside the guarantee). A minimal `x86_64-pc-windows-msvc` temporary
+  crate cross-compile passed; there is no Windows runtime evidence, and the full
+  Tauri Windows target check remains blocked by `ring` requiring `assert.h`.
+  None of the slices is wired to Host RPC, the updater, startup restore, or
+  a real monitor. The updater remains candidate-consuming and fail-closed.
+  Focused verification passed 56 Rust checks (backend authority 14, bridge 9,
+  coordinator unit 2 plus contract 12, recovery 17, Windows host static 1,
+  strict OpenAPI 1) and 42 Python contracts (lifecycle 13, development
+  documentation 12, foundation 17). The strict OpenAPI handshake requires
+  `GET /api/v1/bridge/status`, `POST /api/v1/bridge/stop`, and
+  `POST /api/v1/bridge/start`; a missing or wrongly-methoded `/bridge/start`
+  is rejected.
+  Future updater wiring must use a public candidate reservation followed by a
+  private fixed-enum commit because locked updater `2.10.1` can exit the process
+  from Windows `Update::install()` while macOS still needs `request_restart`;
+  commit loss and failed recovery must remain explicit failure states.
+- 2026-08-23 L10-C bridge boundary: the fixed-loopback monitor adapter has no
+  request-level ownership authentication and is not an ownership proof. Before
+  real wiring, each request/response must bind to a backend-private fresh
+  challenge/HMAC or equivalent authenticated header, retain lifecycle
+  revalidation before and after the request, and never send a bearer secret to
+  a candidate fixed port.
 - 2026-08-20 Tauri L10-R monitor recovery foundation: add a source-only,
   fail-closed transaction for a future host-owned monitor recovery coordinator.
   It captures a released owned lifecycle lease (generation, phase, health,

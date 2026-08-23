@@ -173,6 +173,37 @@ Quit，因为该路径和外部 AppleScript quit 都可能绕过 Tauri `ExitRequ
 `kill + wait` owned child，无法确认退出则 `prevent_exit`。Force Quit、SIGKILL、注销和
 断电不属于这一有序退出协议。
 
+### 3.4.2 Tauri L10-C recovery/update foundation
+
+L10-C 只增加可注入的 source-level seams，不增加浏览器公开 API、HostRpc
+命令或真实运行流程：
+
+- `PythonMonitorRecoveryBridge` 只能访问固定 `127.0.0.1:8766` 上的
+  `/api/v1/bridge/status`、`/api/v1/bridge/stop` 和 `/api/v1/bridge/start`；端点由固定枚举选择，调用方不能传 URL、路径或 body，且每类请求有界超时。
+- 该 bridge 当前没有请求级 ownership authentication，固定 endpoint/method/origin 不是
+  ownership proof。真实接线前必须用 backend-private secret 的 fresh challenge/HMAC（或等价
+  authenticated header）把每次请求和响应绑定到该次调用，并保留同一 lifecycle lease 的请求前后
+  revalidation；不得向候选固定端口发送 bearer secret。
+- `BackendLifecycleAuthority` 是从 `BackendHost` 共享既有 child、ownership 和
+  lifecycle `Arc` 的 cloneable view。lease 包含 generation、phase、health/owned/process
+  PID、startup gate 与 state scope；marker 或 bridge 操作前后都必须重新验证同一 lease。
+- `UpdateCoordinator` 的安装边界只接收 `VerifiedUpdate`，不接收原始下载 bytes；顺序固定为
+  download+verify -> pause -> install -> relaunch。pause/install/relaunch 失败时保留主错误和
+  restore attempt，不能把恢复失败吞掉。
+- Windows marker store 只从已打开目录句柄做 handle-relative、no-reparse leaf 操作；当前有
+  source/static contract，最小 `x86_64-pc-windows-msvc` 临时 crate 交叉编译已通过，但没有
+  Windows runtime 证据，完整 Tauri Windows target check 仍因 `ring` 的 `assert.h` 依赖阻塞。
+  Unix 遵循 marker-store 协议的 whole-operation `load/publish/clear` 由目录 `flock` 串行化，
+  stale-clear 在锁内重读，publish/clear 在最终 link/unlink 后同步目录元数据；绕过协议的同用户
+  直接编辑不在保证内。其它非 Unix store 仍不可用。
+
+这些 seams 没有接入 `HostRpc`、`update_install`、startup restore 或真实 monitor，因此不改变
+当前 candidate-consuming、fail-closed install 语义。未来 updater 必须由 public update request
+先预留 host-owned candidate 并返回，再由 private fixed-enum commit 执行
+download+verify -> pause -> install -> relaunch；锁定 updater `2.10.1` 下 Windows
+`Update::install()` 可能直接 `std::process::exit(0)`，macOS 安装后仍需 `request_restart`，commit
+丢失和失败恢复都必须显式可诊断。
+
 ### 3.5 业务资料夹与做账
 
 | 方法与路径 | AppState/服务入口 | 当前语义 | 错误与安全边界 |
@@ -644,7 +675,15 @@ sequenceDiagram
 
 `v0.3` 起，自动检查只在有效发行 package manifest 且 `auto_check_updates=true` 时延迟执行；失败不会阻塞 localhost、扫描或汇总，也不会覆盖上次有效 ETag/feed/result。Tauri host 只将随机 Host RPC token 传给其直接启动的 Python backend，backend 启动时捕获并从 descendant 环境清除；token 不得进入网页、Tauri command/event、API 响应或日志，携带 token 的 private loopback transport 必须显式禁用环境代理。更新命令面只有 `update_check/update_install`，backend ownership 使用新 challenge 的 HMAC-SHA256，而不是发送 bearer proof 给端口监听者。网页不得获知 token，也不能把安装或原生能力变成任意 URL、路径或命令代理。`latest.json` 与平台更新元数据由同一工具从真实产物、收据、源码归档与固定 release Tag commit 的受控树生成，并通过版本、URL、长度、签名、source commit、tree SHA、文件数和 core build 一致性校验后才可上线。同一进程具备 Tauri host marker 与 private RPC 时，API、设置页和后台 timer 的 `check_for_updates` 调用都属于 strict delegated-install preflight；只有非 Tauri/非 host 检查不获取 `_host_update_lock` 并保留 `UpdateService.check` 的 cache/ETag/nonblocking-busy 语义。host 检查锁竞争时立即返回不持久化 busy 结果，不访问 metadata/candidate 且不清除既有 approval；install 锁竞争立即以脱敏 `HostRpcError` 失败，不消费 approval 或发送第二次 private RPC。host approval 必须在该 session 取得显式携带 `Cache-Control: no-cache`、不带 ETag 的 fresh allowed Feed `200` body 并重新验证，缓存、`304`、离线和错误不授予 approval。Host updater metadata builder 固定 5 秒总时限；listener loop 主动清除到期 candidate。当前 host 的 install 路径再清除候选并 fail closed，直到 recovery/relaunch coordinator 能在任何失败后恢复既有 monitor/进程状态。未来 coordinator 才可按下载+Minisign、monitor stop/recheck、安装/restart 顺序实施。
 
-L10-R 没有改变上图中的 install 分支：它只提供 transaction/marker 契约，要求 coordinator 在每次 marker 或 bridge 操作前后复核同一 released lease；仅 ready 的 owned monitor 可被暂停，恢复只有 later owned status 为 `running && ready` 后才能清 marker。它还未有真实 bridge、Host RPC 调用点、下载或 installer 替换，故不得把 source-level transaction 当作更新成功、monitor stop 或平台 smoke 证据。
+L10-R/C 没有改变上图中的 install 分支：它只提供 lease、marker、fixed-loopback bridge 和 pure coordinator
+契约，要求每次 marker 或 bridge 操作前后复核同一 released lease；仅 ready 的 owned monitor 可被暂停，
+恢复只有 later owned status 为 `running && ready` 后才能清 marker。source-level coordinator 只接收
+verified artifact，未接入真实下载、Host RPC、updater、startup restore、monitor 或 installer 替换，故不得
+把这些 contracts 当作更新成功、monitor stop 或平台 smoke 证据。未来两阶段 commit 必须显式处理 Windows
+安装可能退出 host、macOS `request_restart` 和 commit loss/失败恢复。fixed-loopback bridge 当前没有
+请求级 ownership authentication；真实接线前必须以 backend-private secret 的 fresh challenge/HMAC
+（或等价 authenticated header）绑定请求/响应，并保留请求前后 lifecycle revalidation，不能向候选
+固定端口发送 bearer secret。
 
 hosted check 的 lock-contended 分支在 busy 结果后直接返回，不能落入统一的 `updates.checked` 事件写入；这使响应不依赖 SQLite，其他检查与成功路径仍记录事件。
 

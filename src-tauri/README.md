@@ -69,9 +69,43 @@ phase, health/owned/process PIDs, and a state scope, and revalidates it around
 every marker or future bridge operation. A pause requires a ready owned monitor,
 will not overwrite an existing recovery marker, and preserves the marker on any
 failure; restore clears only after a later owned status is both running and
-ready. Unix persistence is descriptor-pinned and no-follow; non-Unix builds
-return unavailable. This module is not wired to Host RPC, the monitor service,
+ready. Unix persistence is descriptor-pinned and no-follow. At the L10-R
+checkpoint, non-Unix builds returned unavailable; the L10-C section below
+records the later Windows source-level marker store and Unix protocol
+hardening. This module is not wired to Host RPC, the monitor service,
 download, install, restart, or `update_install`.
+
+## L10-C recovery/update foundation
+
+L10-C adds source-level seams only. `PythonMonitorRecoveryBridge` connects
+directly to the fixed `127.0.0.1:8766` listener and selects only the three
+enumerated bridge operations: `GET /api/v1/bridge/status`,
+`POST /api/v1/bridge/stop`, and `POST /api/v1/bridge/start`. The strict OpenAPI
+handshake requires all three exact path/method pairs; a missing or wrongly
+methoded `/api/v1/bridge/start` rejects the handshake. The bridge currently
+has no request-level ownership authentication, so fixed endpoint, method, and
+origin are not an ownership proof. Before real wiring, every request/response
+must use a backend-private fresh challenge/HMAC or equivalent authenticated
+header, revalidate the same lifecycle lease before and after the request, and
+never send a bearer secret to a candidate fixed port.
+
+`BackendLifecycleAuthority` is a cloneable view over the existing child,
+ownership, and lifecycle `Arc` state; it does not create a second lifecycle
+truth. `UpdateCoordinator` is pure and trait-injected: download and built-in
+signature verification must first promote to `VerifiedUpdate`, then the
+coordinator executes pause, install, and relaunch while retaining failed
+recovery attempts. Focused verification passed 56 Rust checks (backend
+authority 14, bridge 9, coordinator unit 2 plus contract 12, recovery 17,
+Windows host static 1, strict OpenAPI 1) and 42 Python contracts (lifecycle
+13, development documentation 12, foundation 17).
+
+These seams are not wired to Host RPC, the updater, startup restore, or a real
+monitor; `update_install` remains candidate-consuming and fail-closed. Future
+updater wiring must reserve a host-owned candidate through the public update
+request, then perform a private fixed-enum commit that runs
+download+verify -> pause -> install -> relaunch and reports commit loss or
+failed recovery explicitly. Locked updater `2.10.1` may exit from Windows
+`Update::install()`, while macOS still needs `request_restart`.
 
 Tray Quit and the custom macOS application-menu Quit item/Cmd-Q both request
 `app.exit(0)`. The menu must not use the predefined native Quit selector,
