@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+- 2026-08-24 Tauri L10-D authenticated recovery/relaunch runtime coordinator:
+  bind each Rust monitor recovery request and exact Python response to one
+  fresh challenge with HMAC-SHA256 under the existing backend-private desktop
+  ownership secret; reject incomplete, tampered, non-empty-body, or replayed
+  authenticated requests without changing ordinary bridge calls. Retain the
+  complete host-owned updater candidate behind a domain-separated artifact
+  identity, activate the updater runtime only after the owned startup gate is
+  released and `BackendHost` is managed, and restore any platform recovery
+  marker before accepting updater operations. `update_install` now reserves
+  one fresh candidate, starts a private worker behind an execute/cancel latch,
+  writes and flushes the exact success response, and only then runs the locked
+  Tauri download/signature verification -> monitor pause -> install -> relaunch
+  coordinator. Writer/spawn/latch loss enters explicit `CommitLost` without
+  update or monitor effects; startup-restore or transaction failure keeps the
+  backend available for diagnostics and blocks further updater work. Windows
+  confirms managed backend termination from `on_before_exit` before installer
+  launch; macOS stops the backend, marks relaunch prepared, then requests a
+  restart, while ordinary Quit is blocked during a private commit. This is
+  source and contract integration only: no product process, real Feed/update,
+  monitor, installer, restart, artifact build, signing, publication, or
+  platform runtime smoke was run or authorized.
 - 2026-08-23 Tauri L10-C foundation slices: add the fixed-loopback
   `PythonMonitorRecoveryBridge`, the pure verified-artifact update coordinator,
   and a cloneable `BackendLifecycleAuthority` that shares the existing child,

@@ -217,6 +217,7 @@ pub enum RecoveryError {
     LeaseInvalid,
     RecoveryPending,
     MonitorUnavailable,
+    MonitorAuthenticationFailed,
     MonitorStillRunning,
     MonitorNotReady,
     MarkerScopeMismatch,
@@ -231,6 +232,7 @@ impl fmt::Display for RecoveryError {
             Self::LeaseInvalid => "desktop lifecycle lease is invalid",
             Self::RecoveryPending => "an earlier monitor recovery is still pending",
             Self::MonitorUnavailable => "monitor bridge is unavailable",
+            Self::MonitorAuthenticationFailed => "monitor bridge authentication failed",
             Self::MonitorStillRunning => "monitor did not stop",
             Self::MonitorNotReady => "monitor did not become ready",
             Self::MarkerScopeMismatch => "monitor recovery marker belongs to another state scope",
@@ -267,7 +269,7 @@ pub struct MonitorRecoveryTransaction<'a, A, B, S>
 where
     A: LifecycleAuthority,
     B: MonitorRecoveryBridge,
-    S: RecoveryMarkerStore,
+    S: RecoveryMarkerStore + ?Sized,
 {
     authority: &'a A,
     bridge: &'a mut B,
@@ -278,7 +280,7 @@ impl<'a, A, B, S> MonitorRecoveryTransaction<'a, A, B, S>
 where
     A: LifecycleAuthority,
     B: MonitorRecoveryBridge,
-    S: RecoveryMarkerStore,
+    S: RecoveryMarkerStore + ?Sized,
 {
     pub fn new(authority: &'a A, bridge: &'a mut B, markers: &'a mut S) -> Self {
         Self {
@@ -410,7 +412,7 @@ where
 
 pub fn open_platform_marker_store(
     root: &Path,
-) -> Result<Box<dyn RecoveryMarkerStore>, MarkerStoreError> {
+) -> Result<Box<dyn RecoveryMarkerStore + Send>, MarkerStoreError> {
     #[cfg(unix)]
     {
         return Ok(Box::new(UnixRecoveryMarkerStore::open(root)?));

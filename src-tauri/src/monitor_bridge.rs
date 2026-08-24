@@ -9,7 +9,9 @@ use std::io::{self, Read, Write};
 use std::net::{Ipv4Addr, SocketAddr, TcpStream};
 use std::time::{Duration, Instant};
 
+use hmac::{Hmac, Mac};
 use serde_json::{Map, Value};
+use sha2::{Digest, Sha256};
 
 use crate::backend::{BRIDGE_START_PATH, BRIDGE_STATUS_PATH, BRIDGE_STOP_PATH};
 use crate::monitor_recovery::{
@@ -18,6 +20,12 @@ use crate::monitor_recovery::{
 use crate::FIXED_BACKEND_PORT;
 
 const MAX_HTTP_RESPONSE_BYTES: usize = 128 * 1024;
+const MONITOR_RECOVERY_CHALLENGE_HEADER: &str = "X-InvoiceHub-Monitor-Recovery-Challenge";
+const MONITOR_RECOVERY_REQUEST_HEADER: &str = "X-InvoiceHub-Monitor-Recovery-Request";
+const MONITOR_RECOVERY_RESPONSE_HEADER: &str = "x-invoicehub-monitor-recovery-response";
+const EMPTY_BODY_SHA256: &str = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+
+type RecoveryHmac = Hmac<Sha256>;
 
 const STATUS_TIMEOUT: RequestTimeout = RequestTimeout {
     connect: Duration::from_secs(1),
@@ -70,6 +78,13 @@ impl BridgeEndpoint {
 struct HttpResponse {
     status_code: u16,
     body: Vec<u8>,
+    recovery_proof: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct BridgeRequestAuth {
+    challenge: String,
+    request_proof: String,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -85,25 +100,31 @@ trait BridgeTransport {
         &mut self,
         endpoint: BridgeEndpoint,
         timeout: RequestTimeout,
+        auth: &BridgeRequestAuth,
     ) -> Result<HttpResponse, TransportError>;
 }
 
 /// A monitor bridge bound to the owned Python backend's fixed listener.
 pub struct PythonMonitorRecoveryBridge {
     transport: Box<dyn BridgeTransport>,
+    authenticator: BridgeAuthenticator,
 }
 
 impl PythonMonitorRecoveryBridge {
     /// Creates an adapter that connects directly to `127.0.0.1:8766`.
-    pub fn new() -> Self {
+    pub fn new(secret: [u8; 32]) -> Self {
         Self {
             transport: Box::new(DirectTcpTransport),
+            authenticator: BridgeAuthenticator::new(secret),
         }
     }
 
     #[cfg(test)]
-    fn with_transport(transport: Box<dyn BridgeTransport>) -> Self {
-        Self { transport }
+    fn with_transport(secret: [u8; 32], transport: Box<dyn BridgeTransport>) -> Self {
+        Self {
+            transport,
+            authenticator: BridgeAuthenticator::new(secret),
+        }
     }
 
     fn request_snapshot(
@@ -113,17 +134,83 @@ impl PythonMonitorRecoveryBridge {
         timeout: RequestTimeout,
     ) -> Result<MonitorSnapshot, RecoveryError> {
         ensure_eligible(lease)?;
+        let auth = self
+            .authenticator
+            .request_auth(endpoint)
+            .map_err(|_| RecoveryError::MonitorAuthenticationFailed)?;
         let response = self
             .transport
-            .request(endpoint, timeout)
+            .request(endpoint, timeout, &auth)
             .map_err(|_| RecoveryError::MonitorUnavailable)?;
+        self.authenticator
+            .verify_response(endpoint, &auth, &response)
+            .map_err(|_| RecoveryError::MonitorAuthenticationFailed)?;
         decode_snapshot(&response).map_err(|_| RecoveryError::MonitorUnavailable)
     }
 }
 
-impl Default for PythonMonitorRecoveryBridge {
-    fn default() -> Self {
-        Self::new()
+#[derive(Clone)]
+struct BridgeAuthenticator {
+    secret: [u8; 32],
+}
+
+impl BridgeAuthenticator {
+    fn new(secret: [u8; 32]) -> Self {
+        Self { secret }
+    }
+
+    fn request_auth(&self, endpoint: BridgeEndpoint) -> Result<BridgeRequestAuth, ()> {
+        let mut challenge_bytes = [0_u8; 32];
+        getrandom::fill(&mut challenge_bytes).map_err(|_| ())?;
+        let challenge = hex_encode(&challenge_bytes);
+        Ok(self.request_auth_for_challenge(endpoint, challenge))
+    }
+
+    fn request_auth_for_challenge(
+        &self,
+        endpoint: BridgeEndpoint,
+        challenge: String,
+    ) -> BridgeRequestAuth {
+        let message = request_auth_message(endpoint, &challenge);
+        BridgeRequestAuth {
+            challenge,
+            request_proof: hmac_hex(&self.secret, message.as_bytes()),
+        }
+    }
+
+    #[cfg(test)]
+    fn response_proof(
+        &self,
+        endpoint: BridgeEndpoint,
+        auth: &BridgeRequestAuth,
+        response: &HttpResponse,
+    ) -> String {
+        let message = response_auth_message(
+            endpoint,
+            &auth.challenge,
+            response.status_code,
+            &response.body,
+        );
+        hmac_hex(&self.secret, message.as_bytes())
+    }
+
+    fn verify_response(
+        &self,
+        endpoint: BridgeEndpoint,
+        auth: &BridgeRequestAuth,
+        response: &HttpResponse,
+    ) -> Result<(), ()> {
+        let proof = response.recovery_proof.as_deref().ok_or(())?;
+        let proof = decode_hex_32(proof).ok_or(())?;
+        let message = response_auth_message(
+            endpoint,
+            &auth.challenge,
+            response.status_code,
+            &response.body,
+        );
+        let mut mac = RecoveryHmac::new_from_slice(&self.secret).map_err(|_| ())?;
+        mac.update(message.as_bytes());
+        mac.verify_slice(&proof).map_err(|_| ())
     }
 }
 
@@ -238,6 +325,7 @@ impl BridgeTransport for DirectTcpTransport {
         &mut self,
         endpoint: BridgeEndpoint,
         timeout: RequestTimeout,
+        auth: &BridgeRequestAuth,
     ) -> Result<HttpResponse, TransportError> {
         let address = SocketAddr::from((Ipv4Addr::LOCALHOST, FIXED_BACKEND_PORT));
         let mut stream =
@@ -249,20 +337,95 @@ impl BridgeTransport for DirectTcpTransport {
             .set_read_timeout(Some(timeout.read))
             .map_err(map_io_error)?;
 
-        let request = build_request(endpoint);
+        let request = build_request(endpoint, auth);
         stream.write_all(&request).map_err(map_io_error)?;
         stream.flush().map_err(map_io_error)?;
         read_http_response(&mut stream, timeout.read)
     }
 }
 
-fn build_request(endpoint: BridgeEndpoint) -> Vec<u8> {
+fn build_request(endpoint: BridgeEndpoint, auth: &BridgeRequestAuth) -> Vec<u8> {
     format!(
-        "{} {} HTTP/1.1\r\nHost: 127.0.0.1:8766\r\nConnection: close\r\nContent-Length: 0\r\n\r\n",
+        "{} {} HTTP/1.1\r\nHost: 127.0.0.1:8766\r\n{}: {}\r\n{}: {}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n",
         endpoint.method(),
-        endpoint.path()
+        endpoint.path(),
+        MONITOR_RECOVERY_CHALLENGE_HEADER,
+        auth.challenge,
+        MONITOR_RECOVERY_REQUEST_HEADER,
+        auth.request_proof,
     )
     .into_bytes()
+}
+
+fn request_auth_message(endpoint: BridgeEndpoint, challenge: &str) -> String {
+    format!(
+        "invoicehub-monitor-recovery-request-v1\n{}\n{}\n{}\n{}",
+        endpoint.method(),
+        endpoint.path(),
+        challenge,
+        EMPTY_BODY_SHA256,
+    )
+}
+
+fn response_auth_message(
+    endpoint: BridgeEndpoint,
+    challenge: &str,
+    status_code: u16,
+    body: &[u8],
+) -> String {
+    format!(
+        "invoicehub-monitor-recovery-response-v1\n{}\n{}\n{}\n{}\n{}",
+        endpoint.method(),
+        endpoint.path(),
+        challenge,
+        status_code,
+        sha256_hex(body),
+    )
+}
+
+fn hmac_hex(secret: &[u8; 32], message: &[u8]) -> String {
+    let mut mac = RecoveryHmac::new_from_slice(secret).expect("fixed HMAC key length");
+    mac.update(message);
+    hex_encode(&mac.finalize().into_bytes())
+}
+
+fn sha256_hex(value: &[u8]) -> String {
+    hex_encode(&Sha256::digest(value))
+}
+
+fn hex_encode(value: &[u8]) -> String {
+    let mut output = String::with_capacity(value.len() * 2);
+    for byte in value {
+        output.push(hex_digit(byte >> 4));
+        output.push(hex_digit(byte & 0x0f));
+    }
+    output
+}
+
+fn hex_digit(value: u8) -> char {
+    match value {
+        0..=9 => char::from(b'0' + value),
+        _ => char::from(b'a' + value - 10),
+    }
+}
+
+fn decode_hex_32(value: &str) -> Option<[u8; 32]> {
+    if value.len() != 64 {
+        return None;
+    }
+    let mut decoded = [0_u8; 32];
+    for (index, pair) in value.as_bytes().chunks_exact(2).enumerate() {
+        decoded[index] = (hex_value(pair[0])? << 4) | hex_value(pair[1])?;
+    }
+    Some(decoded)
+}
+
+fn hex_value(value: u8) -> Option<u8> {
+    match value {
+        b'0'..=b'9' => Some(value - b'0'),
+        b'a'..=b'f' => Some(value - b'a' + 10),
+        _ => None,
+    }
 }
 
 fn map_io_error(error: io::Error) -> TransportError {
@@ -299,8 +462,8 @@ fn read_http_response(
 
         if header_info.is_none() {
             if let Some(header_end) = find_header_end(&raw) {
-                let (_, content_length) = parse_response_head(&raw[..header_end])?;
-                if let Some(length) = content_length {
+                let response_head = parse_response_head(&raw[..header_end])?;
+                if let Some(length) = response_head.content_length {
                     if length > MAX_HTTP_RESPONSE_BYTES.saturating_sub(header_end) {
                         return Err(TransportError::Oversized);
                     }
@@ -312,7 +475,7 @@ fn read_http_response(
                         return parse_http_response(&raw);
                     }
                 }
-                header_info = Some((header_end, content_length));
+                header_info = Some((header_end, response_head.content_length));
             }
         } else if let Some((header_end, Some(length))) = header_info {
             let response_end = header_end + length;
@@ -333,9 +496,9 @@ fn parse_http_response(raw: &[u8]) -> Result<HttpResponse, TransportError> {
         return Err(TransportError::Oversized);
     }
     let header_end = find_header_end(raw).ok_or(TransportError::Malformed)?;
-    let (status_code, content_length) = parse_response_head(&raw[..header_end])?;
+    let response_head = parse_response_head(&raw[..header_end])?;
     let body = &raw[header_end..];
-    if let Some(length) = content_length {
+    if let Some(length) = response_head.content_length {
         if length > MAX_HTTP_RESPONSE_BYTES.saturating_sub(header_end) {
             return Err(TransportError::Oversized);
         }
@@ -344,12 +507,20 @@ fn parse_http_response(raw: &[u8]) -> Result<HttpResponse, TransportError> {
         }
     }
     Ok(HttpResponse {
-        status_code,
+        status_code: response_head.status_code,
         body: body.to_vec(),
+        recovery_proof: response_head.recovery_proof,
     })
 }
 
-fn parse_response_head(raw_head: &[u8]) -> Result<(u16, Option<usize>), TransportError> {
+#[derive(Debug, PartialEq, Eq)]
+struct ResponseHead {
+    status_code: u16,
+    content_length: Option<usize>,
+    recovery_proof: Option<String>,
+}
+
+fn parse_response_head(raw_head: &[u8]) -> Result<ResponseHead, TransportError> {
     if !raw_head.ends_with(b"\r\n\r\n") {
         return Err(TransportError::Malformed);
     }
@@ -370,6 +541,7 @@ fn parse_response_head(raw_head: &[u8]) -> Result<(u16, Option<usize>), Transpor
         .map_err(|_| TransportError::Malformed)?;
 
     let mut content_length = None;
+    let mut recovery_proof = None;
     for line in lines {
         if line.is_empty() {
             continue;
@@ -394,9 +566,22 @@ fn parse_response_head(raw_head: &[u8]) -> Result<(u16, Option<usize>), Transpor
                     .parse::<usize>()
                     .map_err(|_| TransportError::Oversized)?,
             );
+        } else if name.eq_ignore_ascii_case(MONITOR_RECOVERY_RESPONSE_HEADER) {
+            if recovery_proof.is_some() {
+                return Err(TransportError::Malformed);
+            }
+            let value = value.trim();
+            if decode_hex_32(value).is_none() {
+                return Err(TransportError::Malformed);
+            }
+            recovery_proof = Some(value.to_owned());
         }
     }
-    Ok((status_code, content_length))
+    Ok(ResponseHead {
+        status_code,
+        content_length,
+        recovery_proof,
+    })
 }
 
 fn find_header_end(raw: &[u8]) -> Option<usize> {
@@ -412,6 +597,8 @@ mod tests {
     use std::collections::VecDeque;
     use std::sync::{Arc, Mutex};
 
+    const TEST_SECRET: [u8; 32] = [0x5a; 32];
+
     #[derive(Clone, Debug, PartialEq, Eq)]
     struct RecordedRequest {
         endpoint: BridgeEndpoint,
@@ -421,17 +608,32 @@ mod tests {
     struct ScriptedTransport {
         responses: VecDeque<Result<HttpResponse, TransportError>>,
         requests: Arc<Mutex<Vec<RecordedRequest>>>,
+        sign_responses: bool,
     }
 
     impl ScriptedTransport {
         fn new(
             responses: impl IntoIterator<Item = Result<HttpResponse, TransportError>>,
         ) -> (Self, Arc<Mutex<Vec<RecordedRequest>>>) {
+            Self::with_response_signing(responses, true)
+        }
+
+        fn unsigned(
+            responses: impl IntoIterator<Item = Result<HttpResponse, TransportError>>,
+        ) -> (Self, Arc<Mutex<Vec<RecordedRequest>>>) {
+            Self::with_response_signing(responses, false)
+        }
+
+        fn with_response_signing(
+            responses: impl IntoIterator<Item = Result<HttpResponse, TransportError>>,
+            sign_responses: bool,
+        ) -> (Self, Arc<Mutex<Vec<RecordedRequest>>>) {
             let requests = Arc::new(Mutex::new(Vec::new()));
             (
                 Self {
                     responses: responses.into_iter().collect(),
                     requests: Arc::clone(&requests),
+                    sign_responses,
                 },
                 requests,
             )
@@ -443,14 +645,27 @@ mod tests {
             &mut self,
             endpoint: BridgeEndpoint,
             timeout: RequestTimeout,
+            auth: &BridgeRequestAuth,
         ) -> Result<HttpResponse, TransportError> {
+            let expected = BridgeAuthenticator::new(TEST_SECRET)
+                .request_auth_for_challenge(endpoint, auth.challenge.clone());
+            if expected != *auth {
+                return Err(TransportError::Malformed);
+            }
             self.requests
                 .lock()
                 .expect("request recording lock")
                 .push(RecordedRequest { endpoint, timeout });
-            self.responses
+            let mut response = self
+                .responses
                 .pop_front()
-                .expect("scripted response available")
+                .expect("scripted response available")?;
+            if self.sign_responses && response.recovery_proof.is_none() {
+                response.recovery_proof = Some(
+                    BridgeAuthenticator::new(TEST_SECRET).response_proof(endpoint, auth, &response),
+                );
+            }
+            Ok(response)
         }
     }
 
@@ -470,7 +685,12 @@ mod tests {
         HttpResponse {
             status_code,
             body: serde_json::to_vec(&body).expect("test JSON serializes"),
+            recovery_proof: None,
         }
+    }
+
+    fn fixed_auth(endpoint: BridgeEndpoint) -> BridgeRequestAuth {
+        BridgeAuthenticator::new(TEST_SECRET).request_auth_for_challenge(endpoint, "ab".repeat(32))
     }
 
     fn status_body(running: bool, ready: bool) -> Value {
@@ -489,7 +709,8 @@ mod tests {
     fn status_success_uses_only_the_fixed_status_endpoint() {
         let (transport, requests) =
             ScriptedTransport::new([Ok(response(200, status_body(true, true)))]);
-        let mut bridge = PythonMonitorRecoveryBridge::with_transport(Box::new(transport));
+        let mut bridge =
+            PythonMonitorRecoveryBridge::with_transport(TEST_SECRET, Box::new(transport));
 
         assert_eq!(
             bridge.status(&valid_lease()),
@@ -505,9 +726,14 @@ mod tests {
                 timeout: STATUS_TIMEOUT
             }]
         );
+        let auth = fixed_auth(BridgeEndpoint::Status);
         assert_eq!(
-            String::from_utf8(build_request(BridgeEndpoint::Status)).expect("ASCII request"),
-            "GET /api/v1/bridge/status HTTP/1.1\r\nHost: 127.0.0.1:8766\r\nConnection: close\r\nContent-Length: 0\r\n\r\n"
+            String::from_utf8(build_request(BridgeEndpoint::Status, &auth))
+                .expect("ASCII request"),
+            format!(
+                "GET /api/v1/bridge/status HTTP/1.1\r\nHost: 127.0.0.1:8766\r\nX-InvoiceHub-Monitor-Recovery-Challenge: {}\r\nX-InvoiceHub-Monitor-Recovery-Request: {}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n",
+                auth.challenge, auth.request_proof
+            )
         );
     }
 
@@ -515,7 +741,8 @@ mod tests {
     fn stop_success_requires_a_stopped_snapshot_and_fixed_post_path() {
         let (transport, requests) =
             ScriptedTransport::new([Ok(response(200, command_body(false, false)))]);
-        let mut bridge = PythonMonitorRecoveryBridge::with_transport(Box::new(transport));
+        let mut bridge =
+            PythonMonitorRecoveryBridge::with_transport(TEST_SECRET, Box::new(transport));
 
         assert_eq!(bridge.stop(&valid_lease()), Ok(()));
         assert_eq!(
@@ -525,9 +752,14 @@ mod tests {
                 timeout: STOP_TIMEOUT
             }]
         );
+        let auth = fixed_auth(BridgeEndpoint::Stop);
         assert_eq!(
-            String::from_utf8(build_request(BridgeEndpoint::Stop)).expect("ASCII request"),
-            "POST /api/v1/bridge/stop HTTP/1.1\r\nHost: 127.0.0.1:8766\r\nConnection: close\r\nContent-Length: 0\r\n\r\n"
+            String::from_utf8(build_request(BridgeEndpoint::Stop, &auth))
+                .expect("ASCII request"),
+            format!(
+                "POST /api/v1/bridge/stop HTTP/1.1\r\nHost: 127.0.0.1:8766\r\nX-InvoiceHub-Monitor-Recovery-Challenge: {}\r\nX-InvoiceHub-Monitor-Recovery-Request: {}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n",
+                auth.challenge, auth.request_proof
+            )
         );
     }
 
@@ -535,7 +767,8 @@ mod tests {
     fn start_success_requires_running_and_ready_and_fixed_post_path() {
         let (transport, requests) =
             ScriptedTransport::new([Ok(response(200, command_body(true, true)))]);
-        let mut bridge = PythonMonitorRecoveryBridge::with_transport(Box::new(transport));
+        let mut bridge =
+            PythonMonitorRecoveryBridge::with_transport(TEST_SECRET, Box::new(transport));
 
         assert_eq!(bridge.start(&valid_lease()), Ok(()));
         assert_eq!(
@@ -545,9 +778,14 @@ mod tests {
                 timeout: START_TIMEOUT
             }]
         );
+        let auth = fixed_auth(BridgeEndpoint::Start);
         assert_eq!(
-            String::from_utf8(build_request(BridgeEndpoint::Start)).expect("ASCII request"),
-            "POST /api/v1/bridge/start HTTP/1.1\r\nHost: 127.0.0.1:8766\r\nConnection: close\r\nContent-Length: 0\r\n\r\n"
+            String::from_utf8(build_request(BridgeEndpoint::Start, &auth))
+                .expect("ASCII request"),
+            format!(
+                "POST /api/v1/bridge/start HTTP/1.1\r\nHost: 127.0.0.1:8766\r\nX-InvoiceHub-Monitor-Recovery-Challenge: {}\r\nX-InvoiceHub-Monitor-Recovery-Request: {}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n",
+                auth.challenge, auth.request_proof
+            )
         );
     }
 
@@ -556,15 +794,18 @@ mod tests {
         let malformed = HttpResponse {
             status_code: 200,
             body: b"not-json".to_vec(),
+            recovery_proof: None,
         };
         let oversized = HttpResponse {
             status_code: 200,
             body: vec![b'x'; MAX_HTTP_RESPONSE_BYTES + 1],
+            recovery_proof: None,
         };
         let non_success = response(201, status_body(true, true));
         let (transport, _) =
             ScriptedTransport::new([Ok(malformed), Ok(oversized), Ok(non_success)]);
-        let mut bridge = PythonMonitorRecoveryBridge::with_transport(Box::new(transport));
+        let mut bridge =
+            PythonMonitorRecoveryBridge::with_transport(TEST_SECRET, Box::new(transport));
         let lease = valid_lease();
 
         assert_eq!(
@@ -592,7 +833,8 @@ mod tests {
             Ok(response(200, command_body(true, true))),
             Ok(wrong_boolean),
         ]);
-        let mut bridge = PythonMonitorRecoveryBridge::with_transport(Box::new(transport));
+        let mut bridge =
+            PythonMonitorRecoveryBridge::with_transport(TEST_SECRET, Box::new(transport));
         let lease = valid_lease();
 
         assert_eq!(bridge.start(&lease), Err(RecoveryError::MonitorNotReady));
@@ -606,7 +848,8 @@ mod tests {
     #[test]
     fn ready_without_running_is_rejected_as_an_inconsistent_snapshot() {
         let (transport, _) = ScriptedTransport::new([Ok(response(200, status_body(false, true)))]);
-        let mut bridge = PythonMonitorRecoveryBridge::with_transport(Box::new(transport));
+        let mut bridge =
+            PythonMonitorRecoveryBridge::with_transport(TEST_SECRET, Box::new(transport));
 
         assert_eq!(
             bridge.status(&valid_lease()),
@@ -620,7 +863,8 @@ mod tests {
             Err(TransportError::Timeout),
             Err(TransportError::Unavailable),
         ]);
-        let mut bridge = PythonMonitorRecoveryBridge::with_transport(Box::new(transport));
+        let mut bridge =
+            PythonMonitorRecoveryBridge::with_transport(TEST_SECRET, Box::new(transport));
         let lease = valid_lease();
 
         assert_eq!(
@@ -634,10 +878,31 @@ mod tests {
     }
 
     #[test]
+    fn missing_and_tampered_response_proofs_fail_authentication() {
+        let missing = response(200, status_body(true, true));
+        let mut tampered = response(200, status_body(true, true));
+        tampered.recovery_proof = Some("00".repeat(32));
+        let (transport, _) = ScriptedTransport::unsigned([Ok(missing), Ok(tampered)]);
+        let mut bridge =
+            PythonMonitorRecoveryBridge::with_transport(TEST_SECRET, Box::new(transport));
+        let lease = valid_lease();
+
+        assert_eq!(
+            bridge.status(&lease),
+            Err(RecoveryError::MonitorAuthenticationFailed)
+        );
+        assert_eq!(
+            bridge.status(&lease),
+            Err(RecoveryError::MonitorAuthenticationFailed)
+        );
+    }
+
+    #[test]
     fn ineligible_lease_is_rejected_before_transport() {
         let (transport, requests) =
             ScriptedTransport::new([Ok(response(200, status_body(true, true)))]);
-        let mut bridge = PythonMonitorRecoveryBridge::with_transport(Box::new(transport));
+        let mut bridge =
+            PythonMonitorRecoveryBridge::with_transport(TEST_SECRET, Box::new(transport));
         let mut lease = valid_lease();
         lease.phase = LifecyclePhase::Terminating;
 
@@ -652,7 +917,8 @@ mod tests {
             parse_http_response(raw),
             Ok(HttpResponse {
                 status_code: 200,
-                body: b"{}".to_vec()
+                body: b"{}".to_vec(),
+                recovery_proof: None,
             })
         );
         assert_eq!(
@@ -670,6 +936,26 @@ mod tests {
         assert_eq!(
             parse_http_response(&vec![b'x'; MAX_HTTP_RESPONSE_BYTES + 1]),
             Err(TransportError::Oversized)
+        );
+
+        let proof = "ab".repeat(32);
+        let authenticated = format!(
+            "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nX-InvoiceHub-Monitor-Recovery-Response: {proof}\r\n\r\n{{}}"
+        );
+        assert_eq!(
+            parse_http_response(authenticated.as_bytes()),
+            Ok(HttpResponse {
+                status_code: 200,
+                body: b"{}".to_vec(),
+                recovery_proof: Some(proof.clone()),
+            })
+        );
+        let duplicate = format!(
+            "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nX-InvoiceHub-Monitor-Recovery-Response: {proof}\r\nx-invoicehub-monitor-recovery-response: {proof}\r\n\r\n{{}}"
+        );
+        assert_eq!(
+            parse_http_response(duplicate.as_bytes()),
+            Err(TransportError::Malformed)
         );
     }
 }

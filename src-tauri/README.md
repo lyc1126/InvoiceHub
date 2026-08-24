@@ -55,57 +55,50 @@ removes it from descendants; it never reaches Web content, Tauri commands or
 events, API responses, or logs.
 
 The private loopback listener accepts four picker enums and the two updater
-enums `update_check` and `update_install`. A candidate is bounded to 300
-seconds, and updater metadata requests have a five-second total timeout.
-Until a complete recovery/relaunch coordinator exists, `update_install`
-consumes the candidate and returns unavailable; it does not download, stop the
-monitor, install, or restart. The later release coordinator must preserve the
-order download plus Minisign verification, monitor stop and independent recheck,
-then install/restart, with recovery on every failed path.
+enums `update_check` and `update_install`. A complete host-owned candidate is
+bounded to 300 seconds; updater metadata and the retained download object both
+use a five-second timeout. Updater-disabled profiles remain inert. An enabled
+profile activates only after the owned startup gate is released and
+`BackendHost` is registered, opens the platform marker store under the strict
+backend `runtime_dir`, and completes authenticated startup restore before it
+accepts update operations.
 
-L10-R adds only the source-level recovery primitive that a later coordinator
-must use. It captures a released owned lifecycle lease containing generation,
-phase, health/owned/process PIDs, and a state scope, and revalidates it around
-every marker or future bridge operation. A pause requires a ready owned monitor,
-will not overwrite an existing recovery marker, and preserves the marker on any
-failure; restore clears only after a later owned status is both running and
-ready. Unix persistence is descriptor-pinned and no-follow. At the L10-R
-checkpoint, non-Unix builds returned unavailable; the L10-C section below
-records the later Windows source-level marker store and Unix protocol
-hardening. This module is not wired to Host RPC, the monitor service,
-download, install, restart, or `update_install`.
+`update_install` accepts no caller metadata. It atomically consumes one fresh
+candidate, reserves the runtime, and starts a private worker behind an
+execute/cancel latch. Only after the exact `{"ok":true}` response is written
+and flushed does that worker run Tauri download with built-in signature
+verification -> owned-monitor pause -> install -> platform relaunch. Response
+write failure, worker spawn failure, or latch loss enters `CommitLost` without
+download, marker, monitor, or installer effects. Startup restore or transaction
+failure leaves the backend/WebUI available for diagnostics and blocks further
+updater work in that process.
 
-## L10-C recovery/update foundation
+## L10-R/C foundation and L10-D runtime wiring
 
-L10-C adds source-level seams only. `PythonMonitorRecoveryBridge` connects
-directly to the fixed `127.0.0.1:8766` listener and selects only the three
-enumerated bridge operations: `GET /api/v1/bridge/status`,
-`POST /api/v1/bridge/stop`, and `POST /api/v1/bridge/start`. The strict OpenAPI
-handshake requires all three exact path/method pairs; a missing or wrongly
-methoded `/api/v1/bridge/start` rejects the handshake. The bridge currently
-has no request-level ownership authentication, so fixed endpoint, method, and
-origin are not an ownership proof. Before real wiring, every request/response
-must use a backend-private fresh challenge/HMAC or equivalent authenticated
-header, revalidate the same lifecycle lease before and after the request, and
-never send a bearer secret to a candidate fixed port.
+L10-R established the source-level recovery primitive. It captures a released
+owned lifecycle lease containing generation, phase, health/owned/process PIDs,
+and a state scope, and revalidates it around every marker or bridge operation.
+A pause requires a ready owned monitor, will not overwrite an existing marker,
+and preserves the marker on failure; restore clears only after a later owned
+status is both running and ready. L10-C then added the fixed-loopback bridge,
+pure update coordinator, shared lifecycle authority, the Windows
+handle-relative/no-reparse marker store, and Unix whole-operation locking. The
+historical L10-C verification passed 56 Rust checks and 42 Python contracts; it
+did not itself wire Host RPC, updater, startup restore, or a real monitor.
 
-`BackendLifecycleAuthority` is a cloneable view over the existing child,
-ownership, and lifecycle `Arc` state; it does not create a second lifecycle
-truth. `UpdateCoordinator` is pure and trait-injected: download and built-in
-signature verification must first promote to `VerifiedUpdate`, then the
-coordinator executes pause, install, and relaunch while retaining failed
-recovery attempts. Focused verification passed 56 Rust checks (backend
-authority 14, bridge 9, coordinator unit 2 plus contract 12, recovery 17,
-Windows host static 1, strict OpenAPI 1) and 42 Python contracts (lifecycle
-13, development documentation 12, foundation 17).
-
-These seams are not wired to Host RPC, the updater, startup restore, or a real
-monitor; `update_install` remains candidate-consuming and fail-closed. Future
-updater wiring must reserve a host-owned candidate through the public update
-request, then perform a private fixed-enum commit that runs
-download+verify -> pause -> install -> relaunch and reports commit loss or
-failed recovery explicitly. Locked updater `2.10.1` may exit from Windows
-`Update::install()`, while macOS still needs `request_restart`.
+L10-D wires those seams into the owned host runtime. Every recovery request and
+exact response uses a fresh challenge and HMAC-SHA256 under the existing
+backend-private ownership secret; Python rejects incomplete, tampered,
+non-empty, or replayed authenticated requests, while ordinary browser bridge
+calls keep their prior unauthenticated localhost behavior. The host retains the
+cloneable Tauri `Update` and a private domain-separated artifact identity, then
+uses `UpdateCoordinator` for the fixed verified-download -> pause -> install ->
+relaunch order. Windows confirms managed-backend termination in
+`on_before_exit`; macOS stops the backend, marks relaunch prepared, and calls
+`request_restart()`. Normal Quit is blocked while a commit is reserved or
+executing. These are source and contract boundaries only: current development
+and internal-alpha profiles disable updater, and no real Feed, monitor, update,
+restart, package, signing, or platform smoke is claimed.
 
 Tray Quit and the custom macOS application-menu Quit item/Cmd-Q both request
 `app.exit(0)`. The menu must not use the predefined native Quit selector,

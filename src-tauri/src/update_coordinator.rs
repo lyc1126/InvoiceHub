@@ -103,6 +103,24 @@ pub trait RecoveryController {
     fn restore_owned_monitor(&mut self) -> Result<RestoreOutcome, Self::Error>;
 }
 
+impl<'a, A, B, S> RecoveryController
+    for crate::monitor_recovery::MonitorRecoveryTransaction<'a, A, B, S>
+where
+    A: crate::monitor_recovery::LifecycleAuthority,
+    B: crate::monitor_recovery::MonitorRecoveryBridge,
+    S: crate::monitor_recovery::RecoveryMarkerStore + ?Sized,
+{
+    type Error = crate::monitor_recovery::RecoveryError;
+
+    fn pause_owned_monitor(&mut self) -> Result<PauseOutcome, Self::Error> {
+        crate::monitor_recovery::MonitorRecoveryTransaction::pause_owned_monitor(self)
+    }
+
+    fn restore_owned_monitor(&mut self) -> Result<RestoreOutcome, Self::Error> {
+        crate::monitor_recovery::MonitorRecoveryTransaction::restore_owned_monitor(self)
+    }
+}
+
 /// Installs the already verified bytes without requesting a second download.
 pub trait UpdateInstaller {
     type Error;

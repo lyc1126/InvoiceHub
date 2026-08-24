@@ -9,6 +9,7 @@ import os
 import re
 import signal
 import threading
+from collections import deque
 from collections.abc import Callable
 from pathlib import Path
 from typing import AsyncIterator
@@ -44,7 +45,12 @@ PREVIEW_CONTENT_HEADERS = {
 
 DESKTOP_HOST_CHALLENGE_HEADER = "x-invoicehub-desktop-host-challenge"
 DESKTOP_HOST_RESPONSE_HEADER = "X-InvoiceHub-Desktop-Host-Response"
+MONITOR_RECOVERY_CHALLENGE_HEADER = "x-invoicehub-monitor-recovery-challenge"
+MONITOR_RECOVERY_REQUEST_HEADER = "x-invoicehub-monitor-recovery-request"
+MONITOR_RECOVERY_RESPONSE_HEADER = "X-InvoiceHub-Monitor-Recovery-Response"
 _DESKTOP_HOST_VALUE_PATTERN = re.compile(r"[0-9a-f]{64}")
+_MONITOR_RECOVERY_REPLAY_LIMIT = 128
+_EMPTY_BODY_SHA256 = hashlib.sha256(b"").hexdigest()
 NATIVE_PICKER_FAILURE_STATUS = 503
 NATIVE_PICKER_FAILURE_DETAIL = "Native picker unavailable"
 UPDATE_INSTALL_FAILURE_STATUS = 503
@@ -150,6 +156,98 @@ def _desktop_host_challenge_response(request: Request) -> Response:
         status_code=204,
         headers={
             DESKTOP_HOST_RESPONSE_HEADER: response,
+            "Cache-Control": "no-store",
+        },
+    )
+
+
+def _monitor_recovery_request_message(method: str, path: str, challenge: str) -> bytes:
+    return (
+        "invoicehub-monitor-recovery-request-v1\n"
+        f"{method}\n{path}\n{challenge}\n{_EMPTY_BODY_SHA256}"
+    ).encode("ascii")
+
+
+def _monitor_recovery_response_message(
+    method: str,
+    path: str,
+    challenge: str,
+    status_code: int,
+    body: bytes,
+) -> bytes:
+    body_sha256 = hashlib.sha256(body).hexdigest()
+    return (
+        "invoicehub-monitor-recovery-response-v1\n"
+        f"{method}\n{path}\n{challenge}\n{status_code}\n{body_sha256}"
+    ).encode("ascii")
+
+
+def _consume_monitor_recovery_auth(
+    request: Request,
+    *,
+    method: str,
+    path: str,
+) -> tuple[bytes, str] | None:
+    challenge = str(request.headers.get(MONITOR_RECOVERY_CHALLENGE_HEADER) or "").strip()
+    request_proof = str(request.headers.get(MONITOR_RECOVERY_REQUEST_HEADER) or "").strip()
+    if not challenge and not request_proof:
+        return None
+
+    secret = getattr(request.app.state, "desktop_host_secret", None)
+    if (
+        not isinstance(secret, bytes)
+        or len(secret) != 32
+        or not _DESKTOP_HOST_VALUE_PATTERN.fullmatch(challenge)
+        or not _DESKTOP_HOST_VALUE_PATTERN.fullmatch(request_proof)
+        or str(request.headers.get("content-length") or "").strip() != "0"
+        or bool(str(request.headers.get("transfer-encoding") or "").strip())
+    ):
+        raise HTTPException(status_code=403, detail="桌面监控恢复请求已拒绝")
+    expected = hmac.new(
+        secret,
+        _monitor_recovery_request_message(method, path, challenge),
+        hashlib.sha256,
+    ).hexdigest()
+    if not hmac.compare_digest(expected, request_proof):
+        raise HTTPException(status_code=403, detail="桌面监控恢复请求已拒绝")
+
+    replay_lock = request.app.state.monitor_recovery_replay_lock
+    replay_order = request.app.state.monitor_recovery_replay_order
+    replay_seen = request.app.state.monitor_recovery_replay_seen
+    with replay_lock:
+        if challenge in replay_seen:
+            raise HTTPException(status_code=403, detail="桌面监控恢复请求已拒绝")
+        if len(replay_order) >= _MONITOR_RECOVERY_REPLAY_LIMIT:
+            replay_seen.discard(replay_order.popleft())
+        replay_order.append(challenge)
+        replay_seen.add(challenge)
+    return secret, challenge
+
+
+def _monitor_recovery_response(
+    request: Request,
+    *,
+    method: str,
+    path: str,
+    action: Callable[[], dict],
+) -> Response:
+    auth = _consume_monitor_recovery_auth(request, method=method, path=path)
+    if auth is None:
+        return JSONResponse(content=action())
+
+    secret, challenge = auth
+    body = json.dumps(action(), ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    response_proof = hmac.new(
+        secret,
+        _monitor_recovery_response_message(method, path, challenge, 200, body),
+        hashlib.sha256,
+    ).hexdigest()
+    return Response(
+        content=body,
+        status_code=200,
+        media_type="application/json",
+        headers={
+            MONITOR_RECOVERY_RESPONSE_HEADER: response_proof,
             "Cache-Control": "no-store",
         },
     )
@@ -348,6 +446,9 @@ def create_app(
     app = FastAPI(title="一站式发票汇总系统", version=PRODUCT_VERSION)
     app.state.invoice_hub = state
     app.state.desktop_host_secret = desktop_host_secret
+    app.state.monitor_recovery_replay_lock = threading.Lock()
+    app.state.monitor_recovery_replay_order = deque()
+    app.state.monitor_recovery_replay_seen = set()
     app.state.shutdown_scheduler = shutdown_scheduler or _schedule_process_shutdown
     app.mount("/static", StaticFiles(directory=str(web_dir / "static")), name="static")
 
@@ -878,8 +979,13 @@ def create_app(
         return Response(content=payload.content or b"", media_type=payload.media_type)
 
     @app.get("/api/v1/bridge/status")
-    def bridge_status(request: Request) -> dict:
-        return _state(request).bridge_status()
+    def bridge_status(request: Request) -> Response:
+        return _monitor_recovery_response(
+            request,
+            method="GET",
+            path="/api/v1/bridge/status",
+            action=_state(request).bridge_status,
+        )
 
     @app.get("/favicon.ico", include_in_schema=False)
     def favicon() -> Response:
@@ -894,12 +1000,22 @@ def create_app(
         return _state(request).bridge_rebuild()
 
     @app.post("/api/v1/bridge/start")
-    def bridge_start(request: Request) -> dict:
-        return _state(request).bridge_start()
+    def bridge_start(request: Request) -> Response:
+        return _monitor_recovery_response(
+            request,
+            method="POST",
+            path="/api/v1/bridge/start",
+            action=_state(request).bridge_start,
+        )
 
     @app.post("/api/v1/bridge/stop")
-    def bridge_stop(request: Request) -> dict:
-        return _state(request).bridge_stop()
+    def bridge_stop(request: Request) -> Response:
+        return _monitor_recovery_response(
+            request,
+            method="POST",
+            path="/api/v1/bridge/stop",
+            action=_state(request).bridge_stop,
+        )
 
     @app.post('/api/v1/bridge/open-log')
     def bridge_open_log(request: Request) -> dict:

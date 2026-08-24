@@ -384,17 +384,34 @@ def test_host_rpc_docs_describe_the_direct_backend_token_handoff() -> None:
         assert "`update_check` / `update_install` 两个固定 enum" in text
 
 
-def test_current_tauri_docs_keep_install_fail_closed_until_recovery_exists() -> None:
+def test_current_tauri_docs_describe_authenticated_response_then_private_commit() -> None:
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     file_map = FILE_MAP.read_text(encoding="utf-8")
     task_map = (ROOT / "docs" / "architecture" / "AGENT_TASK_MAP.md").read_text(
         encoding="utf-8"
     )
+    update_system = (ROOT / "docs" / "release" / "UPDATE_SYSTEM.md").read_text(
+        encoding="utf-8"
+    )
+    tauri_readme = (ROOT / "src-tauri" / "README.md").read_text(encoding="utf-8")
 
-    assert "install 请求只清除候选并返回不可用" in readme
-    assert "Current install consumes the candidate and fails closed" in file_map
-    assert "当前 install 只清除候选并 fail closed" in task_map
-    assert "随后才按下载+Minisign 验签" not in readme
+    assert "L10-D 已把这些边界接入 Host RPC/updater/startup restore" in readme
+    assert "fresh challenge and HMAC-SHA256" in file_map
+    assert "response flush 后私有 commit" in task_map
+    assert '精确 `{"ok":true}` 完整写入并 flush 后' in update_system
+    assert "L10-D wires those seams into the owned host runtime" in tauri_readme
+    assert "CommitLost" in readme
+
+    current_docs = (readme, file_map, task_map, update_system, tauri_readme)
+    stale_claims = (
+        "install 请求只清除候选并返回不可用",
+        "Current install consumes the candidate and fails closed",
+        "当前 install 只清除候选并 fail closed",
+        "Until a complete recovery/relaunch coordinator exists",
+    )
+    for text in current_docs:
+        for stale_claim in stale_claims:
+            assert stale_claim not in text
 
 
 def test_current_tauri_docs_require_bounded_update_checks_and_confirmed_exit_cleanup() -> None:

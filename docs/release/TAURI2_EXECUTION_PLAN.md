@@ -586,6 +586,16 @@ this table.
 | Security boundary | The fixed-loopback bridge has no request-level ownership authentication and is not an ownership proof. Before real wiring, bind each request/response to a backend-private fresh challenge/HMAC or equivalent authenticated header, retain lifecycle revalidation before and after the request, and never send a bearer secret to a candidate fixed port. |
 | Result (2026-08-23) | Passed as source-level seams only: 56 Rust focused checks passed (backend authority 14, bridge 9, coordinator unit 2 plus contract 12, recovery 17, Windows host static 1, strict OpenAPI 1), and 42 Python contracts passed (lifecycle 13, development documentation 12, foundation 17). The strict OpenAPI handshake requires `GET /api/v1/bridge/status`, `POST /api/v1/bridge/stop`, and `POST /api/v1/bridge/start`; missing or wrong `/bridge/start` methods are rejected. The minimal `x86_64-pc-windows-msvc` temporary-crate cross-compile passed; no Windows runtime was run, and the full Tauri Windows target check remains blocked by `ring` requiring `assert.h`. No HostRpc/updater/startup-restore/real-monitor integration was added. The Unix marker-store protocol now closes whole-operation `load/publish/clear` serialization with directory `flock`, stale-clear re-read, and durable directory metadata sync after publish/clear link operations; direct edits bypassing the protocol remain outside the guarantee. |
 
+### L10-D: authenticated recovery/relaunch runtime coordinator
+
+| Field | Record |
+| --- | --- |
+| Hypothesis | The existing L10-R/C seams can be wired into the owned Tauri runtime without widening the public API: every Rust-to-Python monitor request and response can be bound to one fresh challenge with the backend-private HMAC secret; the public `update_install` request can reserve one host-owned candidate and receive its response before a private fixed-enum commit starts; and a later verified owned startup can restore a marked monitor only after the startup gate is released. |
+| Decision changed by result | A passing implementation and focused contract set permits one DCO source commit and later development-artifact validation. It does not authorize NSIS/DMG assembly, a real update download or install, signing, publication, Feed activation, or a platform release claim. Any authentication, dispatch-order, lifecycle, marker, compiler, or contract failure keeps `update_install` fail closed and confines repair to L10-D. |
+| Minimal sample | Rust contracts for authenticated fixed-endpoint bridge requests/responses, response-before-private-commit ordering, candidate reservation/expiry/dispatch loss, verified download before pause, failure recovery, startup restore after the released owned gate, and existing lifecycle/marker/platform boundaries. Python contracts for valid/tampered/replayed monitor HMAC requests, signed response binding, unchanged ordinary bridge calls, strict empty install body/redacted errors, and documentation drift. Run locked formatting/offline focused tests and binary check when the existing toolchain/cache is available, plus `compileall` and `git diff --check`. |
+| Stop condition | Stop at the first request/response authentication, response-before-commit, candidate identity, lease, marker, recovery, compiler, or focused-contract failure. Do not launch Tauri/FastAPI, bind `127.0.0.1:8766`, call a real monitor or updater, download/install/restart, build an artifact, package, sign, notarize, publish, push, or create a Release/Feed. |
+| Result (2026-08-24) | Passed for L10-D source/contract integration. Locked offline Rust verification passed formatting, the desktop binary check, the tests check, and 74 tests: 38 library tests (including 11 Host RPC and 10 authenticated bridge tests), 6 lifecycle contracts, 17 monitor-recovery contracts, 12 coordinator contracts, and 1 Windows marker static contract. The pre-existing Host RPC parser sample used only test-bound `127.0.0.1:0`; the sandbox rejected that bind, and the same locked test passed in the approved local non-sandbox run. Focused Python verification passed 63 unique tests: 4 API install/bridge/auth contracts plus 59 lifecycle, Host RPC, foundation, and documentation contracts with `DeprecationWarning` treated as errors. Version synchronization, `compileall`, and `git diff --check` passed. The implementation retains the private ownership secret, authenticates both sides of each recovery call, activates only after gate/manage and startup restore, reserves a complete candidate behind response-before-commit, records response/worker/latch loss as `CommitLost`, runs the existing verified-download/recovery coordinator, and separates Windows installer exit from macOS prepared restart. No product process, product-port bind, real Feed/monitor/updater/download/install/restart, artifact build, signing, notarization, publication, push, PR, or platform runtime smoke was run. |
+
 ### P1-SC: setup-failure termination confirmation
 
 | Field | Record |
@@ -634,35 +644,39 @@ this table.
   environments. It never reaches Web content, a Tauri command/event, API
   response, or logs; Web content can access only enumerated commands from the
   expected localhost origin.
-- `POST /api/v1/update/check` remains compatible. `POST /api/v1/update/install`
-  accepts only `{}` but currently consumes its process-local candidate and
-  fails closed. It performs no download, monitor stop, installation, or restart
-  until a recovery/relaunch coordinator can restore failed paths safely.
-- L10-R/C supplies only source-level seams for that later coordinator. Every
-  marker or bridge operation must carry and revalidate a released owned lifecycle
-  lease; Unix marker operations are descriptor-pinned and no-follow, and stores
-  following the marker-store protocol serialize whole `load/publish/clear`
-  operations with directory `flock`, re-read stale clears under the lock, and
-  sync directory metadata after publish/clear link operations. Direct edits that
-  bypass the protocol remain outside the guarantee. The minimal Windows
-  `x86_64-pc-windows-msvc` temporary-crate cross-compile passed, but Windows
-  runtime is unverified and the full Tauri Windows target check remains blocked
-  by `ring` requiring `assert.h`; Windows marker storage is source-level only,
-  and other non-Unix storage returns unavailable.
-  These seams are not wired to Host RPC, a real monitor, download, installation
-  or restart, and therefore cannot relax the current `update_install` fail-closed
-  path.
-- The fixed-loopback bridge currently has no request-level ownership
-  authentication and is not an ownership proof. Before real wiring, every
-  request/response must bind to a backend-private fresh challenge/HMAC or an
-  equivalent authenticated header, while the same lifecycle lease is
-  revalidated before and after the request; no bearer secret may be sent to a
-  candidate fixed port.
-- Future updater wiring must use a public candidate reservation followed by a
-  private fixed-enum commit. The commit must perform download+verify -> pause ->
-  install -> relaunch, account for Windows updater `2.10.1` potentially exiting
-  from `Update::install()` while macOS still needs `request_restart`, and expose
-  commit loss and failed recovery as explicit diagnosable outcomes.
+- `POST /api/v1/update/check` remains compatible and
+  `POST /api/v1/update/install` still accepts only `{}`. L10-D wires the private
+  install branch for updater-enabled profiles without accepting or returning a
+  version, URL, signature, path, or artifact ID. Current development and
+  internal-alpha profiles remain updater-disabled and therefore inert.
+- L10-R/C remains the foundation: every marker or bridge operation revalidates
+  the released owned lifecycle lease; Unix marker operations are
+  descriptor-pinned/no-follow and serialize whole `load/publish/clear`
+  operations with directory `flock`, stale-clear re-read, and directory metadata
+  sync. Windows marker storage remains source-level, its minimal temporary-crate
+  cross-compile passed, full Tauri Windows target check is still blocked by
+  `ring` requiring `assert.h`, and no Windows marker runtime is claimed.
+- L10-D activates only after gate release and `BackendHost` registration, opens
+  the marker store under the strict backend `runtime_dir`, and completes startup
+  restore before accepting updater work. Restore failure retains the marker and
+  diagnostic backend/WebUI while fixing the runtime in a failed state.
+- Every host recovery request and exact response binds to a fresh challenge and
+  HMAC-SHA256 transcript under the backend-private ownership secret. Python
+  rejects incomplete, tampered, non-empty, transfer-encoded, or replayed
+  authenticated requests; Rust requires exactly one response proof and verifies
+  it in constant time. The secret is never sent to the fixed port. Ordinary Web
+  bridge calls retain their prior unauthenticated localhost semantics and do not
+  gain updater authority.
+- `update_install` atomically consumes one fresh complete host candidate,
+  reserves the runtime, and starts a private execute/cancel-latched worker. The
+  exact success response is written and flushed before the worker can perform
+  Tauri built-in download/signature verification -> pause -> install -> relaunch.
+  Writer/spawn/latch loss is explicit `CommitLost` with no update effects;
+  restore/transaction failure is explicit `Failed`. Windows updater `2.10.1`
+  confirms backend termination in `on_before_exit` before installer launch;
+  macOS stops backend, marks relaunch prepared, then calls `request_restart()`.
+  Reserved/executing commits reject concurrent updater operations and ordinary
+  Quit.
 - The five final decision scenarios are startup surface, single instance and
   wrong port, Host RPC authorization, valid/tampered update, and monitor stop
   before install. They are not claimed by the foundation step.

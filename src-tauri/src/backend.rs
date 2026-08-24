@@ -624,12 +624,13 @@ pub struct BackendHost {
     child: Arc<Mutex<Child>>,
     child_pid: u32,
     expected_identity: ExpectedBackendIdentity,
+    ownership_secret: [u8; OWNERSHIP_SECRET_BYTES],
     ownership_verified: Arc<AtomicBool>,
     lifecycle: Arc<Mutex<BackendLifecycleState>>,
     liveness_shutdown: Arc<AtomicBool>,
     liveness_worker: Mutex<Option<JoinHandle<()>>>,
     startup_surface: StartupSurface,
-    _host_rpc: HostRpcServer,
+    host_rpc: HostRpcServer,
 }
 
 #[derive(Clone)]
@@ -783,12 +784,13 @@ impl BackendHost {
             child,
             child_pid,
             expected_identity: manifest.expected_identity,
+            ownership_secret,
             ownership_verified,
             lifecycle,
             liveness_shutdown,
             liveness_worker: Mutex::new(Some(liveness_worker)),
             startup_surface,
-            _host_rpc: host_rpc,
+            host_rpc,
         })
     }
 
@@ -829,6 +831,24 @@ impl BackendHost {
         lifecycle.phase = LifecyclePhase::OwnedRunning;
         lifecycle.startup_gate_released = true;
         Ok(())
+    }
+
+    pub fn activate_updater_runtime(&self) -> Result<bool, BackendError> {
+        self.host_rpc
+            .activate_updater_runtime(
+                &self.expected_identity.runtime_dir,
+                self.ownership_secret,
+                self.lifecycle_authority(),
+            )
+            .map_err(BackendError::HostRpc)
+    }
+
+    pub fn updater_blocks_normal_quit(&self) -> bool {
+        self.host_rpc.updater_blocks_normal_quit()
+    }
+
+    pub fn update_relaunch_prepared(&self) -> bool {
+        self.host_rpc.update_relaunch_prepared()
     }
 
     pub fn shutdown_keep_monitor(&self) -> Result<(), BackendError> {

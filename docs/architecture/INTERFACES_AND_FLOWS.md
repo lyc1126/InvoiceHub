@@ -7,7 +7,7 @@
 
 Tauri L9/P1-Q 只验证一次 development-profile 组装、启动和真实 Cmd-Q 退出流：host 用编译绑定的 manifest/launcher 启动 owned child，child 固定监听 `127.0.0.1:8766`，health/background ready 后加载首页和静态资源。`INVOICE_HUB_DEV_STATE_ROOT` 只对 development host 可用，必须显式、绝对、已存在、canonicalize 后与 bundle/core 和完整 `.app` 容器双向不包含，`Contents` sibling 同样拒绝，且不传给 Python child。clean-commit 样本的前台 Cmd-Q 经自定义菜单触发 `app.exit(0)` 与 `ExitRequested`，随后 shutdown POST 200、`server_state=stopped`、monitor 未运行、host/backend/PID/8766 清理完成；打开的 SSE 连接由既定 `kill + wait` 兜底。外部 AppleScript quit、tray 点击等不是该样本；该流也未调用真实 Feed/安装、原生 picker、browser、单实例或打印，不能推断为任何发布接口已验收。
 
-L10-R 仅定义 future recovery/relaunch coordinator 的内部 Rust transaction，不增加 HTTP、Host RPC 或页面接口。它以 released owned lifecycle lease 绑定 marker 与 future bridge 操作，Unix marker 最终操作固定在 opened-directory descriptor 下，非 Unix 返回 unavailable；该 transaction 未在 `update_install` 路径调用，公开 API 仍返回既有不可用语义。
+L10-R/C 定义的 lease、marker、fixed-loopback bridge 和 pure coordinator 已由 L10-D 接入 Host RPC/updater/startup restore，但不增加新的浏览器公开接口：`POST /api/v1/update/install {}` 仍只委托固定 enum。Host 在 startup gate 释放并 manage 后激活 updater、先恢复 runtime marker；install 成功响应 flush 后才放行私有 download+verify -> pause -> install -> relaunch。现有 development/internal-alpha updater-disabled，且尚无真实 Feed、monitor、安装或平台 smoke。
 
 ## 1. 从页面到真值的完整链路
 
@@ -54,7 +54,7 @@ flowchart LR
 | `GET /api/v1/health` | `health` | 运行状态、路径/PID、build/API/协议/能力，以及 `product_version/package_id/platform/architecture/package_type` 与 package manifest 状态 | 双平台启动器、设置页、macOS 严格握手；当前健康可先于后台同步完成 |
 | `GET /api/v1/about` | `about` | 纯本地返回产品、package、build、公开链接和最近更新状态 | 设置“关于”；绝不触发网络 I/O |
 | `POST /api/v1/update/check` | `check_for_updates` | JSON 只允许布尔 `force`；返回 `idle/checking/up_to_date/available/offline/invalid/unsupported` 与候选 artifact | 同源写请求；线程池执行；URL/主机不可由客户端覆盖 |
-| `POST /api/v1/update/install` | `install_update` | 只接受空 JSON 对象 `{}`；只消费本进程已批准且与 allowlisted Feed 最新版本完全一致的 host candidate | Tauri 配置时要求精确 host origin；当前 host 清除候选后 fail closed，直到 recovery/relaunch coordinator 完整实现；版本/URL/路径/签名一律拒绝；Host RPC 失败固定 `503 Update installation unavailable`，不得泄露 token 或候选元数据 |
+| `POST /api/v1/update/install` | `install_update` | 只接受空 JSON 对象 `{}`；只消费本进程已批准且与 allowlisted Feed 最新版本完全一致的 host candidate | Tauri 配置时要求精确 host origin；host 原子消费 300 秒内完整候选，先 flush `{"ok":true}` 再放行私有 update commit；版本/URL/路径/签名/artifact ID 一律拒绝且不返回；Host RPC/commit 准备失败固定 `503 Update installation unavailable`，不得泄露私有元数据 |
 | `GET /api/v1/settings` | `settings` | 主机端口、活动 TargetProfile、普通/成本产物、最近目录、偏好、bridge、诊断路径 | 首页、设置页、backend |
 | `PUT /api/v1/settings` | `update_settings` | `{watch_dir}`；有效目录才切换，停止旧 monitor，写配置并触发后台同步 | 首页、设置页；业务失败通常返回 `ok=false` 而非 HTTP 4xx |
 | `GET /api/v1/preferences` | `preferences` | 成本显示、路径显示、单据策略、OCR 候选目录、关闭方式、`startup_surface`、`auto_check_updates` 及 `desktop_available` | costs/documents/OCR/settings 与 macOS 壳 |
@@ -173,36 +173,37 @@ Quit，因为该路径和外部 AppleScript quit 都可能绕过 Tauri `ExitRequ
 `kill + wait` owned child，无法确认退出则 `prevent_exit`。Force Quit、SIGKILL、注销和
 断电不属于这一有序退出协议。
 
-### 3.4.2 Tauri L10-C recovery/update foundation
+### 3.4.2 Tauri L10-D authenticated recovery/update runtime
 
-L10-C 只增加可注入的 source-level seams，不增加浏览器公开 API、HostRpc
-命令或真实运行流程：
+L10-D 复用 L10-R/C 的 lease、marker、fixed-loopback bridge 和 pure coordinator，不新增浏览器
+公开 API 或 Host RPC 命令：
 
-- `PythonMonitorRecoveryBridge` 只能访问固定 `127.0.0.1:8766` 上的
-  `/api/v1/bridge/status`、`/api/v1/bridge/stop` 和 `/api/v1/bridge/start`；端点由固定枚举选择，调用方不能传 URL、路径或 body，且每类请求有界超时。
-- 该 bridge 当前没有请求级 ownership authentication，固定 endpoint/method/origin 不是
-  ownership proof。真实接线前必须用 backend-private secret 的 fresh challenge/HMAC（或等价
-  authenticated header）把每次请求和响应绑定到该次调用，并保留同一 lifecycle lease 的请求前后
-  revalidation；不得向候选固定端口发送 bearer secret。
-- `BackendLifecycleAuthority` 是从 `BackendHost` 共享既有 child、ownership 和
-  lifecycle `Arc` 的 cloneable view。lease 包含 generation、phase、health/owned/process
-  PID、startup gate 与 state scope；marker 或 bridge 操作前后都必须重新验证同一 lease。
-- `UpdateCoordinator` 的安装边界只接收 `VerifiedUpdate`，不接收原始下载 bytes；顺序固定为
-  download+verify -> pause -> install -> relaunch。pause/install/relaunch 失败时保留主错误和
-  restore attempt，不能把恢复失败吞掉。
-- Windows marker store 只从已打开目录句柄做 handle-relative、no-reparse leaf 操作；当前有
-  source/static contract，最小 `x86_64-pc-windows-msvc` 临时 crate 交叉编译已通过，但没有
-  Windows runtime 证据，完整 Tauri Windows target check 仍因 `ring` 的 `assert.h` 依赖阻塞。
-  Unix 遵循 marker-store 协议的 whole-operation `load/publish/clear` 由目录 `flock` 串行化，
-  stale-clear 在锁内重读，publish/clear 在最终 link/unlink 后同步目录元数据；绕过协议的同用户
-  直接编辑不在保证内。其它非 Unix store 仍不可用。
+- `BackendHost` 私有保留启动 Python 使用的 32-byte ownership secret。每个 recovery 请求使用
+  fresh 64 字符小写十六进制 challenge，并对 domain/method/path/challenge/空 body SHA-256 做
+  HMAC-SHA256；Python 要求完整认证头、`Content-Length: 0`、无 transfer-encoding，并用 128 项
+  进程内有界集合拒绝 replay。响应 proof 再绑定相同 method/path/challenge、HTTP status 和精确 body
+  SHA-256；Rust 要求恰好一个 proof 并常量时间验证。普通未认证 bridge 页面调用保持原行为。
+- Updater-disabled profile 的 runtime 固定 inert。Enabled profile 只有在 setup surface 成功、startup
+  gate 释放、`BackendHost` 已 manage 后才从 `expected_identity.runtime_dir` 打开平台 marker store，
+  并先调用 authenticated `restore_owned_monitor`。恢复只有 `running && ready` 才清 marker；失败保留
+  marker、backend/WebUI 与诊断，同时把 updater 固定为 failed。
+- `update_check` 保留完整 cloneable `Update`，内部 artifact ID 由
+  version/target/download URL/signature 的域分隔 SHA-256 transcript 产生；Web 只接收版本。
+  `update_install` 原子消费 fresh candidate 并 reserve runtime，启动 execute/cancel latch 阻塞的私有
+  worker；精确 `{"ok":true}` 写入并 flush 后才发送 execute。writer/spawn/latch loss 进入
+  `CommitLost`，worker 不运行下载、marker、monitor 或 installer；reserved/executing 时拒绝并发操作
+  与普通 Quit。
+- 私有 worker 调用锁定 Tauri `Update::download` 完成内置签名验证，再由 `UpdateCoordinator` 执行
+  pause -> `Update::install` -> relaunch；pause/install/relaunch 失败保留 primary 与 restore attempt。
+  Windows 的 updater `on_before_exit` 先调用 managed backend 的 structured shutdown/terminate，无法
+  确认终止则非零退出且不启动 installer。macOS 安装返回后先停 backend、标记 relaunch prepared，
+  再 `request_restart()`；对应 `ExitRequested` 才跳过重复 shutdown。
+- marker store 继续遵守 Unix descriptor-pinned/no-follow/flock/directory-sync 与 Windows
+  handle-relative/no-reparse 边界。最小 Windows store 交叉编译是历史 source 证据；完整 Tauri Windows
+  target 与真实 Windows runtime 仍未验证。
 
-这些 seams 没有接入 `HostRpc`、`update_install`、startup restore 或真实 monitor，因此不改变
-当前 candidate-consuming、fail-closed install 语义。未来 updater 必须由 public update request
-先预留 host-owned candidate 并返回，再由 private fixed-enum commit 执行
-download+verify -> pause -> install -> relaunch；锁定 updater `2.10.1` 下 Windows
-`Update::install()` 可能直接 `std::process::exit(0)`，macOS 安装后仍需 `request_restart`，commit
-丢失和失败恢复都必须显式可诊断。
+上述接线只证明源码顺序与 contract。现有 development/internal-alpha updater-disabled；没有运行
+产品进程、真实 Feed、monitor、下载、安装、重启、制品、签名或发布。
 
 ### 3.5 业务资料夹与做账
 
@@ -669,21 +670,22 @@ sequenceDiagram
         API->>API: 仅版本完全一致时授予内存 approval
         UI->>API: `POST /api/v1/update/install` `{}`
         API->>Platform: `update_install`（不转发版本、URL、路径或签名）
-        Platform-->>API: 当前清除候选并返回 unavailable（不下载/不停止/不安装）
+        Platform->>Platform: 原子消费 fresh candidate；spawn latch-blocked worker
+        Platform-->>API: 写入并 flush `{"ok":true}`
+        API-->>UI: accepted；不宣称安装完成
+        Platform->>Platform: release latch；Tauri download + 内置签名验证
+        Platform->>Monitor: authenticated pause；marker 后确认 stopped
+        Platform->>Platform: install；Windows callback / macOS relaunch protocol
     end
 ```
 
-`v0.3` 起，自动检查只在有效发行 package manifest 且 `auto_check_updates=true` 时延迟执行；失败不会阻塞 localhost、扫描或汇总，也不会覆盖上次有效 ETag/feed/result。Tauri host 只将随机 Host RPC token 传给其直接启动的 Python backend，backend 启动时捕获并从 descendant 环境清除；token 不得进入网页、Tauri command/event、API 响应或日志，携带 token 的 private loopback transport 必须显式禁用环境代理。更新命令面只有 `update_check/update_install`，backend ownership 使用新 challenge 的 HMAC-SHA256，而不是发送 bearer proof 给端口监听者。网页不得获知 token，也不能把安装或原生能力变成任意 URL、路径或命令代理。`latest.json` 与平台更新元数据由同一工具从真实产物、收据、源码归档与固定 release Tag commit 的受控树生成，并通过版本、URL、长度、签名、source commit、tree SHA、文件数和 core build 一致性校验后才可上线。同一进程具备 Tauri host marker 与 private RPC 时，API、设置页和后台 timer 的 `check_for_updates` 调用都属于 strict delegated-install preflight；只有非 Tauri/非 host 检查不获取 `_host_update_lock` 并保留 `UpdateService.check` 的 cache/ETag/nonblocking-busy 语义。host 检查锁竞争时立即返回不持久化 busy 结果，不访问 metadata/candidate 且不清除既有 approval；install 锁竞争立即以脱敏 `HostRpcError` 失败，不消费 approval 或发送第二次 private RPC。host approval 必须在该 session 取得显式携带 `Cache-Control: no-cache`、不带 ETag 的 fresh allowed Feed `200` body 并重新验证，缓存、`304`、离线和错误不授予 approval。Host updater metadata builder 固定 5 秒总时限；listener loop 主动清除到期 candidate。当前 host 的 install 路径再清除候选并 fail closed，直到 recovery/relaunch coordinator 能在任何失败后恢复既有 monitor/进程状态。未来 coordinator 才可按下载+Minisign、monitor stop/recheck、安装/restart 顺序实施。
+`v0.3` 起，自动检查只在有效发行 package manifest 且 `auto_check_updates=true` 时延迟执行；失败不会阻塞 localhost、扫描或汇总，也不会覆盖上次有效 ETag/feed/result。Tauri host 只将随机 Host RPC token 传给其直接启动的 Python backend，backend 启动时捕获并从 descendant 环境清除；token 不得进入网页、Tauri command/event、API 响应或日志，携带 token 的 private loopback transport 必须显式禁用环境代理。更新命令面只有 `update_check/update_install`；网页不得获知 token、ownership secret、URL、签名或内部 artifact ID，也不能把原生能力变成任意 URL、路径或命令代理。`latest.json` 与平台更新元数据由同一工具从真实产物、收据、源码归档与固定 release Tag commit 的受控树生成，并通过版本、URL、长度、签名、source commit、tree SHA、文件数和 core build 一致性校验后才可上线。同一进程具备 Tauri host marker 与 private RPC 时，API、设置页和后台 timer 的 `check_for_updates` 调用都属于 strict delegated-install preflight；只有非 Tauri/非 host 检查不获取 `_host_update_lock` 并保留 `UpdateService.check` 的 cache/ETag/nonblocking-busy 语义。host 检查锁竞争时立即返回不持久化 busy 结果，不访问 metadata/candidate 且不清除既有 approval；install 锁竞争立即以脱敏 `HostRpcError` 失败，不消费 approval 或发送第二次 private RPC。host approval 必须在该 session 取得显式携带 `Cache-Control: no-cache`、不带 ETag 的 fresh allowed Feed `200` body并重新验证，缓存、`304`、离线和错误不授予 approval。Host updater metadata 与下载对象固定 5 秒时限；listener loop 主动清除到期 candidate。成功 HTTP install 只代表私有 commit 已被安全放行，不代表下载、安装或实体升级成功；Tauri 不向 Web 暴露用户取消、installer 或 restart 的最终结果。
 
-L10-R/C 没有改变上图中的 install 分支：它只提供 lease、marker、fixed-loopback bridge 和 pure coordinator
-契约，要求每次 marker 或 bridge 操作前后复核同一 released lease；仅 ready 的 owned monitor 可被暂停，
-恢复只有 later owned status 为 `running && ready` 后才能清 marker。source-level coordinator 只接收
-verified artifact，未接入真实下载、Host RPC、updater、startup restore、monitor 或 installer 替换，故不得
-把这些 contracts 当作更新成功、monitor stop 或平台 smoke 证据。未来两阶段 commit 必须显式处理 Windows
-安装可能退出 host、macOS `request_restart` 和 commit loss/失败恢复。fixed-loopback bridge 当前没有
-请求级 ownership authentication；真实接线前必须以 backend-private secret 的 fresh challenge/HMAC
-（或等价 authenticated header）绑定请求/响应，并保留请求前后 lifecycle revalidation，不能向候选
-固定端口发送 bearer secret。
+L10-D 改变的是 host 内部 install 分支，不改变公开 body 或返回形状。双向 HMAC recovery、startup restore、
+response-before-commit、CommitLost、coordinator restore 和平台退出都已接线；每个 marker/bridge 操作仍前后复核
+同一 released lease，且仅 ready owned monitor 可暂停、later `running && ready` 才可清 marker。普通 localhost
+bridge 并未因此获得跨客户端认证。现有 updater-disabled 制品不会走该分支，本轮也没有以真实 Feed/monitor/
+installer/restart 运行它，因此不得把源码 contracts 当作更新成功或平台 smoke 证据。
 
 hosted check 的 lock-contended 分支在 busy 结果后直接返回，不能落入统一的 `updates.checked` 事件写入；这使响应不依赖 SQLite，其他检查与成功路径仍记录事件。
 
