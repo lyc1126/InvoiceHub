@@ -5,7 +5,7 @@
 ## 公开基线
 
 - 本仓库已将单一、脱敏的根提交发布为公开 `main`。旧的私有提交图、验证记录、二进制包和 Tag 只保留在 owner-only 私有归档中，不属于公开历史，也不会作为 Release 资产上传。
-- 当前开发版本为 `0.3.0-alpha.2`；工作线 `codex/tauri2-alpha2-packaging` 从合并 L10-E 的 `main` 建立。macOS public-preview 和 Windows NSIS 只有组装入口与契约，尚未创建 Tag、SignPath 请求或公开 Release。任何公开二进制都必须从脱敏图上的新版本、新 Tag 和新发布证据构建。
+- 当前开发版本为 `0.3.0-alpha.2`；`v0.3.0-alpha.2` Tag 已创建，但没有 GitHub Release、公开资产或 SignPath 请求。该 Tag 的 macOS public-preview staging 将独立包身份误写为 `dmg`，因此不能作为公开二进制来源；修复分支待合并后必须重新确定 Tag。任何公开二进制都必须从脱敏图上的干净版本、Tag 和新发布证据构建。
 - 历史净化的范围、私有备份和已完成的公开门槛见 [执行记录](docs/release/HISTORY_SANITIZATION_EXECUTION.md)。公开仓库已启用 DCO、Dependabot、Secret Scanning、Push Protection 和私密漏洞报告；仍未创建 Release 或更新 Feed。
 
 ## 保留的产品边界

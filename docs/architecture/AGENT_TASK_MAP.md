@@ -2,7 +2,7 @@
 
 > 作用：把自然语言任务转换成“先读哪里、从哪个符号开工、会影响什么、至少测什么”。
 > 公共权威基线：单一脱敏根提交；退休私有提交、Tag、包和验证材料不在公开图中。
-> 当前边界：`v0.3.0-alpha.2` 从合并 L10-E 的公开 `main` 开始 public-preview 组装；现有 foundation、internal-alpha 与 recovery-smoke 仍只是历史证据。macOS public-preview 和 Windows NSIS/SignPath 只有组装入口与契约，尚未创建 Tag、SignPath 请求、公开 Release 或最终平台烟测。
+> 当前边界：`v0.3.0-alpha.2` 从合并 L10-E 的公开 `main` 开始 public-preview 组装；现有 foundation、internal-alpha 与 recovery-smoke 仍只是历史证据。`v0.3.0-alpha.2` Tag 已创建，但没有 SignPath 请求、公开 Release 或最终平台烟测；该 Tag 的 macOS public-preview 包型缺陷正在修复，合并后必须重新确定 Tag。
 > 校验规则：精确的当前本地与 GitHub HEAD 以实时 Git 引用和双向差异为准。
 
 ## 1. 使用方法
