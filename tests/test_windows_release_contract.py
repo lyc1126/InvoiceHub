@@ -511,7 +511,7 @@ def test_windows_repackage_initializer_runs_in_a_fresh_pwsh_process(tmp_path: Pa
 
     assert completed.returncode == 0, completed.stdout + completed.stderr
     session = json.loads(
-        (root / "dist/evidence/windows-v0.3.0-alpha.1/windows-repackage-session.json").read_text(
+        (root / f"dist/evidence/windows-v{PRODUCT_VERSION}/windows-repackage-session.json").read_text(
             encoding="utf-8-sig"
         )
     )
@@ -537,7 +537,7 @@ def test_windows_repackage_initializer_rejects_insufficient_free_disk(tmp_path: 
     assert completed.returncode != 0
     assert "At least 10 GiB free disk is required" in output
     assert not (
-        root / "dist/evidence/windows-v0.3.0-alpha.1/windows-repackage-session.json"
+        root / f"dist/evidence/windows-v{PRODUCT_VERSION}/windows-repackage-session.json"
     ).exists()
 
 
