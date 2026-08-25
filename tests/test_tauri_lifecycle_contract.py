@@ -33,9 +33,10 @@ def test_tauri_lifecycle_uses_exact_official_plugins_and_has_no_webview_command_
     assert "DESKTOP_HOST_CHALLENGE_HEADER" in backend
     assert "DESKTOP_HOST_PROOF_HEADER" not in backend
     assert "spawn_backend_liveness_watcher" in backend
+    assert "pub mod monitor_recovery;" in (ROOT / "src-tauri" / "src" / "lib.rs").read_text(encoding="utf-8")
 
 
-def test_tauri_updater_manifest_and_candidate_guards_fail_closed() -> None:
+def test_tauri_updater_manifest_candidate_and_commit_guards_fail_closed() -> None:
     main = (ROOT / "src-tauri" / "src" / "main.rs").read_text(encoding="utf-8")
     backend = (ROOT / "src-tauri" / "src" / "backend.rs").read_text(encoding="utf-8")
     host_rpc = (ROOT / "src-tauri" / "src" / "host_rpc.rs").read_text(encoding="utf-8")
@@ -53,10 +54,15 @@ def test_tauri_updater_manifest_and_candidate_guards_fail_closed() -> None:
     assert "let _ = updater.clear_expired_candidate(Instant::now());" in host_rpc
     assert "clear_candidate_if_current(self.candidate.as_ref(), generation)" in host_rpc
     install = host_rpc[host_rpc.index("fn install(&self)") :]
-    assert "self.clear_candidate()?;" in install
-    assert "Err(HostRpcServerError::UpdaterUnavailable)" in install
+    assert ".take()" in install
+    assert "candidate_is_fresh(pending.checked_at, Instant::now())" in install
+    assert "self.runtime_gate.reserve_commit()?;" in install
+    assert "spawn_deferred_commit" in install
+    assert "HostRpcResponse::UpdateInstall" in install
     assert "download_and_install" not in host_rpc
-    assert "stop_and_verify_monitor" not in host_rpc
+    assert ".update.download(" in host_rpc
+    assert "self.update.install(update.into_bytes())" in host_rpc
+    assert "UpdateCoordinator::new" in host_rpc
 
 
 def test_tauri_startup_surface_uses_the_pinned_host_only_opener_and_empty_webview_capability() -> None:
@@ -216,6 +222,108 @@ def test_tauri_checkout_guard_and_liveness_order_fail_closed() -> None:
     assert backend.index("ownership_verified.store(true, Ordering::Release);") < backend.index(
         "let liveness_worker = spawn_backend_liveness_watcher"
     )
+
+
+def test_tauri_monitor_recovery_foundation_requires_a_released_lifecycle_lease_and_pinned_marker_store() -> None:
+    cargo = tomllib.loads((ROOT / "src-tauri" / "Cargo.toml").read_text(encoding="utf-8"))
+    backend = (ROOT / "src-tauri" / "src" / "backend.rs").read_text(encoding="utf-8")
+    main = (ROOT / "src-tauri" / "src" / "main.rs").read_text(encoding="utf-8")
+    recovery = (ROOT / "src-tauri" / "src" / "monitor_recovery.rs").read_text(encoding="utf-8")
+
+    assert cargo["target"]["cfg(unix)"]["dependencies"]["libc"]["version"] == "=0.2.189"
+    assert "pub fn release_startup_gate" in backend
+    assert "impl LifecycleAuthority for BackendHost" in backend
+    assert "capture_released_lease" in backend
+    assert "revalidate_lease" in backend
+    assert main.index("backend.release_startup_gate()") < main.index("app.manage(backend);")
+    for token in (
+        "LifecycleLease",
+        "MonitorRecoveryTransaction",
+        "RecoveryMarkerStore",
+        "RecoveryPending",
+        "fn load_marker",
+        "fn publish_marker",
+        "fn clear_marker",
+        "libc::openat",
+        "libc::O_NOFOLLOW",
+        "libc::linkat",
+        "libc::unlinkat",
+        "libc::AT_SYMLINK_NOFOLLOW",
+        "MarkerStoreError::UnsupportedPlatform",
+        "MarkerStoreError::MarkerChanged",
+    ):
+        assert token in recovery
+    host_rpc = (ROOT / "src-tauri" / "src" / "host_rpc.rs").read_text(encoding="utf-8")
+    assert "MonitorRecoveryTransaction::new" in host_rpc
+    assert ".restore_owned_monitor()" in host_rpc
+    assert "UpdateCoordinator::new" in host_rpc
+
+
+def test_tauri_updater_runtime_activates_after_the_owned_gate_and_commits_after_response_flush() -> None:
+    backend = (ROOT / "src-tauri" / "src" / "backend.rs").read_text(encoding="utf-8")
+    host_rpc = (ROOT / "src-tauri" / "src" / "host_rpc.rs").read_text(encoding="utf-8")
+    main = (ROOT / "src-tauri" / "src" / "main.rs").read_text(encoding="utf-8")
+
+    backend_struct = backend[backend.index("pub struct BackendHost") : backend.index("#[derive(Clone)]\npub struct BackendLifecycleAuthority")]
+    assert "ownership_secret: [u8; OWNERSHIP_SECRET_BYTES]" in backend_struct
+    assert "pub ownership_secret" not in backend
+    assert "fn ownership_secret(" not in backend
+
+    setup = main[main.index(".setup(move |app|") : main.index(".build(tauri::generate_context!())")]
+    assert setup.index("backend.release_startup_gate()") < setup.index("app.manage(backend);")
+    assert setup.index("app.manage(backend);") < setup.index("backend.activate_updater_runtime()")
+    assert "the backend remains available for diagnostics" in setup
+    assert "InvoiceHub updater recovery runtime activated" in setup
+
+    activation = host_rpc[host_rpc.index("fn activate(") : host_rpc.index("fn clear_candidate")]
+    assert "if !self.runtime_gate.begin_activation()?" in activation
+    assert "open_platform_marker_store(runtime_dir)" in activation
+    assert "PythonMonitorRecoveryBridge::new(ownership_secret)" in activation
+    assert ".restore_owned_monitor()" in activation
+    assert activation.index(".restore_owned_monitor()") < activation.index("finish_activation()")
+
+    response_commit = host_rpc[host_rpc.index("fn write_rpc_reply") : host_rpc.index("fn write_rejected_response")]
+    assert response_commit.index("write_response(writer, reply.response)") < response_commit.index("commit.execute()")
+    assert "writer.flush()" in response_commit
+    assert "commit.cancel();" in response_commit
+    assert "mark_commit_lost" in host_rpc
+    assert '"invoicehub-update-commit"' in host_rpc
+
+    exit_guard = main[main.index("fn prepare_backend_exit") : main.index("fn complete_setup_failure_cleanup")]
+    assert exit_guard.index("backend.update_relaunch_prepared()") < exit_guard.index(
+        "backend.updater_blocks_normal_quit()"
+    )
+    assert "return false;" in exit_guard
+    assert "backend.shutdown_keep_monitor_or_terminate()" in host_rpc
+    assert "self.app_handle.request_restart();" in host_rpc
+
+
+def test_tauri_backend_lifecycle_authority_is_cloneable_and_delegated() -> None:
+    backend = (ROOT / "src-tauri" / "src" / "backend.rs").read_text(encoding="utf-8")
+
+    assert "#[derive(Clone)]\npub struct BackendLifecycleAuthority" in backend
+    assert "pub fn lifecycle_authority(&self) -> BackendLifecycleAuthority" in backend
+    factory = backend[
+        backend.index("pub fn lifecycle_authority") : backend.index("    pub fn launch", backend.index("pub fn lifecycle_authority"))
+    ]
+    for handle in ("child", "ownership_verified", "lifecycle"):
+        assert f"Arc::clone(&self.{handle})" in factory
+    assert "self.child_pid" in factory
+
+    authority_impl = backend[
+        backend.index("impl LifecycleAuthority for BackendLifecycleAuthority") : backend.index(
+            "impl LifecycleAuthority for BackendHost"
+        )
+    ]
+    assert "self.ownership_verified.load(Ordering::Acquire)" in authority_impl
+    assert "current_child_pid(&self.child)" in authority_impl
+    assert "RecoveryError::StartupGateHeld" in authority_impl
+    assert "RecoveryError::LeaseInvalid" in authority_impl
+    assert "RecoveryError::OwnershipLost" in authority_impl
+
+    host_impl = backend[backend.index("impl LifecycleAuthority for BackendHost") :]
+    assert "self.lifecycle_authority().capture_released_lease()" in host_impl
+    assert "self.lifecycle_authority().revalidate_lease(lease)" in host_impl
 
 
 def test_tauri_manifest_uses_runtime_derived_user_state_paths() -> None:

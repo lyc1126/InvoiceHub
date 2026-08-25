@@ -146,10 +146,28 @@ fn strict_openapi_requires_the_expected_http_methods() {
             "/api/v1/update/install": {"post": {}},
             "/api/v1/server/shutdown": {"post": {}},
             "/api/v1/bridge/status": {"get": {}},
-            "/api/v1/bridge/stop": {"post": {}}
+            "/api/v1/bridge/stop": {"post": {}},
+            "/api/v1/bridge/start": {"post": {}}
         }
     });
     assert_eq!(validate_openapi_routes(&valid), Ok(()));
+
+    let mut missing_start = valid.clone();
+    missing_start["paths"]
+        .as_object_mut()
+        .expect("OpenAPI paths object")
+        .remove("/api/v1/bridge/start");
+    assert_eq!(
+        validate_openapi_routes(&missing_start),
+        Err(HandshakeError::OpenApiMismatch)
+    );
+
+    let mut wrong_start_method = valid.clone();
+    wrong_start_method["paths"]["/api/v1/bridge/start"] = json!({"get": {}});
+    assert_eq!(
+        validate_openapi_routes(&wrong_start_method),
+        Err(HandshakeError::OpenApiMismatch)
+    );
 
     let wrong_method = json!({
         "paths": {

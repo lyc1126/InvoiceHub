@@ -96,6 +96,21 @@ are outside this replacement scope.
   archive only in a separately isolated private repository; it must not
   re-expose the retired graph publicly.
 
+## Sanitized Legacy Lookup
+
+The public tree may contain a sanitized feature-and-defect lookup index for
+development navigation. It is limited to public categories, durable
+invariants, and current-source entry points; it is not a copy, excerpt, link,
+or path reference to the original changelog. Original titles, timestamps,
+commits, local paths, business facts, runtime details, and validation
+narratives remain outside the public working tree and release inputs.
+
+When a current investigation needs evidence not represented by that index, the
+owner must inspect the private archive outside the public tree and contribute
+only a newly audited, redacted conclusion. The raw changelog, its attachments,
+and any local link to it must never be staged, committed, copied into ignored
+runtime directories, or used as a fixture.
+
 ## Replacement Version Policy
 
 No pre-sanitization archive is a public release input. Its embedded source

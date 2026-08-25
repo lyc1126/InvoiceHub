@@ -1,10 +1,10 @@
 # InvoiceHub 开发架构与工程导航
 
 > 文档状态：当前开发实现的权威架构入口
-> 更新日期：2026-08-18
+> 更新日期：2026-08-24
 > 公共权威基线：经过审计的单一脱敏根提交；旧私有提交、Tag、二进制和验证材料不在公开图中
 > 公开状态：候选树、保留 Git 对象和托管面已完成一次内容与凭据审计；公开图从脱敏根提交开始，详见 `docs/release/HISTORY_SANITIZATION_EXECUTION.md`
-> 当前开发线：`codex/tauri2-unified-desktop` 已从公开 `main` 建立，首个版本为 `0.3.0-alpha.1`；Tauri 已完成受控 lock、代码级生命周期/Host RPC/updater contracts、隔离 TestClient L6 API runtime，并构建且隔离烟测一个 macOS arm64 development `.app`。随后在独立 `codex/tauri-macos-internal-alpha` 线上构建并验证了一个 internal-alpha arm64 `.app/.dmg`，另完成一次临时 state root 启动烟测；裸 checkout 仍缺经编译绑定 manifest 并 fail-closed；尚无 Release。
+> 当前开发线：`codex/tauri2-update-recovery` 基于当前公开 `origin/main` 的稳定基线建立，承接 `0.3.0-alpha.1` 的 Tauri foundation。此前 `codex/tauri2-unified-desktop` 的统一桌面工作与 `codex/tauri-macos-internal-alpha` 的 internal-alpha 构建/验证结果均作为历史上下文保留在该基线中；该分支实现不表示 `main` 或公开 Release 已更新。裸 checkout 仍缺经编译绑定 manifest 并 fail-closed；尚无 Release。
 > 校验规则：精确的本地与 GitHub HEAD 以实时 `git rev-parse`、`git ls-remote` 和双向差异为准；发行源码候选不等于双平台成品 RC 或 GitHub 已发布版本
 
 ## 1. 这套文档解决什么问题
@@ -26,6 +26,7 @@ InvoiceHub 不是只有一个 FastAPI 页面。它同时包含发票提取、文
 - [数据结构与算法](architecture/DATA_AND_ALGORITHMS.md)：模型、数据库、投影、算法和公式。
 - [Agent 任务导航](architecture/AGENT_TASK_MAP.md)：按工程任务定位修改点和验收点。
 - [注释与设计原因地图](architecture/COMMENT_RATIONALE_MAP.md)：高价值注释点及其不变量。
+- [旧工作区功能与故障回溯索引](legacy/OLD_WORKSPACE_CHANGELOG_INDEX.md)：脱敏的历史查询入口，不含原始私有记录。
 
 ## 2. 事实来源和状态标记
 
@@ -38,10 +39,11 @@ InvoiceHub 不是只有一个 FastAPI 页面。它同时包含发票提取、文
 | 3 | `README.md`、`IMPLEMENTATION_STATUS.md` 等真值文档 | 运行方式、完成状态和验收口径 |
 | 4 | `CHANGELOG.md` | 设计如何演进、某个保护逻辑为什么出现 |
 | 5 | `docs/BASELINE_FROM_OLD_PROJECT.md` | 旧项目迁移基线，不代表重构版目录和实现 |
+| 6 | `docs/legacy/OLD_WORKSPACE_CHANGELOG_INDEX.md` | 旧工作区功能与故障的脱敏查询路线，不是原始 Changelog 或当前行为真值 |
 
 文中使用四种状态：
 
-- **当前实现**：已存在于当前脱敏源码快照，或明确标注为后续 `codex/tauri2-unified-desktop` 开发候选，并有源码或测试证据。
+- **当前实现**：已存在于当前脱敏源码快照，或明确标注为当前 `codex/tauri2-update-recovery` 开发候选，并有源码或测试证据。
 - **历史原因**：用于解释设计形成过程，不表示旧实现仍然存在。
 - **未启用能力**：保留接口或页面，但当前正式产品明确禁用。
 - **架构债务**：当前可以运行，但结构、重复或测试覆盖仍有维护风险。
@@ -52,9 +54,17 @@ InvoiceHub 不是只有一个 FastAPI 页面。它同时包含发票提取、文
 
 阻断解除后，`v0.3` 从公开后的 `main` 演进。Tauri 2 只提供窗口、托盘、单实例、原生面板、打印、后端生命周期、随机令牌 Host RPC 和 updater，继续复用 Python/FastAPI/Web/monitor 业务核心。它只能绑定 `127.0.0.1:8766`，未知端口占用必须失败；不能自动换端口或接入旧实例。
 
-当前代码边界已实现固定端口的 spawned-child ownership：Host 先读取 bundle manifest 的原始字节并要求 SHA-256 与编译期 `INVOICE_HUB_BUNDLE_MANIFEST_SHA256` 相等。裸源码 checkout 没有该输入，因此以状态 `78` 退出；development assembler 则从 allowlisted core、schema-3 manifest 和显式 venv launcher stage 资源后注入该哈希，release profile 仍需独立的正式发行输入。Host 以新 challenge 要求 backend 回传 HMAC-SHA256，随后复核 child PID、build/package identity、静态首页和 OpenAPI 的精确 HTTP 方法。读取严格的 `startup_surface` 偏好后，必须再次发起 fresh challenge/HMAC 与 identity 复核，才 arm 授权并选择 `desktop` 的无 IPC WebView 或 `browser` 的 host-only 固定 origin opener；托盘和单实例重开同一 surface，desktop 关闭只隐藏窗口且不停止 monitor。Tray Quit 与 macOS 自定义应用菜单/Cmd-Q 只请求同一个 `app.exit(0)`；应用菜单不使用会直接绑定原生 `terminate:` 的 predefined Quit。Host 收到 `ExitRequested` 后才请求结构化 `keep_monitor` shutdown 并有界等待 owned child，错误或超时后显式 `kill + wait`，无法确认 child 已退出则阻止 host 退出，不能依赖进程 `Drop`。外部 AppleScript quit、Force Quit 或信号可以绕过该事件，不属于有序退出承诺。Host 只把 Host RPC token 传给其直接启动的 Python backend，backend 启动时捕获并从 descendant 环境清除；token 不进入 Web、Tauri command/event、API 响应或日志，携带 token 的 private loopback 请求显式绕过环境代理。Rust dialog 最多 120 秒，Python 等待 125 秒并在四条 picker route 上把 private failure 固定映射为脱敏 503；release-host updater metadata 请求另有 5 秒总时限，不能永久占住 operation mutex。development profile 的 updater 委托明确禁用；它必须显式给出已存在、canonicalize 后与 bundle/core 及完整 macOS `.app` 容器双向不包含的绝对 `INVOICE_HUB_DEV_STATE_ROOT`，`Contents` sibling 同样拒绝，并在启动 Python child 前清除它。release-host `update_install` 也在 recovery/relaunch coordinator 完整实现前故意 fail closed：它只清除候选，不下载、不停 monitor、不安装或重启。L9/P1-Q 已使用隔离 state root 验证 `127.0.0.1:8766` owned backend、health/background ready、首页/静态资源、desktop 默认值，以及 clean-commit 样本上真实 Cmd-Q 的 shutdown POST、stopped state、host/backend/PID/端口清理；打开的 SSE 连接由显式 `kill + wait` 兜底收束，且未触碰真实 Application Support。外部终止仍不属于该结论。该样本没有覆盖原生面板、browser/tray、真实单实例、下载/安装、DMG、签名或任何平台 release smoke。
+当前代码边界已实现固定端口的 spawned-child ownership：Host 先读取 bundle manifest 的原始字节并要求 SHA-256 与编译期 `INVOICE_HUB_BUNDLE_MANIFEST_SHA256` 相等。裸源码 checkout 没有该输入，因此以状态 `78` 退出；development assembler 则从 allowlisted core、schema-3 manifest 和显式 venv launcher stage 资源后注入该哈希，release profile 仍需独立的正式发行输入。Host 以新 challenge 要求 backend 回传 HMAC-SHA256，随后复核 child PID、build/package identity、静态首页和 OpenAPI 的精确 HTTP 方法。读取严格的 `startup_surface` 偏好后，必须再次发起 fresh challenge/HMAC 与 identity 复核，才 arm 授权并选择 `desktop` 的无 IPC WebView 或 `browser` 的 host-only 固定 origin opener；托盘和单实例重开同一 surface，desktop 关闭只隐藏窗口且不停止 monitor。Tray Quit 与 macOS 自定义应用菜单/Cmd-Q 只请求同一个 `app.exit(0)`；应用菜单不使用会直接绑定原生 `terminate:` 的 predefined Quit。Host 收到普通 `ExitRequested` 后请求结构化 `keep_monitor` shutdown 并有界等待 owned child，错误或超时后显式 `kill + wait`，无法确认 child 已退出则阻止 host 退出；update commit 期间普通 Quit 同样被阻止，只有 macOS 已准备 update relaunch 可跳过重复关闭。外部 AppleScript quit、Force Quit 或信号可以绕过该事件，不属于有序退出承诺。Host 只把 Host RPC token 传给其直接启动的 Python backend，backend 启动时捕获并从 descendant 环境清除；token 不进入 Web、Tauri command/event、API 响应或日志，携带 token 的 private loopback 请求显式绕过环境代理。Rust dialog 最多 120 秒，Python 等待 125 秒并在四条 picker route 上把 private failure 固定映射为脱敏 503；release-host updater metadata 与下载对象另有 5 秒时限。development profile 的 updater 委托明确禁用；它必须显式给出已存在、canonicalize 后与 bundle/core 及完整 macOS `.app` 容器双向不包含的绝对 `INVOICE_HUB_DEV_STATE_ROOT`，`Contents` sibling 同样拒绝，并在启动 Python child 前清除它。enabled updater 只在 startup gate 释放、`BackendHost` manage 后激活；激活先从 expected runtime dir 恢复 marker，随后才接受检查或安装。L9/P1-Q 已使用隔离 state root 验证 `127.0.0.1:8766` owned backend、health/background ready、首页/静态资源、desktop 默认值，以及 clean-commit 样本上真实 Cmd-Q 的 shutdown POST、stopped state、host/backend/PID/端口清理；打开的 SSE 连接由显式 `kill + wait` 兜底收束，且未触碰真实 Application Support。外部终止仍不属于该结论。该样本没有覆盖原生面板、browser/tray、真实单实例、下载/安装、DMG、签名或任何平台 release smoke。
 
-Tauri `setup` 在 `BackendHost::launch` 后也不立即将 child 放入 app state：tray 或选定 surface 的任何初始化失败都会先通过同一 structured keep-monitor shutdown 及必要的 kill+wait 收束 owned child；若仍不能确认 child 已退出，setup 会保持阻塞并重试，child mutex 或 `try_wait` 错误也不能伪装成 graceful exit，绝不返回错误后交给 `Drop`。只有确认清理且全部初始化成功后才会 `app.manage`，因为 setup failure 不经过正常 `ExitRequested`，且 Drop 不构成可靠收尾。
+Tauri `setup` 在 `BackendHost::launch` 后也不立即将 child 放入 app state：tray 或选定 surface 的任何初始化失败都会先通过同一 structured keep-monitor shutdown 及必要的 kill+wait 收束 owned child；若仍不能确认 child 已退出，setup 会保持阻塞并重试，child mutex 或 `try_wait` 错误也不能伪装成 graceful exit，绝不返回错误后交给 `Drop`。只有确认清理且全部初始化成功后才会释放 startup gate 并 `app.manage`；updater activation 必须再晚于 manage。setup failure 不经过正常 `ExitRequested`，且 Drop 不构成可靠收尾。
+
+L10-R/C 建立的 monitor recovery foundation 仍是运行时安全不变量：全部 marker 或 bridge 操作必须携带并前后复核 released owned lifecycle lease（generation、phase、health/owned/process PID、state scope）。它只暂停已 `running && ready` 的 owned monitor，已有/损坏/跨 scope marker、ownership loss 或操作失败都保留恢复义务并 fail closed；Unix marker store 的最终读写/删除固定使用 opened-directory descriptor 和 no-follow `openat`/atomic no-clobber `linkat`/`unlinkat`，遵循目录锁协议的整段 load/publish/clear 串行化已闭合，stale-clear 在锁内重读，publish/clear 在最终 link/unlink 后同步目录元数据，绕过协议的同用户直接文件编辑不在保证内；Windows 已有相对已打开目录句柄、拒绝 reparse point 的 source-level marker store，最小 `x86_64-pc-windows-msvc` 临时 crate 交叉编译已通过，但没有 Windows runtime 证据，完整 Tauri Windows target check 仍因 `ring` 的 `assert.h` 依赖阻塞。
+
+L10-D 把这些 seams 接入运行时而不扩大公开 API。`BackendHost` 私有保存已有 ownership secret；每个 Rust recovery 请求和精确 Python 响应都由 fresh challenge 与 HMAC-SHA256 transcript 双向绑定，Python 拒绝 incomplete/tampered/non-empty/replayed 请求，普通 bridge HTTP 行为不变。Host 保留完整 cloneable `Update`，并从 version/target/download URL/signature 计算不公开的域分隔 artifact identity。`update_install` 先消费 fresh candidate 并启动 latch-blocked worker，只有精确 `{"ok":true}` 写入并 flush 后才放行 Tauri `download` 内置验签 -> recovery pause -> `install` -> platform relaunch；writer/spawn/latch loss 进入 `CommitLost` 且没有下载、marker、monitor 或安装副作用。startup restore 或事务失败保留 marker、保持 backend/WebUI 诊断并阻断后续 updater。Windows 在 updater `on_before_exit` 中确认 managed backend 已终止后才启动 installer；macOS 安装返回后先停 backend、标记 relaunch prepared、再 `request_restart()`。本轮没有运行真实 Feed、monitor、updater、installer、restart 或制品构建，源码接线不等于平台验收。
+
+L10-E 将运行验证收窄为不可安装的 development recovery smoke。ordinary development/internal-alpha 保持 updater-disabled；只有显式 recovery staging 才写固定不可达 HTTPS loopback endpoint、无验签能力 key sentinel 和精确三字段 updater 对象。隔离 runner 使用临时 HOME/state/runtime/watch、关闭自动更新检查并预置同 scope marker，且自身 localhost allowlist 只有 health、monitor status 和 monitor stop；它不调用 update check/install 或 bridge start。macOS arm64 样本已恢复 owned monitor 到 `running && ready`、删除 marker、显式停止 monitor并完成进程/端口/临时目录清理，runner 报告 `update_requests=0`。该证据仍不能扩大为 Feed、候选、下载、验签、安装、restart 或发行验收。
+
+固定 endpoint/method/origin 本身仍不是 ownership proof；只有上述 L10-D recovery 调用具有请求/响应双向认证。后续增加 endpoint、body 或状态字段时必须同步更新域分隔 transcript、Python replay/空 body 校验和 Rust 常量时间响应 proof 校验，且不得向候选固定端口发送 bearer secret。
 
 源码采用单仓库共存，平台成品采用互斥边界：Windows 或 macOS 的 checkout 都可包含另一平台工程，但 Windows ZIP 与 macOS `.app/DMG/Sparkle ZIP` 的构建输入、依赖锁、运行时和启动器分别受独立白名单与反向平台拒绝门禁保护。共享 `src/`、`web/` 只避免业务分叉，不表示平台壳或 runtime 可以交叉进入成品。
 
@@ -271,6 +281,7 @@ BAT/页面/monitor 触发
 - 修改字段、公式、数据库或状态 JSON：同步 `DATA_AND_ALGORITHMS.md`。
 - 修改跨模块影响范围或验收门禁：同步 `AGENT_TASK_MAP.md`。
 - 在复杂代码旁新增注释：先核对 `COMMENT_RATIONALE_MAP.md`，只解释原因和不变量。
+- 回溯旧工作区功能或故障：使用 `docs/legacy/OLD_WORKSPACE_CHANGELOG_INDEX.md` 的脱敏路线；私有原文不得进入公开工作树。
 - 不在文档中写本机业务绝对路径、真实发票信息、运行态快照或本地配置值。
 - 不维护易漂移的固定测试总数；以当前测试收集结果为准。
 - 每次基线切换必须记录分支、commit、验收状态，并更新 `CHANGELOG.md`。
@@ -283,6 +294,7 @@ BAT/页面/monitor 触发
 - [`IMPLEMENTATION_STATUS.md`](../IMPLEMENTATION_STATUS.md)
 - [`MIGRATION_GAP_CHECKLIST.md`](MIGRATION_GAP_CHECKLIST.md)
 - [`BASELINE_FROM_OLD_PROJECT.md`](BASELINE_FROM_OLD_PROJECT.md)
+- [旧工作区功能与故障回溯索引](legacy/OLD_WORKSPACE_CHANGELOG_INDEX.md)
 - [`MONITORING_AND_LOGGING.md`](MONITORING_AND_LOGGING.md)
 - [`MAC_WINDOWS_WORKFLOW.md`](MAC_WINDOWS_WORKFLOW.md)
 - [历史净化执行记录](release/HISTORY_SANITIZATION_EXECUTION.md)

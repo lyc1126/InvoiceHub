@@ -1,240 +1,279 @@
-# Changelog
+# 变更日志
 
-## Unreleased
+## 未发布
 
-- 2026-08-19 Tauri internal-alpha assembly: add a bounded macOS arm64
-  `internal-alpha` profile, clean-snapshot staging, embedded Python 3.14.6
-  runtime inputs, manifest/launcher hash binding, receipt generation and an
-  independent fail-closed verifier. The builder accepts a direct locked Tauri
-  CLI path when the installed pnpm wrapper is unavailable. This work is local
-  validation only: no Release, Feed, updater installation, Developer ID,
-  notarization or GitHub mutation is enabled.
-- 2026-08-19 Tauri internal-alpha evidence: built one arm64 `.app` and same-source
-  ad-hoc `.dmg` from clean commit `1892a52bf5eba4ae3b24720fbc32899a4e6003a0`;
-  the independent App/DMG/receipt verifier passed, and a separate temporary
-  HOME launch smoke reached fixed-port `ready` with matching package/build/source
-  identity. The artifacts remain internal-only and do not enable Release, Feed,
-  updater installation, signing, notarization or end-user installation claims.
-- 2026-08-19 Tauri internal-alpha runtime gate: allow only relative runtime
-  symlinks whose resolved targets remain inside the embedded runtime; the
-  staging copy still dereferences them and the final artifact verifier rejects
-  symlinks. This accommodates the pinned python-build-standalone launcher
-  links without weakening bundle containment.
-- 2026-08-19 Tauri internal-alpha receipt repair: represent the signed `.app`
-  as a deterministic directory-tree digest and total file-byte count instead
-  of treating the bundle directory as a regular file. DMG records remain
-  regular-file hashes.
-- 2026-08-19 Tauri internal-alpha bundle mapping: include the validated
-  embedded Python runtime under `Contents/Resources/python`; the verifier now
-  checks the same launcher-visible path used by the App.
-- 2026-08-19 Tauri internal-alpha receipt privacy: store artifact names rather
-  than local absolute build paths in the receipt; hashes, source identity and
-  verification fields remain unchanged.
-- 2026-08-18 Tauri setup cleanup confirmation: after `BackendHost::launch`,
-  tray or selected desktop/browser-surface initialization can fail before the
-  normal `ExitRequested` handler exists. Setup keeps the child local until all
-  fallible initialization succeeds; on failure it retries the existing
-  structured `keep_monitor` shutdown with explicit kill-and-wait fallback until
-  owned-child termination is confirmed; child lock or `try_wait` errors count
-  as unconfirmed and enter forced termination rather than a graceful exit.
-  Only then does it return the original surface error. A focused lifecycle
-  contract forbids returning a cleanup error to `Drop`; this does not enable
-  update installation or create release evidence.
-- 2026-08-17 Tauri Windows CI fixture repair: the development-app contract no
-  longer assumes that POSIX execute-mode bits control `os.access(..., X_OK)`
-  on Windows. Its non-executable virtual-environment sample now denies only
-  the exact executable-access probe, deterministically exercising the existing
-  fail-closed production branch on every hosted platform. Production staging,
-  validation, packaging, and runtime behavior are unchanged; focused and
-  hosted verification is recorded in the Tauri execution plan.
-- 2026-08-17 Tauri exit/update timeout repair: the macOS application menu now
-  uses a custom Quit item with Cmd-Q, and both it and tray Quit request the
-  common `app.exit(0)` path. Every received `ExitRequested` first performs the
-  structured `keep_monitor` backend shutdown; the menu does not use the native
-  predefined Quit selector, which can bypass that event. External termination
-  paths are not claimed as orderly shutdown mechanisms.
-  An API failure or timeout explicitly kills and waits for the owned child;
-  failure to confirm termination prevents host exit instead of relying on
-  process `Drop`. Host updater metadata checks now use a five-second total
-  timeout so a stalled Feed cannot permanently own the updater mutex or Host
-  RPC connection capacity. Focused verification is recorded in the Tauri
-  execution plan. A clean-commit macOS development sample sent a genuine
-  Cmd-Q to the foreground app and observed the shutdown POST, stopped state,
-  host/backend exit, fixed-port release, and PID cleanup. Open SSE connections
-  required the explicit kill-and-wait fallback after the backend had written
-  `stopped`; this proves only the supported custom-menu/Cmd-Q route and does
-  not enable update installation or extend the claim to external termination.
-- 2026-08-17 Tauri P1 transport/container repair: private Python Host RPC
-  requests now use an explicit no-proxy loopback transport, so a configured
-  `HTTP_PROXY` cannot receive the bearer token. Development state-root
-  containment now treats the complete macOS `.app` bundle as protected rather
-  than only `Contents/Resources`, rejecting `Contents` sibling state paths as
-  well. Focused Host RPC and Rust lifecycle contracts passed; this remains a
-  source-level safety repair, not a product-process, updater, installer, or
-  platform-release result.
-- 2026-08-17 Tauri P1 lifecycle/provenance repair: `update_install` now
-  deliberately consumes any candidate and returns unavailable until a complete
-  recovery/relaunch coordinator exists, so it cannot download, stop monitor,
-  install, or restart halfway through an update. Tray Quit now requests the
-  existing structured `keep_monitor` shutdown and waits for the owned backend;
-  its direct child kill was the intended bounded timeout/error fallback and is
-  now enforced for every application exit by the later repair above. Dormant
-  monitor-stop/install response fragments were removed so the Rust host does
-  not imply an executable coordinator. Development
-  assembly records dirty allowlisted inputs as `<HEAD>+dirty`, and development
-  state now requires an explicit existing canonical root that is disjoint from
-  the bundle in both directions. Locked Rust formatting, 16 library tests, 6
-  lifecycle integration tests, the desktop binary check, version sync, focused
-  Python contracts, `compileall`, and diff whitespace checks passed without
-  Rust warnings. A redacted candidate scan found only ignored dependency build
-  metadata and the documented deterministic ledger-fixture false-positive
-  category; tracked/non-ignored source contained no local identity, credential,
-  business output, runtime, or release artifact. This is not a product-process, installer, signed-update,
-  native-panel, or platform release-smoke result.
-- Align the public-history execution record with the prepared sanitized-root
-  Tauri development line while retaining the no-Tag/no-Release/no-Pages
-  boundary.
-- 2026-08-17 Tauri development application L8-S/L9: add the deterministic
-  development-only assembler that stages an allowlisted core, schema-3 host
-  manifest, and explicit virtual-environment launcher, then binds both raw
-  manifest and launcher SHA-256 values into the host build. The macOS arm64
-  development `InvoiceHub.app` was built once and smoke-tested once against an
-  isolated development state root: the owned backend bound exactly
-  `127.0.0.1:8766`, health and background startup became ready, the homepage
-  and static assets loaded, with `desktop_available=true` and the default
-  desktop surface. A later external AppleScript quit released the process,
-  port, and PID but bypassed structured shutdown and left server state stale,
-  so that unsupported exit subclaim remains withdrawn. P1-Q subsequently
-  rebuilt from clean commit `399b20c` and used a genuine Cmd-Q to establish the
-  supported structured-exit path only. The app is a local ignored development
-  artifact; it did not touch the real user
-  Application Support state. The development profile disables updater
-  delegation and rejects release/relative state-root overrides. An initial
-  macOS tray initialization failure was traced to a 16-bit RGBA icon; the icon
-  is now 8-bit RGBA and an IHDR-focused regression guards that mechanism. This
-  is not DMG, NSIS, Developer ID, notarization, Feed, Release, real updater,
-  native-panel, browser/tray, or Windows smoke evidence.
-- 2026-08-16 Tauri release-input L7: complete the read-only readiness audit.
-  The source deliberately disables Tauri bundling and has no deterministic
-  generator or stager for the schema-2 desktop host manifest and its
-  compile-time SHA-256; existing Windows portable and legacy Swift/macOS
-  packagers cannot supply Tauri NSIS or DMG/update-archive inputs. The audit
-  also found that the current static manifest schema cannot safely hold
-  per-user config/runtime paths. Release assembly remains blocked; L8 is
-  recorded before implementation to define the dynamic state-layout and
-  manifest-path contract before any generator. No product process, bundle, signing,
-  notarization, upload, publication, or Feed was created.
-- 2026-08-16 Tauri updater L6-RRRRR: make a contended hosted update check
-  return its read-only busy result before `append_event`, so it cannot block on
-  an SQLite event write. Add representative contracts for that blocked-event
-  path and for releasing the install lock after a private RPC exception. The
-  targeted isolated Python contracts passed 45 tests with deprecations as
-  errors; this supersedes L6-RRRR's 44-test result for the event-write and
-  exception-release scope. No Rust, product process, update, package, signing,
-  or platform smoke test was run.
-- 2026-08-16 Tauri updater L6-RRRR: correct the hosted-Tauri scope of update
-  checks. When the Tauri marker and private Host RPC are both configured, API,
-  settings, and background checks use the strict fresh-Feed/candidate
-  preflight; only non-Tauri/non-host checks retain the ordinary cache/ETag
-  path. Install lock contention now fails immediately without consuming the
-  approval or sending a second Host RPC. The targeted isolated Python contracts
-  passed 44 tests with deprecations as errors; this supersedes the L6-RRR
-  42-test result but is itself superseded by L6-RRRRR for the event-write and
-  exception-release scope. No Rust, product process, update, package, signing,
-  or platform smoke test was run.
-- 2026-08-16 Tauri updater L6-RRR (superseded): keep ordinary update checks outside the
-  host lifecycle lock, while a contended Tauri host approval immediately
-  returns the non-persistent update busy result without metadata/candidate
-  work or clearing an existing approval. The acquired host path still
-  serializes strict metadata, candidate, and one-shot install with explicit
-  `try/finally` release. This was superseded by L6-RRRR because its 42-test
-  result did not establish the stricter hosted-Tauri public-check scope; no
-  Rust, product process, update, package, signing, or platform smoke test was
-  run.
-- 2026-08-16 Tauri updater L6-RR: make the strict host-approval Feed request
-  explicitly send `Cache-Control: no-cache` while continuing to omit ETag and
-  reject `304`; non-host public update checks retain their existing cache/ETag
-  headers. Clarify and lock the separate four-picker and two-updater Host RPC
-  command surfaces. The targeted isolated Python contracts passed 40 tests with
-  deprecations as errors; no Rust, product process, update, package, signing,
-  or platform smoke test was run.
-- 2026-08-16 Tauri updater L6-R: require the host-install approval path to
-  revalidate a fresh allowlisted Feed `200` body without cache, ETag, or `304`
-  reuse, while preserving non-host public check caching. Actively sweep the
-  one-shot host candidate from the bounded listener loop after five minutes and
-  generation-check removal so an old expiry sweep cannot clear a newer slot.
-  Correct current documentation to describe the token handoff only from host to
-  its directly spawned Python backend, followed by startup capture and
-  descendant-environment scrubbing. The isolated Python selection passed 31
-  tests and the Rust 1.85 offline contracts passed 13 library plus 5 lifecycle
-  tests; no product process, `8766` bind, update/download, package, signing, or
-  platform smoke test was run.
-- 2026-08-16 Tauri updater L6: bind the raw desktop bundle manifest to the
-  compile-time SHA-256 injected by the future staged-manifest packager, keeping
-  source checkouts exit-78 fail-closed. Add host-delegated `update_check` and
-  one-shot `update_install` commands with a five-minute candidate bound, an
-  allowlisted Feed/version-match approval gate, empty-body HTTP install API,
-  and redacted 503 failures. Installation now has the fixed order download plus
-  Minisign verification, monitor stop and independent recheck, then
-  install/restart. Controlled Rust contracts and an isolated FastAPI TestClient
-  contract passed; no product process, real update, bundle, signing, or
-  platform smoke was run.
-- 2026-08-16 Tauri 2 lifecycle and startup-surface boundary: add fixed-port
-  backend ownership, child identity/manifest/OpenAPI-method checks,
-  HMAC-SHA256 challenge-response proof, and a four-enum private native-picker
-  RPC. After an owned-backend handshake, the host strictly reads the persisted
-  `desktop|browser` preference: desktop creates the zero-permission WebView,
-  browser uses the host-only pinned opener for the fixed origin, and
-  single-instance/tray open reopens that selected surface while desktop close
-  hides the window without stopping monitor. A manifest-less checkout exits
-  with status 78 before Tauri startup; host credentials are removed from child
-  environments, and a bounded liveness watcher revokes RPC authorization. The
-  host repeats its ownership proof after the preference read; the picker bridge
-  preserves Rust's 120-second dialog with a 125-second Python budget and maps
-  its private failures to redacted HTTP 503. Isolated `cargo check`/`cargo test`
-  and focused Python static contracts passed. The later L6 isolated TestClient
-  endpoint contract is recorded separately above; neither record represents a
-  Tauri/FastAPI product service, installer, signing, native panel, Windows BAT,
-  or platform smoke test.
-- 2026-08-16 Tauri 2 foundation: add the public execution plan, single-source
-  version synchronizer, pinned pnpm Tauri dependencies, fixed-localhost host
-  scaffold, and non-installing Windows/macOS doctor/bootstrap entry points.
-  Diagnostics run from the requested project root, block Rustup/Corepack
-  auto-downloads, and fail closed for missing Windows interpreter, MSVC, or
-  SDK prerequisites. A checksum-verified isolated Rust 1.85.0 environment
-  now pins exact Tauri crates, generates the reviewed MSRV-compatible
-  `Cargo.lock`, and passes focused `cargo check`/fixed-origin Rust tests; the
-  normal user environment remains unmodified. Lifecycle, Host RPC, updater,
-  packaging, and platform smoke tests remain explicitly unimplemented.
-- Correct the interface-flow release boundary to record the completed public
-  transition while retaining the prohibition on reusing retired private assets.
-- Read the Windows CI release-version argument from `version.py` instead of
-  the retired `0.2.0-beta.1` literal, keeping the source-identity gate aligned
-  with the public release configuration.
-- 2026-08-14 public repository transition: publish the audited sanitized root
-  in a new public repository, retain the retired original graph only in an
-  owner-controlled private archive, and enable public-repository security and
-  contribution governance. No retired package, tag, receipt, Release asset, or
-  update Feed was reused.
-- Prepare a sanitized public root: replace historical business fixtures with
-  explicit synthetic data, retire pre-publication release evidence, and add
-  the all-ref and hosting verification gate.
-- Correct alpha-channel update-feed prerelease validation and synchronize the
-  local-candidate publication gate and Windows source-development guidance.
+- 2026-08-24 Tauri L10-E 非安装恢复烟测边界与运行证据：普通 development `stage/build`
+  与 internal-alpha 继续生成 `updater.enabled=false`；新增显式
+  `stage-recovery/build-recovery`，development manifest 只有在 endpoint 等于固定、
+  不可达的 HTTPS loopback 地址且 public key 等于无验签能力的 sentinel 时才允许
+  激活 L10-D startup restore，任一额外字段、任意 endpoint 或 key 都拒绝。新增隔离
+  runner，使用临时 HOME/state/runtime/watch、`auto_check_updates=false` 和预置 marker，
+  其 localhost 请求面只允许 health、monitor status 与 monitor stop，不调用
+  `update_check/update_install`。运行预检先修复 runner 将 Tauri display name 误当作
+  `CFBundleExecutable` 的问题，并把 App plist、host manifest 与 product version
+  绑定；第一次启动随后在 backend/monitor 之前因缺省 `plugins.updater` 被 Tauri
+  反序列化为 `null` 而 fail closed，development overlay 现只提供空 `pubkey` 配置
+  对象，不携带 endpoint 或验签权限。锁定 Rust 1.85/Tauri CLI 2.11.4 离线重建后，
+  macOS arm64 隔离样本以 build ID
+  `8e40363fa673017e993727cf3f5dec347b24927c5ce1a0a4b945601737621873`
+  通过：owned backend/monitor 身份与路径匹配，monitor 达到 `running && ready`，marker
+  被删除，显式 stop 成功，runner 报告 `update_requests=0`；样本 PID、固定端口和临时
+  目录均已清理。该结果只证明 authenticated startup restore，不授权或覆盖 Feed、
+  候选、下载、验签、安装、重启、DMG/NSIS、签名、公证或发布。
+- 2026-08-24 旧工作区功能与故障回溯治理：新增脱敏查询索引，按功能类别、
+  常见症状、不变量和当前源码/测试入口提供回溯路线；原始非公开 Changelog 及其
+  附件、路径、局部摘录和验证记录继续只留在私有归档外部，不复制、链接、暂存或
+  提交到公开工作树、测试夹具或发布输入。
+- 2026-08-24 文档治理：将本文件既有记录统一译为中文，并把后续
+  `CHANGELOG.md` 使用中文的规则写入工程治理。新增或修改跨功能流程时，
+  代码必须在交接点说明上游输入、下游消费者、执行顺序或不变量，以及失败
+  边界；本次不改变产品行为。
+- 2026-08-24 Tauri L10-D 认证恢复/重启运行时协调器：在既有的后端私有桌面
+  所有权 secret 下，以 HMAC-SHA256 将每一条 Rust monitor 恢复请求及精确的
+  Python 响应绑定到一个全新的 challenge；拒绝不完整、被篡改、非空 body 或
+  重放的认证请求，且不改变普通 bridge 调用。以域分隔的 artifact identity
+  保留完整的 host-owned updater candidate；只有 owned startup gate 已释放且
+  `BackendHost` 已被管理后才激活 updater runtime，并在接受 updater 操作前
+  恢复任何平台恢复 marker。`update_install` 现在先保留一个全新的 candidate，
+  在 execute/cancel latch 后启动私有 worker，写入并 flush 精确的成功响应，
+  然后才执行受锁保护的 Tauri 下载/签名校验 -> 暂停 monitor -> 安装 -> 重启
+  协调器。writer/spawn/latch 丢失会显式进入 `CommitLost`，不产生 update 或
+  monitor 副作用；startup restore 或 transaction 失败会保留后端供诊断，并
+  阻断后续 updater 工作。Windows 在启动安装器前通过 `on_before_exit` 确认受管
+  backend 已终止；macOS 先停止 backend、标记已准备重启，再请求 restart，私有
+  commit 进行期间阻断普通 Quit。本项只有源码与契约集成：未运行或获授权运行
+  产品进程、真实 Feed/update、monitor、安装器、重启、产物构建、签名、发布或
+  平台运行烟测。
+- 2026-08-23 Tauri L10-C 基础切片：新增固定 loopback 的
+  `PythonMonitorRecoveryBridge`、纯 verified-artifact update coordinator，
+  以及共享既有 child、ownership 和 lifecycle handle 的可 clone
+  `BackendLifecycleAuthority`。新增 Windows marker-store 源码契约：使用相对
+  于已打开目录的 handle 并拒绝 reparse point，同时保留 Unix 的
+  descriptor-pinned marker primitive。这些仅为源码层接缝：遵循目录锁协议的
+  Unix store 会串行化整个 load/publish/clear 操作，在持有锁时重读过期 clear，
+  并在最终 publish/clear link 操作后持久同步目录元数据（绕过该协议的直接编辑
+  不在保证范围内）。最小 `x86_64-pc-windows-msvc` 临时 crate 交叉编译通过；
+  没有 Windows runtime 证据，完整 Tauri Windows target check 仍被需要
+  `assert.h` 的 `ring` 阻断。所有切片都未接入 Host RPC、updater、startup
+  restore 或真实 monitor；updater 仍会消费 candidate 并 fail closed。聚焦验证
+  通过 56 项 Rust 检查（backend authority 14、bridge 9、coordinator unit 2 加
+  contract 12、recovery 17、Windows host static 1、strict OpenAPI 1）和 42 项
+  Python contract（lifecycle 13、development documentation 12、foundation 17）。
+  strict OpenAPI handshake 要求 `GET /api/v1/bridge/status`、
+  `POST /api/v1/bridge/stop` 和 `POST /api/v1/bridge/start`；缺失或方法错误的
+  `/bridge/start` 会被拒绝。未来 updater 接线必须先公开保留 candidate，再进行
+  私有 fixed-enum commit，因为锁定的 updater `2.10.1` 会在 Windows
+  `Update::install()` 时退出进程，而 macOS 仍需 `request_restart`；commit loss
+  与恢复失败必须保持为显式失败状态。
+- 2026-08-23 L10-C bridge 边界：固定 loopback monitor adapter 没有请求级
+  ownership authentication，不能作为 ownership proof。实际接线前，每个
+  request/response 都必须绑定后端私有的 fresh challenge/HMAC 或等价认证 header，
+  在请求前后保留 lifecycle revalidation，且绝不能把 bearer secret 发送给候选
+  固定端口。
+- 2026-08-20 Tauri L10-R monitor 恢复基础：为未来 host-owned monitor 恢复
+  协调器新增纯源码、fail-closed 的 transaction。它捕获已释放的 owned
+  lifecycle lease（generation、phase、health、owned 和 process PID 及 state
+  scope），拒绝既有恢复义务或未 ready 的 monitor，且只在随后观察到 owned
+  `running && ready` 后清除 marker。Unix marker 持久化使用固定目录 descriptor
+  的 no-follow `openat`/atomic no-clobber `linkat`/`unlinkat`；非 Unix 构建明确
+  返回 unavailable。该 transaction 不包含 Host RPC、真实 monitor、下载器、
+  安装器、重启、bundle、签名或 release 集成，`update_install` 仍消费 candidate
+  并 fail closed。
+- 2026-08-19 Tauri internal-alpha 组装：新增有边界的 macOS arm64
+  `internal-alpha` profile、clean-snapshot staging、内嵌 Python 3.14.6 runtime
+  输入、manifest/launcher hash binding、receipt 生成与独立 fail-closed verifier。
+  已安装 pnpm wrapper 不可用时，builder 可使用直接锁定的 Tauri CLI path。本项
+  仅用于本地验证：未启用 Release、Feed、updater installation、Developer ID、
+  notarization 或 GitHub mutation。
+- 2026-08-19 Tauri internal-alpha 证据：从 clean commit
+  `1892a52bf5eba4ae3b24720fbc32899a4e6003a0` 构建一个 arm64 `.app` 和同源码
+  ad-hoc `.dmg`；独立 App/DMG/receipt verifier 通过，另一次临时 HOME launch
+  smoke 在固定端口达到 `ready`，package/build/source identity 相符。产物仍仅
+  用于内部，不形成 Release、Feed、updater installation、签名、notarization 或
+  最终用户安装的声明。
+- 2026-08-19 Tauri internal-alpha runtime gate：只允许解析后 target 仍位于
+  embedded runtime 内的相对 runtime symlink；staging copy 仍会解引用它们，最终
+  artifact verifier 拒绝 symlink。这允许使用固定的 python-build-standalone
+  launcher link，同时不放宽 bundle containment。
+- 2026-08-19 Tauri internal-alpha receipt 修复：将已签名 `.app` 表示为确定性的
+  directory-tree digest 与文件总字节数，而非把 bundle 目录当作普通文件；DMG
+  记录仍为普通文件 hash。
+- 2026-08-19 Tauri internal-alpha bundle 映射：将已验证的 embedded Python
+  runtime 纳入 `Contents/Resources/python`；verifier 现在检查与 App 相同的
+  launcher-visible path。
+- 2026-08-19 Tauri internal-alpha receipt 隐私：receipt 保存 artifact name 而非
+  本机绝对 build path；hash、source identity 和 verification field 不变。
+- 2026-08-18 Tauri setup cleanup 确认：在 `BackendHost::launch` 后，tray 或选定
+  desktop/browser surface 的初始化可能在正常 `ExitRequested` handler 建立前失败。
+  setup 会让 child 保持本地状态直到所有可失败初始化成功；失败时重试既有结构化
+  `keep_monitor` shutdown，并以显式 kill-and-wait fallback 持续到确认 owned child
+  已终止；child lock 或 `try_wait` error 视为未确认并进入 forced termination，
+  而不是 graceful exit。仅在此后才返回原始 surface error。聚焦 lifecycle
+  contract 禁止把 cleanup error 返回给 `Drop`；这不会启用 update installation 或
+  形成 release 证据。
+- 2026-08-17 Tauri Windows CI fixture 修复：development-app contract 不再假定
+  POSIX execute-mode bit 在 Windows 上控制 `os.access(..., X_OK)`。其不可执行
+  virtual-environment sample 现在只拒绝精确的 executable-access probe，从而在
+  每个 hosted platform 确定性触发现有 fail-closed production branch。production
+  staging、validation、packaging 与 runtime behavior 不变；聚焦及 hosted
+  verification 已记录在 Tauri execution plan。
+- 2026-08-17 Tauri exit/update timeout 修复：macOS application menu 现在使用
+  带 Cmd-Q 的自定义 Quit item，它与 tray Quit 都请求同一 `app.exit(0)` path。
+  每个收到的 `ExitRequested` 都先执行结构化 `keep_monitor` backend shutdown；
+  menu 不使用可能绕过该 event 的 native predefined Quit selector。external
+  termination path 不被宣称为有序 shutdown mechanism。API failure 或 timeout
+  会显式 kill 并等待 owned child；无法确认终止时阻止 host exit，而非依赖 process
+  `Drop`。host updater metadata check 现在使用五秒总 timeout，避免 stalled Feed
+  永久占用 updater mutex 或 Host RPC connection capacity。聚焦验证已记录在
+  Tauri execution plan。一个 clean-commit macOS development sample 向前台 app
+  发送真实 Cmd-Q，观察到 shutdown POST、stopped state、host/backend exit、固定
+  端口释放和 PID cleanup。打开的 SSE connection 使 backend 写入 `stopped` 后仍
+  需要显式 kill-and-wait fallback；这只证明受支持的 custom-menu/Cmd-Q path，
+  不启用 update installation，也不把结论扩大到 external termination。
+- 2026-08-17 Tauri P1 transport/container 修复：私有 Python Host RPC request
+  现在使用显式 no-proxy loopback transport，因此配置的 `HTTP_PROXY` 无法接收
+  bearer token。development state-root containment 现在将完整 macOS `.app`
+  bundle，而非仅 `Contents/Resources`，视为 protected；`Contents` sibling 的
+  state path 也会被拒绝。聚焦 Host RPC 与 Rust lifecycle contract 通过；这仍是
+  源码层安全修复，不是 product-process、updater、installer 或 platform-release
+  结果。
+- 2026-08-17 Tauri P1 lifecycle/provenance 修复：`update_install` 当时会刻意
+  消费所有 candidate 并返回 unavailable，直到具备完整 recovery/relaunch
+  coordinator，以避免更新进行到一半就下载、停止 monitor、安装或重启。tray Quit
+  现在请求既有结构化 `keep_monitor` shutdown 并等待 owned backend；其 direct
+  child kill 原本是有界 timeout/error fallback，现已由上述后续修复用于每次
+  application exit。移除了 dormant monitor-stop/install response fragment，
+  以免 Rust host 暗示可执行 coordinator。development assembly 将 dirty
+  allowlisted input 记录为 `<HEAD>+dirty`，development state 现在要求显式、
+  已存在且与 bundle 双向不相交的 canonical root。锁定的 Rust formatting、16 项
+  library test、6 项 lifecycle integration test、desktop binary check、version
+  sync、聚焦 Python contract、`compileall` 与 diff whitespace check 均通过，且
+  Rust 无 warning。脱敏 candidate scan 仅发现 ignored dependency build metadata
+  和已记录的 deterministic ledger-fixture false-positive 类别；tracked/non-ignored
+  source 不含本机 identity、credential、business output、runtime 或 release
+  artifact。这不是 product-process、installer、signed-update、native-panel 或
+  platform release-smoke 结果。
+- 对齐 public-history execution record 与已准备的 sanitized-root Tauri
+  development line，同时保留 no-Tag/no-Release/no-Pages 边界。
+- 2026-08-17 Tauri development application L8-S/L9：新增确定性的
+  development-only assembler，用其 staging allowlisted core、schema-3 host
+  manifest 和显式 virtual-environment launcher，并将 raw manifest 和 launcher 的
+  SHA-256 值绑定进 host build。macOS arm64 development `InvoiceHub.app` 曾构建
+  一次，并以 isolated development state root 进行一次 smoke test：owned backend
+  精确绑定 `127.0.0.1:8766`，health 与 background startup 达到 ready，homepage
+  和 static asset 已加载，`desktop_available=true` 且为默认 desktop surface。随后
+  一次 external AppleScript quit 释放 process、port 和 PID，却绕过 structured
+  shutdown 并留下 stale server state，因此撤回该不受支持 exit 子结论。P1-Q 随后
+  以 clean commit `399b20c` 重建并使用真实 Cmd-Q，只建立受支持的 structured-exit
+  path。该 app 是本地 ignored development artifact，未触碰真实用户的
+  Application Support state。development profile 禁用 updater delegation，拒绝
+  release/relative state-root override。最初的 macOS tray initialization failure
+  可追溯到 16-bit RGBA icon；图标现为 8-bit RGBA，且 IHDR-focused regression
+  保护该机制。这不是 DMG、NSIS、Developer ID、notarization、Feed、Release、
+  真实 updater、native-panel、browser/tray 或 Windows smoke 证据。
+- 2026-08-16 Tauri release-input L7：完成只读 readiness audit。source 刻意
+  禁用 Tauri bundling，且没有用于 schema-2 desktop host manifest 及其 compile-time
+  SHA-256 的确定性 generator 或 stager；既有 Windows portable 和 legacy
+  Swift/macOS packager 不能提供 Tauri NSIS 或 DMG/update-archive input。audit 还
+  发现当前 static manifest schema 无法安全保存 per-user config/runtime path。
+  release assembly 保持阻断；L8 在实现前被记录，以便在任何 generator 出现前定义
+  dynamic state-layout 与 manifest-path contract。没有创建 product process、bundle、
+  signing、notarization、upload、publication 或 Feed。
+- 2026-08-16 Tauri updater L6-RRRRR：让存在竞争的 hosted update check 在
+  `append_event` 前返回其只读 busy result，因此不会阻塞在 SQLite event write。
+  增加该 blocked-event path 和 private RPC exception 后释放 install lock 的代表性
+  contract。目标 isolated Python contract 在将 deprecation 视为 error 时通过 45 项，
+  就 event-write 和 exception-release 范围取代 L6-RRRR 的 44 项结果。未运行 Rust、
+  product process、update、package、signing 或 platform smoke test。
+- 2026-08-16 Tauri updater L6-RRRR：修正 hosted-Tauri update check 的范围。当
+  Tauri marker 和 private Host RPC 都配置时，API、settings 和 background check
+  使用严格 fresh-Feed/candidate preflight；只有 non-Tauri/non-host check 保留普通
+  cache/ETag path。install lock contention 现在立即失败，不消费 approval 也不发送
+  第二次 Host RPC。目标 isolated Python contract 在将 deprecation 视为 error 时
+  通过 44 项，取代 L6-RRR 的 42 项结果，但其 event-write 和 exception-release
+  范围又已被 L6-RRRRR 取代。未运行 Rust、product process、update、package、
+  signing 或 platform smoke test。
+- 2026-08-16 Tauri updater L6-RRR（已取代）：将普通 update check 保持在 host
+  lifecycle lock 之外；存在竞争的 Tauri host approval 立即返回非持久 busy result，
+  不进行 metadata/candidate 工作，也不清除既有 approval。已获得锁的 host path
+  仍通过显式 `try/finally` release 串行化 strict metadata、candidate 与 one-shot
+  install。该项被 L6-RRRR 取代，因为其 42 项结果未建立更严格的 hosted-Tauri
+  public-check 范围；未运行 Rust、product process、update、package、signing 或
+  platform smoke test。
+- 2026-08-16 Tauri updater L6-RR：让 strict host-approval Feed request 显式发送
+  `Cache-Control: no-cache`，同时继续省略 ETag 并拒绝 `304`；non-host public
+  update check 保留原有 cache/ETag header。明确并锁定独立的四项 picker 与两项
+  updater Host RPC command surface。目标 isolated Python contract 在将 deprecation
+  视为 error 时通过 40 项；未运行 Rust、product process、update、package、signing
+  或 platform smoke test。
+- 2026-08-16 Tauri updater L6-R：要求 host-install approval path 重新验证新鲜的
+  allowlisted Feed `200` body，不使用 cache、ETag 或 `304` reuse，同时保持 non-host
+  public check caching。在五分钟后由 bounded listener loop 主动清扫 one-shot host
+  candidate，并以 generation-check 删除，使旧 expiry sweep 不能清除新 slot。修正
+  当前文档，只描述 token 从 host 交给其直接启动的 Python backend，随后在 startup
+  capture 并清理 descendant-environment。isolated Python selection 通过 31 项，
+  Rust 1.85 offline contract 通过 13 项 library 加 5 项 lifecycle test；未运行
+  product process、`8766` bind、update/download、package、signing 或 platform
+  smoke test。
+- 2026-08-16 Tauri updater L6：将 raw desktop bundle manifest 绑定到未来
+  staged-manifest packager 注入的 compile-time SHA-256，使 source checkout 以
+  exit-78 fail-closed。新增 host-delegated `update_check` 和 one-shot
+  `update_install` command，带有五分钟 candidate bound、allowlisted
+  Feed/version-match approval gate、empty-body HTTP install API 与脱敏的 503
+  failure。installation 现具有固定顺序：download 加 Minisign verification、
+  monitor stop 与 independent recheck，然后 install/restart。controlled Rust
+  contract 与 isolated FastAPI TestClient contract 通过；未运行 product process、
+  real update、bundle、signing 或 platform smoke。
+- 2026-08-16 Tauri 2 lifecycle 与 startup-surface 边界：新增 fixed-port backend
+  ownership、child identity/manifest/OpenAPI-method check、HMAC-SHA256
+  challenge-response proof 和四枚举 private native-picker RPC。完成 owned-backend
+  handshake 后，host 严格读取持久化的 `desktop|browser` preference：desktop 创建
+  zero-permission WebView，browser 以 host-only pinned opener 打开 fixed origin，
+  single-instance/tray open 重新打开该 selected surface，而 desktop close 只隐藏
+  window、不停止 monitor。缺失 manifest 的 checkout 会在 Tauri startup 前以
+  status 78 退出；host credential 从 child environment 移除，bounded liveness
+  watcher 撤销 RPC authorization。host 在读取 preference 后重复 ownership proof；
+  picker bridge 保留 Rust 的 120-second dialog 与 Python 的 125-second budget，
+  并将 private failure 映射为脱敏 HTTP 503。isolated `cargo check`/`cargo test` 和
+  聚焦 Python static contract 通过。上方另行记录后续 L6 isolated TestClient
+  endpoint contract；两项记录都不代表 Tauri/FastAPI product service、installer、
+  signing、native panel、Windows BAT 或 platform smoke test。
+- 2026-08-16 Tauri 2 foundation：新增 public execution plan、single-source
+  version synchronizer、pinned pnpm Tauri dependency、fixed-localhost host
+  scaffold 以及不安装依赖的 Windows/macOS doctor/bootstrap entry point。diagnostic
+  从请求的 project root 运行，阻止 Rustup/Corepack auto-download，并在 Windows
+  interpreter、MSVC 或 SDK prerequisite 缺失时 fail closed。一个经过 checksum
+  verification 的 isolated Rust 1.85.0 environment 现在锁定精确 Tauri crate，
+  生成经审查、MSRV-compatible 的 `Cargo.lock`，并通过聚焦 `cargo check`/fixed-origin
+  Rust test；普通 user environment 不变。lifecycle、Host RPC、updater、packaging 和
+  platform smoke test 仍明确未实现。
+- 修正 interface-flow release boundary，使其记录已完成的 public transition，同时
+  保留禁止复用 retired private asset 的约束。
+- 将 Windows CI 的 release-version argument 从 retired `0.2.0-beta.1` literal
+  改为读取 `version.py`，使 source-identity gate 与 public release configuration
+  对齐。
+- 2026-08-14 public repository transition：在新的 public repository 发布已审计的
+  sanitized root；只在 owner-controlled private archive 保留已退休 original graph，
+  并启用 public-repository security 与 contribution governance。未复用任何 retired
+  package、tag、receipt、Release asset 或 update Feed。
+- 准备 sanitized public root：将历史 business fixture 替换为明确的 synthetic data，
+  retire pre-publication release evidence，并新增 all-ref 和 hosting verification
+  gate。
+- 修正 alpha-channel update-feed prerelease validation，并同步 local-candidate
+  publication gate 和 Windows source-development guidance。
 
-## Public Baseline - 2026-08-14
+## 公开基线 - 2026-08-14
 
-- The public repository begins from a sanitized source snapshot. Earlier
-  private development history, validation narratives, and release artifacts
-  are intentionally not part of the public Git graph.
-- The next development line is `0.3.0-alpha.1`, which introduces the Tauri 2
-  desktop host while retaining the Python, FastAPI, Web, and monitor core.
-- No pre-publication binary or tag is published from this repository. Future
-  public binaries use a new version and fresh audited release evidence.
+- public repository 从经过净化的 source snapshot 开始。较早的 private development
+  history、validation narrative 与 release artifact 有意不属于 public Git graph。
+- 下一条 development line 是 `0.3.0-alpha.1`，它引入 Tauri 2 desktop host，同时
+  保留 Python、FastAPI、Web 与 monitor core。
+- 本仓库不发布任何 pre-publication binary 或 tag。未来 public binary 将使用新
+  version 和全新、经过审计的 release evidence。
 
-## Compatibility Scope
+## 兼容范围
 
-- Invoice extraction, projections, the independent monitor, localhost APIs,
-  and the existing Web UI remain the shared product core.
-- The first Tauri release targets Windows 10/11 x64 NSIS and macOS 13+ arm64
-  DMG/update archives. Other desktop variants remain out of scope.
+- invoice extraction、projection、independent monitor、localhost API 与既有 Web UI
+  仍是共享 product core。
+- 第一版 Tauri release 面向 Windows 10/11 x64 NSIS 与 macOS 13+ arm64
+  DMG/update archive；其他 desktop variant 不在范围内。

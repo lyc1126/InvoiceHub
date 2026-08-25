@@ -133,6 +133,10 @@ CSV 使用 UTF-8 BOM 方便 Excel/WPS；XLSX 的活动 sheet 为“发票汇总�
 
 macOS 将这组可写运行态映射到用户的 Application Support，而不是 `.app/Contents`；TargetProfile 和投影语义不变。Windows 正式 core 仍使用包内运行态布局。平台差异只影响根位置，不改变各文件的真值角色。
 
+Tauri `.invoicehub-monitor-recovery.json` 是 host-local recovery marker schema，不是发票、投影、SQLite 主数据、更新候选或安装授权。L10-D 将 marker root 固定为严格 backend identity 的 `runtime_dir`，只有 updater-enabled、released owned lifecycle 才能打开平台 store；启动恢复在 gate release 与 host manage 后发生，只有 monitor `running && ready` 才清 marker。失败保留 marker 和诊断 backend，不把异常当成无恢复义务。Unix store 使用 descriptor-pinned/no-follow primitive、目录 `flock` whole-operation serialization、锁内 stale re-read 与最终目录 sync；Windows store 使用 opened-handle-relative/no-reparse 操作。Windows 最小交叉编译仍只是 source 证据，不代表 runtime。
+
+Lifecycle lease 是 host 运行态授权快照，不是可持久化业务状态：字段固定为 generation、phase、health PID、owned PID、process PID、startup-gate 与 state scope；authority 共享 `BackendHost` 现有 Arc，不复制真值。Updater runtime 也是纯内存状态机：`disabled -> inactive -> activating -> ready -> commit_reserved -> commit_executing -> relaunch_prepared`，失败终态为 `failed` 或 `commit_lost`。完整 `Update` 与内部 `artifact_id` 只存在 host 内存；artifact ID 对 version/target/download URL/signature 做域分隔、长度前缀 SHA-256，Web 不持久化或接收它。`VerifiedUpdate` 只能由 Tauri `Update::download` 完成内置签名验证后 promotion，raw bytes 不得进入 installer。`UpdateCoordinator` 编排 verify -> pause -> install -> relaunch 并保留 restore attempt；响应闩锁在 coordinator 之外保证 HTTP flush 先于任何 transaction effect。
+
 ### 4.5 业务资料夹与做账真值
 
 业务资料夹是当前公司资料的导航边界，不替代 `watch_dir`。当活动扫描目录位于公司资料夹子目录时，`/api/v1/business-dossier` 可以暴露成本发票、银行流水、进项抵扣、开具发票和成本产物等受控入口；open API 仍要求目标位于当前业务资料夹或 `watch_dir` 内。它的元数据统计不是发票业务扫描：一次 `os.scandir` 深度遍历最多检查 4,000 个目录项或 1.25 秒，跳过隐藏项和符号链接，并在同一遍中得出快捷子目录与统计，避免为每个链接重复递归。达到边界或遇到不可读目录时返回 `scan.complete=false`，此时 `stats` 和目录 `file_count` 都只是可诊断的下界，不能用于业务汇总或做账判断。
@@ -500,7 +504,7 @@ CycloneDX 1.6 SBOM 由平台哈希锁确定性生成，组件版本和 lock SHA 
 
 更新服务只接受编译进包内的 HTTPS Feed 和主机白名单，重定向后再次校验；连接预算 3 秒、端到端预算 5 秒、响应上限 256KB。缓存位于 `runtime/local_state/update-cache.json`，保存 ETag、上次有效 feed/result 和最近尝试时间；离线、无效或未来最低契约失败只更新错误状态，不清除最后有效元数据，也不获得成功结果的 24 小时 TTL。Tauri host approval 例外地必须取得不带 `If-None-Match` 的 fresh allowlisted Feed `200` body 并在同一 session 重验；缓存、ETag、`304`、离线或错误不能形成 approval。
 
-`preferences.json` 保持 `startup_surface=browser|desktop` 与 `auto_check_updates=bool`。`v0.3` Tauri 新安装默认 desktop，导入的显式偏好保持原值并在下次启动生效，browser 模式隐藏主窗口、只打开一次默认浏览器并常驻托盘。安装协调标记只用于跨 host 重启的 monitor 协调，不保存发票、解析结果或安装授权；停止失败、取消或安装失败均不改变运行状态。
+`preferences.json` 保持 `startup_surface=browser|desktop` 与 `auto_check_updates=bool`。`v0.3` Tauri 新安装默认 desktop，导入的显式偏好保持原值并在下次启动生效，browser 模式隐藏主窗口、只打开一次默认浏览器并常驻托盘。安装协调标记只用于跨 host 重启的 monitor 协调，不保存发票、解析结果或安装授权。Updater 已采用 public response -> private fixed-enum commit 两阶段协议；`CommitLost` 表示响应/worker/latch 的提交权丢失且无更新副作用，`Failed` 表示 startup restore 或 transaction 未闭合并保留诊断/marker。Windows `Update::install()` 的进程退出与 macOS `request_restart` 由独立平台适配器收束，不能把同一状态转移假设套到双平台。
 
 ## 13. 失败策略总表
 

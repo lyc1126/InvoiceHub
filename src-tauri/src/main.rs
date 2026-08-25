@@ -69,6 +69,13 @@ fn build_application_menu(app: &tauri::AppHandle<tauri::Wry>) -> tauri::Result<M
 
 fn prepare_backend_exit(app: &tauri::AppHandle<tauri::Wry>) -> bool {
     if let Some(backend) = app.try_state::<BackendHost>() {
+        if backend.update_relaunch_prepared() {
+            return true;
+        }
+        if backend.updater_blocks_normal_quit() {
+            eprintln!("InvoiceHub desktop host exit was blocked while an update commit is active");
+            return false;
+        }
         match backend.shutdown_keep_monitor_or_terminate() {
             Ok(BackendShutdownOutcome::Graceful) => {}
             Ok(BackendShutdownOutcome::Forced) => {
@@ -191,8 +198,25 @@ fn main() -> ExitCode {
                 complete_setup_failure_cleanup(&backend);
                 return Err(error);
             }
+            if let Err(error) = backend.release_startup_gate() {
+                complete_setup_failure_cleanup(&backend);
+                return Err(Box::new(error));
+            }
             app.manage(backend);
             app.manage(startup_surface);
+            if let Some(backend) = app.try_state::<BackendHost>() {
+                match backend.activate_updater_runtime() {
+                    Ok(true) => {
+                        eprintln!("InvoiceHub updater recovery runtime activated");
+                    }
+                    Ok(false) => {}
+                    Err(error) => {
+                        eprintln!(
+                            "InvoiceHub updater runtime is unavailable; the backend remains available for diagnostics: {error}"
+                        );
+                    }
+                }
+            }
             Ok(())
         })
         .build(tauri::generate_context!())
