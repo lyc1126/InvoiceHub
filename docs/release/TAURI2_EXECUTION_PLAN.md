@@ -16,12 +16,14 @@ bookkeeping, or monitoring.
 
 ## Current P1 boundary
 
-`update_install` is deliberately unavailable while the host lacks a complete
-recovery/relaunch coordinator. It consumes any in-memory candidate and returns
-the existing redacted unavailable error; it must not download, stop monitor,
-install, or restart. The historical L6 order is a future coordinator
-requirement, not a currently executable flow. Tray Quit and the application
-menu/Cmd-Q must request `app.exit(0)`, which enters the common Tauri
+L10-D has wired the complete recovery/relaunch coordinator into updater-enabled
+host profiles. L10-E has now exercised only its authenticated startup restore
+with an exact, non-installing development recovery-smoke profile; the existing
+ordinary development and internal-alpha assemblers still emit
+`updater.enabled=false`. The smoke did not perform an update check, reach a
+Feed, retain an installable verification key, download, install, or restart.
+Tray Quit and the application menu/Cmd-Q must request
+`app.exit(0)`, which enters the common Tauri
 `ExitRequested` path. A native predefined Quit item or an external macOS
 termination request can bypass that event and therefore cannot be claimed as
 an orderly-shutdown path. Every `ExitRequested` that the host receives first
@@ -595,6 +597,16 @@ this table.
 | Minimal sample | Rust contracts for authenticated fixed-endpoint bridge requests/responses, response-before-private-commit ordering, candidate reservation/expiry/dispatch loss, verified download before pause, failure recovery, startup restore after the released owned gate, and existing lifecycle/marker/platform boundaries. Python contracts for valid/tampered/replayed monitor HMAC requests, signed response binding, unchanged ordinary bridge calls, strict empty install body/redacted errors, and documentation drift. Run locked formatting/offline focused tests and binary check when the existing toolchain/cache is available, plus `compileall` and `git diff --check`. |
 | Stop condition | Stop at the first request/response authentication, response-before-commit, candidate identity, lease, marker, recovery, compiler, or focused-contract failure. Do not launch Tauri/FastAPI, bind `127.0.0.1:8766`, call a real monitor or updater, download/install/restart, build an artifact, package, sign, notarize, publish, push, or create a Release/Feed. |
 | Result (2026-08-24) | Passed for L10-D source/contract integration. Locked offline Rust verification passed formatting, the desktop binary check, the tests check, and 74 tests: 38 library tests (including 11 Host RPC and 10 authenticated bridge tests), 6 lifecycle contracts, 17 monitor-recovery contracts, 12 coordinator contracts, and 1 Windows marker static contract. The pre-existing Host RPC parser sample used only test-bound `127.0.0.1:0`; the sandbox rejected that bind, and the same locked test passed in the approved local non-sandbox run. Focused Python verification passed 63 unique tests: 4 API install/bridge/auth contracts plus 59 lifecycle, Host RPC, foundation, and documentation contracts with `DeprecationWarning` treated as errors. Version synchronization, `compileall`, and `git diff --check` passed. The implementation retains the private ownership secret, authenticates both sides of each recovery call, activates only after gate/manage and startup restore, reserves a complete candidate behind response-before-commit, records response/worker/latch loss as `CommitLost`, runs the existing verified-download/recovery coordinator, and separates Windows installer exit from macOS prepared restart. No product process, product-port bind, real Feed/monitor/updater/download/install/restart, artifact build, signing, notarization, publication, push, PR, or platform runtime smoke was run. |
+
+### L10-E: non-installing updater recovery-smoke profile
+
+| Field | Record |
+| --- | --- |
+| Hypothesis | A compile-bound development manifest can activate the L10-D updater runtime solely for authenticated startup recovery while remaining structurally unable to install an update: the ordinary development profile stays disabled, and the smoke variant accepts only one fixed HTTPS loopback endpoint plus a deliberately non-verifying public-key sentinel. |
+| Decision changed by result | A source and runtime pass permits later, separately bounded valid/tampered update work on a purpose-built alpha artifact. A failure blocks that work and confines repair to the smoke manifest, startup activation, authenticated monitor restore, or isolated cleanup mechanism that failed. It does not authorize a real Feed, update candidate, download, install, restart, NSIS/DMG, signing, notarization, publication, push, or PR. |
+| Minimal sample | Source contracts for the exact smoke tuple and arbitrary endpoint/key rejection; deterministic normal and recovery staging; a direct app-only build from the current reviewed source; then one macOS arm64 launch with a temporary development state root, empty watch directory, disabled automatic update checks, and a valid pre-seeded recovery marker. Observe owned health, authenticated monitor restoration to `running && ready`, marker removal, explicit monitor stop, and bounded cleanup of only the spawned sample. |
+| Stop condition | Stop at the first manifest/profile, compiler, test, fixed-port, ownership, authentication, marker, monitor-ready, cleanup, or documentation failure. Do not retry with the real HOME/Application Support, a real watch directory, another port, a reachable endpoint, a verification-capable key, `update_check`, `update_install`, download, installer, restart, DMG/NSIS, signing, notarization, upload, Release, Feed, push, or PR. |
+| Result (2026-08-24) | Passed within the non-installing boundary. Preflight first caught that the runner used the display name instead of Tauri's actual `CFBundleExecutable`; it now validates the fixed `Info.plist` executable, identifier, package type, and version against the host identity. The first launch then failed closed before backend/monitor startup because an absent development `plugins.updater` node deserialized as `null`; the overlay now supplies only an empty `pubkey` object, with no endpoint or verification authority, while the hash-bound manifest and Rust parser still supply and enforce the exact sentinel tuple. A locked Rust 1.85/Tauri CLI 2.11.4 offline app-only rebuild succeeded. The first sample to enter the recovery path used build ID `8e40363fa673017e993727cf3f5dec347b24927c5ce1a0a4b945601737621873`; owned health and monitor paths matched the temporary state, the monitor reached `running && ready`, `marker_removed=true`, explicit stop returned `monitor_stopped=true`, and the runner reported `update_requests=0`. Backend PID 6629 and monitor PID 6638 were absent afterward; `127.0.0.1:8766`, the process-pattern audit, and the temporary sample-directory audit were all clear. Final focused verification passed 77 Python development/recovery/lifecycle/foundation/Host RPC/documentation contracts with `DeprecationWarning` treated as errors; locked Rust formatting and offline desktop/tests `cargo check`, version synchronization, focused `compileall`, and `git diff --check` also passed. No Feed, candidate, update check, download, signature validation, install, restart, NSIS/DMG, signing, notarization, publication, push, PR, or Release action was performed or validated. |
 
 ### P1-SC: setup-failure termination confirmation
 

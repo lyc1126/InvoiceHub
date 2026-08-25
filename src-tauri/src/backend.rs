@@ -37,6 +37,10 @@ pub const DESKTOP_HOST_SECRET_ENV: &str = "INVOICE_HUB_DESKTOP_HOST_SECRET";
 pub const DESKTOP_HOST_MODE_ENV: &str = "INVOICE_HUB_DESKTOP_HOST";
 pub const DESKTOP_UPDATER_ENABLED_ENV: &str = "INVOICE_HUB_DESKTOP_UPDATER_ENABLED";
 pub const DEVELOPMENT_STATE_ROOT_ENV: &str = "INVOICE_HUB_DEV_STATE_ROOT";
+pub const RECOVERY_SMOKE_ENDPOINT: &str =
+    "https://127.0.0.1:1/invoicehub-recovery-smoke/latest.json";
+pub const RECOVERY_SMOKE_PUBLIC_KEY: &str =
+    "SU5WT0lDRUhVQiBSRUNPVkVSWSBTTU9LRSAtIE5PVCBBIFNJR05JTkcgS0VZ";
 const MAX_HTTP_RESPONSE_BYTES: usize = 128 * 1024;
 const HTTP_TIMEOUT: Duration = Duration::from_secs(5);
 const BACKEND_STARTUP_TIMEOUT: Duration = Duration::from_secs(20);
@@ -1339,8 +1343,9 @@ fn updater_from_json(
     }
     if !matches!(
         profile,
-        BundleProfile::InternalAlpha | BundleProfile::Release
-    ) {
+        BundleProfile::Development | BundleProfile::InternalAlpha | BundleProfile::Release
+    ) || fields.len() != 3
+    {
         return Err(BackendError::BundleManifestInvalid);
     }
     let endpoint =
@@ -1352,6 +1357,14 @@ fn updater_from_json(
         || endpoint.contains('#')
         || endpoint.chars().any(char::is_control)
         || public_key.chars().any(char::is_control)
+    {
+        return Err(BackendError::BundleManifestInvalid);
+    }
+    // The development assembler's recovery smoke only exercises startup restore.
+    // Locking both values here prevents a dirty development manifest from turning
+    // that cross-layer test profile into an arbitrary Feed or install authority.
+    if profile == BundleProfile::Development
+        && (endpoint != RECOVERY_SMOKE_ENDPOINT || public_key != RECOVERY_SMOKE_PUBLIC_KEY)
     {
         return Err(BackendError::BundleManifestInvalid);
     }
@@ -1660,10 +1673,10 @@ mod tests {
         desktop_state_paths_for, fixed_backend_arguments, generate_ownership_challenge,
         generate_ownership_secret, identity_from_json, is_keep_monitor_shutdown_ack,
         ownership_response_for_test, ownership_response_matches, retry_probe,
-        revalidate_backend_after_preferences, state_paths_for_bundle_profile, BackendError,
-        BackendHealth, BackendLifecycleAuthority, BackendLifecycleState, BundleProfile,
-        DesktopStatePaths, DesktopStatePlatform, HandshakeError, LifecycleAuthority,
-        LifecyclePhase, RecoveryError,
+        revalidate_backend_after_preferences, state_paths_for_bundle_profile, updater_from_json,
+        BackendError, BackendHealth, BackendLifecycleAuthority, BackendLifecycleState,
+        BundleProfile, DesktopStatePaths, DesktopStatePlatform, HandshakeError, LifecycleAuthority,
+        LifecyclePhase, RecoveryError, RECOVERY_SMOKE_ENDPOINT, RECOVERY_SMOKE_PUBLIC_KEY,
     };
 
     #[cfg(unix)]
@@ -2117,6 +2130,52 @@ mod tests {
         ));
         assert!(matches!(
             bundle_relative_directory(Path::new("/bundle"), "../escape"),
+            Err(BackendError::BundleManifestInvalid)
+        ));
+    }
+
+    #[test]
+    fn development_updater_accepts_only_the_non_installing_recovery_smoke_tuple() {
+        let fields = Map::from_iter([
+            ("enabled".to_owned(), Value::Bool(true)),
+            (
+                "endpoint".to_owned(),
+                Value::String(RECOVERY_SMOKE_ENDPOINT.to_owned()),
+            ),
+            (
+                "public_key".to_owned(),
+                Value::String(RECOVERY_SMOKE_PUBLIC_KEY.to_owned()),
+            ),
+        ]);
+
+        let updater = updater_from_json(&fields, BundleProfile::Development)
+            .expect("exact recovery-smoke updater tuple");
+        assert!(updater.enabled());
+        assert_eq!(updater.endpoint(), Some(RECOVERY_SMOKE_ENDPOINT));
+        assert_eq!(updater.public_key(), Some(RECOVERY_SMOKE_PUBLIC_KEY));
+
+        for (field, value) in [
+            (
+                "endpoint",
+                Value::String("https://example.invalid/latest.json".to_owned()),
+            ),
+            (
+                "public_key",
+                Value::String("install-capable-key".to_owned()),
+            ),
+        ] {
+            let mut changed = fields.clone();
+            changed.insert(field.to_owned(), value);
+            assert!(matches!(
+                updater_from_json(&changed, BundleProfile::Development),
+                Err(BackendError::BundleManifestInvalid)
+            ));
+        }
+
+        let mut extra = fields;
+        extra.insert("channel".to_owned(), Value::String("alpha".to_owned()));
+        assert!(matches!(
+            updater_from_json(&extra, BundleProfile::Development),
             Err(BackendError::BundleManifestInvalid)
         ));
     }

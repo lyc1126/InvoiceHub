@@ -684,8 +684,16 @@ sequenceDiagram
 L10-D 改变的是 host 内部 install 分支，不改变公开 body 或返回形状。双向 HMAC recovery、startup restore、
 response-before-commit、CommitLost、coordinator restore 和平台退出都已接线；每个 marker/bridge 操作仍前后复核
 同一 released lease，且仅 ready owned monitor 可暂停、later `running && ready` 才可清 marker。普通 localhost
-bridge 并未因此获得跨客户端认证。现有 updater-disabled 制品不会走该分支，本轮也没有以真实 Feed/monitor/
-installer/restart 运行它，因此不得把源码 contracts 当作更新成功或平台 smoke 证据。
+bridge 并未因此获得跨客户端认证。ordinary development 与 internal-alpha 制品不会走该分支。
+
+L10-E 只为 startup restore 建立一个 compile-bound development recovery-smoke：manifest 只能使用固定不可达的
+`https://127.0.0.1:1/invoicehub-recovery-smoke/latest.json`、无验签能力 key sentinel 和精确三字段 updater 对象；
+普通 stage/build 仍写 `enabled=false`。runner 在临时 HOME/state/runtime/watch 中预写
+`auto_check_updates=false` 和同 scope marker，自身 HTTP allowlist 只有 `GET /api/v1/health`、
+`GET /api/v1/bridge/status`、`POST /api/v1/bridge/stop`；authenticated `/bridge/start` 只能由 host recovery
+内部调用。它不调用公开 update check/install，也不能验证签名或获得 candidate。macOS arm64 隔离样本已观察
+owned monitor `running && ready`、marker 删除、显式 stop 和进程/端口/临时目录清理，runner 报告
+`update_requests=0`；不得把该 profile 当作真实 Feed、更新成功或发行 smoke 证据。
 
 hosted check 的 lock-contended 分支在 busy 结果后直接返回，不能落入统一的 `updates.checked` 事件写入；这使响应不依赖 SQLite，其他检查与成功路径仍记录事件。
 

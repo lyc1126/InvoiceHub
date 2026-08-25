@@ -12,16 +12,22 @@ A bare source checkout is intentionally not runnable: `main.rs` requires an
 status 78 before the host attaches to a listener or opens a WebView.
 
 `scripts/dev/tauri_dev_app.py` is the only development assembly entry point.
-It stages an allowlisted shared core, creates a schema-3 `development` manifest
-and an explicit virtual-environment launcher, and binds both the manifest and
-launcher SHA-256 values while building one macOS arm64 `.app`. It requires an
-absolute venv Python; its build action also requires an absolute pnpm
-executable. The development bundle is local and ignored. It does not create a
-DMG, NSIS installer, update archive, release manifest, release signature, or
-Feed input.
+Its ordinary `stage/build` actions stage an allowlisted shared core, create an
+updater-disabled schema-3 `development` manifest and explicit virtual-
+environment launcher, and bind both manifest and launcher SHA-256 values while
+building one macOS arm64 `.app`. Build accepts an absolute pnpm or direct Tauri
+CLI executable. The explicit `stage-recovery/build-recovery` actions differ
+only by writing the exact L10-E non-installing recovery-smoke tuple. Every
+development bundle is local and ignored; none creates a DMG, NSIS installer,
+update archive, release manifest, release signature, or Feed input.
 
-The development manifest resolves resources from `Contents/Resources`, rejects
-a package manifest, and explicitly disables updater delegation.
+The development manifest resolves resources from `Contents/Resources` and
+rejects a package manifest. Ordinary manifests explicitly disable updater
+delegation. An enabled development manifest is valid only when its updater
+object has exactly `enabled`, `endpoint`, and `public_key`, with the endpoint
+fixed to unreachable `https://127.0.0.1:1/invoicehub-recovery-smoke/latest.json`
+and the key fixed to a sentinel that is not a signing key. Arbitrary endpoints,
+keys, or extra fields fail closed.
 `INVOICE_HUB_DEV_STATE_ROOT` is required for a development launch: it must name
 an existing absolute directory. The host canonicalizes it and rejects either
 containment direction between that state root and the bundle/core root. Release
@@ -96,9 +102,22 @@ uses `UpdateCoordinator` for the fixed verified-download -> pause -> install ->
 relaunch order. Windows confirms managed-backend termination in
 `on_before_exit`; macOS stops the backend, marks relaunch prepared, and calls
 `request_restart()`. Normal Quit is blocked while a commit is reserved or
-executing. These are source and contract boundaries only: current development
-and internal-alpha profiles disable updater, and no real Feed, monitor, update,
-restart, package, signing, or platform smoke is claimed.
+executing. These are source and contract boundaries only: ordinary development
+and internal-alpha profiles disable updater, and no real Feed, update, restart,
+package, signing, or platform smoke is claimed.
+
+L10-E adds `scripts/dev/tauri_recovery_smoke.py` solely to exercise authenticated
+startup restore. It accepts only the exact recovery App, creates temporary HOME,
+state, runtime, and watch directories, writes `auto_check_updates=false`, seeds
+a scope-bound prior marker, then permits only health, monitor status, and
+monitor stop requests. Authenticated monitor start comes from the host recovery
+transaction itself; the runner cannot request bridge start or updater check/
+install. It verifies App/health/path ownership before cleanup and terminates only
+its spawned process group. The locked offline macOS arm64 sample restored an
+owned monitor to `running && ready`, removed the marker, explicitly stopped the
+monitor, and cleared its process group, fixed port, and temporary directories;
+the runner reported `update_requests=0`. This remains startup-recovery evidence,
+not Feed, candidate, download, signature-validation, install, or restart evidence.
 
 Tray Quit and the custom macOS application-menu Quit item/Cmd-Q both request
 `app.exit(0)`. The menu must not use the predefined native Quit selector,
@@ -117,7 +136,8 @@ retries instead of returning the original surface error to `Drop`; a child
 mutex or `try_wait` error cannot count as a graceful exit. This path does not
 depend on the later `ExitRequested` handler or `Drop`.
 
-The development app disables this updater path. L9/P1-Q did not exercise browser,
-tray clicking, second-instance, native-picker, printing, download, signature validation,
-monitor-stop-for-install, installation, restart, Windows, DMG, Developer ID,
-notarization, Release, or Feed behavior. It is not release evidence.
+The ordinary development app disables this updater path. L9/P1-Q did not
+exercise browser, tray clicking, second-instance, native-picker, printing,
+download, signature validation, monitor-stop-for-install, installation,
+restart, Windows, DMG, Developer ID, notarization, Release, or Feed behavior.
+L10-E does not widen those claims. Neither profile is release evidence.

@@ -273,6 +273,7 @@ def test_tauri_updater_runtime_activates_after_the_owned_gate_and_commits_after_
     assert setup.index("backend.release_startup_gate()") < setup.index("app.manage(backend);")
     assert setup.index("app.manage(backend);") < setup.index("backend.activate_updater_runtime()")
     assert "the backend remains available for diagnostics" in setup
+    assert "InvoiceHub updater recovery runtime activated" in setup
 
     activation = host_rpc[host_rpc.index("fn activate(") : host_rpc.index("fn clear_candidate")]
     assert "if !self.runtime_gate.begin_activation()?" in activation

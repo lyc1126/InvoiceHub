@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """Stage or build the macOS development-only Tauri InvoiceHub app.
 
-This tool deliberately has two explicit actions. ``stage`` constructs only the
-allowlisted shared core and development host manifest below ``src-tauri``.
-``build`` runs Tauri only on macOS arm64 and only requests the ``app`` bundle.
-Neither action signs, notarizes, creates a DMG, starts InvoiceHub, or falls
-back to a Python found on PATH.
+The ordinary ``stage`` and ``build`` actions keep updater delegation disabled.
+The explicit ``*-recovery`` actions instead emit the one compile-bound updater
+tuple accepted by the Rust host for startup-recovery smoke testing. Every build
+is limited to the macOS arm64 ``app`` bundle. No action signs, notarizes, creates
+a DMG, starts InvoiceHub, contacts an update Feed, or falls back to a Python
+found on PATH.
 """
 
 from __future__ import annotations
@@ -63,6 +64,10 @@ FORBIDDEN_STAGED_TOP_LEVEL_NAMES = {
     "运行状态",
 }
 COMMIT_PATTERN = re.compile(r"^[0-9a-f]{40}(?:\+dirty)?$")
+RECOVERY_SMOKE_ENDPOINT = "https://127.0.0.1:1/invoicehub-recovery-smoke/latest.json"
+RECOVERY_SMOKE_PUBLIC_KEY = (
+    "SU5WT0lDRUhVQiBSRUNPVkVSWSBTTU9LRSAtIE5PVCBBIFNJR05JTkcgS0VZ"
+)
 
 
 class TauriDevAppError(RuntimeError):
@@ -77,6 +82,7 @@ class StageResult:
     host_manifest_path: Path
     manifest_sha256: str
     build_id: str
+    recovery_smoke: bool
 
 
 def _require_root(root: Path) -> Path:
@@ -116,6 +122,13 @@ def _validate_pnpm(raw_pnpm: Path) -> Path:
     candidate = Path(raw_pnpm).expanduser()
     if not candidate.is_absolute() or not candidate.is_file() or not os.access(candidate, os.X_OK):
         raise TauriDevAppError("--pnpm must be an absolute executable")
+    return candidate
+
+
+def _validate_tauri_cli(raw_tauri_cli: Path) -> Path:
+    candidate = Path(raw_tauri_cli).expanduser()
+    if not candidate.is_absolute() or not candidate.is_file() or not os.access(candidate, os.X_OK):
+        raise TauriDevAppError("--tauri-cli must be an absolute executable")
     return candidate
 
 
@@ -320,6 +333,7 @@ def _write_host_manifest(
     launcher_sha256: str,
     build_manifest: dict[str, Any],
     product_version: str,
+    recovery_smoke: bool,
 ) -> str:
     build_id = str(build_manifest["build_id"])
     if not re.fullmatch(r"[0-9a-f]{64}", build_id):
@@ -342,7 +356,15 @@ def _write_host_manifest(
             "architecture": "arm64",
             "package_type": "source",
         },
-        "updater": {"enabled": False},
+        "updater": (
+            {
+                "enabled": True,
+                "endpoint": RECOVERY_SMOKE_ENDPOINT,
+                "public_key": RECOVERY_SMOKE_PUBLIC_KEY,
+            }
+            if recovery_smoke
+            else {"enabled": False}
+        ),
     }
     encoded = (json.dumps(payload, indent=2, sort_keys=True) + "\n").encode("utf-8")
     path.write_bytes(encoded)
@@ -387,6 +409,7 @@ def stage(
     *,
     source_commit: str | None = None,
     built_at: str | None = None,
+    recovery_smoke: bool = False,
 ) -> StageResult:
     """Create the deterministic development resources used by the Tauri app."""
 
@@ -417,6 +440,7 @@ def stage(
             launcher_sha256=launcher_sha256,
             build_manifest=build_manifest,
             product_version=product_version,
+            recovery_smoke=recovery_smoke,
         )
         _validate_staged_core(core_root)
         _replace_staging(staging_dir, temporary_dir)
@@ -428,6 +452,7 @@ def stage(
         host_manifest_path=staging_dir / HOST_MANIFEST_NAME,
         manifest_sha256=manifest_sha256,
         build_id=str(build_manifest["build_id"]),
+        recovery_smoke=recovery_smoke,
     )
 
 
@@ -438,35 +463,56 @@ def _assert_macos_arm64(system_name: str | None = None, machine: str | None = No
         raise TauriDevAppError("the development app build is limited to macOS arm64")
 
 
-def build_command(root: Path, pnpm: Path, manifest_sha256: str) -> tuple[list[str], dict[str, str]]:
+def build_command(
+    root: Path,
+    pnpm: Path | None,
+    manifest_sha256: str,
+    *,
+    tauri_cli: Path | None = None,
+) -> tuple[list[str], dict[str, str]]:
     """Return the controlled app-only Tauri command and compile-time environment."""
 
     resolved_root = _require_root(root)
-    validated_pnpm = _validate_pnpm(pnpm)
     if not re.fullmatch(r"[0-9a-f]{64}", manifest_sha256):
         raise TauriDevAppError("host manifest SHA-256 is invalid")
-    command = [
-        str(validated_pnpm),
-        "exec",
-        "tauri",
-        "build",
-        "--config",
-        str(resolved_root / DEV_CONFIG_RELATIVE_PATH),
-        "--bundles",
-        "app",
-    ]
+    if tauri_cli is not None:
+        command = [str(_validate_tauri_cli(tauri_cli)), "build"]
+    else:
+        if pnpm is None:
+            raise TauriDevAppError("either --pnpm or --tauri-cli is required")
+        command = [str(_validate_pnpm(pnpm)), "exec", "tauri", "build"]
+    command.extend(
+        [
+            "--config",
+            str(resolved_root / DEV_CONFIG_RELATIVE_PATH),
+            "--bundles",
+            "app",
+        ]
+    )
     environment = os.environ.copy()
     environment["INVOICE_HUB_BUNDLE_MANIFEST_SHA256"] = manifest_sha256
     return command, environment
 
 
-def build(root: Path, python: Path, pnpm: Path) -> Path:
+def build(
+    root: Path,
+    python: Path,
+    pnpm: Path | None,
+    *,
+    tauri_cli: Path | None = None,
+    recovery_smoke: bool = False,
+) -> Path:
     """Stage and build a local macOS arm64 `.app`, without a DMG or release work."""
 
     _assert_macos_arm64()
     resolved_root = _require_root(root)
-    staged = stage(resolved_root, python)
-    command, environment = build_command(resolved_root, pnpm, staged.manifest_sha256)
+    staged = stage(resolved_root, python, recovery_smoke=recovery_smoke)
+    command, environment = build_command(
+        resolved_root,
+        pnpm,
+        staged.manifest_sha256,
+        tauri_cli=tauri_cli,
+    )
     completed = subprocess.run(command, check=False, cwd=resolved_root, env=environment)
     if completed.returncode != 0:
         raise TauriDevAppError(f"Tauri development app build failed with exit status {completed.returncode}")
@@ -478,7 +524,7 @@ def build(root: Path, python: Path, pnpm: Path) -> Path:
 
 def _stage_result_payload(result: StageResult) -> dict[str, str]:
     return {
-        "action": "stage",
+        "action": "stage-recovery" if result.recovery_smoke else "stage",
         "build_id": result.build_id,
         "host_manifest": str(result.host_manifest_path),
         "host_manifest_sha256": result.manifest_sha256,
@@ -490,19 +536,43 @@ def _stage_result_payload(result: StageResult) -> dict[str, str]:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Stage or build the macOS Tauri development app.")
     subcommands = parser.add_subparsers(dest="action", required=True)
-    for name in ("stage", "build"):
+    for name in ("stage", "stage-recovery", "build", "build-recovery"):
         command = subcommands.add_parser(name)
         command.add_argument("--root", type=Path, default=DEFAULT_ROOT)
         command.add_argument("--python", type=Path, required=True)
-    subcommands.choices["build"].add_argument("--pnpm", type=Path, required=True)
+    for name in ("build", "build-recovery"):
+        subcommands.choices[name].add_argument("--pnpm", type=Path)
+        subcommands.choices[name].add_argument("--tauri-cli", type=Path)
     args = parser.parse_args(argv)
 
     try:
-        if args.action == "stage":
-            print(json.dumps(_stage_result_payload(stage(args.root, args.python)), sort_keys=True))
+        recovery_smoke = args.action.endswith("-recovery")
+        if args.action in {"stage", "stage-recovery"}:
+            print(
+                json.dumps(
+                    _stage_result_payload(
+                        stage(args.root, args.python, recovery_smoke=recovery_smoke)
+                    ),
+                    sort_keys=True,
+                )
+            )
             return 0
-        app_bundle = build(args.root, args.python, args.pnpm)
-        print(json.dumps({"action": "build", "app_bundle": str(app_bundle)}, sort_keys=True))
+        app_bundle = build(
+            args.root,
+            args.python,
+            args.pnpm,
+            tauri_cli=args.tauri_cli,
+            recovery_smoke=recovery_smoke,
+        )
+        print(
+            json.dumps(
+                {
+                    "action": "build-recovery" if recovery_smoke else "build",
+                    "app_bundle": str(app_bundle),
+                },
+                sort_keys=True,
+            )
+        )
         return 0
     except TauriDevAppError as exc:
         print(json.dumps({"ok": False, "error": str(exc)}, sort_keys=True), file=sys.stderr)

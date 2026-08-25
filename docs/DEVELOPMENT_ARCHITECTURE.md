@@ -26,6 +26,7 @@ InvoiceHub 不是只有一个 FastAPI 页面。它同时包含发票提取、文
 - [数据结构与算法](architecture/DATA_AND_ALGORITHMS.md)：模型、数据库、投影、算法和公式。
 - [Agent 任务导航](architecture/AGENT_TASK_MAP.md)：按工程任务定位修改点和验收点。
 - [注释与设计原因地图](architecture/COMMENT_RATIONALE_MAP.md)：高价值注释点及其不变量。
+- [旧工作区功能与故障回溯索引](legacy/OLD_WORKSPACE_CHANGELOG_INDEX.md)：脱敏的历史查询入口，不含原始私有记录。
 
 ## 2. 事实来源和状态标记
 
@@ -38,6 +39,7 @@ InvoiceHub 不是只有一个 FastAPI 页面。它同时包含发票提取、文
 | 3 | `README.md`、`IMPLEMENTATION_STATUS.md` 等真值文档 | 运行方式、完成状态和验收口径 |
 | 4 | `CHANGELOG.md` | 设计如何演进、某个保护逻辑为什么出现 |
 | 5 | `docs/BASELINE_FROM_OLD_PROJECT.md` | 旧项目迁移基线，不代表重构版目录和实现 |
+| 6 | `docs/legacy/OLD_WORKSPACE_CHANGELOG_INDEX.md` | 旧工作区功能与故障的脱敏查询路线，不是原始 Changelog 或当前行为真值 |
 
 文中使用四种状态：
 
@@ -59,6 +61,8 @@ Tauri `setup` 在 `BackendHost::launch` 后也不立即将 child 放入 app stat
 L10-R/C 建立的 monitor recovery foundation 仍是运行时安全不变量：全部 marker 或 bridge 操作必须携带并前后复核 released owned lifecycle lease（generation、phase、health/owned/process PID、state scope）。它只暂停已 `running && ready` 的 owned monitor，已有/损坏/跨 scope marker、ownership loss 或操作失败都保留恢复义务并 fail closed；Unix marker store 的最终读写/删除固定使用 opened-directory descriptor 和 no-follow `openat`/atomic no-clobber `linkat`/`unlinkat`，遵循目录锁协议的整段 load/publish/clear 串行化已闭合，stale-clear 在锁内重读，publish/clear 在最终 link/unlink 后同步目录元数据，绕过协议的同用户直接文件编辑不在保证内；Windows 已有相对已打开目录句柄、拒绝 reparse point 的 source-level marker store，最小 `x86_64-pc-windows-msvc` 临时 crate 交叉编译已通过，但没有 Windows runtime 证据，完整 Tauri Windows target check 仍因 `ring` 的 `assert.h` 依赖阻塞。
 
 L10-D 把这些 seams 接入运行时而不扩大公开 API。`BackendHost` 私有保存已有 ownership secret；每个 Rust recovery 请求和精确 Python 响应都由 fresh challenge 与 HMAC-SHA256 transcript 双向绑定，Python 拒绝 incomplete/tampered/non-empty/replayed 请求，普通 bridge HTTP 行为不变。Host 保留完整 cloneable `Update`，并从 version/target/download URL/signature 计算不公开的域分隔 artifact identity。`update_install` 先消费 fresh candidate 并启动 latch-blocked worker，只有精确 `{"ok":true}` 写入并 flush 后才放行 Tauri `download` 内置验签 -> recovery pause -> `install` -> platform relaunch；writer/spawn/latch loss 进入 `CommitLost` 且没有下载、marker、monitor 或安装副作用。startup restore 或事务失败保留 marker、保持 backend/WebUI 诊断并阻断后续 updater。Windows 在 updater `on_before_exit` 中确认 managed backend 已终止后才启动 installer；macOS 安装返回后先停 backend、标记 relaunch prepared、再 `request_restart()`。本轮没有运行真实 Feed、monitor、updater、installer、restart 或制品构建，源码接线不等于平台验收。
+
+L10-E 将运行验证收窄为不可安装的 development recovery smoke。ordinary development/internal-alpha 保持 updater-disabled；只有显式 recovery staging 才写固定不可达 HTTPS loopback endpoint、无验签能力 key sentinel 和精确三字段 updater 对象。隔离 runner 使用临时 HOME/state/runtime/watch、关闭自动更新检查并预置同 scope marker，且自身 localhost allowlist 只有 health、monitor status 和 monitor stop；它不调用 update check/install 或 bridge start。macOS arm64 样本已恢复 owned monitor 到 `running && ready`、删除 marker、显式停止 monitor并完成进程/端口/临时目录清理，runner 报告 `update_requests=0`。该证据仍不能扩大为 Feed、候选、下载、验签、安装、restart 或发行验收。
 
 固定 endpoint/method/origin 本身仍不是 ownership proof；只有上述 L10-D recovery 调用具有请求/响应双向认证。后续增加 endpoint、body 或状态字段时必须同步更新域分隔 transcript、Python replay/空 body 校验和 Rust 常量时间响应 proof 校验，且不得向候选固定端口发送 bearer secret。
 
@@ -277,6 +281,7 @@ BAT/页面/monitor 触发
 - 修改字段、公式、数据库或状态 JSON：同步 `DATA_AND_ALGORITHMS.md`。
 - 修改跨模块影响范围或验收门禁：同步 `AGENT_TASK_MAP.md`。
 - 在复杂代码旁新增注释：先核对 `COMMENT_RATIONALE_MAP.md`，只解释原因和不变量。
+- 回溯旧工作区功能或故障：使用 `docs/legacy/OLD_WORKSPACE_CHANGELOG_INDEX.md` 的脱敏路线；私有原文不得进入公开工作树。
 - 不在文档中写本机业务绝对路径、真实发票信息、运行态快照或本地配置值。
 - 不维护易漂移的固定测试总数；以当前测试收集结果为准。
 - 每次基线切换必须记录分支、commit、验收状态，并更新 `CHANGELOG.md`。
@@ -289,6 +294,7 @@ BAT/页面/monitor 触发
 - [`IMPLEMENTATION_STATUS.md`](../IMPLEMENTATION_STATUS.md)
 - [`MIGRATION_GAP_CHECKLIST.md`](MIGRATION_GAP_CHECKLIST.md)
 - [`BASELINE_FROM_OLD_PROJECT.md`](BASELINE_FROM_OLD_PROJECT.md)
+- [旧工作区功能与故障回溯索引](legacy/OLD_WORKSPACE_CHANGELOG_INDEX.md)
 - [`MONITORING_AND_LOGGING.md`](MONITORING_AND_LOGGING.md)
 - [`MAC_WINDOWS_WORKFLOW.md`](MAC_WINDOWS_WORKFLOW.md)
 - [历史净化执行记录](release/HISTORY_SANITIZATION_EXECUTION.md)

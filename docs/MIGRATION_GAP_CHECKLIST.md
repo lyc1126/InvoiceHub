@@ -11,6 +11,7 @@
 - [x] 对候选源树完成一次文本、二进制容器和工作簿属性审计。
 - [x] 创建中性身份的根提交，并对所有保留对象完成一次 gitleaks 与业务数据分类审计。
 - [x] 用托管 API 核对 heads、tags、PR refs、Release/asset、LFS 与可见 fork/cache 状态；新公开仓库只包含脱敏根及其后代，原始图保留在 private archive。
+- [x] 提供旧工作区功能与故障的脱敏回溯索引；索引只记录公开可验证的类别和当前查询入口，原始 Changelog 继续留在私有归档外部，不复制进公开工作树或发布输入。
 
 执行约束见 [历史净化执行记录](release/HISTORY_SANITIZATION_EXECUTION.md)。旧私有包和旧 Tag 绝不进入新的公开图或 Release。
 
@@ -39,6 +40,7 @@
 - [x] L10-R source foundation：future coordinator 可使用 released owned lifecycle lease（generation/phase/health/owned/process PID/state scope）围住每次 marker/bridge 操作；暂停只接受 `running && ready` 的 owned monitor，已有/损坏/跨 scope marker、ownership loss 和任一 failure 都 fail closed。Unix marker store 用 opened-directory + `O_NOFOLLOW` 的 `openat`/atomic no-clobber `linkat`/`unlinkat` 固定最终操作；在该 L10-R 阶段其它非 Unix 平台返回 unavailable。下方 L10-C source-level slices 后续补充 Windows handle-relative/no-reparse marker store 与 Unix whole-operation protocol hardening。它未接入 Host RPC、真实 monitor、下载、安装或 restart，`update_install` 仍清除 candidate 后返回 unavailable。
 - [x] L10-C foundation slices：新增 fixed-loopback `PythonMonitorRecoveryBridge`、只接收已验证 artifact 的 pure `UpdateCoordinator`、共享既有 child/ownership/lifecycle `Arc` 的 cloneable `BackendLifecycleAuthority`，并补充 Windows handle-relative marker 的 source/static contract。它们在 L10-C 阶段只形成可注入 source-level seams；当时的 56 项 Rust、42 项 Python 和最小 Windows 临时 crate 结果保留为历史证据，当前运行行为由 L10-D 接线取代。
 - [x] L10-D authenticated runtime coordinator：Backend 私有 ownership secret 对每个固定 recovery 请求/精确响应使用 fresh challenge/HMAC-SHA256，Python 拒绝不完整、篡改、非空 body 和有界进程内 replay，普通 bridge 调用不变。Updater-disabled profile 不激活；enabled profile 只在 startup gate 释放和 `BackendHost` manage 后从 `runtime_dir` 打开 marker store并先恢复，失败保留 marker 和诊断 WebUI。完整 host-owned candidate 以域分隔 artifact identity 固定且不公开；`update_install` 先 reserve/spawn blocked worker，再 flush `{"ok":true}`，最后才执行 Tauri `download` 内置验签 -> pause -> `install` -> relaunch。writer/spawn/latch loss 进入 `CommitLost` 且无副作用；Windows `on_before_exit` 与 macOS `request_restart` 分别执行平台终止协议。该项只有源码/contract 证据，真实 Feed、monitor、合法/篡改下载、安装和重启仍在发布缺口中。
+- [x] L10-E non-installing recovery smoke：普通 development/internal-alpha 继续 updater-disabled；显式 development smoke 只接受固定不可达 loopback endpoint、无验签能力 key sentinel 和精确三字段 updater 对象。隔离 runner 使用临时 HOME/state/watch、关闭自动更新检查、预置 scope marker，且 HTTP allowlist 只有 health/status/stop。锁定工具链离线构建后，macOS arm64 `.app` 已恢复 owned monitor 到 `running && ready`、删除 marker、显式停止 monitor，并清理本次 backend/monitor PID、进程组、固定端口和临时目录；runner 报告 `update_requests=0`。该项仍不覆盖 Feed、候选、下载、验签、安装或重启。
 
 ## 发布缺口
 

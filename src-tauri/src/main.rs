@@ -205,10 +205,16 @@ fn main() -> ExitCode {
             app.manage(backend);
             app.manage(startup_surface);
             if let Some(backend) = app.try_state::<BackendHost>() {
-                if let Err(error) = backend.activate_updater_runtime() {
-                    eprintln!(
-                        "InvoiceHub updater runtime is unavailable; the backend remains available for diagnostics: {error}"
-                    );
+                match backend.activate_updater_runtime() {
+                    Ok(true) => {
+                        eprintln!("InvoiceHub updater recovery runtime activated");
+                    }
+                    Ok(false) => {}
+                    Err(error) => {
+                        eprintln!(
+                            "InvoiceHub updater runtime is unavailable; the backend remains available for diagnostics: {error}"
+                        );
+                    }
                 }
             }
             Ok(())

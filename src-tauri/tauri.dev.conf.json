@@ -8,5 +8,10 @@
       ".dev-staging/invoice-hub-dev-launcher.sh": "invoice-hub-dev-launcher.sh",
       ".dev-staging/invoicehub-desktop-host.json": "invoicehub-desktop-host.json"
     }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": ""
+    }
   }
 }
