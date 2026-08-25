@@ -2,6 +2,8 @@
 
 ## 未发布
 
+- 2026-08-25 macOS public-preview 组装门禁修复：共享 staging 器对 internal-alpha 保留 `dmg` 包型缺省值，public-preview 显式覆盖为 `preview-dmg`，使其独立 package ID 能通过 fail-closed package manifest 校验。新增回归契约，此修复尚未获新 Tag 或平台成品证据。
+
 - 2026-08-25 `v0.3.0-alpha.2` 双平台公开预览组装基础：同步产品版本和现有构建身份；新增 macOS arm64 public-preview DMG 的独立 staging、release profile、ad-hoc receipt/verifier，以及 Windows x64 current-user NSIS/SignPath workflow、WebView2 SHA-256 锁和双层签名顺序。updater、Feed、Tag、GitHub Release 与平台成品烟测仍未执行；Windows 卸载器在本 alpha 中明确未签名。
 
 - 2026-08-24 Tauri L10-E 非安装恢复烟测边界与运行证据：普通 development `stage/build`

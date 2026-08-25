@@ -123,6 +123,9 @@ def _configure_shared_stager(alpha) -> None:
     alpha.STAGING_RELATIVE_PATH = STAGING_RELATIVE_PATH
     alpha.ALPHA_CONFIG_RELATIVE_PATH = CONFIG_RELATIVE_PATH
     alpha.PRODUCT_PACKAGE_ID = PACKAGE_ID
+    # The shared stager owns the package manifest, so override its otherwise
+    # internal-alpha package type together with the public-preview identity.
+    alpha.PRODUCT_PACKAGE_TYPE = "preview-dmg"
     alpha.LAUNCHER_NAME = LAUNCHER_NAME
     alpha._launcher_text = _launcher_text
     alpha._build_host_manifest = _host_manifest
