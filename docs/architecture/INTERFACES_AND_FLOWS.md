@@ -697,6 +697,11 @@ owned monitor `running && ready`、marker 删除、显式 stop 和进程/端口/
 
 hosted check 的 lock-contended 分支在 busy 结果后直接返回，不能落入统一的 `updates.checked` 事件写入；这使响应不依赖 SQLite，其他检查与成功路径仍记录事件。
 
+`v0.3.0-alpha.2` public-preview 不新增业务 API、Feed 或 updater 契约。macOS public-preview
+使用 `profile=release`，但 release profile 仅接受精确 `{"enabled": false}`，因此不会登记
+endpoint、公钥或更新权限。Windows workflow 只允许 GitHub-hosted runner 从精确 Tag 手动触发，
+只上传 Actions artifact；发布到 GitHub Release 仍须单独授权。
+
 ## 7. 接口变更检查表
 
 修改任一接口、事件、页面状态或产物字段时，按以下链路检查：

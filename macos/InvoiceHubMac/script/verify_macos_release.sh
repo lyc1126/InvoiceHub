@@ -109,7 +109,7 @@ verify_app_layout() {
   [[ ! -e "$core/config/app.local.json" ]] || die "$label contains local config."
   [[ -f "$core/sbom/InvoiceHub-macos-arm64.cdx.json" ]] || die "$label macOS CycloneDX SBOM is missing."
   verify_macos_platform_boundary "$app" "$label"
-  [[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$plist")" == "0.3.0-alpha.1" ]] || die "$label version is invalid."
+  [[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$plist")" == "0.3.0-alpha.2" ]] || die "$label version is invalid."
   [[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$plist")" == "1" ]] || die "$label build number is invalid."
   [[ "$(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "$plist")" == "13.0" ]] || die "$label minimum macOS version is invalid."
   [[ "$(/usr/libexec/PlistBuddy -c 'Print :InvoiceHubReleaseMode' "$plist")" == "true" ]] || die "$label is not in release mode."

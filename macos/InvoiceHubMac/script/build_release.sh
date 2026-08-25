@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VERSION="0.3.0-alpha.1"
+VERSION="0.3.0-alpha.2"
 BUILD_NUMBER="1"
 PYTHON_VERSION="3.14.6"
 BUNDLE_ID="com.invoicehub.mac"

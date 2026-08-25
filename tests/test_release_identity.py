@@ -43,8 +43,8 @@ def _payload() -> dict:
 
 
 def test_release_version_identity_is_consistent() -> None:
-    assert invoice_hub.__version__ == PYTHON_PACKAGE_VERSION == "0.3.0a1"
-    assert PRODUCT_VERSION == "0.3.0-alpha.1"
+    assert invoice_hub.__version__ == PYTHON_PACKAGE_VERSION == "0.3.0a2"
+    assert PRODUCT_VERSION == "0.3.0-alpha.2"
     assert RELEASE_PYTHON_VERSION == "3.14.6"
     assert UPDATE_CHANNEL == "alpha"
     assert UPDATE_FEED_URL.endswith("/updates/alpha/latest.json")

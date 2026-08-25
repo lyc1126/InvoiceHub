@@ -5,8 +5,8 @@ from __future__ import annotations
 
 PRODUCT_NAME = "InvoiceHub"
 PRODUCT_DISPLAY_NAME = "一站式发票汇总系统"
-PRODUCT_VERSION = "0.3.0-alpha.1"
-PYTHON_PACKAGE_VERSION = "0.3.0a1"
+PRODUCT_VERSION = "0.3.0-alpha.2"
+PYTHON_PACKAGE_VERSION = "0.3.0a2"
 # Formal Windows and macOS artifacts embed exactly this runtime.  Development
 # source mode remains compatible with any supported 3.14 patch release.
 RELEASE_PYTHON_VERSION = "3.14.6"
@@ -32,5 +32,9 @@ UPDATE_ALLOWED_HOSTS = (
 WINDOWS_PACKAGE_ID = "com.invoicehub.windows.x86_64.portable"
 MACOS_DMG_PACKAGE_ID = "com.invoicehub.macos.arm64.dmg"
 MACOS_SPARKLE_PACKAGE_ID = "com.invoicehub.macos.arm64.sparkle"
+# Public preview installation identities are distinct from historical portable
+# and internal-alpha artifacts, so receipts cannot be reused across channels.
+WINDOWS_NSIS_PREVIEW_PACKAGE_ID = "com.invoicehub.windows.x86_64.nsis-preview"
+MACOS_PUBLIC_PREVIEW_PACKAGE_ID = "com.invoicehub.macos.arm64.preview-dmg"
 MACOS_SPARKLE_KEYCHAIN_ACCOUNT = "com.invoicehub.release"
 TAURI_BUNDLE_IDENTIFIER = "com.invoicehub.desktop"

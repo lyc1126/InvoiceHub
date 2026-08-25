@@ -1328,7 +1328,7 @@ fn updater_from_json(
     if !enabled {
         if !matches!(
             profile,
-            BundleProfile::Development | BundleProfile::InternalAlpha
+            BundleProfile::Development | BundleProfile::InternalAlpha | BundleProfile::Release
         ) || fields.len() != 1
             || fields.contains_key("endpoint")
             || fields.contains_key("public_key")
@@ -2102,7 +2102,7 @@ mod tests {
             ),
             (
                 "product_version".to_owned(),
-                Value::String("0.3.0-alpha.1".to_owned()),
+                Value::String("0.3.0-alpha.2".to_owned()),
             ),
             (
                 "package_id".to_owned(),
@@ -2178,6 +2178,26 @@ mod tests {
             updater_from_json(&extra, BundleProfile::Development),
             Err(BackendError::BundleManifestInvalid)
         ));
+    }
+
+    #[test]
+    fn release_profile_accepts_only_the_exact_disabled_updater_object() {
+        let disabled = Map::from_iter([("enabled".to_owned(), Value::Bool(false))]);
+        let updater = updater_from_json(&disabled, BundleProfile::Release)
+            .expect("release preview must be able to disable updater delegation");
+        assert!(!updater.enabled());
+
+        for (name, value) in [
+            ("endpoint", Value::String("https://example.invalid/latest.json".to_owned())),
+            ("public_key", Value::String("unexpected-key".to_owned())),
+        ] {
+            let mut extra = disabled.clone();
+            extra.insert(name.to_owned(), value);
+            assert!(matches!(
+                updater_from_json(&extra, BundleProfile::Release),
+                Err(BackendError::BundleManifestInvalid)
+            ));
+        }
     }
 
     #[test]

@@ -1,6 +1,6 @@
 # InvoiceHub third-party notices
 
-InvoiceHub `0.3.0-alpha.1` is distributed under `AGPL-3.0-or-later`. The
+InvoiceHub `0.3.0-alpha.2` is distributed under `AGPL-3.0-or-later`. The
 following end-user runtime components and selected build components are included
 in, or used to build, the Windows and macOS packages. Exact transitive runtime
 and build-tool inventories are recorded in the hash locks and generated SBOMs;

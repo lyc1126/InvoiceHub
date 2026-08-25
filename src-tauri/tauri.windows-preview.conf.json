@@ -1,0 +1,35 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "InvoiceHub",
+  "version": "0.3.0-alpha.2",
+  "identifier": "com.invoicehub.desktop",
+  "build": {
+    "devUrl": "http://127.0.0.1:8766",
+    "frontendDist": "../src-tauri/boot"
+  },
+  "app": {
+    "windows": [],
+    "security": {
+      "capabilities": ["no-webview-ipc"],
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "resources": {
+      ".windows-preview-staging/invoice-hub-core": "invoice-hub-core",
+      ".windows-preview-staging/python": "python",
+      ".windows-preview-staging/invoice-hub-preview-launcher.cmd": "invoice-hub-preview-launcher.cmd",
+      ".windows-preview-staging/invoicehub-desktop-host.json": "invoicehub-desktop-host.json"
+    },
+    "windows": {
+      "webviewInstallMode": {
+        "type": "offlineInstaller"
+      },
+      "nsis": {
+        "installMode": "currentUser"
+      }
+    }
+  }
+}

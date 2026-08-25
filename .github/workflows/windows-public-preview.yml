@@ -1,0 +1,94 @@
+name: Windows public-preview NSIS
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Exact public-preview tag to build
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    name: SignPath NSIS preview
+    runs-on: windows-2025
+    timeout-minutes: 60
+    steps:
+      - name: Require the exact alpha.2 tag
+        shell: pwsh
+        run: |
+          if ('${{ inputs.tag }}' -ne 'v0.3.0-alpha.2') { throw 'Only v0.3.0-alpha.2 is accepted.' }
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag }}
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.14.6'
+          architecture: x64
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+          cache: pnpm
+      - name: Prepare and stage the exact Windows preview resources
+        shell: pwsh
+        run: |
+          corepack enable
+          $runtimeRoot = Join-Path $env:RUNNER_TEMP 'invoicehub-public-preview-runtime'
+          ./scripts/dev/prepare_windows_runtime.ps1 -OutputRoot $runtimeRoot -PythonManager pymanager
+          $env:PYTHONPATH = Join-Path $PWD 'src'
+          $stage = python scripts/dev/tauri_windows_preview_stage.py --root $PWD --runtime-dir (Join-Path $runtimeRoot 'python') --source-commit (git rev-parse HEAD) | ConvertFrom-Json
+          if (-not $stage.host_manifest_sha256 -or $stage.host_manifest_sha256 -notmatch '^[0-9a-f]{64}$') { throw 'Preview host manifest staging failed.' }
+          "INVOICE_HUB_BUNDLE_MANIFEST_SHA256=$($stage.host_manifest_sha256)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+      - name: Verify tag identity and prepare the hash-locked WebView2 cache
+        shell: pwsh
+        run: |
+          $config = Get-Content docs/release/WINDOWS_PUBLIC_PREVIEW_CONFIG.json -Raw | ConvertFrom-Json
+          if ((python -c "import runpy; print(runpy.run_path('src/invoice_hub/version.py')['PRODUCT_VERSION'])") -ne $config.product_version) { throw 'Version drift.' }
+          $webview = Join-Path $env:RUNNER_TEMP $config.webview2.file_name
+          Invoke-WebRequest -UseBasicParsing -Uri $config.webview2.url -OutFile $webview
+          if ((Get-FileHash $webview -Algorithm SHA256).Hash.ToLowerInvariant() -ne $config.webview2.sha256) { throw 'WebView2 hash drift.' }
+          "TAURI_WEBVIEW2_BOOTSTRAPPER_PATH=$webview" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+      - name: Build unsigned application and write the deterministic marker
+        shell: pwsh
+        run: |
+          pnpm exec tauri build --config src-tauri/tauri.windows-preview.conf.json --no-bundle
+          $exe = 'src-tauri/target/release/invoicehub-desktop.exe'
+          $marker = (Get-Content docs/release/WINDOWS_PUBLIC_PREVIEW_CONFIG.json -Raw | ConvertFrom-Json).nsis_marker
+          if ([Text.Encoding]::ASCII.GetString([IO.File]::ReadAllBytes($exe)).Contains($marker)) { throw 'Unexpected existing NSIS marker.' }
+          [IO.File]::AppendAllText($exe, "`n$marker`n", [Text.Encoding]::ASCII)
+      - name: Sign the application executable with SignPath
+        uses: SignPath/github-action-submit-signing-request@v1.1
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+          artifact-configuration-slug: ${{ vars.SIGNPATH_APPLICATION_ARTIFACT_CONFIGURATION_SLUG }}
+          input-artifact-path: src-tauri/target/release/invoicehub-desktop.exe
+          output-artifact-path: src-tauri/target/release/invoicehub-desktop.exe
+      - name: Bundle NSIS without Tauri signing and verify main executable bytes
+        shell: pwsh
+        run: |
+          $before = (Get-FileHash src-tauri/target/release/invoicehub-desktop.exe -Algorithm SHA256).Hash
+          pnpm exec tauri bundle --config src-tauri/tauri.windows-preview.conf.json --bundles nsis --no-sign
+          $inside = 'src-tauri/target/release/bundle/nsis/invoicehub-desktop.exe'
+          if ((Get-FileHash $inside -Algorithm SHA256).Hash -ne $before) { throw 'Packaged EXE differs from the signed EXE.' }
+      - name: Sign the outer NSIS installer with SignPath
+        uses: SignPath/github-action-submit-signing-request@v1.1
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+          artifact-configuration-slug: ${{ vars.SIGNPATH_INSTALLER_ARTIFACT_CONFIGURATION_SLUG }}
+          input-artifact-path: src-tauri/target/release/bundle/nsis/InvoiceHub_0.3.0-alpha.2_x64-setup.exe
+          output-artifact-path: dist/InvoiceHub-v0.3.0-alpha.2-windows-x64-setup.exe
+      - uses: actions/upload-artifact@v4
+        with:
+          name: InvoiceHub-v0.3.0-alpha.2-windows-x64-setup
+          path: dist/InvoiceHub-v0.3.0-alpha.2-windows-x64-setup.exe
+          if-no-files-found: error

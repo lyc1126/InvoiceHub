@@ -18,10 +18,10 @@
     "active": true,
     "targets": ["app"],
     "resources": {
-      ".alpha-staging/invoice-hub-core": "invoice-hub-core",
-      ".alpha-staging/python": "python",
-      ".alpha-staging/invoice-hub-alpha-launcher.sh": "invoice-hub-alpha-launcher.sh",
-      ".alpha-staging/invoicehub-desktop-host.json": "invoicehub-desktop-host.json"
+      ".public-preview-staging/invoice-hub-core": "invoice-hub-core",
+      ".public-preview-staging/python": "python",
+      ".public-preview-staging/invoice-hub-public-preview-launcher.sh": "invoice-hub-public-preview-launcher.sh",
+      ".public-preview-staging/invoicehub-desktop-host.json": "invoicehub-desktop-host.json"
     },
     "macOS": {
       "minimumSystemVersion": "13.0"

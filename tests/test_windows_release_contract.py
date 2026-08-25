@@ -460,6 +460,21 @@ def test_windows_release_entry_scripts_load_machine_config_before_work() -> None
     assert "runtime_preparation_skipped" in build
 
 
+def test_windows_public_preview_stages_manifest_bound_resources_before_tauri_build() -> None:
+    workflow = _text(".github/workflows/windows-public-preview.yml")
+    stage = _text("scripts/dev/tauri_windows_preview_stage.py")
+
+    assert "prepare_windows_runtime.ps1" in workflow
+    assert "tauri_windows_preview_stage.py" in workflow
+    assert "INVOICE_HUB_BUNDLE_MANIFEST_SHA256" in workflow
+    assert workflow.index("tauri_windows_preview_stage.py") < workflow.index("tauri build --config")
+    assert "build_core._collect_source_files" in stage
+    assert "validate_runtime_manifest" in stage
+    assert "build_sbom_payload" in stage
+    assert '"package_type": "nsis"' in stage
+    assert '"updater": {"enabled": False}' in stage
+
+
 def test_windows_source_tests_use_an_isolated_hash_locked_environment() -> None:
     prepare = _text("scripts/dev/prepare_windows_test_environment.ps1")
     runner = _text("scripts/dev/run_tests.ps1")
@@ -511,7 +526,7 @@ def test_windows_repackage_initializer_runs_in_a_fresh_pwsh_process(tmp_path: Pa
 
     assert completed.returncode == 0, completed.stdout + completed.stderr
     session = json.loads(
-        (root / "dist/evidence/windows-v0.3.0-alpha.1/windows-repackage-session.json").read_text(
+        (root / f"dist/evidence/windows-v{PRODUCT_VERSION}/windows-repackage-session.json").read_text(
             encoding="utf-8-sig"
         )
     )
@@ -537,7 +552,7 @@ def test_windows_repackage_initializer_rejects_insufficient_free_disk(tmp_path: 
     assert completed.returncode != 0
     assert "At least 10 GiB free disk is required" in output
     assert not (
-        root / "dist/evidence/windows-v0.3.0-alpha.1/windows-repackage-session.json"
+        root / f"dist/evidence/windows-v{PRODUCT_VERSION}/windows-repackage-session.json"
     ).exists()
 
 

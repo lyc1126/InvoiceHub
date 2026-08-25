@@ -2,6 +2,8 @@
 
 ## 未发布
 
+- 2026-08-25 `v0.3.0-alpha.2` 双平台公开预览组装基础：同步产品版本和现有构建身份；新增 macOS arm64 public-preview DMG 的独立 staging、release profile、ad-hoc receipt/verifier，以及 Windows x64 current-user NSIS/SignPath workflow、WebView2 SHA-256 锁和双层签名顺序。updater、Feed、Tag、GitHub Release 与平台成品烟测仍未执行；Windows 卸载器在本 alpha 中明确未签名。
+
 - 2026-08-24 Tauri L10-E 非安装恢复烟测边界与运行证据：普通 development `stage/build`
   与 internal-alpha 继续生成 `updater.enabled=false`；新增显式
   `stage-recovery/build-recovery`，development manifest 只有在 endpoint 等于固定、

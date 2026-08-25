@@ -391,10 +391,14 @@ def test_current_baselines_and_non_drifting_facts_are_explicit() -> None:
     flows = (ROOT / "docs" / "architecture" / "INTERFACES_AND_FLOWS.md").read_text(
         encoding="utf-8"
     )
+    version_source = (ROOT / "src" / "invoice_hub" / "version.py").read_text(encoding="utf-8")
+    version_match = re.search(r'^PRODUCT_VERSION = "([^"]+)"$', version_source, re.MULTILINE)
+    assert version_match is not None
+    product_version = version_match.group(1)
     for text in (entry, status):
         assert "main" in text
         assert "脱敏" in text
-        assert "0.3.0-alpha.1" in text
+        assert product_version in text
     assert "候选树、Git 对象和托管面验证已通过" in flows
     assert "验证通过前，仓库不得公开" not in flows
 

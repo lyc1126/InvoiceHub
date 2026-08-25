@@ -89,21 +89,27 @@ def synchronize(root: Path, *, write: bool) -> dict[str, str]:
     identity = load_identity(root)
     package_path = root / "package.json"
     cargo_path = root / "src-tauri" / "Cargo.toml"
-    tauri_path = root / "src-tauri" / "tauri.conf.json"
-    for path in (package_path, cargo_path, tauri_path):
+    tauri_paths = (
+        root / "src-tauri" / "tauri.conf.json",
+        root / "src-tauri" / "tauri.alpha.conf.json",
+        root / "src-tauri" / "tauri.public-preview.conf.json",
+        root / "src-tauri" / "tauri.windows-preview.conf.json",
+    )
+    for path in (package_path, cargo_path, *tauri_paths):
         if not path.is_file():
             raise VersionSyncError(f"derived identity target is missing: {path}")
 
     _validate_or_update_json(package_path, {"version": identity["product_version"]}, write=write)
-    _validate_or_update_json(
-        tauri_path,
-        {
-            "productName": identity["product_name"],
-            "version": identity["product_version"],
-            "identifier": identity["bundle_identifier"],
-        },
-        write=write,
-    )
+    for tauri_path in tauri_paths:
+        _validate_or_update_json(
+            tauri_path,
+            {
+                "productName": identity["product_name"],
+                "version": identity["product_version"],
+                "identifier": identity["bundle_identifier"],
+            },
+            write=write,
+        )
 
     cargo_text = cargo_path.read_text(encoding="utf-8")
     updated_cargo = _replace_cargo_version(cargo_text, identity["product_version"], cargo_path)
