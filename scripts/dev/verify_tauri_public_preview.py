@@ -9,14 +9,15 @@ import json
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any
 
 
 PRODUCT_VERSION = "0.3.0-alpha.2"
 PACKAGE_ID = "com.invoicehub.macos.arm64.preview-dmg"
-RECEIPT_SCHEMA_VERSION = 1
-VERIFIER_ID = "verify_tauri_public_preview.py/v1"
+RECEIPT_SCHEMA_VERSION = 4
+VERIFIER_ID = "verify_tauri_public_preview.py/v2"
 HOST_NAME = "invoicehub-desktop-host.json"
 
 
@@ -44,6 +45,10 @@ def _tree_sha256(root: Path) -> str:
         digest.update(hashlib.sha256(path.read_bytes()).digest())
         digest.update(b"\0")
     return digest.hexdigest()
+
+
+def _tree_size(root: Path) -> int:
+    return sum(path.stat().st_size for path in root.rglob("*") if path.is_file())
 
 
 def _json(path: Path) -> dict[str, Any]:
@@ -75,6 +80,63 @@ def _verify_adhoc_signature(app: Path) -> None:
         raise PublicPreviewVerificationError("public preview App is not ad-hoc signed")
 
 
+def _assert_artifact_record(path: Path, record: object, label: str) -> None:
+    if not isinstance(record, dict):
+        raise PublicPreviewVerificationError(f"receipt.{label} is invalid")
+    kind = "directory" if path.is_dir() else "file"
+    digest = _tree_sha256(path) if path.is_dir() else _sha256(path)
+    size = _tree_size(path) if path.is_dir() else path.stat().st_size
+    if (
+        record.get("name") != path.name
+        or record.get("path") != path.name
+        or record.get("kind") != kind
+        or record.get("sha256") != digest
+        or record.get("size_bytes") != size
+    ):
+        raise PublicPreviewVerificationError(f"receipt.{label} does not match the supplied artifact")
+
+
+def _verify_app_layout(app: Path) -> None:
+    host = _json(app / "Contents/Resources" / HOST_NAME)
+    if host.get("profile") != "release" or host.get("updater") != {"enabled": False}:
+        raise PublicPreviewVerificationError("public preview host updater contract is invalid")
+    identity = host.get("expected_identity")
+    if not isinstance(identity, dict) or identity.get("package_id") != PACKAGE_ID or identity.get("package_type") != "preview-dmg":
+        raise PublicPreviewVerificationError("public preview host identity is invalid")
+
+
+def _verify_dmg_contents(dmg: Path, app: Path) -> None:
+    """Bind distribution evidence to the mounted DMG, never an adjacent App."""
+
+    if sys.platform != "darwin":
+        return
+    hdiutil = shutil.which("hdiutil")
+    if hdiutil is None:
+        raise PublicPreviewVerificationError("hdiutil is required for macOS public preview verification")
+    _verify_adhoc_signature(dmg)
+    with tempfile.TemporaryDirectory(prefix="invoicehub-public-preview-verify-") as temporary_name:
+        mount = Path(temporary_name) / "mount"
+        mount.mkdir()
+        attached = subprocess.run(
+            [hdiutil, "attach", str(dmg), "-readonly", "-nobrowse", "-mountpoint", str(mount)],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if attached.returncode != 0:
+            raise PublicPreviewVerificationError(f"DMG attach failed: {attached.stderr.strip()}")
+        try:
+            mounted_app = mount / "InvoiceHub.app"
+            if not mounted_app.is_dir():
+                raise PublicPreviewVerificationError("DMG does not contain InvoiceHub.app")
+            if _tree_sha256(mounted_app) != _tree_sha256(app):
+                raise PublicPreviewVerificationError("DMG App does not match the supplied App")
+            _verify_app_layout(mounted_app)
+            _verify_adhoc_signature(mounted_app)
+        finally:
+            subprocess.run([hdiutil, "detach", str(mount)], check=False, capture_output=True, text=True)
+
+
 def verify(app: Path, dmg: Path, receipt_path: Path) -> dict[str, Any]:
     app = app.resolve()
     dmg = dmg.resolve()
@@ -98,20 +160,11 @@ def verify(app: Path, dmg: Path, receipt_path: Path) -> dict[str, Any]:
     for key, value in expected.items():
         if receipt.get(key) != value:
             raise PublicPreviewVerificationError(f"receipt.{key} is invalid")
-    for label, artifact in (("app", app), ("dmg", dmg)):
-        record = receipt.get(label)
-        if not isinstance(record, dict) or record.get("name") != artifact.name:
-            raise PublicPreviewVerificationError(f"receipt.{label} does not name the supplied artifact")
-        actual_sha256 = _tree_sha256(artifact) if artifact.is_dir() else _sha256(artifact)
-        if record.get("sha256") != actual_sha256:
-            raise PublicPreviewVerificationError(f"receipt.{label} SHA-256 does not match")
-    host = _json(app / "Contents/Resources" / HOST_NAME)
-    if host.get("profile") != "release" or host.get("updater") != {"enabled": False}:
-        raise PublicPreviewVerificationError("public preview host updater contract is invalid")
-    identity = host.get("expected_identity")
-    if not isinstance(identity, dict) or identity.get("package_id") != PACKAGE_ID or identity.get("package_type") != "preview-dmg":
-        raise PublicPreviewVerificationError("public preview host identity is invalid")
+    _assert_artifact_record(app, receipt.get("app"), "app")
+    _assert_artifact_record(dmg, receipt.get("dmg"), "dmg")
+    _verify_app_layout(app)
     _verify_adhoc_signature(app)
+    _verify_dmg_contents(dmg, app)
     return {"ok": True, "product_version": PRODUCT_VERSION, "dmg_sha256": _sha256(dmg)}
 
 

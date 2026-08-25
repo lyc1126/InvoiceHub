@@ -26,6 +26,8 @@ LAUNCHER_NAME = "invoice-hub-public-preview-launcher.sh"
 RECEIPT_NAME = "InvoiceHub-v{version}-macos-arm64-preview.build-receipt.json"
 DMG_NAME = "InvoiceHub-v{version}-macos-arm64-preview.dmg"
 VERIFIER = Path(__file__).with_name("verify_tauri_public_preview.py")
+RECEIPT_SCHEMA_VERSION = 4
+RECEIPT_VERIFIER = "verify_tauri_public_preview.py/v2"
 
 
 class PublicPreviewError(RuntimeError):
@@ -53,6 +55,14 @@ def _tree_sha256(root: Path) -> str:
         digest.update(b"\0")
         digest.update(hashlib.sha256(path.read_bytes()).digest())
         digest.update(b"\0")
+    return digest.hexdigest()
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
     return digest.hexdigest()
 
 
@@ -143,8 +153,18 @@ def _make_dmg(alpha, app: Path, output: Path, version: str) -> None:
 
 
 def _receipt(stage, app: Path, dmg: Path) -> dict[str, Any]:
+    def artifact(path: Path) -> dict[str, Any]:
+        is_directory = path.is_dir()
+        return {
+            "name": path.name,
+            "path": path.name,
+            "kind": "directory" if is_directory else "file",
+            "size_bytes": sum(item.stat().st_size for item in path.rglob("*") if item.is_file()) if is_directory else path.stat().st_size,
+            "sha256": _tree_sha256(path) if is_directory else _sha256_file(path),
+        }
+
     return {
-        "schema_version": 1,
+        "schema_version": RECEIPT_SCHEMA_VERSION,
         "artifact_kind": "tauri-macos-public-preview",
         "product_version": stage.product_version,
         "source_commit": stage.source_commit,
@@ -160,9 +180,9 @@ def _receipt(stage, app: Path, dmg: Path) -> dict[str, Any]:
         "notarized": False,
         "host_manifest_sha256": stage.host_manifest_sha256,
         "launcher_sha256": stage.launcher_sha256,
-        "app": {"name": app.name, "sha256": _tree_sha256(app)},
-        "dmg": {"name": dmg.name, "sha256": hashlib.sha256(dmg.read_bytes()).hexdigest()},
-        "verification": {"complete": False, "verifier": "verify_tauri_public_preview.py/v1"},
+        "app": artifact(app),
+        "dmg": artifact(dmg),
+        "verification": {"complete": False, "verifier": RECEIPT_VERIFIER},
     }
 
 
@@ -202,7 +222,7 @@ def build(root: Path, python: Path, runtime_dir: Path, pnpm: Path | None, *, tau
     verified = subprocess.run([str(python), str(VERIFIER), "--app", str(app), "--dmg", str(dmg), "--receipt", str(receipt)], check=False, capture_output=True, text=True)
     if verified.returncode != 0:
         raise PublicPreviewError(f"public-preview verifier rejected the build: {verified.stderr.strip()}")
-    payload["verification"] = {"complete": True, "verifier": "verify_tauri_public_preview.py/v1", "output": verified.stdout.strip()}
+    payload["verification"] = {"complete": True, "verifier": RECEIPT_VERIFIER, "output": verified.stdout.strip()}
     receipt.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return {"app": str(app), "dmg": str(dmg), "receipt": str(receipt)}
 

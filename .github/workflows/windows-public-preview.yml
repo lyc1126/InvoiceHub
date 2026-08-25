@@ -29,6 +29,20 @@ jobs:
         with:
           python-version: '3.14.6'
           architecture: x64
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+          cache: pnpm
+      - name: Prepare and stage the exact Windows preview resources
+        shell: pwsh
+        run: |
+          corepack enable
+          $runtimeRoot = Join-Path $env:RUNNER_TEMP 'invoicehub-public-preview-runtime'
+          ./scripts/dev/prepare_windows_runtime.ps1 -OutputRoot $runtimeRoot -PythonManager pymanager
+          $env:PYTHONPATH = Join-Path $PWD 'src'
+          $stage = python scripts/dev/tauri_windows_preview_stage.py --root $PWD --runtime-dir (Join-Path $runtimeRoot 'python') --source-commit (git rev-parse HEAD) | ConvertFrom-Json
+          if (-not $stage.host_manifest_sha256 -or $stage.host_manifest_sha256 -notmatch '^[0-9a-f]{64}$') { throw 'Preview host manifest staging failed.' }
+          "INVOICE_HUB_BUNDLE_MANIFEST_SHA256=$($stage.host_manifest_sha256)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
       - name: Verify tag identity and prepare the hash-locked WebView2 cache
         shell: pwsh
         run: |

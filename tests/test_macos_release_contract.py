@@ -18,6 +18,22 @@ def _stripped_lines(block: str) -> list[str]:
     return [line.strip() for line in block.splitlines() if line.strip()]
 
 
+def test_public_preview_receipt_and_verifier_bind_the_mounted_dmg_app() -> None:
+    builder = _text("scripts/dev/tauri_public_preview.py")
+    verifier = _text("scripts/dev/verify_tauri_public_preview.py")
+
+    assert "RECEIPT_SCHEMA_VERSION = 4" in builder
+    assert '"kind": "directory" if is_directory else "file"' in builder
+    assert '"size_bytes"' in builder
+    assert 'RECEIPT_VERIFIER = "verify_tauri_public_preview.py/v2"' in builder
+    assert "RECEIPT_SCHEMA_VERSION = 4" in verifier
+    assert 'hdiutil, "attach", str(dmg), "-readonly", "-nobrowse"' in verifier
+    assert 'mounted_app = mount / "InvoiceHub.app"' in verifier
+    assert "DMG App does not match the supplied App" in verifier
+    assert "_verify_adhoc_signature(dmg)" in verifier
+    assert "_verify_adhoc_signature(mounted_app)" in verifier
+
+
 def test_sparkle_dependency_and_resolved_revision_are_exact() -> None:
     package = _text("macos/InvoiceHubMac/Package.swift")
     resolved = json.loads(_text("macos/InvoiceHubMac/Package.resolved"))
