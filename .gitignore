@@ -36,4 +36,5 @@ Desktop.ini
 /src-tauri/gen/
 /src-tauri/.dev-staging/
 /src-tauri/.alpha-staging/
+/src-tauri/.public-preview-staging/
 /src-tauri/target/

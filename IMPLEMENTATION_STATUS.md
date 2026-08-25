@@ -1,11 +1,11 @@
 # IMPLEMENTATION_STATUS
 
-更新时间：2026-08-24
+更新时间：2026-08-25
 
 ## 公开基线
 
 - 本仓库已将单一、脱敏的根提交发布为公开 `main`。旧的私有提交图、验证记录、二进制包和 Tag 只保留在 owner-only 私有归档中，不属于公开历史，也不会作为 Release 资产上传。
-- 首个公开开发版本为 `0.3.0-alpha.1`；当前工作线是基于当前公开 `origin/main` 稳定基线建立的 `codex/tauri2-update-recovery`。此前 `codex/tauri2-unified-desktop` 的统一桌面工作和 `codex/tauri-macos-internal-alpha` 的 internal-alpha 结果均保留为历史上下文；该分支实现不表示 `main` 或公开 Release 已更新。任何公开二进制都必须从脱敏图上的新版本、新 Tag 和新发布证据构建。
+- 当前开发版本为 `0.3.0-alpha.2`；工作线 `codex/tauri2-alpha2-packaging` 从合并 L10-E 的 `main` 建立。macOS public-preview 和 Windows NSIS 只有组装入口与契约，尚未创建 Tag、SignPath 请求或公开 Release。任何公开二进制都必须从脱敏图上的新版本、新 Tag 和新发布证据构建。
 - 历史净化的范围、私有备份和已完成的公开门槛见 [执行记录](docs/release/HISTORY_SANITIZATION_EXECUTION.md)。公开仓库已启用 DCO、Dependabot、Secret Scanning、Push Protection 和私密漏洞报告；仍未创建 Release 或更新 Feed。
 
 ## 保留的产品边界

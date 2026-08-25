@@ -121,6 +121,8 @@
 | `scripts/dev/tauri-bootstrap.ps1` | Windows bootstrap 包装。 | 使用 `py -3` 或已解析的 `python` 转发；两者均缺失时明确 `exit 2`，不安装系统工具。 |
 | `scripts/dev/tauri_dev_app.py` | macOS arm64 Tauri development `.app` 的 allowlisted staging 与 app-only build 入口。 | 普通 `stage/build` 生成 updater-disabled schema-3 manifest；显式 `stage-recovery/build-recovery` 只写 L10-E 固定不可安装 tuple。build 接受绝对 pnpm 或绝对 Tauri CLI，只构建 ignored `.app`，不生成 DMG/更新归档、不签名/公证、不启动应用。 |
 | `scripts/dev/tauri_recovery_smoke.py` | L10-E macOS arm64 authenticated startup-recovery 隔离 runner。 | 只接受 plist executable/identifier/version、host manifest、launcher hash 与 core build identity 一致的精确 recovery-smoke App；创建临时 HOME/state/runtime/watch、关闭自动更新检查并预置 scope marker。localhost allowlist 只有 health、bridge status 和 bridge stop；确认身份后停止临时 monitor，并只终止自己创建的进程组，绝不调用 update check/install。 |
+| `scripts/dev/tauri_public_preview.py` / `verify_tauri_public_preview.py` | macOS public-preview DMG 组装与 receipt 验证。 | release profile 只允许精确 disabled updater；产物是 ad-hoc、未公证且与 internal-alpha receipt 隔离。 |
+| `scripts/dev/tauri_windows_public_preview.ps1` / `WINDOWS_PUBLIC_PREVIEW_CONFIG.json` | Windows NSIS preview 组装与 WebView2 lock。 | 先验证下载哈希，再按应用签名、NSIS、安装器签名顺序执行并比较包内 EXE。 |
 | `scripts/dev/tauri_alpha_release.py` | internal-alpha macOS arm64 clean-snapshot staging、Tauri App 构建、ad-hoc DMG 组装和 schema-4 receipt 入口。 | 只接受 allowlisted core、锁定 Python 3.14.6 runtime 和固定 manifest；默认拒绝 dirty source、用户状态、Windows 文件、updater/Feed/Release 输入；可用 `--tauri-cli` 绕过失效的 pnpm 包装层。 |
 | `scripts/dev/verify_tauri_alpha.py` | internal-alpha App/DMG/receipt 的独立 fail-closed 验证器。 | 校验 manifest、launcher/runtime/package/build SHA、布局、架构、ad-hoc 签名和平台污染；不把 receipt 单独当作正式签名、公证或发布证据。 |
 | `scripts/tools/jierui_probe_template.py` | 捷锐模板探测辅助入口。 | 只生成或核对结构性事实，不写真实凭证状态。 |

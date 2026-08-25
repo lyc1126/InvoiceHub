@@ -76,7 +76,7 @@ def test_macos_formal_build_has_release_identity_signing_notary_and_fixed_output
     verify = _text("macos/InvoiceHubMac/script/verify_macos_release.sh")
     sparkle_verifier = _text("macos/InvoiceHubMac/script/verify_sparkle_update.swift")
     for marker in (
-        'VERSION="0.3.0-alpha.1"',
+        'VERSION="0.3.0-alpha.2"',
         'BUILD_NUMBER="1"',
         'PACKAGE_ID="com.invoicehub.macos.arm64.dmg"',
         "git -C \"$REPO_ROOT\" archive",

@@ -44,6 +44,9 @@
 
 ## 发布缺口
 
+- [ ] 从 `v0.3.0-alpha.2` Tag 构建并挂载 macOS public-preview DMG，验证 ad-hoc receipt、隔离状态与 monitor；该包未公证。
+- [ ] 在 GitHub-hosted Windows runner 执行 WebView2 hash gate、两层 SignPath、NSIS 安装/卸载与 receipt 烟测；本 alpha 接受卸载器未签名。
+
 - [ ] Windows 10/11 x64 NSIS 安装器与新的公开构建/签名证据。
 - [ ] macOS 13+ arm64 DMG、更新归档、Developer ID、Hardened Runtime、公证、staple、quarantine 与升级证据。
 - [ ] 同仓库 GitHub Pages 更新 Feed、真实资产签名、源码归档、SBOM、收据与最终 provenance 闭环。

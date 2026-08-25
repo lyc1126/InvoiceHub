@@ -20,7 +20,7 @@ fn expected_identity() -> ExpectedBackendIdentity {
             "invoices.file-preview.v1".to_owned(),
             "monitor.ready-handshake.v1".to_owned(),
         ],
-        product_version: "0.3.0-alpha.1".to_owned(),
+        product_version: "0.3.0-alpha.2".to_owned(),
         package_id: "com.invoicehub.macos.arm64.dmg".to_owned(),
         platform: "macos".to_owned(),
         architecture: "arm64".to_owned(),

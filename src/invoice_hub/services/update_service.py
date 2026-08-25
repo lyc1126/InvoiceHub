@@ -499,7 +499,7 @@ class UpdateService:
         package_type = str(self.package_manifest.get("package_type") or "")
         if target_platform == "windows" and architecture == "x86_64" and package_type == "portable":
             return "windows-x86_64-portable"
-        if target_platform == "macos" and architecture == "arm64" and package_type in {"dmg", "sparkle"}:
+        if target_platform == "macos" and architecture == "arm64" and package_type in {"dmg", "preview-dmg", "sparkle"}:
             return "macos-arm64-dmg"
         return ""
 

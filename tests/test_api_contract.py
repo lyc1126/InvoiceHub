@@ -531,7 +531,7 @@ def test_about_api_is_local_only_and_update_check_payload_is_strict(tmp_path: Pa
     about = client.get("/api/v1/about")
     assert about.status_code == 200
     payload = about.json()
-    assert payload["product"]["version"] == "0.3.0-alpha.1"
+    assert payload["product"]["version"] == "0.3.0-alpha.2"
     assert payload["package"]["manifest_status"] == "missing"
     assert payload["update"]["status"] == "idle"
 
