@@ -1,9 +1,9 @@
 # InvoiceHub 平台架构：共享核心、Windows 与 macOS
 
 > 文档状态：当前跨平台实现的权威附录
-> 更新日期：2026-08-23
+> 更新日期：2026-08-26
 > 公共基线：单一脱敏根提交。退休的私有提交、Tag、包和验证材料不属于公开发行输入。
-> 当前发行状态：候选树、保留 Git 对象和托管面验证已完成，仓库现为 public；当前工作线是基于当前公开 `origin/main` 稳定基线建立的 `codex/tauri2-update-recovery`。此前 `codex/tauri2-unified-desktop` 的 `v0.3.0-alpha.1` Tauri foundation 与代码级 lifecycle/Host RPC 边界、以及 `codex/tauri-macos-internal-alpha` 的 arm64 `.app/.dmg` verifier/隔离启动结果均保留为历史上下文；该分支实现不表示 `main` 或公开 Release 已更新。尚无 Release。
+> 当前发行状态：候选树、保留 Git 对象和托管面验证已完成，仓库现为 public；`0.3.0-alpha.2` public-preview 的双平台组装、macOS package identity、LaunchServices/quarantine smoke 与 SSE 关闭修复已进入 `main`。现有同名 Tag 早于该基线，只保留为审计对象，不能用于构建或 Release；待本记录合并后必须从最终干净 `main` 重建。此前 foundation、internal-alpha 与 recovery-smoke 结果保留为历史上下文；尚无 Release、资产、SignPath 请求或 Feed。
 
 本页只解释平台边界。领域模型、API、投影和 monitor 的详细契约分别见[开发架构总入口](../DEVELOPMENT_ARCHITECTURE.md)、[接口与运行流程](INTERFACES_AND_FLOWS.md)和[数据结构与算法](DATA_AND_ALGORITHMS.md)。
 

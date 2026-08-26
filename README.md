@@ -129,7 +129,7 @@ W8/W9 技术与产品能力已完成，但当前真实公司资料夹中的 7 �
 
 ## 开发者与 Agent 阅读路线
 
-开发实现的权威入口是 [`docs/DEVELOPMENT_ARCHITECTURE.md`](docs/DEVELOPMENT_ARCHITECTURE.md)。公开 `main` 已从单一脱敏根提交开始，不继承旧的私有提交、Tag 或 Release 身份；旧图仅保留在私有归档。当前没有公开 Release 或更新 Feed。当前工作线是基于当前公开 `origin/main` 稳定基线建立的 `codex/tauri2-update-recovery`；此前 `codex/tauri2-unified-desktop` 的统一桌面工作与 `codex/tauri-macos-internal-alpha` 的 internal-alpha 结果保留为历史上下文；该分支实现不表示 `main` 或公开 Release 已更新。
+开发实现的权威入口是 [`docs/DEVELOPMENT_ARCHITECTURE.md`](docs/DEVELOPMENT_ARCHITECTURE.md)。公开 `main` 已从单一脱敏根提交开始，不继承旧的私有提交、Tag 或 Release 身份；旧图仅保留在私有归档。`0.3.0-alpha.2` 的 public-preview 组装和 macOS smoke 修复已进入 `main`，但当前同名 Tag 早于该基线，不能用于构建或发布；尚无公开 Release、资产或更新 Feed。统一桌面、internal-alpha 与 recovery-smoke 的既有结果仍只保留为历史上下文，不替代最终平台成品验收。
 
 版本同步、pnpm/Cargo lock、固定 localhost 合同、后端严格握手、私有 Host RPC，以及 handshake 后的 desktop/browser、托盘和单实例已完成受控验证。L10-D 已把 authenticated startup restore、完整 host-owned candidate、response-before-private-commit、Tauri 内置下载/验签、monitor recovery 和双平台 relaunch 接入源码与 contracts；这不等于真实 updater 已验收。裸源码 checkout 缺少经编译绑定 manifest 时仍以状态 `78` 失败；ordinary development assembler 已生成 updater-disabled schema-3 manifest 和显式 venv launcher，并从 clean source commit 构建本地 arm64 `.app`；internal-alpha 另已完成 arm64 `.app/.dmg` 的独立 verifier 与临时 state root 启动烟测。L10-E recovery-smoke 已完成一次隔离 macOS arm64 startup restore，但其固定不可达 endpoint/无效 key 不能验证或安装更新。
 

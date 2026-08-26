@@ -4,7 +4,7 @@
 > 更新日期：2026-08-26
 > 公共权威基线：经过审计的单一脱敏根提交；旧私有提交、Tag、二进制和验证材料不在公开图中
 > 公开状态：候选树、保留 Git 对象和托管面已完成一次内容与凭据审计；公开图从脱敏根提交开始，详见 `docs/release/HISTORY_SANITIZATION_EXECUTION.md`
-> 当前开发线：`codex/tauri2-alpha2-public-preview-fix` 承接 `0.3.0-alpha.2` 的双平台 public-preview 组装。`v0.3.0-alpha.2` Tag 已创建但尚无 GitHub Release、资产或 SignPath 请求；其 macOS public-preview 包型与 LaunchServices/SSE 关闭缺陷均正在修复，合并后必须重新确定 Tag。最终成品必须从 DMG 挂载复制、以隔离 `HOME` 经 LaunchServices 启动并保留 quarantine 验收；internal-alpha 与 L10-E 结果仅作为历史上下文。
+> 当前开发基线：`0.3.0-alpha.2` 的 public-preview 组装、独立 package identity、LaunchServices/quarantine smoke 与 SSE 关闭修复已合入公开 `main`。现有同名 Tag 早于这些修复，只保留为审计对象，不能作为构建或 Release 输入；待当前基线记录合并后必须从最终干净 `main` 重建。没有 GitHub Release、资产、SignPath 请求或 Feed；最终 macOS 成品必须从 DMG 挂载复制、以隔离 `HOME` 经 LaunchServices 启动并保留 quarantine 验收；internal-alpha 与 L10-E 结果仅作为历史上下文。
 > 校验规则：精确的本地与 GitHub HEAD 以实时 `git rev-parse`、`git ls-remote` 和双向差异为准；发行源码候选不等于双平台成品 RC 或 GitHub 已发布版本
 
 ## 1. 这套文档解决什么问题
