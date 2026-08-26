@@ -17,6 +17,7 @@ English project name: `InvoiceHub`.
 - 2026-08-19 的 internal-alpha arm64 `.app/.dmg` 已由独立 verifier 复核通过，并以临时 HOME/state root 完成一次固定端口 `ready` 启动烟测；这只证明内部评审包的布局、身份和启动边界，不改变其非公开、未签名/未公证和 updater-disabled 属性。
 - 2026-08-24 的 L10-E recovery-smoke 以锁定工具链离线构建并在临时 HOME/state/watch 中完成一次 macOS arm64 启动恢复：owned monitor 达到 `running && ready`，marker 删除、显式 stop 与进程/端口/临时目录清理均通过，且 runner 报告 `update_requests=0`。该专用 profile 使用不可达 endpoint 和无验签能力 sentinel，只证明 authenticated startup restore，不证明 Feed、下载、验签、安装或重启。
 - `scripts/dev/tauri_public_preview_smoke.py` 是 `0.3.0-alpha.2` macOS public-preview 的成品验收入口：它从 mounted DMG 复制 App，复核默认 finalized receipt 与 ad-hoc 签名，为复制件写入 quarantine，并只经 LaunchServices 的 `open -n -W -g` 传入临时 `HOME`。它不传 development state override，且只请求 health、monitor 和固定 `stop_monitor` shutdown；结构化关闭后 SSE 会自行结束，避免 WKWebView 连接阻塞 Uvicorn。pending receipt 只允许组包器内部验证，公开验包默认拒绝；该 runner 的聚焦契约已通过，最终 Tag DMG 的 Finder/Gatekeeper 交互和发布证据仍待执行。
+- Windows NSIS public-preview 的 GitHub-hosted SignPath 执行、产物取证和 Windows 10/11 x64 安装/卸载烟测见[Windows public-preview 操作手册](docs/release/WINDOWS_PUBLIC_PREVIEW_RUNBOOK.md)。它只允许最终 Tag 工作流产出的安装器、SHA-256 与 receipt 三项 Actions artifact，并明确本 alpha 的卸载器未签名。
 - 两个平台共享同一 `RC_SHA` 和 core build ID，但 package ID、运行时、启动器、可写目录和成品文件互不复用。源码共存用于避免业务算法分叉，成品互斥用于避免平台文件混包。
 
 ## 快速启动

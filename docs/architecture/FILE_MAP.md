@@ -127,6 +127,7 @@
 | `scripts/dev/tauri_windows_public_preview.ps1` | Windows NSIS public-preview 组装与验包入口。 | 先验证下载哈希，再按应用签名、NSIS、安装器签名顺序执行并比较包内 EXE。 |
 | `scripts/dev/tauri_windows_preview_stage.py` | Windows public-preview 的 clean-source staging 入口。 | 复用 Windows portable 的源码白名单与敏感内容扫描，验证 3.14.6 runtime，写 NSIS package/build/SBOM/host manifest，并将其 SHA-256 编译绑定到 Tauri host。 |
 | `docs/release/WINDOWS_PUBLIC_PREVIEW_CONFIG.json` | Windows public-preview 的受控 WebView2 下载、NSIS marker、包身份及安装器/SHA-256/receipt 名称锁。 | workflow 与 PowerShell 组包器必须先验证此处 SHA-256，不能以 URL 或版本号替代字节锁。 |
+| `docs/release/WINDOWS_PUBLIC_PREVIEW_RUNBOOK.md` | Windows 10/11 x64 public-preview 的人工执行、取证和烟测手册。 | 只从最终精确 Tag 的 GitHub-hosted workflow 获取三项 artifact；强制两层 Authenticode、receipt/哈希、current-user 安装和未签名卸载器披露，不自动上传 Release。 |
 | `.github/workflows/windows-public-preview.yml` | 仅 GitHub-hosted Windows runner、精确 Tag 手动触发的 SignPath NSIS public-preview 工作流。 | 使用两个 SignPath artifact configuration，复核内外层 Authenticode 与包内 EXE 字节一致性后，只上传安装器、SHA-256 和 receipt 三项 Actions artifact，不创建或修改 GitHub Release。 |
 | `scripts/dev/tauri_alpha_release.py` | internal-alpha macOS arm64 clean-snapshot staging、Tauri App 构建、ad-hoc DMG 组装和 schema-4 receipt 入口。 | 只接受 allowlisted core、锁定 Python 3.14.6 runtime 和固定 manifest；默认拒绝 dirty source、用户状态、Windows 文件、updater/Feed/Release 输入；可用 `--tauri-cli` 绕过失效的 pnpm 包装层。 |
 | `scripts/dev/verify_tauri_alpha.py` | internal-alpha App/DMG/receipt 的独立 fail-closed 验证器。 | 校验 manifest、launcher/runtime/package/build SHA、布局、架构、ad-hoc 签名和平台污染；不把 receipt 单独当作正式签名、公证或发布证据。 |
