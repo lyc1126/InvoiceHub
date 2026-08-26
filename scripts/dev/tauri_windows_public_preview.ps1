@@ -24,6 +24,9 @@ function Get-IHPreviewConfig {
     if ($config.package_id -ne "com.invoicehub.windows.x86_64.nsis-preview" -or $config.architecture -ne "x64") {
         throw "Windows public-preview package identity is invalid."
     }
+    if ($config.sha256_name -ne "$($config.artifact_name).sha256" -or [string]::IsNullOrWhiteSpace([string]$config.receipt_name)) {
+        throw "Windows public-preview evidence artifact names are invalid."
+    }
     if ($config.webview2.download_id -ne "2124701" -or $config.webview2.sha256 -notmatch '^[0-9a-f]{64}$') {
         throw "WebView2 download lock is invalid."
     }
@@ -100,9 +103,16 @@ if ($LASTEXITCODE -ne 0) { throw "SignPath installer signing failed." }
 $output = Join-Path $root "dist\$($config.artifact_name)"
 [System.IO.Directory]::CreateDirectory((Split-Path -Parent $output)) | Out-Null
 Copy-Item -LiteralPath $installer -Destination $output -Force
+$artifactSha256 = Get-IHSha256 $output
+$checksumPath = Join-Path $root "dist\$($config.sha256_name)"
+$checksumLine = "$artifactSha256  $($config.artifact_name)`n"
+[System.IO.File]::WriteAllText($checksumPath, $checksumLine, [System.Text.Encoding]::ASCII)
+if ([System.IO.File]::ReadAllText($checksumPath, [System.Text.Encoding]::ASCII) -ne $checksumLine) {
+    throw "Windows public-preview SHA-256 sidecar write failed."
+}
 $receipt = [ordered]@{
     schema_version = 1; product_version = $config.product_version; package_id = $config.package_id
-    artifact_name = $config.artifact_name; artifact_sha256 = Get-IHSha256 $output
+    artifact_name = $config.artifact_name; artifact_sha256 = $artifactSha256
     signed_application_sha256 = $signedAppSha256; webview2_sha256 = $config.webview2.sha256
     uninstall_signed = $false; updater_enabled = $false; source_commit = $SourceCommit
 }

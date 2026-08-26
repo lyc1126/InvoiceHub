@@ -58,8 +58,16 @@ jobs:
           pnpm exec tauri build --config src-tauri/tauri.windows-preview.conf.json --no-bundle
           $exe = 'src-tauri/target/release/invoicehub-desktop.exe'
           $marker = (Get-Content docs/release/WINDOWS_PUBLIC_PREVIEW_CONFIG.json -Raw | ConvertFrom-Json).nsis_marker
-          if ([Text.Encoding]::ASCII.GetString([IO.File]::ReadAllBytes($exe)).Contains($marker)) { throw 'Unexpected existing NSIS marker.' }
+          $markerBytes = [Text.Encoding]::ASCII.GetBytes("`n$marker`n")
+          $before = [IO.File]::ReadAllBytes($exe)
+          $count = 0
+          for ($index = 0; $index -le $before.Length - $markerBytes.Length; $index++) {
+            if ([System.Linq.Enumerable]::SequenceEqual([byte[]]$before[$index..($index + $markerBytes.Length - 1)], [byte[]]$markerBytes)) { $count++ }
+          }
+          if ($count -ne 0) { throw 'NSIS marker must be absent before its single deterministic write.' }
           [IO.File]::AppendAllText($exe, "`n$marker`n", [Text.Encoding]::ASCII)
+          $after = [Text.Encoding]::ASCII.GetString([IO.File]::ReadAllBytes($exe))
+          if (($after.Split($marker).Count - 1) -ne 1) { throw 'NSIS marker count is invalid after write.' }
       - name: Sign the application executable with SignPath
         uses: SignPath/github-action-submit-signing-request@v1.1
         with:
@@ -87,8 +95,39 @@ jobs:
           artifact-configuration-slug: ${{ vars.SIGNPATH_INSTALLER_ARTIFACT_CONFIGURATION_SLUG }}
           input-artifact-path: src-tauri/target/release/bundle/nsis/InvoiceHub_0.3.0-alpha.2_x64-setup.exe
           output-artifact-path: dist/InvoiceHub-v0.3.0-alpha.2-windows-x64-setup.exe
+      - name: Verify SignPath outputs and write immutable release evidence
+        shell: pwsh
+        run: |
+          $config = Get-Content docs/release/WINDOWS_PUBLIC_PREVIEW_CONFIG.json -Raw | ConvertFrom-Json
+          if ($config.sha256_name -ne "$($config.artifact_name).sha256") { throw 'Preview SHA-256 sidecar name is invalid.' }
+          $app = 'src-tauri/target/release/invoicehub-desktop.exe'
+          $packagedApp = 'src-tauri/target/release/bundle/nsis/invoicehub-desktop.exe'
+          $artifact = Join-Path $PWD "dist/$($config.artifact_name)"
+          $appSha256 = (Get-FileHash $app -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ((Get-FileHash $packagedApp -Algorithm SHA256).Hash.ToLowerInvariant() -ne $appSha256) { throw 'Packaged EXE differs from the SignPath-signed application after outer signing.' }
+          foreach ($candidate in @(@{ Path = $app; Label = 'application' }, @{ Path = $artifact; Label = 'installer' })) {
+            $signature = Get-AuthenticodeSignature -FilePath $candidate.Path
+            if ($signature.Status -ne 'Valid') { throw "SignPath $($candidate.Label) signature is not valid: $($signature.Status)" }
+          }
+          $artifactSha256 = (Get-FileHash $artifact -Algorithm SHA256).Hash.ToLowerInvariant()
+          $checksumPath = Join-Path $PWD "dist/$($config.sha256_name)"
+          $checksumLine = "$artifactSha256  $($config.artifact_name)`n"
+          [IO.File]::WriteAllText($checksumPath, $checksumLine, [Text.Encoding]::ASCII)
+          if ([IO.File]::ReadAllText($checksumPath, [Text.Encoding]::ASCII) -ne $checksumLine) { throw 'Preview SHA-256 sidecar write failed.' }
+          $sourceCommit = (git rev-parse HEAD).Trim().ToLowerInvariant()
+          if ($sourceCommit -notmatch '^[0-9a-f]{40}$') { throw 'Preview source commit is invalid.' }
+          $receipt = [ordered]@{
+            schema_version = 1; product_version = $config.product_version; package_id = $config.package_id
+            artifact_name = $config.artifact_name; artifact_sha256 = $artifactSha256
+            signed_application_sha256 = $appSha256; webview2_sha256 = $config.webview2.sha256
+            uninstall_signed = $false; updater_enabled = $false; source_commit = $sourceCommit
+          }
+          $receipt | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $PWD "dist/$($config.receipt_name)") -Encoding UTF8
       - uses: actions/upload-artifact@v4
         with:
           name: InvoiceHub-v0.3.0-alpha.2-windows-x64-setup
-          path: dist/InvoiceHub-v0.3.0-alpha.2-windows-x64-setup.exe
+          path: |
+            dist/InvoiceHub-v0.3.0-alpha.2-windows-x64-setup.exe
+            dist/InvoiceHub-v0.3.0-alpha.2-windows-x64-setup.exe.sha256
+            dist/InvoiceHub-v0.3.0-alpha.2-windows-x64-setup.build-receipt.json
           if-no-files-found: error
