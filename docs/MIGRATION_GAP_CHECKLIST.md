@@ -44,7 +44,7 @@
 
 ## 发布缺口
 
-- [ ] 从重新确定的最终 `v0.3.0-alpha.2` Tag 构建并挂载 macOS public-preview DMG，验证 ad-hoc receipt、隔离 Application Support 状态、quarantine、LaunchServices 启动、monitor 与结构化退出；该包未公证。修复已合入 `main`，但现有远端 Tag 早于该基线，继续保留只为审计，不能作为构建输入。
+- [ ] 从包含 receipt finalization 门禁的最终干净 `v0.3.0-alpha.2` Tag 构建并挂载 macOS public-preview DMG，验证默认 finalized ad-hoc receipt、隔离 Application Support 状态、quarantine、LaunchServices 启动、monitor 与结构化退出；该包未公证。远端同名 Tag 已按授权重置到此前基线，但尚未包含本修复，不能作为构建输入。
 - [ ] 在 GitHub-hosted Windows runner 执行 WebView2 hash gate、两层 SignPath、NSIS 安装/卸载与 receipt 烟测；本 alpha 接受卸载器未签名。
 
 - [ ] Windows 10/11 x64 NSIS 安装器与新的公开构建/签名证据。

@@ -28,6 +28,7 @@ DMG_NAME = "InvoiceHub-v{version}-macos-arm64-preview.dmg"
 VERIFIER = Path(__file__).with_name("verify_tauri_public_preview.py")
 RECEIPT_SCHEMA_VERSION = 4
 RECEIPT_VERIFIER = "verify_tauri_public_preview.py/v2"
+VERIFIER_TIMEOUT_SECONDS = 120
 
 
 class PublicPreviewError(RuntimeError):
@@ -189,6 +190,59 @@ def _receipt(stage, app: Path, dmg: Path) -> dict[str, Any]:
     }
 
 
+def _diagnostic_output(value: str | bytes | None) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace").strip()
+    return value.strip()
+
+
+def _run_verifier(
+    python: Path,
+    app: Path,
+    dmg: Path,
+    receipt: Path,
+    *,
+    allow_pending_verification: bool,
+) -> str:
+    command = [
+        str(python),
+        str(VERIFIER),
+        "--app",
+        str(app),
+        "--dmg",
+        str(dmg),
+        "--receipt",
+        str(receipt),
+    ]
+    if allow_pending_verification:
+        command.append("--allow-pending-verification")
+    try:
+        verified = subprocess.run(
+            command,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=VERIFIER_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired as exc:
+        stdout = _diagnostic_output(exc.stdout)
+        stderr = _diagnostic_output(exc.stderr)
+        raise PublicPreviewError(
+            f"public-preview verifier timed out after {VERIFIER_TIMEOUT_SECONDS}s; "
+            f"stdout={stdout!r}; stderr={stderr!r}"
+        ) from exc
+    if verified.returncode != 0:
+        stdout = _diagnostic_output(verified.stdout)
+        stderr = _diagnostic_output(verified.stderr)
+        raise PublicPreviewError(
+            f"public-preview verifier rejected the build with exit status {verified.returncode}; "
+            f"stdout={stdout!r}; stderr={stderr!r}"
+        )
+    return _diagnostic_output(verified.stdout)
+
+
 def stage(root: Path, python: Path, runtime_dir: Path, **kwargs):
     alpha = _alpha_module()
     _configure_shared_stager(alpha)
@@ -222,11 +276,22 @@ def build(root: Path, python: Path, runtime_dir: Path, pnpm: Path | None, *, tau
     receipt = destination / RECEIPT_NAME.format(version=staged.product_version)
     payload = _receipt(staged, app, dmg)
     receipt.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    verified = subprocess.run([str(python), str(VERIFIER), "--app", str(app), "--dmg", str(dmg), "--receipt", str(receipt)], check=False, capture_output=True, text=True)
-    if verified.returncode != 0:
-        raise PublicPreviewError(f"public-preview verifier rejected the build: {verified.stderr.strip()}")
-    payload["verification"] = {"complete": True, "verifier": RECEIPT_VERIFIER, "output": verified.stdout.strip()}
+    # Pending is valid only for this internal pass; a persisted release receipt
+    # must bind its result to the DMG and survive the default verifier afterward.
+    verification_output = _run_verifier(
+        python,
+        app,
+        dmg,
+        receipt,
+        allow_pending_verification=True,
+    )
+    payload["verification"] = {
+        "complete": True,
+        "verifier": RECEIPT_VERIFIER,
+        "output": verification_output,
+    }
     receipt.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    _run_verifier(python, app, dmg, receipt, allow_pending_verification=False)
     return {"app": str(app), "dmg": str(dmg), "receipt": str(receipt)}
 
 

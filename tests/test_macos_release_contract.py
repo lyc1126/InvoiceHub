@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import hashlib
+import importlib.util
 import json
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -16,6 +19,71 @@ def _text(relative: str) -> str:
 
 def _stripped_lines(block: str) -> list[str]:
     return [line.strip() for line in block.splitlines() if line.strip()]
+
+
+def _load_module(relative: str, name: str):
+    spec = importlib.util.spec_from_file_location(name, ROOT / relative)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def _public_preview_receipt(
+    tmp_path: Path,
+    verifier,
+    verification: dict[str, object],
+) -> tuple[Path, Path, Path]:
+    app = tmp_path / "InvoiceHub-v0.3.0-alpha.2-macos-arm64-preview.app"
+    resources = app / "Contents/Resources"
+    resources.mkdir(parents=True)
+    (resources / verifier.HOST_NAME).write_text(
+        json.dumps(
+            {
+                "profile": "release",
+                "updater": {"enabled": False},
+                "expected_identity": {
+                    "package_id": verifier.PACKAGE_ID,
+                    "package_type": "preview-dmg",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    dmg = tmp_path / "InvoiceHub-v0.3.0-alpha.2-macos-arm64-preview.dmg"
+    dmg.write_bytes(b"synthetic-public-preview-dmg")
+    receipt = tmp_path / "receipt.json"
+    payload = {
+        "schema_version": verifier.RECEIPT_SCHEMA_VERSION,
+        "artifact_kind": "tauri-macos-public-preview",
+        "product_version": verifier.PRODUCT_VERSION,
+        "package_id": verifier.PACKAGE_ID,
+        "platform": "macos",
+        "architecture": "arm64",
+        "package_type": "preview-dmg",
+        "signature_mode": "public-adhoc-preview",
+        "updater_enabled": False,
+        "public_release": True,
+        "notarized": False,
+        "app": {
+            "name": app.name,
+            "path": app.name,
+            "kind": "directory",
+            "sha256": verifier._tree_sha256(app),
+            "size_bytes": verifier._tree_size(app),
+        },
+        "dmg": {
+            "name": dmg.name,
+            "path": dmg.name,
+            "kind": "file",
+            "sha256": hashlib.sha256(dmg.read_bytes()).hexdigest(),
+            "size_bytes": dmg.stat().st_size,
+        },
+        "verification": verification,
+    }
+    receipt.write_text(json.dumps(payload), encoding="utf-8")
+    return app, dmg, receipt
 
 
 def test_public_preview_receipt_and_verifier_bind_the_mounted_dmg_app() -> None:
@@ -49,6 +117,138 @@ def test_public_preview_receipt_and_verifier_bind_the_mounted_dmg_app() -> None:
     assert 'f"HOME={sample.home}"' in smoke
     assert 'def _host_pid_for_backend' in smoke
     assert 'def _terminate_exact_owned_process' in smoke
+    assert '"--allow-pending-verification"' in builder
+    assert "VERIFIER_TIMEOUT_SECONDS = 120" in builder
+    assert "stdout={stdout!r}; stderr={stderr!r}" in builder
+    assert 'parser.add_argument("--allow-pending-verification", action="store_true")' in verifier
+
+
+def test_public_preview_verifier_rejects_incomplete_or_tampered_receipt_finalizers(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    verifier = _load_module(
+        "scripts/dev/verify_tauri_public_preview.py",
+        "public_preview_verifier_receipt_test",
+    )
+    monkeypatch.setattr(verifier.sys, "platform", "linux")
+    pending = {"complete": False, "verifier": verifier.VERIFIER_ID}
+    app, dmg, receipt = _public_preview_receipt(tmp_path, verifier, pending)
+
+    with pytest.raises(verifier.PublicPreviewVerificationError, match="incomplete"):
+        verifier.verify(app, dmg, receipt)
+    assert verifier.verify(app, dmg, receipt, allow_pending_verification=True)["ok"] is True
+
+    payload = json.loads(receipt.read_text(encoding="utf-8"))
+    payload["public_release"] = 1
+    receipt.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(verifier.PublicPreviewVerificationError, match="public_release"):
+        verifier.verify(app, dmg, receipt, allow_pending_verification=True)
+
+    payload["public_release"] = True
+    payload["verification"]["complete"] = 0
+    receipt.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(verifier.PublicPreviewVerificationError, match="invalid"):
+        verifier.verify(app, dmg, receipt, allow_pending_verification=True)
+
+    payload["verification"] = pending
+    receipt.write_text(json.dumps(payload), encoding="utf-8")
+
+    payload["verification"] = {
+        "complete": True,
+        "verifier": verifier.VERIFIER_ID,
+        "output": json.dumps(
+            {
+                "ok": True,
+                "product_version": verifier.PRODUCT_VERSION,
+                "dmg_sha256": "0" * 64,
+            }
+        ),
+    }
+    receipt.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(verifier.PublicPreviewVerificationError, match="does not match"):
+        verifier.verify(app, dmg, receipt)
+
+    payload["verification"]["output"] = json.dumps(
+        {
+            "ok": 1,
+            "product_version": verifier.PRODUCT_VERSION,
+            "dmg_sha256": payload["dmg"]["sha256"],
+        }
+    )
+    receipt.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(verifier.PublicPreviewVerificationError, match="does not match"):
+        verifier.verify(app, dmg, receipt)
+
+    payload["verification"]["output"] = json.dumps(
+        {
+            "ok": True,
+            "product_version": verifier.PRODUCT_VERSION,
+            "dmg_sha256": payload["dmg"]["sha256"],
+        }
+    )
+    receipt.write_text(json.dumps(payload), encoding="utf-8")
+    assert verifier.verify(app, dmg, receipt)["ok"] is True
+
+
+def test_public_preview_host_manifest_requires_a_json_boolean_disabled_updater(
+    tmp_path: Path,
+) -> None:
+    verifier = _load_module(
+        "scripts/dev/verify_tauri_public_preview.py",
+        "public_preview_verifier_host_boolean_test",
+    )
+    app, _, _ = _public_preview_receipt(
+        tmp_path,
+        verifier,
+        {"complete": False, "verifier": verifier.VERIFIER_ID},
+    )
+    host_path = app / "Contents/Resources" / verifier.HOST_NAME
+    host = json.loads(host_path.read_text(encoding="utf-8"))
+    host["updater"] = {"enabled": 0}
+    host_path.write_text(json.dumps(host), encoding="utf-8")
+
+    with pytest.raises(verifier.PublicPreviewVerificationError, match="updater contract"):
+        verifier._verify_app_layout(app)
+
+
+def test_public_preview_builder_reports_verifier_stdout_stderr_and_timeout(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    builder = _load_module(
+        "scripts/dev/tauri_public_preview.py",
+        "public_preview_builder_verifier_test",
+    )
+    app = tmp_path / "InvoiceHub.app"
+    dmg = tmp_path / "InvoiceHub.dmg"
+    receipt = tmp_path / "receipt.json"
+    python = Path(sys.executable).resolve()
+
+    monkeypatch.setattr(
+        builder.subprocess,
+        "run",
+        lambda command, **kwargs: subprocess.CompletedProcess(
+            command,
+            7,
+            "verifier stdout",
+            "verifier stderr",
+        ),
+    )
+    with pytest.raises(builder.PublicPreviewError, match="verifier stdout.*verifier stderr"):
+        builder._run_verifier(python, app, dmg, receipt, allow_pending_verification=True)
+
+    def timeout(*args, **kwargs):
+        raise subprocess.TimeoutExpired(
+            args[0],
+            builder.VERIFIER_TIMEOUT_SECONDS,
+            output=b"before timeout",
+            stderr=b"timeout stderr",
+        )
+
+    monkeypatch.setattr(builder.subprocess, "run", timeout)
+    with pytest.raises(builder.PublicPreviewError, match="before timeout.*timeout stderr"):
+        builder._run_verifier(python, app, dmg, receipt, allow_pending_verification=False)
 
 
 def test_sparkle_dependency_and_resolved_revision_are_exact() -> None:
