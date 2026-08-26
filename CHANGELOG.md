@@ -2,7 +2,11 @@
 
 ## 未发布
 
-- 2026-08-25 `v0.3.0-alpha.2` 双平台公开预览组装基础：同步产品版本和现有构建身份；新增 macOS arm64 public-preview DMG 的独立 staging、release profile、ad-hoc receipt/verifier，以及 Windows x64 current-user NSIS/SignPath workflow、WebView2 SHA-256 锁和双层签名顺序。updater、Feed、Tag、GitHub Release 与平台成品烟测仍未执行；Windows 卸载器在本 alpha 中明确未签名。
+- 2026-08-26 macOS public-preview 启动与结构化关闭修复：新增独立的 DMG 成品烟测入口，先独立复核 App/DMG/receipt，再挂载、复制、ad-hoc 验签并为临时 App 写入 quarantine；Tauri App 只允许由 LaunchServices 的 `open -n -W -g` 启动，并仅注入隔离 `HOME`，不传 development state override。烟测只访问固定 health/monitor/shutdown allowlist，覆盖 monitor start/ready/stop 与 `stop_monitor` 结构化退出。`GET /api/v1/events/stream` 现会在已接受结构化关闭后结束生成器，避免 WKWebView 的 EventSource 阻止 Uvicorn 正常退出。聚焦 public-preview/release/recovery 测试共 22 项通过；此前候选仅用于定位该关闭缺陷，最终干净 Tag 的 DMG、真实 Finder/Gatekeeper 交互和 Release 资产仍待执行。
+
+- 2026-08-25 macOS public-preview 组装门禁修复：共享 staging 器对 internal-alpha 保留 `dmg` 包型缺省值，public-preview 显式覆盖为 `preview-dmg`，使其独立 package ID 能通过 fail-closed package manifest 校验。新增回归契约，此修复尚未获新 Tag 或平台成品证据。
+
+- 2026-08-25 `v0.3.0-alpha.2` 双平台公开预览组装基础：同步产品版本和现有构建身份；新增 macOS arm64 public-preview DMG 的独立 staging、release profile、ad-hoc receipt/verifier，以及 Windows x64 current-user NSIS/SignPath workflow、WebView2 SHA-256 锁和双层签名顺序。`v0.3.0-alpha.2` Tag 已创建但尚无 GitHub Release 或资产；其 macOS public-preview 包型缺陷由上条修复，等待修复合并后重新确定 Tag。updater、Feed 与平台成品烟测仍未执行；Windows 卸载器在本 alpha 中明确未签名。
 
 - 2026-08-24 Tauri L10-E 非安装恢复烟测边界与运行证据：普通 development `stage/build`
   与 internal-alpha 继续生成 `updater.enabled=false`；新增显式

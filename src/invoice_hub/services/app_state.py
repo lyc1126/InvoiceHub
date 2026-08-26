@@ -2761,6 +2761,11 @@ class AppState:
     def bridge_stop(self) -> dict:
         return self._monitor_bridge().stop()
 
+    @property
+    def server_shutdown_requested(self) -> bool:
+        with self._lock:
+            return self._server_shutdown_requested
+
     def request_server_shutdown(self, behavior: str, remember: bool = False) -> dict:
         normalized = str(behavior or "").strip()
         if normalized not in {"keep_monitor", "stop_monitor"}:

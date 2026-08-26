@@ -3,7 +3,7 @@
 > 公共权威基线：经过审计的单一脱敏根提交；旧私有历史和发布资产不属于公开图。
 > 当前发行边界：候选树、Git 对象和托管面验证已通过，仓库已公开；旧私有历史、Tag 和资产仍不得公开或上传。Tauri 2 `v0.3` 才替换平台壳并新增 Host RPC/updater 行为。
 > 校验规则：精确的当前本地与 GitHub HEAD 以实时 Git 引用和双向差异为准。
-> 状态说明：OCR 服务类接口与 Windows desktop surface 属于“未启用能力”；当前尚未创建公开 Tag、Release 或 Feed。Tauri 开发分支已有代码级 host 生命周期、Host RPC 和 update-install API，且 L6 已运行隔离 TestClient runtime contract。schema-3 development assembly 已构建且隔离烟测一个 macOS arm64 `.app`；裸 checkout 仍无 manifest 而 fail-closed，development updater 禁用，真实 updater 与平台 release smoke 尚未进行。
+> 状态说明：OCR 服务类接口与 Windows desktop surface 属于“未启用能力”；`v0.3.0-alpha.2` Tag 已创建，但没有公开 Release 或 Feed。该 Tag 的 macOS public-preview staging 包型、LaunchServices 启动与 SSE 关闭修复待合并，合并后必须重新确定 Tag；Tauri 开发分支已有代码级 host 生命周期、Host RPC 和 update-install API，且 L6 已运行隔离 TestClient runtime contract。schema-3 development assembly 已构建且隔离烟测一个 macOS arm64 `.app`；裸 checkout 仍无 manifest 而 fail-closed，development updater 禁用，真实 updater 与平台 release smoke 尚未进行。
 
 Tauri L9/P1-Q 只验证一次 development-profile 组装、启动和真实 Cmd-Q 退出流：host 用编译绑定的 manifest/launcher 启动 owned child，child 固定监听 `127.0.0.1:8766`，health/background ready 后加载首页和静态资源。`INVOICE_HUB_DEV_STATE_ROOT` 只对 development host 可用，必须显式、绝对、已存在、canonicalize 后与 bundle/core 和完整 `.app` 容器双向不包含，`Contents` sibling 同样拒绝，且不传给 Python child。clean-commit 样本的前台 Cmd-Q 经自定义菜单触发 `app.exit(0)` 与 `ExitRequested`，随后 shutdown POST 200、`server_state=stopped`、monitor 未运行、host/backend/PID/8766 清理完成；打开的 SSE 连接由既定 `kill + wait` 兜底。外部 AppleScript quit、tray 点击等不是该样本；该流也未调用真实 Feed/安装、原生 picker、browser、单实例或打印，不能推断为任何发布接口已验收。
 
@@ -271,7 +271,7 @@ L10-D 复用 L10-R/C 的 lease、marker、fixed-loopback bridge 和 pure coordin
 | `POST /api/v1/ocr/local-smoke` | 路由常量响应 | 始终 `ok=false`，说明 core 未内置 OCR | 未启用能力 |
 | `GET /api/v1/consistency-report` | `consistency_report` | `only_mismatch` 查询；同票多格式字段对照 | 一致性页 |
 | `GET /api/v1/tasks/{task_id}` | `get_task` | SQLite task 状态与 detail | 不存在 `404` |
-| `GET /api/v1/events/stream` | `event_stream` | SSE；`after` 优先于 `Last-Event-ID`，无游标从最新事件后监听 | `common.js`；15 秒空闲心跳注释 |
+| `GET /api/v1/events/stream` | `event_stream` | SSE；`after` 优先于 `Last-Event-ID`，无游标从最新事件后监听；一旦结构化 shutdown 已被接受，生成器结束，不继续维持 WebView 的长连接 | `common.js`；15 秒空闲心跳注释；Uvicorn graceful shutdown |
 | `POST /api/v1/server/shutdown` | `request_server_shutdown` | `{shutdown_behavior,remember}`；返回 `ok`、`scheduled/idempotent` 和确认后的行为，再延迟结束 WebUI | `remember` 非布尔或行为非法 `400`，关闭失败 `500`；macOS 原生停止固定 `keep_monitor + remember=false` |
 
 health 的当前 API 契约是 `2026-08-02-release-update-v1`，做账协议是 `w9-ledger-review-v1`。构建清单与 health 都必须包含完整能力集合；除既有预览、打印、分类、合计、monitor 与关闭能力外，`release.package-identity.v1`、`settings.startup-surface.v1` 和 `updates.metadata-check.v1` 也是 macOS 严格握手必需能力。
@@ -699,8 +699,12 @@ hosted check 的 lock-contended 分支在 busy 结果后直接返回，不能落
 
 `v0.3.0-alpha.2` public-preview 不新增业务 API、Feed 或 updater 契约。macOS public-preview
 使用 `profile=release`，但 release profile 仅接受精确 `{"enabled": false}`，因此不会登记
-endpoint、公钥或更新权限。Windows workflow 只允许 GitHub-hosted runner 从精确 Tag 手动触发，
-只上传 Actions artifact；发布到 GitHub Release 仍须单独授权。
+endpoint、公钥或更新权限。最终 DMG smoke 必须先独立复核 App/DMG/receipt，再挂载并复制 App，
+为复制件写入 quarantine，以 `open -n -W -g` 经 LaunchServices 启动且只注入隔离 `HOME`；直接执行
+`Contents/MacOS` 或传递 development state override 都不构成用户启动样本。smoke 只允许 health、
+monitor start/status/stop 与固定 `stop_monitor` shutdown，后者会使 SSE 生成器结束，以免 EventSource
+阻止 Uvicorn 退出。Windows workflow 只允许 GitHub-hosted runner 从精确 Tag 手动触发，只上传
+Actions artifact；发布到 GitHub Release 仍须单独授权。
 
 ## 7. 接口变更检查表
 

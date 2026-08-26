@@ -21,6 +21,8 @@ def _stripped_lines(block: str) -> list[str]:
 def test_public_preview_receipt_and_verifier_bind_the_mounted_dmg_app() -> None:
     builder = _text("scripts/dev/tauri_public_preview.py")
     verifier = _text("scripts/dev/verify_tauri_public_preview.py")
+    smoke = _text("scripts/dev/tauri_public_preview_smoke.py")
+    alpha_stager = _text("scripts/dev/tauri_alpha_release.py")
 
     assert "RECEIPT_SCHEMA_VERSION = 4" in builder
     assert '"kind": "directory" if is_directory else "file"' in builder
@@ -32,6 +34,21 @@ def test_public_preview_receipt_and_verifier_bind_the_mounted_dmg_app() -> None:
     assert "DMG App does not match the supplied App" in verifier
     assert "_verify_adhoc_signature(dmg)" in verifier
     assert "_verify_adhoc_signature(mounted_app)" in verifier
+    assert 'alpha.PRODUCT_PACKAGE_TYPE = "preview-dmg"' in builder
+    assert 'PRODUCT_PACKAGE_TYPE = "dmg"' in alpha_stager
+    assert '"--package-type",\n                PRODUCT_PACKAGE_TYPE,\n                "--python-version",' in alpha_stager
+    assert 'VERIFIER = Path(__file__).with_name("verify_tauri_public_preview.py")' in smoke
+    assert 'hdiutil, "attach", str(dmg), "-readonly", "-nobrowse"' in smoke
+    assert 'QUARANTINE_ATTRIBUTE = "com.apple.quarantine"' in smoke
+    assert 'environment.pop(name, None)' in smoke
+    assert '"INVOICE_HUB_DEV_STATE_ROOT"' in smoke
+    assert 'SHUTDOWN_BODY = b\'{"shutdown_behavior":"stop_monitor","remember":false}\'' in smoke
+    assert 'launcher = shutil.which("open")' in smoke
+    assert '"-n",' in smoke
+    assert '"-W",' in smoke
+    assert 'f"HOME={sample.home}"' in smoke
+    assert 'def _host_pid_for_backend' in smoke
+    assert 'def _terminate_exact_owned_process' in smoke
 
 
 def test_sparkle_dependency_and_resolved_revision_are_exact() -> None:

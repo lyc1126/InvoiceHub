@@ -1360,6 +1360,7 @@ def test_settings_page_contract() -> None:
     assert "diagnostic_summary" in app_state
     assert "PREFERENCE_SYSTEM_SHUTDOWN_BEHAVIORS" in app_state
     assert "request_server_shutdown" in app_state
+    assert "server_shutdown_requested" in app_state
     assert "finalize_server_shutdown" in app_state
     assert "config_health" in app_state
     assert "export_support_package" in app_state
@@ -1376,6 +1377,7 @@ def test_settings_page_contract() -> None:
     assert "/api/v1/diagnostics/support-package" in api_app
     assert "/api/v1/server/shutdown" in api_app
     assert "shutdown_scheduler" in api_app
+    assert "if state.server_shutdown_requested:" in api_app
 
 
 def test_skin_page_contract_and_common_skin_loader() -> None:

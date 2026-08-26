@@ -119,6 +119,18 @@ monitor, and cleared its process group, fixed port, and temporary directories;
 the runner reported `update_requests=0`. This remains startup-recovery evidence,
 not Feed, candidate, download, signature-validation, install, or restart evidence.
 
+`scripts/dev/tauri_public_preview_smoke.py` is separate from the development
+profiles. It validates a mounted `0.3.0-alpha.2` preview DMG and receipt,
+copies the App, verifies its ad-hoc signature, applies quarantine, and starts
+only through `open -n -W -g` with a temporary `HOME`; it never supplies
+`INVOICE_HUB_DEV_STATE_ROOT`. Direct `Contents/MacOS` execution is not a valid
+Tauri/AppKit user-launch path. The smoke's localhost surface is fixed to
+health, monitor start/status/stop, and the exact `stop_monitor` shutdown body.
+Once that shutdown is accepted, the SSE generator exits so the WebView
+EventSource cannot keep Uvicorn alive. The runner has focused contracts, but
+the final Tag DMG, Finder/Gatekeeper interaction, and public Release evidence
+remain outstanding.
+
 Tray Quit and the custom macOS application-menu Quit item/Cmd-Q both request
 `app.exit(0)`. The menu must not use the predefined native Quit selector,
 which can bypass Tauri's interceptable event. Every `ExitRequested` received

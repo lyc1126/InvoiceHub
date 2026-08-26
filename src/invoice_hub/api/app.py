@@ -1290,13 +1290,19 @@ def create_app(
             raise HTTPException(status_code=404, detail="task not found")
 
     async def event_stream(request: Request, after: int | None) -> AsyncIterator[str]:
-        cursor = _resolve_event_stream_cursor(_state(request), after, request.headers.get("last-event-id"))
+        state = _state(request)
+        cursor = _resolve_event_stream_cursor(state, after, request.headers.get("last-event-id"))
         idle_ticks = 0
         yield f": connected {cursor}\n\n"
         while True:
+            # The shutdown response must reach the WebView before Uvicorn begins
+            # graceful termination. Ending this owned SSE stream then prevents the
+            # browser connection from holding the localhost process open forever.
+            if state.server_shutdown_requested:
+                return
             if await request.is_disconnected():
                 return
-            events = _state(request).wait_events(cursor)
+            events = state.wait_events(cursor)
             for event in events:
                 cursor = max(cursor, int(event["seq"]))
                 yield f"id: {event['seq']}\nevent: {event['event_type']}\ndata: {json.dumps(event, ensure_ascii=False)}\n\n"
