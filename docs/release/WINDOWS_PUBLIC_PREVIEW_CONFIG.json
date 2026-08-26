@@ -5,6 +5,7 @@
   "manifest_architecture": "x86_64",
   "package_id": "com.invoicehub.windows.x86_64.nsis-preview",
   "artifact_name": "InvoiceHub-v0.3.0-alpha.2-windows-x64-setup.exe",
+  "sha256_name": "InvoiceHub-v0.3.0-alpha.2-windows-x64-setup.exe.sha256",
   "receipt_name": "InvoiceHub-v0.3.0-alpha.2-windows-x64-setup.build-receipt.json",
   "webview2": {
     "download_id": "2124701",

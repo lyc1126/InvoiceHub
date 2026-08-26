@@ -463,6 +463,8 @@ def test_windows_release_entry_scripts_load_machine_config_before_work() -> None
 def test_windows_public_preview_stages_manifest_bound_resources_before_tauri_build() -> None:
     workflow = _text(".github/workflows/windows-public-preview.yml")
     stage = _text("scripts/dev/tauri_windows_preview_stage.py")
+    packager = _text("scripts/dev/tauri_windows_public_preview.ps1")
+    config = json.loads(_text("docs/release/WINDOWS_PUBLIC_PREVIEW_CONFIG.json"))
 
     assert "prepare_windows_runtime.ps1" in workflow
     assert "tauri_windows_preview_stage.py" in workflow
@@ -473,6 +475,18 @@ def test_windows_public_preview_stages_manifest_bound_resources_before_tauri_bui
     assert "build_sbom_payload" in stage
     assert '"package_type": "nsis"' in stage
     assert '"updater": {"enabled": False}' in stage
+    assert config["sha256_name"] == f"{config['artifact_name']}.sha256"
+    assert config["receipt_name"].endswith(".build-receipt.json")
+    assert "NSIS marker count is invalid after write." in workflow
+    assert "Get-AuthenticodeSignature" in workflow
+    assert "signed_application_sha256" in workflow
+    assert "$config.sha256_name" in workflow
+    assert "$config.receipt_name" in workflow
+    assert config["artifact_name"] in workflow
+    assert config["sha256_name"] in workflow
+    assert config["receipt_name"] in workflow
+    assert "Windows public-preview SHA-256 sidecar write failed." in packager
+    assert "$config.sha256_name" in packager
 
 
 def test_windows_source_tests_use_an_isolated_hash_locked_environment() -> None:

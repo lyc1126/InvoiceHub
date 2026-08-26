@@ -2,6 +2,8 @@
 
 ## 未发布
 
+- 2026-08-26 Windows public-preview 交付证据闭环：受控配置新增安装器 SHA-256 sidecar 名称；PowerShell 组包器和 GitHub-hosted SignPath 工作流均在签名后写入安装器、SHA-256 与 receipt。工作流会复核单次 NSIS marker、内层 EXE 字节一致性及应用/外层安装器的 Authenticode 状态，随后只上传三项 Actions artifact，不修改 GitHub Release。新增静态契约；未触发 SignPath 或任何 Windows 安装、启动、卸载验收。
+
 - 2026-08-26 `alpha.2` public-preview 合并后基线同步：macOS public-preview 的 package manifest、LaunchServices/quarantine 烟测与 SSE 结构化关闭修复已经进入公开 `main`。现有 `v0.3.0-alpha.2` Tag 早于这些修复，继续保留只为审计，不能作为任何构建或 Release 输入；待本轮基线记录合并后，才从最终干净 `main` 重新创建同名 Tag。GitHub Release、资产、Feed、SignPath 请求和平台成品烟测仍未执行。
 
 - 2026-08-26 macOS public-preview 启动与结构化关闭修复：新增独立的 DMG 成品烟测入口，先独立复核 App/DMG/receipt，再挂载、复制、ad-hoc 验签并为临时 App 写入 quarantine；Tauri App 只允许由 LaunchServices 的 `open -n -W -g` 启动，并仅注入隔离 `HOME`，不传 development state override。烟测只访问固定 health/monitor/shutdown allowlist，覆盖 monitor start/ready/stop 与 `stop_monitor` 结构化退出。`GET /api/v1/events/stream` 现会在已接受结构化关闭后结束生成器，避免 WKWebView 的 EventSource 阻止 Uvicorn 正常退出。聚焦 public-preview/release/recovery 测试共 22 项通过；此前候选仅用于定位该关闭缺陷，最终干净 Tag 的 DMG、真实 Finder/Gatekeeper 交互和 Release 资产仍待执行。
