@@ -123,6 +123,7 @@
 | `scripts/dev/tauri_recovery_smoke.py` | L10-E macOS arm64 authenticated startup-recovery 隔离 runner。 | 只接受 plist executable/identifier/version、host manifest、launcher hash 与 core build identity 一致的精确 recovery-smoke App；创建临时 HOME/state/runtime/watch、关闭自动更新检查并预置 scope marker。localhost allowlist 只有 health、bridge status 和 bridge stop；确认身份后停止临时 monitor，并只终止自己创建的进程组，绝不调用 update check/install。 |
 | `scripts/dev/tauri_public_preview.py` | macOS public-preview DMG 组装入口。 | release profile 只允许精确 disabled updater；产物是 ad-hoc、未公证且与 internal-alpha receipt 隔离。 |
 | `scripts/dev/verify_tauri_public_preview.py` | macOS public-preview DMG 与独立 receipt 验证器。 | 复核 public-release 身份、ad-hoc 签名、未公证状态与 staging 布局，不把 receipt 作为正式签名或公证证据。 |
+| `scripts/dev/tauri_public_preview_smoke.py` | macOS public-preview 成品 smoke 入口。 | 从 mounted DMG 复制 App、复核 receipt/ad-hoc 签名并保留 quarantine；只经 LaunchServices 与隔离 `HOME` 启动，核验 health、monitor 和结构化退出，不允许 development state override 或任意 localhost 请求。 |
 | `scripts/dev/tauri_windows_public_preview.ps1` | Windows NSIS public-preview 组装与验包入口。 | 先验证下载哈希，再按应用签名、NSIS、安装器签名顺序执行并比较包内 EXE。 |
 | `scripts/dev/tauri_windows_preview_stage.py` | Windows public-preview 的 clean-source staging 入口。 | 复用 Windows portable 的源码白名单与敏感内容扫描，验证 3.14.6 runtime，写 NSIS package/build/SBOM/host manifest，并将其 SHA-256 编译绑定到 Tauri host。 |
 | `docs/release/WINDOWS_PUBLIC_PREVIEW_CONFIG.json` | Windows public-preview 的受控 WebView2 下载、NSIS marker、包身份和产物名称锁。 | workflow 与 PowerShell 组包器必须先验证此处 SHA-256，不能以 URL 或版本号替代字节锁。 |

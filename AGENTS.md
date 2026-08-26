@@ -239,6 +239,7 @@
 - macOS 内部候选的 staging App、Sparkle ZIP App、DMG App 与 DMG 容器必须全部为 ad-hoc 签名，并拒绝 Developer ID Authority 或 Team ID；验证器必须显式且互斥地使用 `--expect-internal-adhoc` 或 `--expect-notarized`，不得用自动猜测或无模式验证混淆内部候选与正式产物。
 - Sparkle 发布私钥只允许使用 Keychain account `com.invoicehub.release`，`sign_update` 必须显式传递该 account。macOS 构建收据固定为 schema 4 并记录 `signature_mode`、`sparkle_keychain_account` 与 v4 验证器；公开 provenance/finalizer 只接受 `developer-id-notarized` 正式收据，仍须对实际制品独立执行 `--artifact-only --expect-notarized`，内部 ad-hoc 收据永远不能放行 Feed。
 - macOS 发布验收必须额外覆盖：`.app/.dmg`、Developer ID、Hardened Runtime、公证/staple、quarantine、无 Docker/开发 `.venv`、包外发票目录、Application Support、原生面板、关闭窗口/monitor，以及一次真实 Sparkle 旧版到新版升级。
+- macOS public-preview 的 DMG smoke 必须从挂载卷复制 App、复核 receipt 与 ad-hoc 签名、在复制件保留 quarantine，并仅用 `open -n -W -g` 经 LaunchServices 注入隔离 `HOME`；不得直接执行 `Contents/MacOS`、删除 quarantine 或传递 `INVOICE_HUB_DEV_STATE_ROOT`。其固定 shutdown 样本中，SSE 必须在结构化 shutdown 已被接受后结束，避免 WKWebView 的 EventSource 阻止 Uvicorn 正常退出。
 - macOS 发布验证器对已签名 App 执行内嵌 Python、`pip check`、import smoke 或内容扫描时必须同时设置 `PYTHONDONTWRITEBYTECODE=1` 和解释器参数 `-B`；`-I` 会忽略 `PYTHON*` 环境变量，不能只靠前者。普通验证必须可重复执行且不得在 staging App 内新增 `.pyc` 或破坏 codesign seal，artifact-only 通过不能替代该幂等检查。
 
 ## 发行与更新规则

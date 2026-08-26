@@ -1,11 +1,12 @@
 # IMPLEMENTATION_STATUS
 
-更新时间：2026-08-25
+更新时间：2026-08-26
 
 ## 公开基线
 
 - 本仓库已将单一、脱敏的根提交发布为公开 `main`。旧的私有提交图、验证记录、二进制包和 Tag 只保留在 owner-only 私有归档中，不属于公开历史，也不会作为 Release 资产上传。
 - 当前开发版本为 `0.3.0-alpha.2`；`v0.3.0-alpha.2` Tag 已创建，但没有 GitHub Release、公开资产或 SignPath 请求。该 Tag 的 macOS public-preview staging 将独立包身份误写为 `dmg`，因此不能作为公开二进制来源；修复分支待合并后必须重新确定 Tag。任何公开二进制都必须从脱敏图上的干净版本、Tag 和新发布证据构建。
+- public-preview 另有专用成品烟测：它从 DMG 挂载复制的 App 复核 receipt 与 ad-hoc 签名、写入 quarantine，再通过 LaunchServices 的 `open -n -W -g` 和临时 `HOME` 启动；不允许直接执行 `Contents/MacOS`，也不允许传递 `INVOICE_HUB_DEV_STATE_ROOT`。为使 WebView 的 EventSource 不再拖住 Uvicorn，SSE 生成器会在结构化 shutdown 已被接受后结束。该实现及 22 项聚焦测试已经就绪，但最终干净 Tag 的 DMG、Finder/Gatekeeper 人工交互和成品验收尚未完成。
 - 历史净化的范围、私有备份和已完成的公开门槛见 [执行记录](docs/release/HISTORY_SANITIZATION_EXECUTION.md)。公开仓库已启用 DCO、Dependabot、Secret Scanning、Push Protection 和私密漏洞报告；仍未创建 Release 或更新 Feed。
 
 ## 保留的产品边界

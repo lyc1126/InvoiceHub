@@ -1,6 +1,6 @@
 # 迁移与公开缺口清单
 
-更新时间：2026-08-24
+更新时间：2026-08-26
 
 ## 公开历史净化
 
@@ -44,7 +44,7 @@
 
 ## 发布缺口
 
-- [ ] 从 `v0.3.0-alpha.2` Tag 构建并挂载 macOS public-preview DMG，验证 ad-hoc receipt、隔离状态与 monitor；该包未公证。
+- [ ] 从重新确定的最终 `v0.3.0-alpha.2` Tag 构建并挂载 macOS public-preview DMG，验证 ad-hoc receipt、隔离 Application Support 状态、quarantine、LaunchServices 启动、monitor 与结构化退出；该包未公证。成品 runner 和其 22 项聚焦契约已就绪，但当前远端 Tag 早于修复，不能作为构建输入。
 - [ ] 在 GitHub-hosted Windows runner 执行 WebView2 hash gate、两层 SignPath、NSIS 安装/卸载与 receipt 烟测；本 alpha 接受卸载器未签名。
 
 - [ ] Windows 10/11 x64 NSIS 安装器与新的公开构建/签名证据。

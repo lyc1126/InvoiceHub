@@ -1,10 +1,10 @@
 # InvoiceHub 开发架构与工程导航
 
 > 文档状态：当前开发实现的权威架构入口
-> 更新日期：2026-08-25
+> 更新日期：2026-08-26
 > 公共权威基线：经过审计的单一脱敏根提交；旧私有提交、Tag、二进制和验证材料不在公开图中
 > 公开状态：候选树、保留 Git 对象和托管面已完成一次内容与凭据审计；公开图从脱敏根提交开始，详见 `docs/release/HISTORY_SANITIZATION_EXECUTION.md`
-> 当前开发线：`codex/tauri2-alpha2-public-preview-fix` 承接 `0.3.0-alpha.2` 的双平台 public-preview 组装。`v0.3.0-alpha.2` Tag 已创建但尚无 GitHub Release、资产或 SignPath 请求；该 Tag 的 macOS public-preview 包型缺陷正在修复，合并后必须重新确定 Tag。internal-alpha 与 L10-E 结果仅作为历史上下文。
+> 当前开发线：`codex/tauri2-alpha2-public-preview-fix` 承接 `0.3.0-alpha.2` 的双平台 public-preview 组装。`v0.3.0-alpha.2` Tag 已创建但尚无 GitHub Release、资产或 SignPath 请求；其 macOS public-preview 包型与 LaunchServices/SSE 关闭缺陷均正在修复，合并后必须重新确定 Tag。最终成品必须从 DMG 挂载复制、以隔离 `HOME` 经 LaunchServices 启动并保留 quarantine 验收；internal-alpha 与 L10-E 结果仅作为历史上下文。
 > 校验规则：精确的本地与 GitHub HEAD 以实时 `git rev-parse`、`git ls-remote` 和双向差异为准；发行源码候选不等于双平台成品 RC 或 GitHub 已发布版本
 
 ## 1. 这套文档解决什么问题
@@ -63,6 +63,8 @@ L10-R/C 建立的 monitor recovery foundation 仍是运行时安全不变量：�
 L10-D 把这些 seams 接入运行时而不扩大公开 API。`BackendHost` 私有保存已有 ownership secret；每个 Rust recovery 请求和精确 Python 响应都由 fresh challenge 与 HMAC-SHA256 transcript 双向绑定，Python 拒绝 incomplete/tampered/non-empty/replayed 请求，普通 bridge HTTP 行为不变。Host 保留完整 cloneable `Update`，并从 version/target/download URL/signature 计算不公开的域分隔 artifact identity。`update_install` 先消费 fresh candidate 并启动 latch-blocked worker，只有精确 `{"ok":true}` 写入并 flush 后才放行 Tauri `download` 内置验签 -> recovery pause -> `install` -> platform relaunch；writer/spawn/latch loss 进入 `CommitLost` 且没有下载、marker、monitor 或安装副作用。startup restore 或事务失败保留 marker、保持 backend/WebUI 诊断并阻断后续 updater。Windows 在 updater `on_before_exit` 中确认 managed backend 已终止后才启动 installer；macOS 安装返回后先停 backend、标记 relaunch prepared、再 `request_restart()`。本轮没有运行真实 Feed、monitor、updater、installer、restart 或制品构建，源码接线不等于平台验收。
 
 L10-E 将运行验证收窄为不可安装的 development recovery smoke。ordinary development/internal-alpha 保持 updater-disabled；只有显式 recovery staging 才写固定不可达 HTTPS loopback endpoint、无验签能力 key sentinel 和精确三字段 updater 对象。隔离 runner 使用临时 HOME/state/runtime/watch、关闭自动更新检查并预置同 scope marker，且自身 localhost allowlist 只有 health、monitor status 和 monitor stop；它不调用 update check/install 或 bridge start。macOS arm64 样本已恢复 owned monitor 到 `running && ready`、删除 marker、显式停止 monitor并完成进程/端口/临时目录清理，runner 报告 `update_requests=0`。该证据仍不能扩大为 Feed、候选、下载、验签、安装、restart 或发行验收。
+
+public-preview 的成品 smoke 与 L10-E 保持隔离：它不复用 development state root，而是从 mounted DMG 复制 App、独立验签/receipt、为复制件保留 quarantine，并只经 `open -n -W -g` 的 LaunchServices 路径注入临时 `HOME`。直接执行 `Contents/MacOS` 会在 Tauri 的 AppKit 注册阶段失败，不能当作用户启动或 Gatekeeper 样本。发布 smoke 只允许 health、monitor start/status/stop 和固定 `stop_monitor` shutdown；当 shutdown 已被接受时，SSE generator 必须结束，以免 WKWebView 的 EventSource 让 Uvicorn 无法完成 graceful exit。该 runner 已有聚焦契约，最终干净 Tag 的 DMG 和 Finder/Gatekeeper 交互仍是待验证成品证据。
 
 固定 endpoint/method/origin 本身仍不是 ownership proof；只有上述 L10-D recovery 调用具有请求/响应双向认证。后续增加 endpoint、body 或状态字段时必须同步更新域分隔 transcript、Python replay/空 body 校验和 Rust 常量时间响应 proof 校验，且不得向候选固定端口发送 bearer secret。
 

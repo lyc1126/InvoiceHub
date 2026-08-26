@@ -1,3 +1,4 @@
+import asyncio
 import importlib
 import hashlib
 import hmac
@@ -621,6 +622,7 @@ def test_server_shutdown_api_preserves_or_stops_monitor_and_finalizes_state(tmp_
     assert keep_payload["monitor_running"] is True
     assert stop_calls == []
     assert scheduled_states == [state]
+    assert state.server_shutdown_requested is True
     assert client.get("/api/v1/preferences").json()["preferences"]["system_shutdown_behavior"] == "keep_monitor"
 
     stopping_state = json.loads(state.layout.server_state.read_text(encoding="utf-8"))
@@ -659,6 +661,75 @@ def test_server_shutdown_api_preserves_or_stops_monitor_and_finalizes_state(tmp_
     assert stop_client.get("/api/v1/preferences").json()["preferences"]["system_shutdown_behavior"] == "ask"
     stop_state.finalize_server_shutdown()
     assert json.loads(stop_state.layout.server_state.read_text(encoding="utf-8"))["status"] == "stopped"
+
+
+def test_event_stream_finishes_after_structured_shutdown_is_requested(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr("invoice_hub.services.app_state.AppState.run_background_diagnostics", lambda self, trigger="startup_sync": None)
+    monitor = {"running": False, "pid": 0}
+    monkeypatch.setattr("invoice_hub.services.app_state.AppState.bridge_status", lambda self: dict(monitor))
+    monkeypatch.setattr(
+        "invoice_hub.services.app_state.AppState.bridge_stop",
+        lambda self: {"ok": True, "running": False, "status": dict(monitor)},
+    )
+    app = create_app(tmp_path, shutdown_scheduler=lambda state: None)
+    state = app.state.invoice_hub
+
+    async def collect_stream_messages() -> list[dict]:
+        messages: list[dict] = []
+        first_request = True
+        connected = asyncio.Event()
+        disconnect = asyncio.Event()
+
+        async def receive() -> dict:
+            nonlocal first_request
+            if first_request:
+                first_request = False
+                return {"type": "http.request", "body": b"", "more_body": False}
+            await disconnect.wait()
+            return {"type": "http.disconnect"}
+
+        async def send(message: dict) -> None:
+            messages.append(message)
+            if message["type"] == "http.response.body" and b": connected " in message.get("body", b""):
+                connected.set()
+
+        stream = asyncio.create_task(
+            app(
+                {
+                    "type": "http",
+                    "asgi": {"version": "3.0", "spec_version": "2.3"},
+                    "http_version": "1.1",
+                    "method": "GET",
+                    "scheme": "http",
+                    "path": "/api/v1/events/stream",
+                    "raw_path": b"/api/v1/events/stream",
+                    "query_string": b"",
+                    "headers": [],
+                    "client": ("testclient", 50000),
+                    "server": ("testserver", 80),
+                    "root_path": "",
+                },
+                receive,
+                send,
+            )
+        )
+        try:
+            await asyncio.wait_for(connected.wait(), timeout=1)
+            result = state.request_server_shutdown("stop_monitor")
+            assert result["scheduled"] is True
+            assert state.server_shutdown_requested is True
+            await asyncio.wait_for(stream, timeout=3)
+        finally:
+            disconnect.set()
+            if not stream.done():
+                stream.cancel()
+                await asyncio.gather(stream, return_exceptions=True)
+        return messages
+
+    messages = asyncio.run(collect_stream_messages())
+    body = b"".join(message.get("body", b"") for message in messages if message["type"] == "http.response.body")
+    assert b": connected " in body
+    assert messages[-1] == {"type": "http.response.body", "body": b"", "more_body": False}
 
 
 def test_server_shutdown_does_not_close_webui_when_monitor_remains_running(tmp_path: Path, monkeypatch) -> None:
