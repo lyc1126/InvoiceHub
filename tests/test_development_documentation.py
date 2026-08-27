@@ -416,6 +416,7 @@ def test_current_baselines_and_non_drifting_facts_are_explicit() -> None:
         "receipt finalization 门禁尚在修复分支",
         "receipt finalization 门禁尚待合并",
         "receipt finalization 门禁仍须合并",
+        "receipt finalization 门禁也已在当前候选树实现",
     )
     stale: list[str] = []
     for path in CURRENT_FACT_DOCS:
