@@ -413,6 +413,9 @@ def test_current_baselines_and_non_drifting_facts_are_explicit() -> None:
         "描述该未合并实现",
         "2026-08-02-preview-session-resilience",
         "当前开发分支：`codex/preview-session-resilience`",
+        "receipt finalization 门禁尚在修复分支",
+        "receipt finalization 门禁尚待合并",
+        "receipt finalization 门禁仍须合并",
     )
     stale: list[str] = []
     for path in CURRENT_FACT_DOCS:

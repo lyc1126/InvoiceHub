@@ -2,9 +2,13 @@
 
 ## 未发布
 
-- 2026-08-26 Windows public-preview 交付证据闭环：受控配置新增安装器 SHA-256 sidecar 名称；PowerShell 组包器和 GitHub-hosted SignPath 工作流均在签名后写入安装器、SHA-256 与 receipt。工作流会复核单次 NSIS marker、内层 EXE 字节一致性及应用/外层安装器的 Authenticode 状态，随后只上传三项 Actions artifact，不修改 GitHub Release。新增静态契约；未触发 SignPath 或任何 Windows 安装、启动、卸载验收。
+- 2026-08-27 `alpha.2` receipt gate 发布基线校正：receipt finalization 门禁已在当前候选树实现并通过聚焦门禁及 PR CI；旧的远端 `v0.3.0-alpha.2` Tag 仍指向此前公开 `main`，不能用作构建或发布输入。最终仍须把干净 `main` 经新的明确授权重建为同名 Tag，再构建 DMG、完成 Finder/Gatekeeper 与平台成品验收；没有 GitHub Release、资产、Feed、SignPath 请求或最终平台烟测。
 
-- 2026-08-26 `alpha.2` public-preview 合并后基线同步：macOS public-preview 的 package manifest、LaunchServices/quarantine 烟测与 SSE 结构化关闭修复已经进入公开 `main`。现有 `v0.3.0-alpha.2` Tag 早于这些修复，继续保留只为审计，不能作为任何构建或 Release 输入；待本轮基线记录合并后，才从最终干净 `main` 重新创建同名 Tag。GitHub Release、资产、Feed、SignPath 请求和平台成品烟测仍未执行。
+- 2026-08-26 macOS public-preview receipt finalization 门禁：组包器先写入唯一允许的 pending receipt，并只在内部 verifier 调用中显式接受它；首次验证成功后才写入与实际 DMG SHA-256 精确绑定的 finalized record，再以默认 verifier 复验。默认验证会拒绝未完成、字段扩展、篡改或与 DMG 不一致的 finalizer；verifier 失败或 120 秒超时会同时报告 stdout/stderr。远端 `v0.3.0-alpha.2` Tag 已按授权重置到当时公开 `main`，但它早于本门禁；只有从包含该门禁的最终干净 `main` 经新授权重建 Tag 后才能构建。没有 GitHub Release、资产、Feed、SignPath 请求或最终平台烟测。
+
+- 2026-08-26 Windows public-preview 交付证据闭环：受控配置新增安装器 SHA-256 sidecar 名称；PowerShell 组包器和 GitHub-hosted SignPath 工作流均在签名后写入安装器、SHA-256 与 receipt。工作流会复核单次 NSIS marker、内层 EXE 字节一致性及应用/外层安装器的 Authenticode 状态，随后只上传三项 Actions artifact，不修改 GitHub Release。新增 Windows 真机操作手册，固定 Tag/变量/两次 SignPath/三项 artifact/签名与卸载烟测顺序；未触发 SignPath 或任何 Windows 安装、启动、卸载验收。
+
+- 2026-08-26 `alpha.2` public-preview 合并后基线同步：macOS public-preview 的 package manifest、LaunchServices/quarantine 烟测与 SSE 结构化关闭修复已经进入公开 `main`。当时的同名 Tag 已按授权重置到该基线；后续 receipt finalization 门禁已在候选树实现，最终干净 `main` 仍须经新授权重建 Tag，不能把中间 Tag 用作任何构建或 Release 输入。GitHub Release、资产、Feed、SignPath 请求和平台成品烟测仍未执行。
 
 - 2026-08-26 macOS public-preview 启动与结构化关闭修复：新增独立的 DMG 成品烟测入口，先独立复核 App/DMG/receipt，再挂载、复制、ad-hoc 验签并为临时 App 写入 quarantine；Tauri App 只允许由 LaunchServices 的 `open -n -W -g` 启动，并仅注入隔离 `HOME`，不传 development state override。烟测只访问固定 health/monitor/shutdown allowlist，覆盖 monitor start/ready/stop 与 `stop_monitor` 结构化退出。`GET /api/v1/events/stream` 现会在已接受结构化关闭后结束生成器，避免 WKWebView 的 EventSource 阻止 Uvicorn 正常退出。聚焦 public-preview/release/recovery 测试共 22 项通过；此前候选仅用于定位该关闭缺陷，最终干净 Tag 的 DMG、真实 Finder/Gatekeeper 交互和 Release 资产仍待执行。
 

@@ -96,9 +96,64 @@ def _assert_artifact_record(path: Path, record: object, label: str) -> None:
         raise PublicPreviewVerificationError(f"receipt.{label} does not match the supplied artifact")
 
 
+def _verify_receipt_verification(
+    receipt: dict[str, Any],
+    *,
+    allow_pending_verification: bool,
+) -> None:
+    """Bind the receipt's finalizer record to this exact DMG before release use."""
+
+    verification = receipt.get("verification")
+    if not isinstance(verification, dict):
+        raise PublicPreviewVerificationError("receipt verification record is invalid")
+    pending = (
+        set(verification) == {"complete", "verifier"}
+        and verification.get("complete") is False
+        and verification.get("verifier") == VERIFIER_ID
+    )
+    if pending:
+        if allow_pending_verification:
+            return
+        raise PublicPreviewVerificationError("receipt verification is incomplete")
+
+    if set(verification) != {"complete", "verifier", "output"}:
+        raise PublicPreviewVerificationError("receipt verification record is invalid")
+    if verification.get("complete") is not True or verification.get("verifier") != VERIFIER_ID:
+        raise PublicPreviewVerificationError("receipt verification record is invalid")
+    output = verification.get("output")
+    if not isinstance(output, str):
+        raise PublicPreviewVerificationError("receipt verification output is invalid")
+    try:
+        reported = json.loads(output)
+    except json.JSONDecodeError as exc:
+        raise PublicPreviewVerificationError("receipt verification output is invalid") from exc
+    dmg = receipt.get("dmg")
+    if not isinstance(dmg, dict) or not isinstance(dmg.get("sha256"), str):
+        raise PublicPreviewVerificationError("receipt.dmg is invalid")
+    expected = {
+        "ok": True,
+        "product_version": PRODUCT_VERSION,
+        "dmg_sha256": dmg["sha256"],
+    }
+    if (
+        not isinstance(reported, dict)
+        or set(reported) != set(expected)
+        or reported.get("ok") is not True
+        or reported.get("product_version") != expected["product_version"]
+        or reported.get("dmg_sha256") != expected["dmg_sha256"]
+    ):
+        raise PublicPreviewVerificationError("receipt verification output does not match the DMG")
+
+
 def _verify_app_layout(app: Path) -> None:
     host = _json(app / "Contents/Resources" / HOST_NAME)
-    if host.get("profile") != "release" or host.get("updater") != {"enabled": False}:
+    updater = host.get("updater")
+    if (
+        host.get("profile") != "release"
+        or not isinstance(updater, dict)
+        or set(updater) != {"enabled"}
+        or updater.get("enabled") is not False
+    ):
         raise PublicPreviewVerificationError("public preview host updater contract is invalid")
     identity = host.get("expected_identity")
     if not isinstance(identity, dict) or identity.get("package_id") != PACKAGE_ID or identity.get("package_type") != "preview-dmg":
@@ -137,7 +192,13 @@ def _verify_dmg_contents(dmg: Path, app: Path) -> None:
             subprocess.run([hdiutil, "detach", str(mount)], check=False, capture_output=True, text=True)
 
 
-def verify(app: Path, dmg: Path, receipt_path: Path) -> dict[str, Any]:
+def verify(
+    app: Path,
+    dmg: Path,
+    receipt_path: Path,
+    *,
+    allow_pending_verification: bool = False,
+) -> dict[str, Any]:
     app = app.resolve()
     dmg = dmg.resolve()
     receipt = _json(receipt_path)
@@ -158,10 +219,17 @@ def verify(app: Path, dmg: Path, receipt_path: Path) -> dict[str, Any]:
         "notarized": False,
     }
     for key, value in expected.items():
-        if receipt.get(key) != value:
+        actual = receipt.get(key)
+        if (isinstance(value, bool) and actual is not value) or (
+            not isinstance(value, bool) and actual != value
+        ):
             raise PublicPreviewVerificationError(f"receipt.{key} is invalid")
     _assert_artifact_record(app, receipt.get("app"), "app")
     _assert_artifact_record(dmg, receipt.get("dmg"), "dmg")
+    _verify_receipt_verification(
+        receipt,
+        allow_pending_verification=allow_pending_verification,
+    )
     _verify_app_layout(app)
     _verify_adhoc_signature(app)
     _verify_dmg_contents(dmg, app)
@@ -173,9 +241,20 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--app", type=Path, required=True)
     parser.add_argument("--dmg", type=Path, required=True)
     parser.add_argument("--receipt", type=Path, required=True)
+    parser.add_argument("--allow-pending-verification", action="store_true")
     args = parser.parse_args(argv)
     try:
-        print(json.dumps(verify(args.app, args.dmg, args.receipt), sort_keys=True))
+        print(
+            json.dumps(
+                verify(
+                    args.app,
+                    args.dmg,
+                    args.receipt,
+                    allow_pending_verification=args.allow_pending_verification,
+                ),
+                sort_keys=True,
+            )
+        )
     except PublicPreviewVerificationError as exc:
         parser.exit(1, f"public preview verification failed: {exc}\n")
     return 0

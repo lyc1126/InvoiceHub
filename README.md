@@ -16,7 +16,8 @@ English project name: `InvoiceHub`.
 - 当前 Tauri macOS development `.app` 由 `scripts/dev/tauri_dev_app.py` 组装：普通 `stage/build` 只复制允许的共享 core、使用显式 venv launcher 和 updater-disabled schema-3 development manifest，并只构建 arm64 `.app`；显式 `stage-recovery/build-recovery` 仅生成 L10-E 固定、不可安装的 startup-recovery smoke 变体。`scripts/dev/tauri_alpha_release.py` 是隔离的 internal-alpha assembly：从 clean Git snapshot 组装锁定 Python 3.14.6 arm64 runtime、schema-4 receipt 和独立 verifier，目标仅为本地 ad-hoc `.app/.dmg` 评审；它不启用 updater、Feed、Release、Developer ID 或公证。旧的 `macos/InvoiceHubMac/` SwiftUI/WKWebView 工程仍是平台参考实现。所有 macOS 成品验包都扫描整个 `Resources`，拒绝 Windows BAT/PowerShell、Windows 锁与 `.exe/.dll/.pyd/.msi/.msix`。
 - 2026-08-19 的 internal-alpha arm64 `.app/.dmg` 已由独立 verifier 复核通过，并以临时 HOME/state root 完成一次固定端口 `ready` 启动烟测；这只证明内部评审包的布局、身份和启动边界，不改变其非公开、未签名/未公证和 updater-disabled 属性。
 - 2026-08-24 的 L10-E recovery-smoke 以锁定工具链离线构建并在临时 HOME/state/watch 中完成一次 macOS arm64 启动恢复：owned monitor 达到 `running && ready`，marker 删除、显式 stop 与进程/端口/临时目录清理均通过，且 runner 报告 `update_requests=0`。该专用 profile 使用不可达 endpoint 和无验签能力 sentinel，只证明 authenticated startup restore，不证明 Feed、下载、验签、安装或重启。
-- `scripts/dev/tauri_public_preview_smoke.py` 是 `0.3.0-alpha.2` macOS public-preview 的成品验收入口：它从 mounted DMG 复制 App，复核 receipt 与 ad-hoc 签名，为复制件写入 quarantine，并只经 LaunchServices 的 `open -n -W -g` 传入临时 `HOME`。它不传 development state override，且只请求 health、monitor 和固定 `stop_monitor` shutdown；结构化关闭后 SSE 会自行结束，避免 WKWebView 连接阻塞 Uvicorn。该 runner 的聚焦契约已通过，最终 Tag DMG 的 Finder/Gatekeeper 交互和发布证据仍待执行。
+- `scripts/dev/tauri_public_preview_smoke.py` 是 `0.3.0-alpha.2` macOS public-preview 的成品验收入口：它从 mounted DMG 复制 App，复核默认 finalized receipt 与 ad-hoc 签名，为复制件写入 quarantine，并只经 LaunchServices 的 `open -n -W -g` 传入临时 `HOME`。它不传 development state override，且只请求 health、monitor 和固定 `stop_monitor` shutdown；结构化关闭后 SSE 会自行结束，避免 WKWebView 连接阻塞 Uvicorn。pending receipt 只允许组包器内部验证，公开验包默认拒绝；该 runner 的聚焦契约已通过，最终 Tag DMG 的 Finder/Gatekeeper 交互和发布证据仍待执行。
+- Windows NSIS public-preview 的 GitHub-hosted SignPath 执行、产物取证和 Windows 10/11 x64 安装/卸载烟测见[Windows public-preview 操作手册](docs/release/WINDOWS_PUBLIC_PREVIEW_RUNBOOK.md)。它只允许最终 Tag 工作流产出的安装器、SHA-256 与 receipt 三项 Actions artifact，并明确本 alpha 的卸载器未签名。
 - 两个平台共享同一 `RC_SHA` 和 core build ID，但 package ID、运行时、启动器、可写目录和成品文件互不复用。源码共存用于避免业务算法分叉，成品互斥用于避免平台文件混包。
 
 ## 快速启动
@@ -129,7 +130,7 @@ W8/W9 技术与产品能力已完成，但当前真实公司资料夹中的 7 �
 
 ## 开发者与 Agent 阅读路线
 
-开发实现的权威入口是 [`docs/DEVELOPMENT_ARCHITECTURE.md`](docs/DEVELOPMENT_ARCHITECTURE.md)。公开 `main` 已从单一脱敏根提交开始，不继承旧的私有提交、Tag 或 Release 身份；旧图仅保留在私有归档。`0.3.0-alpha.2` 的 public-preview 组装和 macOS smoke 修复已进入 `main`，但当前同名 Tag 早于该基线，不能用于构建或发布；尚无公开 Release、资产或更新 Feed。统一桌面、internal-alpha 与 recovery-smoke 的既有结果仍只保留为历史上下文，不替代最终平台成品验收。
+开发实现的权威入口是 [`docs/DEVELOPMENT_ARCHITECTURE.md`](docs/DEVELOPMENT_ARCHITECTURE.md)。公开 `main` 已从单一脱敏根提交开始，不继承旧的私有提交、Tag 或 Release 身份；旧图仅保留在私有归档。`0.3.0-alpha.2` 的 public-preview 组装和 macOS smoke 修复已进入 `main`，receipt finalization 门禁也已在当前候选树实现；远端同名 Tag 仍是此前基线，必须在最终干净 `main` 上经新的明确授权重建，当前 Tag 不能用于构建或发布。尚无公开 Release、资产或更新 Feed。统一桌面、internal-alpha 与 recovery-smoke 的既有结果仍只保留为历史上下文，不替代最终平台成品验收。
 
 版本同步、pnpm/Cargo lock、固定 localhost 合同、后端严格握手、私有 Host RPC，以及 handshake 后的 desktop/browser、托盘和单实例已完成受控验证。L10-D 已把 authenticated startup restore、完整 host-owned candidate、response-before-private-commit、Tauri 内置下载/验签、monitor recovery 和双平台 relaunch 接入源码与 contracts；这不等于真实 updater 已验收。裸源码 checkout 缺少经编译绑定 manifest 时仍以状态 `78` 失败；ordinary development assembler 已生成 updater-disabled schema-3 manifest 和显式 venv launcher，并从 clean source commit 构建本地 arm64 `.app`；internal-alpha 另已完成 arm64 `.app/.dmg` 的独立 verifier 与临时 state root 启动烟测。L10-E recovery-smoke 已完成一次隔离 macOS arm64 startup restore，但其固定不可达 endpoint/无效 key 不能验证或安装更新。
 

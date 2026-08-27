@@ -3,7 +3,7 @@
 > 文档状态：当前跨平台实现的权威附录
 > 更新日期：2026-08-26
 > 公共基线：单一脱敏根提交。退休的私有提交、Tag、包和验证材料不属于公开发行输入。
-> 当前发行状态：候选树、保留 Git 对象和托管面验证已完成，仓库现为 public；`0.3.0-alpha.2` public-preview 的双平台组装、macOS package identity、LaunchServices/quarantine smoke 与 SSE 关闭修复已进入 `main`。现有同名 Tag 早于该基线，只保留为审计对象，不能用于构建或 Release；待本记录合并后必须从最终干净 `main` 重建。此前 foundation、internal-alpha 与 recovery-smoke 结果保留为历史上下文；尚无 Release、资产、SignPath 请求或 Feed。
+> 当前发行状态：候选树、保留 Git 对象和托管面验证已完成，仓库现为 public；`0.3.0-alpha.2` public-preview 的双平台组装、macOS package identity、LaunchServices/quarantine smoke 与 SSE 关闭修复已进入 `main`，receipt finalization 门禁也已在当前候选树实现。远端同名 Tag 仍指向此前基线，最终构建须从包含该门禁的干净 `main` 经新的明确授权重建；此前 foundation、internal-alpha 与 recovery-smoke 结果保留为历史上下文；尚无 Release、资产、SignPath 请求或 Feed。
 
 本页只解释平台边界。领域模型、API、投影和 monitor 的详细契约分别见[开发架构总入口](../DEVELOPMENT_ARCHITECTURE.md)、[接口与运行流程](INTERFACES_AND_FLOWS.md)和[数据结构与算法](DATA_AND_ALGORITHMS.md)。
 
@@ -114,7 +114,7 @@ L10-D 将上述 lease/store/bridge/coordinator 接入 Host RPC updater 与 start
 
 L10-E 只验证上段 startup restore 的运行接线。Rust development parser 对 enabled updater 要求精确不可达 HTTPS loopback endpoint、无验签能力 sentinel 和恰好三个字段；ordinary development/internal-alpha 保持 disabled。`tauri_recovery_smoke.py` 只在临时 HOME/state/watch 中预置 marker 和关闭自动检查，复核 App/health/monitor 路径身份后观察 marker 删除，再通过普通 bridge stop 关闭该临时 monitor，最后只终止本次新建的进程组。macOS arm64 样本已观察 owned monitor `running && ready`、marker 删除、显式 stop、进程/PID/固定端口/临时目录清理和 `update_requests=0`；runner 不请求 update 或 authenticated bridge start，该结果不覆盖 Feed、下载、验签、安装或重启。
 
-`0.3.0-alpha.2` public-preview 另有 `tauri_public_preview_smoke.py`，且不复用 L10-E 的 development state root：它从 mounted DMG 复制 App、复核独立 receipt/ad-hoc 签名、保留复制件 quarantine，并只用 `open -n -W -g` 的 LaunchServices 路径和临时 `HOME` 启动。直接执行 `Contents/MacOS` 不是有效 Tauri/AppKit 用户启动路径。发布 smoke 的 localhost allowlist 只包含 health、monitor start/status/stop 和固定 `stop_monitor` shutdown；SSE 在该 shutdown 被接受后结束，使 WebView 的 EventSource 不会阻止 Uvicorn 的正常退出。该 runner 的契约已通过，最终 Tag 成品和 Finder/Gatekeeper 交互仍待执行。
+`0.3.0-alpha.2` public-preview 另有 `tauri_public_preview_smoke.py`，且不复用 L10-E 的 development state root：它从 mounted DMG 复制 App、复核默认 finalized receipt/ad-hoc 签名、保留复制件 quarantine，并只用 `open -n -W -g` 的 LaunchServices 路径和临时 `HOME` 启动。pending receipt 只在组包器的内部首轮可验证，常规 verifier 必须拒绝它及任何未精确绑定实际 DMG SHA-256 的 finalizer。直接执行 `Contents/MacOS` 不是有效 Tauri/AppKit 用户启动路径。发布 smoke 的 localhost allowlist 只包含 health、monitor start/status/stop 和固定 `stop_monitor` shutdown；SSE 在该 shutdown 被接受后结束，使 WebView 的 EventSource 不会阻止 Uvicorn 的正常退出。该 runner 的契约已通过，最终 Tag 成品和 Finder/Gatekeeper 交互仍待执行。
 
 hosted check 的 host-lock 竞争直接返回 busy，不调用 `append_event` 或 SQLite；正常成功与非竞争检查保留更新事件。
 
