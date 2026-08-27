@@ -2,7 +2,7 @@
 
 > 作用：把自然语言任务转换成“先读哪里、从哪个符号开工、会影响什么、至少测什么”。
 > 公共权威基线：单一脱敏根提交；退休私有提交、Tag、包和验证材料不在公开图中。
-> 当前边界：`v0.3.0-alpha.2` public-preview 组装与 macOS package identity、LaunchServices/SSE 修复已合入公开 `main`，远端同名 Tag 已按授权重置到该基线；现有 foundation、internal-alpha 与 recovery-smoke 仍只是历史证据。receipt finalization 门禁尚待合并，最终构建只接受默认 verified finalized receipt，必须从包含该门禁的最终干净 `main` 重建 Tag；尚无 SignPath 请求、公开 Release 或最终平台烟测。
+> 当前边界：`v0.3.0-alpha.2` public-preview 组装与 macOS package identity、LaunchServices/SSE 修复已合入公开 `main`，receipt finalization 门禁也已在当前候选树实现；现有 foundation、internal-alpha 与 recovery-smoke 仍只是历史证据。最终构建只接受默认 verified finalized receipt，远端同名 Tag 仍指向此前基线，必须从包含该门禁的最终干净 `main` 经新的明确授权重建；尚无 SignPath 请求、公开 Release 或最终平台烟测。
 > 校验规则：精确的当前本地与 GitHub HEAD 以实时 Git 引用和双向差异为准。
 
 ## 1. 使用方法
