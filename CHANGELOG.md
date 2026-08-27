@@ -2,7 +2,7 @@
 
 ## 未发布
 
-- 2026-08-27 `alpha.2` receipt gate 发布基线校正：receipt finalization 门禁已在当前候选树实现并通过聚焦门禁及 PR CI；旧的远端 `v0.3.0-alpha.2` Tag 仍指向此前公开 `main`，不能用作构建或发布输入。最终仍须把干净 `main` 经新的明确授权重建为同名 Tag，再构建 DMG、完成 Finder/Gatekeeper 与平台成品验收；没有 GitHub Release、资产、Feed、SignPath 请求或最终平台烟测。
+- 2026-08-28 `alpha.2` receipt gate 发布基线同步：receipt finalization 门禁已合入公开 `main`，并已通过聚焦门禁及 PR CI；旧的远端 `v0.3.0-alpha.2` Tag 仍指向此前基线，不能用作构建或发布输入。最终仍须把干净 `main` 经新的明确授权重建为同名 Tag，再构建 DMG、完成 Finder/Gatekeeper 与平台成品验收；没有 GitHub Release、资产、Feed、SignPath 请求或最终平台烟测。
 
 - 2026-08-26 macOS public-preview receipt finalization 门禁：组包器先写入唯一允许的 pending receipt，并只在内部 verifier 调用中显式接受它；首次验证成功后才写入与实际 DMG SHA-256 精确绑定的 finalized record，再以默认 verifier 复验。默认验证会拒绝未完成、字段扩展、篡改或与 DMG 不一致的 finalizer；verifier 失败或 120 秒超时会同时报告 stdout/stderr。远端 `v0.3.0-alpha.2` Tag 已按授权重置到当时公开 `main`，但它早于本门禁；只有从包含该门禁的最终干净 `main` 经新授权重建 Tag 后才能构建。没有 GitHub Release、资产、Feed、SignPath 请求或最终平台烟测。
 
