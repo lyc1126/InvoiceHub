@@ -28,13 +28,13 @@ alpha.2 Windows x64 便携 ZIP 是 Tauri host 的非安装交付，不生成 MSI
 1. 先运行 `tauri-doctor.ps1 --require-ready`；它必须看到 Rust `1.85.0` MSVC、Visual Studio C++ Build Tools/Windows SDK、Node/pnpm 与 Evergreen WebView2 Runtime。doctor 不安装 WebView2，缺失时由用户安装。
 2. 从目标公开 tag 的 clean checkout 运行 `tauri-windows-portable.ps1 build`，并传入绝对锁定 Python 3.14.6 runtime 和 pnpm；它将 release manifest SHA-256 编译绑定到 raw x64 `InvoiceHub.exe`，生成 ZIP、SHA、receipt 与 SBOM。
 3. 在相同 tag 的 clean checkout 运行 `tauri-windows-portable.ps1 handoff`，输出 `dist/handoff/v0.3.0-alpha.2/` 的产品 ZIP、SHA、receipt、SBOM、源码归档及 SHA、strict `latest.json` 和 Mac 上传说明。
-4. 将 ZIP 解压到临时中文空格路径，隔离 `LOCALAPPDATA`，直接启动 `InvoiceHub.exe`；验证窗口、health/identity、固定端口冲突、单实例、目录选择、monitor、tray Quit、进程清理和只读 Feed 检查。
+4. 将 ZIP 解压到临时中文空格路径，隔离 `LOCALAPPDATA`，直接启动 `InvoiceHub.exe`；host 必须把 backend/config/runtime 与 WebView2 profile 一并收束在 `%LOCALAPPDATA%\\InvoiceHub`，其中 profile 为预创建的 `webview`。验证窗口、health/identity、固定端口冲突、单实例、目录选择、monitor、tray Quit、进程清理和只读 Feed 检查。
 
 不要求双组装、断网重装或 PS7/PS5.1 双烟测；双组装 SHA 比对、离线重建和源码预门禁仍可显式执行。alpha.2 的 Feed 只能含一个真实 Windows ZIP、receipt 与源码身份；“检查更新/前往下载”只打开 GitHub prerelease，安装接口保持 fail-closed，不能停止 monitor、替换现有目录或伪造 macOS 资产。任何未执行的 Windows 真机行为必须如实标为未覆盖。
 
 ### 2026-09-01 source gate
 
-运行时 shell-helper 裁剪、锁定 Rust 1.85 格式/测试、版本同步、聚焦发布契约、完整 Python 回归、`compileall`、PowerShell 解析和 diff whitespace 检查均已通过。独立 test Python 已离线重建其当前源码 `.pth` 绑定；未绑定且路径过长的 pytest 临时目录不构成验证证据。该主机的 Rust 1.85、MSVC/Windows SDK、Node/pnpm、锁文件和系统级 Evergreen WebView2 Runtime 均可用。doctor 曾因错误 Edge Update client ID 和三段版本限制把四段 `131.0.2903.86` runtime 误报缺失；修复并以 18 项 foundation 回归验证后，真实 `tauri-doctor --require-ready` 已放行。尚未据此构建 runtime 或 ZIP，也没有执行桌面窗口、picker、monitor、tray、Feed、Tag、Release 或 Pages 操作。
+运行时 shell-helper 裁剪、锁定 Rust 1.85 格式/测试、版本同步、聚焦发布契约、完整 Python 回归、`compileall`、PowerShell 解析和 diff whitespace 检查均已通过。独立 test Python 已离线重建其当前源码 `.pth` 绑定；未绑定且路径过长的 pytest 临时目录不构成验证证据。该主机的 Rust 1.85、MSVC/Windows SDK、Node/pnpm、锁文件和系统级 Evergreen WebView2 Runtime 均可用。doctor 曾因错误 Edge Update client ID 和三段版本限制把四段 `131.0.2903.86` runtime 误报缺失；修复并以 18 项 foundation 回归验证后，真实 `tauri-doctor --require-ready` 已放行。随后的 valid candidate 已通过静态验包和 owned backend handshake，但 desktop WebView 在 Tauri 隐式 profile 位置返回 Windows access denied；browser surface 可工作，因此问题被限定为 desktop profile。host 现显式创建并传入 `%LOCALAPPDATA%\\InvoiceHub\\webview`，该源码修复通过 Rust 格式/库测试，但仍须从 clean commit 重建 ZIP 后验证桌面窗口、picker、monitor、tray、Feed、Tag、Release 与 Pages。
 
 ## macOS 新 RC
 

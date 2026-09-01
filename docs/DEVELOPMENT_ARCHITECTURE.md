@@ -258,9 +258,9 @@ BAT/页面/monitor 触发
 | 架构债务 | 路径规范化在 `targets`、`monitoring`、成本和选择合计中有不同语境实现 | 不能仅凭函数同名就机械合并 |
 | 架构债务 | `base_head.html` 存在，但页面仍各自维护 head 和资源版本 | 静态资源变更必须逐模板核对版本参数 |
 | 架构债务 | 当前前端自动化主要是静态契约测试 | UI 改动仍需要真实浏览器/DOM 验收 |
-| 当前实现 | alpha.2 已有 Windows Tauri raw host 和无签名 ZIP 源码组装链 | release manifest 原始 SHA-256 绑定进 host；产品 runtime 在 manifest 前裁剪 `Doc`、顶层 `Scripts` 与五个已知 CPython shell helper，并拒绝任何其它 shell script；自有 core 保持完整内容扫描，受锁 `python/Lib/**` 只使用依赖范围扫描且 GitHub token/私钥仍阻断；`windows_portable` 是 release updater disabled 的唯一例外；运行态位于 `%LOCALAPPDATA%\\InvoiceHub`，但仍无 Windows native 成品或证据 |
+| 当前实现 | alpha.2 已有 Windows Tauri raw host 和无签名 ZIP 源码组装链 | release manifest 原始 SHA-256 绑定进 host；产品 runtime 在 manifest 前裁剪 `Doc`、顶层 `Scripts` 与五个已知 CPython shell helper，并拒绝任何其它 shell script；自有 core 保持完整内容扫描，受锁 `python/Lib/**` 只使用依赖范围扫描且 GitHub token/私钥仍阻断；`windows_portable` 是 release updater disabled 的唯一例外；所有用户状态位于 `%LOCALAPPDATA%\\InvoiceHub`，其中 desktop WebView2 profile 显式为 `webview`，但仍无 Windows native 成品或证据 |
 | 当前实现 | Windows-only alpha Feed 与完整双平台 Feed 分开校验 | alpha Feed 只允许一个 Windows ZIP、receipt 和 source identity；macOS 不存在资产时返回 `unsupported`，下载页不执行安装 |
-| 发布阻断 | Rust 1.85 MSVC、C++ Build Tools/Windows SDK、WebView2 及 Windows native 验收尚未完成 | 自动化通过不等于 ZIP 已放行；必须从 exact tagged clean commit build，在隔离中文空格路径验证窗口、端口、单实例、picker、monitor、tray 和清理 |
+| 发布阻断 | Windows native 验收与公开 release sequence 尚未完成 | 先前 candidate 的 backend handshake 和静态验包通过，但 WebView2 隐式 profile 创建返回 access denied；源码已改为预创建并显式使用 `%LOCALAPPDATA%\\InvoiceHub\\webview`。必须从该 exact clean commit rebuild，并在隔离中文空格路径验证窗口、端口、单实例、picker、monitor、tray 和清理 |
 | 未启用能力 | OCR 页面和 API 保留候选文件入口 | core 包未内置正式本地 OCR，提取接口返回禁用状态 |
 | 当前实现 | SQLite 建有 `settings` 和 `cache` 表 | 当前主要业务消费者集中在 `tasks/events`，不能误称已有数据库主存储 |
 

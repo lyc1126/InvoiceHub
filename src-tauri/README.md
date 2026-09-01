@@ -99,14 +99,20 @@ configuration, invoices, logs, or runtime state.
 The only release-manifest exception is a Windows x86_64 portable identity with
 the exact `windows_portable` marker `{"distribution":"zip","updater_enabled":false}`.
 That marker permits `updater.enabled=false`; every other release host remains
-strict. The release state root is the user-writable Windows local application
-data location, the default surface is desktop, close hides the window, and
-tray Quit follows the existing structured keep-monitor shutdown path.
+strict. The release state root is `%LOCALAPPDATA%\\InvoiceHub`. Before the
+owned child starts, the host derives and creates its `webview` child and passes
+that exact path to the desktop `WebviewWindowBuilder` as WebView2 user data.
+The default surface is desktop, close hides the window, and tray Quit follows
+the existing structured keep-monitor shutdown path.
 
 The ZIP is unsigned, has no MSI/NSIS installer, and never replaces its own
 directory. Its Windows-only alpha Feed is check-only: the UI may open the
 GitHub prerelease page, while `update_install` remains unavailable. Rust 1.85
 MSVC, C++ Build Tools/Windows SDK, and Evergreen WebView2 are build/runtime
 prerequisites; the doctor reports missing WebView2 without installing it.
-This source boundary is not native Windows build, tray, picker, monitor, or
-publication evidence until the isolated ZIP smoke has completed.
+One statically verified candidate reached owned-backend handshake under
+isolated LocalAppData but failed desktop WebView creation with Windows access
+denied at Tauri's implicit profile location. The explicit `webview` state path
+is therefore source-level repair only, not native Windows build, tray, picker,
+monitor, or publication evidence until a freshly rebuilt isolated ZIP smoke
+has completed.

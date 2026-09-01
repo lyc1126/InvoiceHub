@@ -589,6 +589,13 @@ GitHub token/私钥；它只接受
 `dist/handoff/v0.3.0-alpha.2/` 的 ZIP、SHA、receipt、SBOM、源码归档及 SHA、`latest.json`
 和 Mac 上传说明。此流程不签名、不创建 MSI/NSIS、不替换现有目录，也不写入用户状态。
 
+release host 在启动 backend 前从 Windows user-state root 派生并创建
+`%LOCALAPPDATA%\\InvoiceHub\\webview`，desktop `WebviewWindowBuilder` 明确使用该目录作为
+WebView2 user-data folder；它与配置和 backend runtime 同属 `%LOCALAPPDATA%\\InvoiceHub`，
+不让 Tauri 以 application ID 隐式选择另一个可写位置。该路径不是 ZIP 内容，也不参与
+source/core identity。一次有效 candidate 的 backend handshake 后出现过隐式 profile access
+denied，故这一显式边界必须与新 clean ZIP 的真实窗口验收一起复核。
+
 ### 6.12 macOS 壳启动、所有权与严格握手
 
 ```mermaid

@@ -45,6 +45,7 @@ const OWNERSHIP_SECRET_BYTES: usize = 32;
 const DESKTOP_STATE_DIRECTORY: &str = "InvoiceHub";
 const DESKTOP_CONFIG_RELATIVE_PATH: &str = "config/app.local.json";
 const DESKTOP_RUNTIME_RELATIVE_PATH: &str = "runtime";
+const DESKTOP_WEBVIEW_DATA_RELATIVE_PATH: &str = "webview";
 const BUILD_MANIFEST_FILE: &str = "invoice-hub-build.json";
 const PACKAGE_MANIFEST_FILE: &str = "invoice-hub-package.json";
 // The packager sets this while compiling the signed desktop host from the staged manifest.
@@ -291,6 +292,7 @@ pub struct BackendBundleManifest {
     program: PathBuf,
     backend_root: PathBuf,
     args: Vec<String>,
+    webview_data_directory: PathBuf,
     expected_identity: ExpectedBackendIdentity,
     updater: UpdaterBundleConfig,
 }
@@ -306,6 +308,10 @@ impl BackendBundleManifest {
 
     pub fn updater(&self) -> &UpdaterBundleConfig {
         &self.updater
+    }
+
+    pub fn webview_data_directory(&self) -> &Path {
+        &self.webview_data_directory
     }
 }
 
@@ -327,6 +333,12 @@ pub struct DesktopStatePaths {
     pub root: PathBuf,
     pub config_path: PathBuf,
     pub runtime_dir: PathBuf,
+}
+
+impl DesktopStatePaths {
+    pub fn webview_data_directory(&self) -> PathBuf {
+        self.root.join(DESKTOP_WEBVIEW_DATA_RELATIVE_PATH)
+    }
 }
 
 impl UpdaterBundleConfig {
@@ -503,6 +515,7 @@ fn load_bundle_manifest_for_state(
         program,
         backend_root,
         args,
+        webview_data_directory: state_paths.webview_data_directory(),
         expected_identity,
         updater,
     })
@@ -621,6 +634,7 @@ pub struct BackendHost {
     child: Arc<Mutex<Child>>,
     child_pid: u32,
     expected_identity: ExpectedBackendIdentity,
+    webview_data_directory: PathBuf,
     ownership_verified: Arc<AtomicBool>,
     liveness_shutdown: Arc<AtomicBool>,
     liveness_worker: Mutex<Option<JoinHandle<()>>>,
@@ -640,6 +654,9 @@ impl BackendHost {
         app_handle: tauri::AppHandle<tauri::Wry>,
     ) -> Result<Self, BackendError> {
         assert_fixed_backend_port_available()?;
+        let webview_data_directory = manifest.webview_data_directory().to_path_buf();
+        fs::create_dir_all(&webview_data_directory)
+            .map_err(|_| BackendError::DesktopStateUnavailable)?;
         let ownership_verified = Arc::new(AtomicBool::new(false));
         let host_rpc = HostRpcServer::start(
             app_handle,
@@ -711,6 +728,7 @@ impl BackendHost {
             child,
             child_pid,
             expected_identity: manifest.expected_identity,
+            webview_data_directory,
             ownership_verified,
             liveness_shutdown,
             liveness_worker: Mutex::new(Some(liveness_worker)),
@@ -785,6 +803,10 @@ impl BackendHost {
 
     pub fn startup_surface(&self) -> StartupSurface {
         self.startup_surface
+    }
+
+    pub fn webview_data_directory(&self) -> &Path {
+        &self.webview_data_directory
     }
 
     fn stop_liveness_worker(&self) {
@@ -1611,6 +1633,10 @@ mod tests {
         assert_eq!(
             windows.runtime_dir,
             windows_local_app_data.join("InvoiceHub/runtime")
+        );
+        assert_eq!(
+            windows.webview_data_directory(),
+            windows_local_app_data.join("InvoiceHub/webview")
         );
 
         let macos_home = if cfg!(target_os = "windows") {

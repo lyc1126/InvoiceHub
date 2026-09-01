@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- 2026-09-01 Windows Tauri portable WebView2 state boundary: after the first
+  valid candidate completed its owned-backend handshake but failed desktop
+  WebView creation with Windows access denied, the release host now creates
+  `%LOCALAPPDATA%\\InvoiceHub\\webview` before startup and passes it explicitly
+  to `WebviewWindowBuilder::data_directory`. This keeps the backend, host and
+  WebView2 runtime state under the same portable user-state root rather than
+  relying on Tauri's implicit application-ID profile location. The source
+  repair has Rust contract coverage; a clean rebuilt ZIP and native desktop
+  smoke remain required before release.
 - 2026-09-01 Windows Tauri portable CPython scan boundary: the second clean
   assembly stopped before a valid ZIP, receipt, or SHA when the artifact
   verifier treated the locked CPython `python/Lib/getpass.py` password example

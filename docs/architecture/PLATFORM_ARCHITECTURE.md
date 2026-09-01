@@ -114,12 +114,12 @@ hosted check 的 host-lock 竞争直接返回 busy，不调用 `append_event` �
 2. PowerShell 7 优先，5.1 后备；BAT 先验证固定 Program Files PS7，再从 `PATH`/Microsoft Store App Execution Alias 解析并验证 `pwsh.exe`，也可用 `INVOICE_HUB_FORCE_PS51=1` 强制 5.1 做兼容验收。共享模块准备运行态、验证三类 manifest/内置 Python、探测端口/PID、启动 Uvicorn 并派发浏览器；health 从原始响应流按 UTF-8 解码，避免 PS5.1 在无 charset JSON 上损坏中文路径后再执行严格身份比较。
 3. Web 页面通过 `/api/v1` 执行业务动作；Python/Tk 只提供原生选择器适配，不承载业务逻辑。
 4. monitor 由独立 Python daemon 运行；仅停止 localhost 的 BAT 不得停止 monitor，stop-all 才能同时停止。
-5. alpha.2 的 Tauri builder 从精确 clean tagged commit 的 Git 快照取 allowlisted core，绑定 Python 3.14.6 x64 runtime/依赖锁和 schema-3 host manifest 原始 SHA-256，编译 raw x64 `InvoiceHub.exe` 并生成无签名 ZIP、SBOM、逐文件 SHA、receipt、源码归档和 handoff。它拒绝 macOS、Swift、用户配置、发票、日志和 runtime 状态；自有 core 保持完整内容扫描，受锁 `python/Lib/**` 只以 dependency scope 放行 provenance/password-shaped 示例且 GitHub token/私钥仍阻断；`windows_portable={distribution:"zip",updater_enabled:false}` 是 release host 唯一允许禁用 updater 的 marker。真实发布还要在隔离 `%LOCALAPPDATA%` 和中文空格路径验证窗口、包内默认目录和包外目录切换。
+5. alpha.2 的 Tauri builder 从精确 clean tagged commit 的 Git 快照取 allowlisted core，绑定 Python 3.14.6 x64 runtime/依赖锁和 schema-3 host manifest 原始 SHA-256，编译 raw x64 `InvoiceHub.exe` 并生成无签名 ZIP、SBOM、逐文件 SHA、receipt、源码归档和 handoff。它拒绝 macOS、Swift、用户配置、发票、日志和 runtime 状态；自有 core 保持完整内容扫描，受锁 `python/Lib/**` 只以 dependency scope 放行 provenance/password-shaped 示例且 GitHub token/私钥仍阻断；`windows_portable={distribution:"zip",updater_enabled:false}` 是 release host 唯一允许禁用 updater 的 marker。host 将配置、backend runtime 和 WebView2 profile 都收束在 `%LOCALAPPDATA%\\InvoiceHub`，其中 profile 固定为 `webview` 并在 host 启动前创建；真实发布还要在隔离 `%LOCALAPPDATA%` 和中文空格路径验证窗口、包内默认目录和包外目录切换。
 6. Windows 不在运行中的目录自替换。升级是“下载新 ZIP -> 新目录解压 -> 校验 -> 白名单导入设置 -> 从新目录启动”；源发票保持原位置，日志/PID/SQLite/cache/皮肤不跨版本复制。
 
 ### 4.1 Windows Tauri portable alpha.2
 
-`scripts/dev/tauri-windows-portable.ps1` 只转发 `tauri_windows_portable.py`；它不安装 Rust、Visual Studio 或 WebView2。doctor 必须先报告 Rust `1.85.0` MSVC、C++ Build Tools/Windows SDK 和 Evergreen WebView2 Runtime，后者由用户安装。`build` 只在 clean exact commit 上工作，`handoff` 还要求 `v0.3.0-alpha.2` 解析到同一 commit。最终交接目录只包含 ZIP、ZIP SHA、receipt、SBOM、源码归档及 SHA、`latest.json` 和 Mac 上传说明。Feed 的 `scope=windows-only` 严格拒绝 macOS 占位资产；检查更新只能进入 GitHub prerelease 页面，不能改写当前 ZIP、停止 monitor 或调用安装器。
+`scripts/dev/tauri-windows-portable.ps1` 只转发 `tauri_windows_portable.py`；它不安装 Rust、Visual Studio 或 WebView2。doctor 必须先报告 Rust `1.85.0` MSVC、C++ Build Tools/Windows SDK 和 Evergreen WebView2 Runtime，后者由用户安装。`build` 只在 clean exact commit 上工作，`handoff` 还要求 `v0.3.0-alpha.2` 解析到同一 commit。最终交接目录只包含 ZIP、ZIP SHA、receipt、SBOM、源码归档及 SHA、`latest.json` 和 Mac 上传说明。Feed 的 `scope=windows-only` 严格拒绝 macOS 占位资产；检查更新只能进入 GitHub prerelease 页面，不能改写当前 ZIP、停止 monitor 或调用安装器。此前有效 candidate 在 backend handshake 后由 Tauri 的隐式 WebView profile 位置触发 access denied；显式 profile 边界必须随新的 clean build 进入 native acceptance，不能把 source-level test 当作窗口通过。
 
 ## 5. macOS 架构（既有壳与迁移边界）
 

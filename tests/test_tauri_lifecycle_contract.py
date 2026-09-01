@@ -137,7 +137,7 @@ def test_tauri_setup_cleans_up_an_owned_backend_before_returning_surface_failure
     assert "let backend = BackendHost::launch" in setup
     assert "let setup_result = (|| -> Result<(), Box<dyn Error>>" in setup
     assert "install_tray(app)?;" in setup
-    assert "create_desktop_window(app)?" in setup
+    assert "create_desktop_window(app, backend.webview_data_directory())?" in setup
     assert "open_backend_in_browser(&app.handle())?" in setup
     assert "if let Err(error) = setup_result" in setup
     assert "complete_setup_failure_cleanup(&backend);" in setup
@@ -150,7 +150,9 @@ def test_tauri_setup_cleans_up_an_owned_backend_before_returning_surface_failure
         "return Err(error);"
     )
     assert setup.index("install_tray(app)?;") < setup.index("app.manage(backend);")
-    assert setup.index("create_desktop_window(app)?") < setup.index("app.manage(backend);")
+    assert setup.index(
+        "create_desktop_window(app, backend.webview_data_directory())?"
+    ) < setup.index("app.manage(backend);")
     assert setup.index("open_backend_in_browser(&app.handle())?") < setup.index(
         "app.manage(backend);"
     )
@@ -220,6 +222,7 @@ def test_tauri_checkout_guard_and_liveness_order_fail_closed() -> None:
 
 def test_tauri_manifest_uses_runtime_derived_user_state_paths() -> None:
     backend = (ROOT / "src-tauri" / "src" / "backend.rs").read_text(encoding="utf-8")
+    main = (ROOT / "src-tauri" / "src" / "main.rs").read_text(encoding="utf-8")
 
     assert 'const DESKTOP_STATE_DIRECTORY: &str = "InvoiceHub";' in backend
     assert 'DesktopStatePlatform::Windows => base.join(DESKTOP_STATE_DIRECTORY)' in backend
@@ -238,6 +241,12 @@ def test_tauri_manifest_uses_runtime_derived_user_state_paths() -> None:
     assert "canonical_bundle_boundary.starts_with(&canonical_root)" in backend
     assert 'path.extension().and_then(|value| value.to_str()) == Some("app")' in backend
     assert "app_contents_state" in backend
+    assert 'const DESKTOP_WEBVIEW_DATA_RELATIVE_PATH: &str = "webview";' in backend
+    assert "self.root.join(DESKTOP_WEBVIEW_DATA_RELATIVE_PATH)" in backend
+    assert "fs::create_dir_all(&webview_data_directory)" in backend
+    assert "webview_data_directory: state_paths.webview_data_directory()" in backend
+
+    assert ".data_directory(webview_data_directory.to_path_buf())" in main
 
 
 def test_tauri_all_exit_requests_use_structured_shutdown_with_confirmed_termination_fallback() -> None:

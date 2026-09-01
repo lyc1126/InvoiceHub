@@ -37,10 +37,11 @@
 - [x] P1-Q：clean-commit 外部 AppleScript quit 绕过 shutdown POST 并留下 `server_state=ready`，因此该外部路径仍不作有序退出承诺。修复后的自定义 macOS 应用菜单 Quit/Cmd-Q 与 tray 共用 `app.exit(0)` 且禁止 predefined Quit；隔离的 clean-commit 真实 Cmd-Q 样本已确认 shutdown POST 200、stopped state、monitor 未启动、host/backend/PID/端口清理，SSE 未及时退出时由显式 `kill + wait` 兜底。该结果允许推送开发分支并创建 Draft PR，但不覆盖 tray 点击、Force Quit、SIGKILL 或平台发布。
 - [x] P1 setup cleanup：BackendHost 启动后若 tray、desktop window 或 browser surface 初始化失败，host 在返回原始 setup error 前调用既有 keep-monitor shutdown，并在失败/超时时 kill+wait owned child；如果终止尚不可确认则 setup 保持阻塞并重试，child mutex 或 `try_wait` 错误也不算退出，绝不返回后依赖 Drop。只有成功初始化后才把 backend/surface 注册到 app state。该路径不依赖 `ExitRequested`，且不改变 updater fail-closed 语义。
 - [x] alpha.2 Windows Tauri portable 源码边界：从 clean exact commit stage allowlisted core/Windows Python 3.14.6 runtime，产品 runtime 在 manifest 前裁剪 `Doc`、顶层 `Scripts`、`__pycache__/.pyc/.pyo` 和五个已知 CPython shell helper，所有 runtime probe 使用 `-B`，staging 在 host 编译前拒绝残留缓存和其它 runtime script，生成 hash-bound raw x64 host、release manifest、ZIP/文件 SHA、SBOM、receipt、源码归档、`dist/handoff` 和严格一个 Windows ZIP 的 `scope: windows-only` Feed；验包器对自有 core 执行完整扫描，受锁 `python/Lib/**` 只允许 dependency scope 的 provenance/password-shaped 示例但仍拒绝 GitHub token/私钥；Windows portable marker 唯一允许 release host 显式 `updater_enabled=false`，Mac 不存在资产时返回 `unsupported`，下载动作只打开 prerelease 页面。该项仅覆盖源码和契约，不代表 native build、Tag、Release 或 Pages 已完成。
+- [x] Windows portable WebView2 profile 也属于 host 的用户状态边界：release host 从同一个 `%LOCALAPPDATA%\\InvoiceHub` root 派生并预创建 `webview`，再显式传给 Tauri desktop WebView。此前有效 candidate 已到达 backend handshake，但隐式 WebView profile 创建返回 Windows access denied；这一源码修复有 Rust contract coverage，尚不构成 native desktop release evidence。
 
 ## 发布缺口
 
-- [ ] 从 `v0.3.0-alpha.2` 的 clean tagged commit 实际构建 Windows 10/11 x64 无签名 Tauri ZIP，并在隔离 `%LOCALAPPDATA%`、中文空格路径完成窗口、固定端口、单实例、选择器、monitor、tray Quit、进程清理和只读 Feed 烟测。
+- [ ] 从包含显式 WebView2 profile 边界的 `v0.3.0-alpha.2` clean tagged commit 实际构建 Windows 10/11 x64 无签名 Tauri ZIP，并在隔离 `%LOCALAPPDATA%`、中文空格路径完成窗口、固定端口、单实例、选择器、monitor、tray Quit、进程清理和只读 Feed 烟测。
 - [ ] GitHub prerelease 资产、GitHub Pages `updates/alpha/latest.json` 与 Mac 上传交接；Feed 只能含真实 Windows ZIP、SHA、receipt、源码归档和 source/core 身份，不能伪造 macOS 资产。
 - [ ] macOS 13+ arm64 DMG、更新归档、Developer ID、Hardened Runtime、公证、staple、quarantine 与升级证据。
 - [ ] 同仓库 GitHub Pages 更新 Feed、真实资产签名、源码归档、SBOM、收据与最终 provenance 闭环。

@@ -1,4 +1,5 @@
 use std::error::Error;
+use std::path::Path;
 use std::process::ExitCode;
 
 #[cfg(target_os = "macos")]
@@ -182,7 +183,9 @@ fn main() -> ExitCode {
             let setup_result = (|| -> Result<(), Box<dyn Error>> {
                 install_tray(app)?;
                 match startup_surface {
-                    StartupSurface::Desktop => create_desktop_window(app)?,
+                    StartupSurface::Desktop => {
+                        create_desktop_window(app, backend.webview_data_directory())?
+                    }
                     StartupSurface::Browser => open_backend_in_browser(&app.handle())?,
                 }
                 Ok(())
@@ -213,7 +216,10 @@ fn main() -> ExitCode {
     ExitCode::SUCCESS
 }
 
-fn create_desktop_window(app: &tauri::App<tauri::Wry>) -> Result<(), Box<dyn Error>> {
+fn create_desktop_window(
+    app: &tauri::App<tauri::Wry>,
+    webview_data_directory: &Path,
+) -> Result<(), Box<dyn Error>> {
     let backend_url = invoicehub_desktop::backend_origin().parse()?;
     tauri::WebviewWindowBuilder::new(
         app,
@@ -223,6 +229,7 @@ fn create_desktop_window(app: &tauri::App<tauri::Wry>) -> Result<(), Box<dyn Err
     .title("InvoiceHub")
     .inner_size(1280.0, 860.0)
     .min_inner_size(1024.0, 640.0)
+    .data_directory(webview_data_directory.to_path_buf())
     .build()?;
     Ok(())
 }

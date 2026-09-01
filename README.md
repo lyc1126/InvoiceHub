@@ -204,6 +204,11 @@ pwsh -NoProfile -File .\scripts\dev\build_windows_portable_release.ps1
 
 脚本会在开始时记录当前 `HEAD`，并由构建器再次确认该提交及 tracked 工作树干净；自动化需要指定提交时仍可传 `-SourceCommit <40位小写SHA>`。默认交付只给用户 ZIP 与同名 `.sha256`；runtime/build/package manifest、依赖锁、SBOM 和逐文件 SHA-256 留在 ZIP 内作为完整性信息，不需要单独上传。正式 BAT 烟测证据写入 `dist/evidence/windows-v<version>/windows-portable-smoke.json`。
 
+Tauri release host 不把用户状态写回解压目录：配置和后端运行态位于
+`%LOCALAPPDATA%\\InvoiceHub`，WebView2 profile 也显式固定在
+`%LOCALAPPDATA%\\InvoiceHub\\webview`。因此 ZIP 可以解压到新目录回滚，
+且 WebView2 不依赖 Tauri 按 application ID 推导的隐式 profile 位置。
+
 烟测会解压到临时中文空格路径，以根 `启动一站式发票汇总系统.bat -NoBrowser` 启动，验证 `/`、`/api/v1/health` 和 build/package/PID/路径身份，再以根 `停止一站式发票汇总系统.bat` 停止。它只使用包内脱敏空目录，不读取业务目录。若默认 `8766` 落入 Windows TCP 排除范围，证据会保留原始默认配置的启动结果和系统错误，再以包内无业务路径的临时配置选择相邻可用端口继续烟测；这种结果不会宣称默认配置已原样通过。
 
 默认链不再强制第二次 ZIP 比对、断网 wheelhouse 重建、隔离源码测试环境或同时覆盖 PS7/PS5.1。它们仍保留为高级审计：在同一默认命令上追加 `-VerifyReproducibility` 可执行第二次 ZIP SHA 比对；已有 base runtime 和 wheelhouse 时可追加 `-Offline` 做离线运行时重建（不能与 `-Clean` 同用）；`initialize_windows_repackage.ps1` 与 `prepare_windows_test_environment.ps1` 继续用于需要远端 tip 绑定、完整源码回归或供应链复核的场景。
