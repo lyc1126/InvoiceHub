@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- 2026-09-01 Windows Tauri portable runtime cache guard: the first clean
+  assembly correctly stopped before a valid ZIP, receipt, or SHA was emitted
+  when a diagnostic wrote
+  `python/Lib/__pycache__/__future__.cpython-314.pyc` into the product
+  runtime. Runtime normalization now removes bytecode/cache directories, all
+  runtime probes use `-B`, and staging rejects residual cache content before
+  host compilation.
 - 2026-09-01 Windows Tauri doctor: recognize the standard Evergreen WebView2
   Edge Update client ID and its three- or four-component runtime versions.
   This fixes a false missing prerequisite report for the system x64 runtime

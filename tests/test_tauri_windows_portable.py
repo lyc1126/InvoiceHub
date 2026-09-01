@@ -214,6 +214,7 @@ def test_windows_builder_uses_clean_git_stage_raw_host_and_handoff_gate() -> Non
         "export_source_snapshot",
         "_require_tag_at_commit",
         "MAC_UPLOAD_INSTRUCTIONS.md",
+        "locked Windows runtime contains cache content",
     ):
         assert required in source
     assert "/src-tauri/.windows-portable-staging/" in (root / ".gitignore").read_text(encoding="utf-8")

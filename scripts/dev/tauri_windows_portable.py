@@ -245,6 +245,8 @@ def _validate_runtime(runtime_root: Path, dependency_lock: Path) -> tuple[Path, 
         relative = item.relative_to(python_root)
         if item.is_symlink():
             raise TauriWindowsPortableError(f"locked Windows runtime contains a symlink: {relative}")
+        if item.name == "__pycache__" or (item.is_file() and item.suffix.casefold() in {".pyc", ".pyo"}):
+            raise TauriWindowsPortableError(f"locked Windows runtime contains cache content: {relative}")
         folded = tuple(part.casefold() for part in relative.parts)
         if len(folded) >= 1 and folded[0] in {"doc", "scripts"}:
             raise TauriWindowsPortableError(f"locked Windows runtime contains forbidden product content: {relative}")

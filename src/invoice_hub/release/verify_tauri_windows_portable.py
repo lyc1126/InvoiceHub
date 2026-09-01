@@ -283,8 +283,8 @@ def _verify_sbom(root: Path, package: dict[str, Any]) -> None:
 def _run_runtime_probe(root: Path) -> None:
     python = root / "python" / "python.exe"
     commands = (
-        [str(python), "-I", "-c", "import fitz,PIL,watchdog; print('runtime-smoke-ok')"],
-        [str(python), "-I", "-m", "pip", "check"],
+        [str(python), "-B", "-I", "-c", "import fitz,PIL,watchdog; print('runtime-smoke-ok')"],
+        [str(python), "-B", "-I", "-m", "pip", "check"],
     )
     for command in commands:
         try:

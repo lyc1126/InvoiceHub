@@ -65,17 +65,17 @@ if (-not [System.IO.File]::Exists($python)) {
     throw "Failed to reconstruct the product runtime from clean base Python: $python"
 }
 
-$actualVersion = & $python -I -c "import platform; print(platform.python_version())"
+$actualVersion = & $python -B -I -c "import platform; print(platform.python_version())"
 if ($LASTEXITCODE -ne 0 -or [string]$actualVersion -ne $PythonVersion) {
     throw "Prepared runtime version mismatch. Expected $PythonVersion, got $actualVersion."
 }
-$actualArchitecture = & $python -I -c "import platform; print(platform.machine().lower())"
+$actualArchitecture = & $python -B -I -c "import platform; print(platform.machine().lower())"
 if ($LASTEXITCODE -ne 0 -or ([string]$actualArchitecture -notin @("amd64", "x86_64"))) {
     throw "Prepared runtime architecture mismatch: $actualArchitecture"
 }
 
 if (-not $Offline) {
-    & $python -I -m pip download --requirement $lock --require-hashes --only-binary=:all: --dest $wheelhouse
+    & $python -B -I -m pip download --requirement $lock --require-hashes --only-binary=:all: --dest $wheelhouse
     if ($LASTEXITCODE -ne 0) { throw "Failed to build the Windows wheelhouse." }
 }
 if (-not (Get-ChildItem -LiteralPath $wheelhouse -Filter "*.whl" -File -ErrorAction SilentlyContinue)) {
@@ -86,7 +86,7 @@ $previousSourceDateEpoch = [Environment]::GetEnvironmentVariable("SOURCE_DATE_EP
 try {
     # distlib embeds this timestamp in generated launchers; force the ZIP lower bound for reproducible installs.
     $env:SOURCE_DATE_EPOCH = "315532800"
-    & $python -I -m pip install --requirement $lock --require-hashes --only-binary=:all: --no-index "--find-links=$wheelhouse" --no-warn-script-location
+    & $python -B -I -m pip install --requirement $lock --require-hashes --only-binary=:all: --no-index "--find-links=$wheelhouse" --no-warn-script-location
     if ($LASTEXITCODE -ne 0) { throw "Hash-locked offline dependency installation failed." }
 }
 finally {
@@ -98,17 +98,17 @@ finally {
     }
 }
 $env:PYTHONPATH = Join-Path $root "src"
-& $python -m invoice_hub.release.runtime_manifest normalize-windows --runtime-dir $runtimeDir
+& $python -B -m invoice_hub.release.runtime_manifest normalize-windows --runtime-dir $runtimeDir
 if ($LASTEXITCODE -ne 0 -or [System.IO.Directory]::Exists($runtimeScriptsDir)) {
     throw "Windows runtime console script normalization failed."
 }
-& $python -I -m pip check
+& $python -B -I -m pip check
 if ($LASTEXITCODE -ne 0) { throw "pip check failed in the prepared runtime." }
-& $python -I -c "import tkinter, ssl, sqlite3, fitz, PIL, watchdog; print('windows-runtime-smoke-ok')"
+& $python -B -I -c "import tkinter, ssl, sqlite3, fitz, PIL, watchdog; print('windows-runtime-smoke-ok')"
 if ($LASTEXITCODE -ne 0) { throw "Windows runtime import smoke failed." }
 
 $source = "Python Install Manager $PythonVersion-64"
-& $python -m invoice_hub.release.runtime_manifest write --runtime-dir $runtimeDir --dependency-lock $lock --platform windows --architecture x86_64 --python-version $PythonVersion --python-executable python.exe --source $source
+& $python -B -m invoice_hub.release.runtime_manifest write --runtime-dir $runtimeDir --dependency-lock $lock --platform windows --architecture x86_64 --python-version $PythonVersion --python-executable python.exe --source $source
 if ($LASTEXITCODE -ne 0 -or -not [System.IO.File]::Exists($manifest)) {
     throw "Runtime manifest generation failed."
 }

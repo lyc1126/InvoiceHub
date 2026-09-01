@@ -564,7 +564,7 @@ flowchart LR
     Repro -. "可选审计" .-> Offline["断网 runtime 重建"]
 ```
 
-机器配置固定版本、Python、架构、包名、锁、staging 和证据目录，但故意不保存会自引用的 `RC_SHA`。默认入口启动时读取当前 clean `HEAD`，自动化仍可显式传入 40 位 SHA；构建器会再次拒绝不同 HEAD 或 tracked 修改。产品 runtime 每次从 `base-python` 复制、删除产品 `Doc`，以哈希锁固定时间安装依赖、删除不使用的顶层 `Scripts` 并规范 RECORD，精确裁剪五个 CPython 标准库 shell helper、拒绝任何其它 runtime script，再执行 `pip check`、import smoke 和 runtime manifest。验包器继续拒绝 `python/Doc`、`python/Scripts`、macOS 内容、本机配置、业务数据、运行态、缓存和项目测试；合法 wheel 自带的 `python/Lib/site-packages/**/tests/**` 仍计入所有清单和哈希。烟测只调用正式根 BAT，不触发浏览器、原生选择器、monitor 或 stop-all；`Get-IHHealth` 和 `Test-IHHealthIdentity` 同时确认首页、health、PID、路径和 build/package identity。若默认端口被 Windows TCP 排除范围覆盖，先记录默认启动的输出和 `server_stderr.log`，再用包内无业务路径的相邻端口配置继续；不能把这种 fallback 写成默认配置原样通过。
+机器配置固定版本、Python、架构、包名、锁、staging 和证据目录，但故意不保存会自引用的 `RC_SHA`。默认入口启动时读取当前 clean `HEAD`，自动化仍可显式传入 40 位 SHA；构建器会再次拒绝不同 HEAD 或 tracked 修改。产品 runtime 每次从 `base-python` 复制、删除产品 `Doc`，以哈希锁固定时间安装依赖、删除不使用的顶层 `Scripts` 并规范 RECORD，精确裁剪 `__pycache__/.pyc/.pyo` 与五个 CPython 标准库 shell helper、拒绝任何其它 runtime script，再以 `-B` 执行 `pip check`、import smoke 和 runtime manifest；Tauri staging 会在 host 编译前拒绝残留 bytecode。验包器继续拒绝 `python/Doc`、`python/Scripts`、macOS 内容、本机配置、业务数据、运行态、缓存和项目测试；合法 wheel 自带的 `python/Lib/site-packages/**/tests/**` 仍计入所有清单和哈希。烟测只调用正式根 BAT，不触发浏览器、原生选择器、monitor 或 stop-all；`Get-IHHealth` 和 `Test-IHHealthIdentity` 同时确认首页、health、PID、路径和 build/package identity。若默认端口被 Windows TCP 排除范围覆盖，先记录默认启动的输出和 `server_stderr.log`，再用包内无业务路径的相邻端口配置继续；不能把这种 fallback 写成默认配置原样通过。
 
 `-VerifyReproducibility`、`-Offline`、`initialize_windows_repackage.ps1` 和 `prepare_windows_test_environment.ps1` 是可选审计工具：它们保留远端 tip 绑定、隔离源码测试、双 ZIP 比对和离线重建能力，但不再阻塞普通便携包交付。它们也不能替代浏览器、原生选择器、monitor 与失败矩阵的独立 Windows 验收。
 

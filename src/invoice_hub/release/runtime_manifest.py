@@ -21,6 +21,7 @@ SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 WINDOWS_SMOKE_MODULES = ("tkinter", "ssl", "sqlite3", "fitz", "PIL", "watchdog")
 MACOS_SMOKE_MODULES = ("tkinter", "ssl", "sqlite3", "fitz", "PIL")
 WINDOWS_RUNTIME_SCRIPT_SUFFIXES = frozenset({".bat", ".cmd", ".ps1", ".psm1"})
+BYTECODE_SUFFIXES = frozenset({".pyc", ".pyo"})
 # These are CPython 3.14 standard-library helpers. They are not needed by the
 # embedded product runtime, but would otherwise violate the portable ZIP's
 # no-shell-script boundary.
@@ -56,7 +57,7 @@ def runtime_tree_sha256(runtime_dir: Path) -> str:
         for path in runtime_dir.rglob("*")
         if path.is_file()
         and path.name != RUNTIME_MANIFEST_NAME
-        and path.suffix.casefold() not in {".pyc", ".pyo"}
+        and path.suffix.casefold() not in BYTECODE_SUFFIXES
         and "__pycache__" not in path.relative_to(runtime_dir).parts
     ]
     if not files:
@@ -173,11 +174,32 @@ def normalize_windows_runtime(runtime_dir: Path) -> dict[str, Any]:
         path.unlink()
     for script_dir in script_dirs:
         shutil.rmtree(script_dir)
+
+    removed_bytecode_files = []
+    for path in sorted(runtime_dir.rglob("*"), key=lambda item: item.as_posix().casefold()):
+        if not path.is_file():
+            continue
+        relative = path.relative_to(runtime_dir)
+        if path.suffix.casefold() not in BYTECODE_SUFFIXES and "__pycache__" not in relative.parts:
+            continue
+        path.unlink()
+        removed_bytecode_files.append(relative.as_posix())
+    cache_directories = sorted(
+        (path for path in runtime_dir.rglob("__pycache__") if path.is_dir()),
+        key=lambda item: (len(item.parts), item.as_posix().casefold()),
+        reverse=True,
+    )
+    for cache_dir in cache_directories:
+        if cache_dir.is_symlink():
+            cache_dir.unlink()
+        else:
+            shutil.rmtree(cache_dir)
     return {
         "removed_script_files": removed_script_files,
         "removed_stdlib_script_files": removed_stdlib_script_files,
         "removed_record_entries": sorted(removed_record_entries, key=str.casefold),
         "rewritten_records": rewritten_records,
+        "removed_bytecode_files": removed_bytecode_files,
     }
 
 
@@ -210,7 +232,7 @@ def _probe_runtime(executable: Path, expected_modules: tuple[str, ...]) -> dict[
     )
     try:
         completed = subprocess.run(
-            [str(executable), "-I", "-c", script],
+            [str(executable), "-B", "-I", "-c", script],
             check=True,
             capture_output=True,
             text=True,

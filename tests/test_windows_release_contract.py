@@ -339,10 +339,14 @@ def test_windows_release_build_keeps_hash_lock_and_makes_reproducibility_an_opt_
     assert 'Copy-Item -LiteralPath $baseRuntimeDir -Destination $runtimeDir -Recurse' in prepare
     assert 'Remove-Item -LiteralPath $runtimeDocDir -Recurse -Force' in prepare
     assert "invoice_hub.release.runtime_manifest normalize-windows" in prepare
+    assert "& $python -B -m invoice_hub.release.runtime_manifest normalize-windows" in prepare
     assert '$env:SOURCE_DATE_EPOCH = "315532800"' in prepare
     assert '$previousSourceDateEpoch = [Environment]::GetEnvironmentVariable' in prepare
     assert 'Remove-Item -LiteralPath "Env:SOURCE_DATE_EPOCH"' in prepare
     assert "import tkinter, ssl, sqlite3, fitz, PIL, watchdog" in prepare
+    assert "& $python -B -I -m pip check" in prepare
+    assert "& $python -B -I -c \"import tkinter, ssl, sqlite3, fitz, PIL, watchdog" in prepare
+    assert "& $python -B -m invoice_hub.release.runtime_manifest write" in prepare
     assert prepare.index('Copy-Item -LiteralPath $baseRuntimeDir') < prepare.index(
         '$runtimeDocDir = Join-Path $runtimeDir "Doc"'
     ) < prepare.index('$env:SOURCE_DATE_EPOCH = "315532800"') < prepare.index(
