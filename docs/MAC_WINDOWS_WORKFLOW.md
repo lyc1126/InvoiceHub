@@ -34,7 +34,7 @@ alpha.2 Windows x64 便携 ZIP 是 Tauri host 的非安装交付，不生成 MSI
 
 ### 2026-09-01 source gate
 
-运行时 shell-helper 裁剪、锁定 Rust 1.85 格式/测试、版本同步、聚焦发布契约、完整 Python 回归、`compileall`、PowerShell 解析和 diff whitespace 检查均已通过。独立 test Python 已离线重建其当前源码 `.pth` 绑定；未绑定且路径过长的临时 pytest 目录不构成验证证据。该主机的 Rust 1.85、MSVC/Windows SDK、Node/pnpm 和锁文件可用，但 Evergreen WebView2 Runtime 未注册；因此 `tauri-doctor --require-ready` 仍不能放行。没有在该状态下构建 runtime 或 ZIP，也没有执行桌面窗口、picker、monitor、tray、Feed、Tag、Release 或 Pages 操作。
+运行时 shell-helper 裁剪、锁定 Rust 1.85 格式/测试、版本同步、聚焦发布契约、完整 Python 回归、`compileall`、PowerShell 解析和 diff whitespace 检查均已通过。独立 test Python 已离线重建其当前源码 `.pth` 绑定；未绑定且路径过长的 pytest 临时目录不构成验证证据。该主机的 Rust 1.85、MSVC/Windows SDK、Node/pnpm、锁文件和系统级 Evergreen WebView2 Runtime 均可用。doctor 曾因错误 Edge Update client ID 和三段版本限制把四段 `131.0.2903.86` runtime 误报缺失；修复并以 18 项 foundation 回归验证后，真实 `tauri-doctor --require-ready` 已放行。尚未据此构建 runtime 或 ZIP，也没有执行桌面窗口、picker、monitor、tray、Feed、Tag、Release 或 Pages 操作。
 
 ## macOS 新 RC
 

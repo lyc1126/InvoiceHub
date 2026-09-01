@@ -7,6 +7,8 @@ import struct
 import subprocess
 import sys
 import tomllib
+import types
+from contextlib import nullcontext
 from pathlib import Path
 from unittest.mock import patch
 
@@ -213,6 +215,39 @@ def test_doctor_rejects_windows_sdk_check_without_program_files_location(tmp_pat
 
     assert result["status"] == "missing"
     assert result["detail"] == "ProgramFiles(x86) is unavailable"
+
+
+def test_doctor_detects_system_webview2_runtime_from_standard_edge_update_key() -> None:
+    doctor = _load_doctor_module()
+    opened: list[tuple[str, str]] = []
+    fake_winreg = types.SimpleNamespace(
+        HKEY_CURRENT_USER="current-user",
+        HKEY_LOCAL_MACHINE="local-machine",
+    )
+    standard_key = (
+        rf"SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{doctor.WEBVIEW2_CLIENT_ID}"
+    )
+
+    def open_key(hive: str, key: str):
+        opened.append((hive, key))
+        if hive == fake_winreg.HKEY_LOCAL_MACHINE and key == standard_key:
+            return nullcontext(object())
+        raise OSError("not registered here")
+
+    fake_winreg.OpenKey = open_key
+    fake_winreg.QueryValueEx = lambda _handle, name: ("131.0.2903.86", name)
+
+    with patch.dict(sys.modules, {"winreg": fake_winreg}):
+        result = doctor._webview2_runtime_check()
+
+    assert doctor.WEBVIEW2_CLIENT_ID == "{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
+    assert result == {
+        "status": "ok",
+        "expected": "",
+        "actual": "131.0.2903.86",
+        "detail": "",
+    }
+    assert opened[-1] == (fake_winreg.HKEY_LOCAL_MACHINE, standard_key)
 
 
 def test_tauri_scaffold_is_fixed_to_the_expected_localhost_origin() -> None:

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- 2026-09-01 Windows Tauri doctor: recognize the standard Evergreen WebView2
+  Edge Update client ID and its three- or four-component runtime versions.
+  This fixes a false missing prerequisite report for the system x64 runtime
+  without making doctor install or modify any system tooling.
 - 2026-09-01 Windows Tauri portable runtime sanitization: normalize the
   CPython 3.14.6 product copy by removing its five known unused standard-
   library shell helpers before writing the runtime manifest, and fail closed

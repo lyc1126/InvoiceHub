@@ -142,7 +142,7 @@ python3 scripts/dev/tauri_version_sync.py --check
 ./scripts/dev/tauri-bootstrap.sh
 ```
 
-`doctor` 和默认 `bootstrap` 只报告环境状态，不安装 Rust、证书、Xcode 或 Visual Studio。当前机器若缺少 Rust/Cargo 或 `src-tauri/Cargo.lock`，`--require-ready` 会以非零状态明确失败。裸 checkout 没有可用 manifest，仍不能运行；development app 必须通过 `tauri_dev_app.py` 的显式 stage/build 流程生成，且 `--python` 必须是绝对 venv interpreter、`--pnpm` 必须是绝对 executable。一次 development `.app` smoke 已通过，但不能据此宣称安装器、原生面板、tray/browser、updater 或平台发布验收已完成。
+`doctor` 和默认 `bootstrap` 只报告环境状态，不安装 Rust、证书、Xcode 或 Visual Studio。当前机器若缺少 Rust/Cargo 或 `src-tauri/Cargo.lock`，`--require-ready` 会以非零状态明确失败。Windows doctor 读取 Evergreen WebView2 的标准 Edge Update client ID，并接受三段或四段 runtime 版本；裸 checkout 没有可用 manifest，仍不能运行。development app 必须通过 `tauri_dev_app.py` 的显式 stage/build 流程生成，且 `--python` 必须是绝对 venv interpreter、`--pnpm` 必须是绝对 executable。一次 development `.app` smoke 已通过，但不能据此宣称安装器、原生面板、tray/browser、updater 或平台发布验收已完成。
 
 Windows 的同一 foundation 检查使用 PowerShell 包装器：
 

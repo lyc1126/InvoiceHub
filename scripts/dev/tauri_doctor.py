@@ -17,9 +17,11 @@ from typing import Any
 
 
 DEFAULT_ROOT = Path(__file__).resolve().parents[2]
-VERSION_PATTERN = re.compile(r"\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?")
+VERSION_PATTERN = re.compile(r"\d+(?:\.\d+){2,3}(?:[-+][0-9A-Za-z.-]+)?")
 MSVC_COMPONENT = "Microsoft.VisualStudio.Component.VC.Tools.x86.x64"
-WEBVIEW2_CLIENT_ID = "{F1E7E4F8-B7E8-4E9E-AEAE-7CA3E1D69CB7}"
+# Evergreen WebView2 Runtime's Edge Update product client ID.  The x64
+# system-level runtime is commonly registered under WOW6432Node.
+WEBVIEW2_CLIENT_ID = "{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
 
 
 def _check(status: str, *, expected: str = "", actual: str = "", detail: str = "") -> dict[str, str]:
