@@ -208,7 +208,7 @@ pwsh -NoProfile -File .\scripts\dev\build_windows_portable_release.ps1
 
 默认链不再强制第二次 ZIP 比对、断网 wheelhouse 重建、隔离源码测试环境或同时覆盖 PS7/PS5.1。它们仍保留为高级审计：在同一默认命令上追加 `-VerifyReproducibility` 可执行第二次 ZIP SHA 比对；已有 base runtime 和 wheelhouse 时可追加 `-Offline` 做离线运行时重建（不能与 `-Clean` 同用）；`initialize_windows_repackage.ps1` 与 `prepare_windows_test_environment.ps1` 继续用于需要远端 tip 绑定、完整源码回归或供应链复核的场景。
 
-包内不包含项目测试、开发脚本、运行态、缓存、真实业务数据或本机 `config/app.local.json`。哈希锁定 wheel 自带的 `python/Lib/site-packages/**/tests/**` 可以保留并继续计入 runtime tree、逐文件 manifest、SBOM 和 ZIP SHA；其它位置的测试/缓存目录仍会被验包器拒绝。旧版本只能通过 `导入旧版设置.bat` 白名单迁移设置和偏好。
+包内不包含项目测试、开发脚本、运行态、缓存、真实业务数据或本机 `config/app.local.json`。产品 Python 在写 runtime manifest 前会裁剪 `Doc`、pip 顶层 `Scripts` 和 CPython 自带但产品不用的五个标准库 shell helper；任何其它 `.bat/.cmd/.ps1/.psm1` 会使构建失败。哈希锁定 wheel 自带的 `python/Lib/site-packages/**/tests/**` 可以保留并继续计入 runtime tree、逐文件 manifest、SBOM 和 ZIP SHA；其它位置的测试/缓存目录仍会被验包器拒绝。旧版本只能通过 `导入旧版设置.bat` 白名单迁移设置和偏好。
 
 正式 Windows BAT 会优先验证 `%ProgramFiles%\PowerShell\7\pwsh.exe`；该固定位置不存在时，再通过 `where.exe pwsh.exe` 使用当前 `PATH`，因此 Microsoft Store 的 App Execution Alias 也是有效 PS7 来源。只有没有可运行的 7.x 时才回退 Windows PowerShell 5.1，`INVOICE_HUB_FORCE_PS51=1` 仍用于兼容验收。共享启动模块从 localhost health 的原始响应字节显式按 UTF-8 解码，避免 PS5.1 在响应未声明 charset 时损坏中文配置和运行目录；解码后仍执行完整 PID、路径、build/package 身份校验。
 

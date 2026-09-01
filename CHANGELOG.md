@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- 2026-09-01 Windows Tauri portable runtime sanitization: normalize the
+  CPython 3.14.6 product copy by removing its five known unused standard-
+  library shell helpers before writing the runtime manifest, and fail closed
+  on any other runtime `.bat`, `.cmd`, `.ps1`, or `.psm1` file. This repairs
+  the first alpha.2 build gate without weakening the ZIP verifier.
 - 2026-09-01 Windows Tauri 2 portable alpha.2: add the clean-commit Windows
   x64 ZIP staging/build/handoff path, the hash-bound raw host manifest and
   required controlled Windows ICO resource, an

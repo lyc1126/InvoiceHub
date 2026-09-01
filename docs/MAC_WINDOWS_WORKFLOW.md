@@ -32,6 +32,10 @@ alpha.2 Windows x64 便携 ZIP 是 Tauri host 的非安装交付，不生成 MSI
 
 不要求双组装、断网重装或 PS7/PS5.1 双烟测；双组装 SHA 比对、离线重建和源码预门禁仍可显式执行。alpha.2 的 Feed 只能含一个真实 Windows ZIP、receipt 与源码身份；“检查更新/前往下载”只打开 GitHub prerelease，安装接口保持 fail-closed，不能停止 monitor、替换现有目录或伪造 macOS 资产。任何未执行的 Windows 真机行为必须如实标为未覆盖。
 
+### 2026-09-01 source gate
+
+运行时 shell-helper 裁剪、锁定 Rust 1.85 格式/测试、版本同步、聚焦发布契约、完整 Python 回归、`compileall`、PowerShell 解析和 diff whitespace 检查均已通过。独立 test Python 已离线重建其当前源码 `.pth` 绑定；未绑定且路径过长的临时 pytest 目录不构成验证证据。该主机的 Rust 1.85、MSVC/Windows SDK、Node/pnpm 和锁文件可用，但 Evergreen WebView2 Runtime 未注册；因此 `tauri-doctor --require-ready` 仍不能放行。没有在该状态下构建 runtime 或 ZIP，也没有执行桌面窗口、picker、monitor、tray、Feed、Tag、Release 或 Pages 操作。
+
 ## macOS 新 RC
 
 1. 从同一 clean `RC_SHA` 构建内嵌 core 与 arm64 runtime，生成 manifest、SBOM 和源码归档。

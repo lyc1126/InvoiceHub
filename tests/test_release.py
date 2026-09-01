@@ -230,6 +230,7 @@ def test_normalize_windows_runtime_removes_console_scripts_and_record_rows(tmp_p
     assert not scripts.exists()
     assert result == {
         "removed_script_files": ["sCrIpTs/sample.exe"],
+        "removed_stdlib_script_files": [],
         "removed_record_entries": ["sample-1.0.dist-info:../../SCRIPTS/sample.exe"],
         "rewritten_records": ["Lib/site-packages/sample-1.0.dist-info/RECORD"],
     }
@@ -238,9 +239,37 @@ def test_normalize_windows_runtime_removes_console_scripts_and_record_rows(tmp_p
     assert other_record.read_bytes() == other_before
     assert normalize_windows_runtime(runtime) == {
         "removed_script_files": [],
+        "removed_stdlib_script_files": [],
         "removed_record_entries": [],
         "rewritten_records": [],
     }
+
+
+def test_normalize_windows_runtime_removes_known_stdlib_helpers_and_rejects_unknown_scripts(tmp_path: Path) -> None:
+    runtime = tmp_path / "python"
+    (runtime / "Lib" / "site-packages").mkdir(parents=True)
+    helpers = [
+        "Lib/ctypes/macholib/fetch_macholib.bat",
+        "Lib/idlelib/idle.bat",
+        "Lib/venv/scripts/common/Activate.ps1",
+        "Lib/venv/scripts/nt/activate.bat",
+        "Lib/venv/scripts/nt/deactivate.bat",
+    ]
+    for relative in helpers:
+        path = runtime / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("@echo off\n", encoding="ascii")
+
+    result = normalize_windows_runtime(runtime)
+
+    assert result["removed_stdlib_script_files"] == helpers
+    assert all(not (runtime / relative).exists() for relative in helpers)
+
+    unknown = runtime / "Lib" / "unsafe-helper.cmd"
+    unknown.write_text("@echo off\n", encoding="ascii")
+    with pytest.raises(RuntimeManifestError, match="unexpected script files: Lib/unsafe-helper.cmd"):
+        normalize_windows_runtime(runtime)
+    assert unknown.is_file()
 
 
 def test_normalize_windows_runtime_rejects_record_escape_before_removing_scripts(tmp_path: Path) -> None:

@@ -269,7 +269,7 @@
 | `src/invoice_hub/release/build_core.py` | 从精确 Git commit 组装确定性 Windows ZIP，写脱敏配置、清单、SBOM 和文件 SHA。 | Windows 构建脚本调用；不读取本机未跟踪/业务数据。 |
 | `src/invoice_hub/release/build_manifest.py` | 确定性 build ID、API 契约、做账协议和能力清单。 | health、macOS Swift 握手和 `build_and_run.sh --verify` 三方核对。 |
 | `src/invoice_hub/release/dependency_lock.py` | 解析并验证平台哈希锁及 package/version。 | runtime 准备、SBOM、发行身份测试使用。 |
-| `src/invoice_hub/release/runtime_manifest.py` | 绑定 runtime 树、Python、平台/架构、锁和 import probe；规范 Windows 产品 runtime。 | Windows 安装后删除顶层 `Scripts` 并以 CSV 规则同步 RECORD，Windows/Mac 构建及成品验证共同使用其余清单能力。 |
+| `src/invoice_hub/release/runtime_manifest.py` | 绑定 runtime 树、Python、平台/架构、锁和 import probe；规范 Windows 产品 runtime。 | Windows 安装后删除顶层 `Scripts` 并以 CSV 规则同步 RECORD，精确裁剪五个 CPython 标准库 shell helper，未知 shell script fail closed；Windows/Mac 构建及成品验证共同使用其余清单能力。 |
 | `src/invoice_hub/release/package_manifest.py` | 绑定成品版本、平台、架构、包型、锁、Feed、source/core identity。 | health、启动器、About、更新服务与验包使用。 |
 | `src/invoice_hub/release/content_scan.py` | 分作用域扫描成品/源码中的秘密和本机绝对路径。 | 自有源码/core 使用严格规则；仅哈希锁定的依赖目录允许上游构建 provenance 路径，私钥和高置信 token 始终阻断。 |
 | `src/invoice_hub/release/sbom.py` | 从哈希锁生成确定性 CycloneDX 1.6 SBOM。 | 双平台成品和验证器核对 lock identity。 |

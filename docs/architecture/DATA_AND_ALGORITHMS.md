@@ -471,7 +471,7 @@ OR resolved_target.is_relative_to(resolved_root)
 
 `deterministic_build_id()` 对声明的共享 core 输入按仓库相对路径排序，依次散列路径、内容长度和内容，并忽略 `.DS_Store`、`.pyc` 与 `__pycache__`。当前输入覆盖共享 `src`、`web`、随包捷锐 runner、`docs/jierui` facts 和 `pyproject.toml`；本机配置、运行态、发票和平台构建缓存不进入散列。Windows 与 macOS 必须以同一 RC_SHA 计算出相同 core build ID。
 
-`invoice-hub-build.json` 记录 core build ID、API 契约、`w9-ledger-review-v1`、完整 capabilities、source commit 和 built_at。`invoice-hub-package.json` 再绑定产品版本、平台、架构、包类型、package ID、Python 版本、依赖锁 SHA、更新通道/地址/白名单与 core build；它的 `source_commit` 必须与 build manifest 完全相同，且 package ID 必须由平台/架构/包类型唯一推导，不能只靠格式正确。`python/invoice-hub-runtime.json` 或 Mac runtime 中的同名清单绑定运行时树 SHA、解释器路径、平台/架构/Python 和 smoke modules。三者任一缺失、值漂移或使用非 40 位 clean source commit，正式启动/验证必须 fail closed，不能把 development fallback 当作发布身份。
+`invoice-hub-build.json` 记录 core build ID、API 契约、`w9-ledger-review-v1`、完整 capabilities、source commit 和 built_at。`invoice-hub-package.json` 再绑定产品版本、平台、架构、包类型、package ID、Python 版本、依赖锁 SHA、更新通道/地址/白名单与 core build；它的 `source_commit` 必须与 build manifest 完全相同，且 package ID 必须由平台/架构/包类型唯一推导，不能只靠格式正确。`python/invoice-hub-runtime.json` 或 Mac runtime 中的同名清单绑定运行时树 SHA、解释器路径、平台/架构/Python 和 smoke modules。三者任一缺失、值漂移或使用非 40 位 clean source commit，正式启动/验证必须 fail closed，不能把 development fallback 当作发布身份。Windows 产品 runtime 在计算这个树 SHA 前会删除 `Doc`、pip 顶层 `Scripts` 和五个已知但不参与产品运行的 CPython 标准库 shell helper；顶层 `Scripts` 的 RECORD 行同步删除。任何其它 `.bat/.cmd/.ps1/.psm1` 都是未知输入，必须在 manifest 前失败，不能靠 ZIP 验包阶段忽略或放行。
 
 CycloneDX 1.6 SBOM 由平台哈希锁确定性生成，组件版本和 lock SHA 必须匹配 package/runtime manifest。逐文件 SHA 清单用于验证包解压后的内容完整性；它和 SBOM 都是发行证据，不是签名、公证或 Sparkle EdDSA 的替代物。
 
