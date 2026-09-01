@@ -100,6 +100,15 @@ def test_host_rpc_wait_budget_outlasts_the_rust_picker_dialog() -> None:
     assert host_rpc.HOST_RPC_TIMEOUT_SECONDS > host_rpc.PICKER_DIALOG_TIMEOUT_SECONDS
 
 
+def test_host_rpc_delegates_native_picker_main_thread_dispatch_to_the_plugin() -> None:
+    rust_host_rpc = (ROOT / "src-tauri" / "src" / "host_rpc.rs").read_text(encoding="utf-8")
+    selector = rust_host_rpc.split("fn select_path(", 1)[1].split("\nenum HostRpcResponse", 1)[0]
+
+    assert "app_handle.dialog().file().pick_file(respond);" in selector
+    assert "app_handle.dialog().file().pick_folder(respond);" in selector
+    assert ".run_on_main_thread(" not in selector
+
+
 def test_picker_routes_map_host_rpc_errors_to_a_stable_redacted_5xx_contract() -> None:
     app = (ROOT / "src" / "invoice_hub" / "api" / "app.py").read_text(encoding="utf-8")
 

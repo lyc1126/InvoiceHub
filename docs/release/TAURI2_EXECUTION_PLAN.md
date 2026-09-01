@@ -620,6 +620,16 @@ this table.
 | Stop condition | Do not reuse the failed ZIP as release evidence, retry against a real user profile, change the fixed port, treat the browser path as desktop coverage, or proceed to tag/publish. Build one new clean candidate after the source repair and stop on the first static, desktop, picker, monitor, tray, cleanup, or Feed failure. |
 | Result (2026-09-01) | The host now derives `%LOCALAPPDATA%\\InvoiceHub\\webview`, creates it before launching the owned child, retains it on `BackendHost`, and passes it to `WebviewWindowBuilder::data_directory`. Locked Rust `cargo fmt --check --all` and offline library tests passed after the change. This is source-level evidence only: a fresh clean ZIP, independent verifier pass and native desktop acceptance are still required. |
 
+### L11-W-P: Windows native-picker direct-plugin dispatcher repair
+
+| Field | Record |
+| --- | --- |
+| Hypothesis | The first otherwise valid Windows candidate returned `503 Native picker unavailable` before a directory chooser appeared because `select_path` queued a second `run_on_main_thread` dispatch around `tauri-plugin-dialog`, even though the plugin owns its asynchronous main-thread marshalling. Calling the plugin directly should preserve the private RPC timeout/error boundary while removing that redundant rejection point. |
+| Decision changed by result | A focused source-contract pass permits one new clean-commit build and one representative real native picker sample. It does not permit Tag, Release, Feed, or a claim that picker behavior has passed. A failed real chooser stops the release at the picker boundary. |
+| Minimal sample | Remove only the outer dispatch and its now-unused error variant; assert that `select_path` directly calls the plugin's file/folder picker without `run_on_main_thread`; run the focused Host RPC test against the locked test Python with an explicit bounded pytest base temp directory. |
+| Stop condition | Stop at the first Rust compile/format, picker contract, clean build, native chooser, identity, monitor, tray, Feed, or cleanup failure. Do not replace the fixed port, fall back to Tk while Tauri Host RPC is configured, expose a new IPC command, weaken the redacted `503`, tag, upload, or publish. |
+| Result (2026-09-02) | The source change removed only the redundant outer dispatch. The focused locked-Python test passed `17` cases. This is source-level evidence; the clean ZIP, actual picker window, tray Quit and publication sequence remain pending. |
+
 ## Fixed scope and validation
 
 - The backend binds only `127.0.0.1:8766`. An unknown listener is a clear

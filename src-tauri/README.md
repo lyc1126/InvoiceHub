@@ -58,6 +58,11 @@ events, API responses, or logs.
 The private loopback listener accepts four picker enums and the two updater
 enums `update_check` and `update_install`. A candidate is bounded to 300
 seconds, and updater metadata requests have a five-second total timeout.
+`tauri-plugin-dialog` owns asynchronous main-thread dispatch for its picker;
+`host_rpc.rs` calls that plugin directly and must not wrap it in a second
+`run_on_main_thread` hop. The first Windows candidate returned a redacted
+picker error before the chooser appeared, so this narrow source repair still
+requires a fresh clean ZIP native-picker acceptance sample.
 Until a complete recovery/relaunch coordinator exists, `update_install`
 consumes the candidate and returns unavailable; it does not download, stop the
 monitor, install, or restart. The later release coordinator must preserve the

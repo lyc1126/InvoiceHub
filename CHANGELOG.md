@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- 2026-09-02 Windows Tauri native-picker dispatcher repair: the first native
+  candidate returned the redacted picker `503` before a chooser appeared.
+  `host_rpc.rs` now calls `tauri-plugin-dialog` directly and leaves its
+  asynchronous main-thread dispatch to the plugin, removing the redundant
+  outer `run_on_main_thread` hop. The focused source contract passed; a fresh
+  clean ZIP and a real picker acceptance sample remain required before
+  release.
 - 2026-09-01 Windows Tauri portable WebView2 state boundary: after the first
   valid candidate completed its owned-backend handshake but failed desktop
   WebView creation with Windows access denied, the release host now creates

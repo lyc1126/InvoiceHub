@@ -147,7 +147,9 @@ identity 检查确认 child 仍被拥有，才 arm 授权或创建 surface。未
 在非 Tauri mode，它们保留既有同源写入检查。Tauri host 只将 token 传给其直接启动的
 Python backend；backend 启动时捕获 token 并从 descendant 环境清除。该 Python client 的 picker 面只将四种固定 picker enum
 发送到随机 loopback Host RPC listener，更新面独立地只允许 `update_check` / `update_install` 两个固定 enum；token 不会经过页面、
-Tauri command/event、API 响应或日志；Rust dialog 最多等待 120 秒，Python 以 125 秒预算保留响应余量。
+Tauri command/event、API 响应或日志；Rust dialog 最多等待 120 秒，Python 以 125 秒预算保留响应余量。`tauri-plugin-dialog`
+自身负责异步主线程调度，host 必须直接调用插件 picker，不能再包一层 `run_on_main_thread`；此前 native candidate 在 chooser
+显示前得到脱敏 `503`，修复后的源码契约不替代新的 clean ZIP 原生窗口验收。
 Host RPC 失败统一变为不含 token、URL 或 secret 的 `503 Native picker unavailable`；非
 Tauri 的 Tk 行为不变。授权先在 handshake 后 arm，backend child 退出后由 100 ms 有界
 Rust liveness watcher 撤销，watcher 不能重新授权已退出 child。握手完成后 host 才读取

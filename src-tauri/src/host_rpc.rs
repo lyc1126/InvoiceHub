@@ -142,7 +142,6 @@ impl HostRpcAuthorizer {
 pub enum HostRpcServerError {
     RandomUnavailable,
     ListenerUnavailable,
-    MainThreadUnavailable,
     PickerUnavailable,
     UpdaterUnavailable,
 }
@@ -152,9 +151,6 @@ impl fmt::Display for HostRpcServerError {
         let message = match self {
             Self::RandomUnavailable => "secure random token generation is unavailable",
             Self::ListenerUnavailable => "the private loopback listener is unavailable",
-            Self::MainThreadUnavailable => {
-                "the native picker cannot reach the application main thread"
-            }
             Self::PickerUnavailable => "the native picker is unavailable",
             Self::UpdaterUnavailable => "the host updater is unavailable",
         };
@@ -594,22 +590,20 @@ fn select_path(
         }
     };
     let (sender, receiver) = mpsc::sync_channel(1);
-    let dispatch_handle = app_handle.clone();
-    app_handle
-        .run_on_main_thread(move || {
-            let respond = move |selection: Option<tauri_plugin_dialog::FilePath>| {
-                let path = selection
-                    .and_then(|file_path| file_path.into_path().ok())
-                    .map(|path| path.to_string_lossy().into_owned());
-                let _ = sender.send(path);
-            };
-            if pick_file {
-                dispatch_handle.dialog().file().pick_file(respond);
-            } else {
-                dispatch_handle.dialog().file().pick_folder(respond);
-            }
-        })
-        .map_err(|_| HostRpcServerError::MainThreadUnavailable)?;
+    let respond = move |selection: Option<tauri_plugin_dialog::FilePath>| {
+        let path = selection
+            .and_then(|file_path| file_path.into_path().ok())
+            .map(|path| path.to_string_lossy().into_owned());
+        let _ = sender.send(path);
+    };
+    // tauri-plugin-dialog already marshals its asynchronous picker onto Tauri's
+    // main thread. A second dispatch can be rejected before the plugin receives
+    // the request, turning a usable native dialog into a redacted 503.
+    if pick_file {
+        app_handle.dialog().file().pick_file(respond);
+    } else {
+        app_handle.dialog().file().pick_folder(respond);
+    }
     receiver
         .recv_timeout(PICKER_TIMEOUT)
         .map_err(|_| HostRpcServerError::PickerUnavailable)
