@@ -1127,7 +1127,7 @@ def test_settings_page_contract() -> None:
     assert "app.css?v=20260802-release-update-v1" in html
     assert "settings-actions.css?v=20260720-shutdown-monitor-choice" in html
     assert "common.js?v=20260729-main-macos-sync" in html
-    assert "page-settings.js?v=20260803-external-monitor-guard" in html
+    assert "page-settings.js?v=20260901-windows-alpha-download" in html
     assert "/api/v1/settings/rename-invoice-files" in api_app
     assert '@app.get("/settings", response_class=HTMLResponse)' in api_app
     assert 'render_page(request, "settings.html"' in api_app

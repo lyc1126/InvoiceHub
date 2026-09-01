@@ -19,6 +19,7 @@ from typing import Any
 DEFAULT_ROOT = Path(__file__).resolve().parents[2]
 VERSION_PATTERN = re.compile(r"\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?")
 MSVC_COMPONENT = "Microsoft.VisualStudio.Component.VC.Tools.x86.x64"
+WEBVIEW2_CLIENT_ID = "{F1E7E4F8-B7E8-4E9E-AEAE-7CA3E1D69CB7}"
 
 
 def _check(status: str, *, expected: str = "", actual: str = "", detail: str = "") -> dict[str, str]:
@@ -149,6 +150,32 @@ def _windows_sdk_check(root: Path) -> dict[str, str]:
     return _check("ok", actual=installation_path)
 
 
+def _webview2_runtime_check() -> dict[str, str]:
+    """Report the Evergreen WebView2 runtime without attempting installation."""
+
+    expected = "Microsoft Edge WebView2 Runtime"
+    try:
+        import winreg
+    except ImportError:
+        return _check("missing", expected=expected, detail="Windows registry access is unavailable")
+
+    locations = (
+        (winreg.HKEY_CURRENT_USER, rf"SOFTWARE\Microsoft\EdgeUpdate\Clients\{WEBVIEW2_CLIENT_ID}"),
+        (winreg.HKEY_LOCAL_MACHINE, rf"SOFTWARE\Microsoft\EdgeUpdate\Clients\{WEBVIEW2_CLIENT_ID}"),
+        (winreg.HKEY_LOCAL_MACHINE, rf"SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{WEBVIEW2_CLIENT_ID}"),
+    )
+    for hive, key in locations:
+        try:
+            with winreg.OpenKey(hive, key) as handle:
+                version, _ = winreg.QueryValueEx(handle, "pv")
+        except OSError:
+            continue
+        actual = str(version).strip()
+        if VERSION_PATTERN.fullmatch(actual):
+            return _check("ok", actual=actual)
+    return _check("missing", expected=expected, detail="Evergreen WebView2 Runtime is not registered")
+
+
 def _version_sync_check(root: Path) -> dict[str, str]:
     script = Path(__file__).with_name("tauri_version_sync.py")
     completed = subprocess.run(
@@ -204,6 +231,7 @@ def evaluate(root: Path) -> dict[str, Any]:
         checks["platform_target"] = _check(target_status, expected="arm64", actual=machine)
     elif system.startswith("win"):
         checks["platform_sdk"] = _windows_sdk_check(root)
+        checks["webview2_runtime"] = _webview2_runtime_check()
         target_status = "ok" if machine in {"amd64", "x86_64"} else "unsupported"
         checks["platform_target"] = _check(target_status, expected="x86_64", actual=machine)
     else:

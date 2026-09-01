@@ -23,6 +23,10 @@ from invoice_hub.release.update_metadata import (
     api_contract_date,
     validate_update_feed,
 )
+from invoice_hub.release.windows_alpha_metadata import (
+    WINDOWS_ALPHA_FEED_SCOPE,
+    validate_windows_alpha_feed,
+)
 from invoice_hub.storage import atomic_write_json, read_json_object
 from invoice_hub.version import API_CONTRACT_VERSION, PRODUCT_VERSION, UPDATE_FEED_URL
 
@@ -505,11 +509,22 @@ class UpdateService:
 
     def _evaluate_feed(self, feed: object, checked_at: str) -> dict:
         try:
-            normalized = validate_update_feed(
-                feed,
-                allowed_hosts=self.allowed_hosts,
-                url_validator=_validate_https_url,
-            )
+            if isinstance(feed, dict) and "scope" in feed:
+                if feed.get("scope") != WINDOWS_ALPHA_FEED_SCOPE:
+                    raise UpdateMetadataError("UPDATE_FEED_INVALID", "更新元数据 scope 无效")
+                normalized = validate_windows_alpha_feed(
+                    feed,
+                    allowed_hosts=self.allowed_hosts,
+                    url_validator=_validate_https_url,
+                )
+            else:
+                # Keep the complete dual-platform finalizer unchanged. The
+                # narrow alpha schema is opt-in through its explicit scope.
+                normalized = validate_update_feed(
+                    feed,
+                    allowed_hosts=self.allowed_hosts,
+                    url_validator=_validate_https_url,
+                )
         except UpdateMetadataError as exc:
             raise UpdateCheckError(exc.code, str(exc)) from exc
         latest_text = normalized["latest_version"]
@@ -529,10 +544,28 @@ class UpdateService:
                 "message": "当前平台或包类型不支持自动更新检查",
             }
         artifacts = normalized["artifacts"]
-        artifact = artifacts[artifact_key]
+        artifact = artifacts.get(artifact_key)
+        if not isinstance(artifact, dict):
+            # A Windows-only alpha Feed is intentionally not a macOS Feed.
+            # Treat the absent platform asset as unsupported rather than
+            # leaking a KeyError through the update check.
+            return {
+                **self._idle_state(),
+                "ok": False,
+                "status": "unsupported",
+                "checked_at": checked_at,
+                "latest_version": latest_text,
+                "published_at": normalized["published_at"],
+                "minimum_api_contract": minimum_contract,
+                "current_api_contract": API_CONTRACT_VERSION,
+                "release_notes_url": release_notes_url,
+                "message": "当前平台或包类型暂不支持此更新发布",
+            }
         sparkle_artifact = None
         if str(self.package_manifest.get("platform")) == "macos":
-            sparkle_artifact = artifacts["macos-arm64-sparkle"]
+            candidate = artifacts.get("macos-arm64-sparkle")
+            if isinstance(candidate, dict):
+                sparkle_artifact = candidate
 
         if api_contract_date(minimum_contract) > api_contract_date(API_CONTRACT_VERSION):
             return {

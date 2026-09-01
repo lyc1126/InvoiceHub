@@ -1923,8 +1923,11 @@ app.connectEvents(settingsRefs.eventState, () => loadSettings("event"), { refres
 
     const platform = String(packageInfo?.platform || "");
     if (refs.downloadLink) {
-      refs.downloadLink.hidden = !(available && platform === "windows" && artifact?.url);
-      refs.downloadLink.href = safeExternalHref(artifact?.url);
+      // Portable Windows releases are manually installed from a new ZIP. Link
+      // to the prerelease page, never directly to an asset or installer flow.
+      const releasePage = safeExternalHref(update?.release_notes_url);
+      refs.downloadLink.hidden = !(available && platform === "windows" && releasePage !== "#");
+      refs.downloadLink.href = releasePage;
     }
     if (refs.installBtn) refs.installBtn.hidden = !(available && platform === "macos");
   }

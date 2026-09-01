@@ -1,11 +1,11 @@
 # IMPLEMENTATION_STATUS
 
-更新时间：2026-08-20
+更新时间：2026-09-01
 
 ## 公开基线
 
 - 本仓库已将单一、脱敏的根提交发布为公开 `main`。旧的私有提交图、验证记录、二进制包和 Tag 只保留在 owner-only 私有归档中，不属于公开历史，也不会作为 Release 资产上传。
-- 首个公开开发版本为 `0.3.0-alpha.1`；`codex/tauri2-unified-desktop` 已从公开 `main` 建立。任何公开二进制都必须从脱敏图上的新版本、新 Tag 和新发布证据构建。
+- 当前公开开发源码版本为 `0.3.0-alpha.2`；它仍未创建公开 Tag、Release 或 Feed。任何公开二进制都必须从脱敏图上的新版本、新 Tag 和新发布证据构建。
 - 历史净化的范围、私有备份和已完成的公开门槛见 [执行记录](docs/release/HISTORY_SANITIZATION_EXECUTION.md)。公开仓库已启用 DCO、Dependabot、Secret Scanning、Push Protection 和私密漏洞报告；仍未创建 Release 或更新 Feed。
 
 ## 保留的产品边界
@@ -26,7 +26,7 @@
 
 - 使用 Tauri 2 负责窗口、托盘、单实例、原生面板、打印、后端生命周期、受限 Host RPC 和 updater。
 - 固定 localhost 为 `127.0.0.1:8766`；未知占用明确失败，不能换端口或接入未知旧进程。
-- 首版目标是 Windows 10/11 x64 NSIS 与 macOS 13+ arm64 DMG/更新归档。Intel Mac、Windows ARM64、MSI、App Store、云端和增量更新不在首版范围。
+- 当前 alpha.2 交付目标是 Windows 10/11 x64 无签名 Tauri 2 便携 ZIP；不生成 MSI、NSIS、自动安装或覆盖更新。macOS 的既有 internal-alpha 只保留历史评审证据，macOS 正式 DMG/更新归档另行验收。Intel Mac、Windows ARM64、App Store、云端和增量更新不在当前范围。
 - 更新签名验证、下载、安装前 monitor 停止与重启仍是未来 host recovery/relaunch coordinator 的责任；当前 `update_install` 故意清除候选并返回不可用，不会下载、停止 monitor、安装或重启。
 
 ## Tauri 2 生命周期边界与开发 `.app`
@@ -42,19 +42,20 @@
 - P1-R 接管复核已通过锁定 Rust 格式、16 项 library、6 项 lifecycle integration、desktop binary check、版本同步、聚焦 Python contracts、`compileall` 与 diff whitespace 门禁，Rust 编译无 warning。复核删除了 fail-closed 后不再可达的 monitor-stop/install-success 片段，没有用 dead-code allow 掩盖半实现。该结果只允许形成 DCO 开发提交并从 clean commit 重建一次 development `.app`，不扩大为真实 updater、安装器或平台发布证据。
 - P1-RR 进一步修复了两个先前未被代表样本覆盖的私有边界：Python Host RPC 对 private loopback listener 的 bearer 请求显式禁用 `HTTP_PROXY/http_proxy` 等环境代理；development state root 以整个 macOS `.app` 容器为 containment boundary，`Contents/state` 这类不在 `Resources` 内的 sibling 也 fail closed。16 项 Rust library、6 项 lifecycle integration 与 16 项 Host RPC Python contracts 通过；这只允许继续受控开发，不构成真实 native panel、updater、安装器或平台发布证据。
 - P1 setup cleanup：`BackendHost::launch` 后的 tray、desktop window 或 browser surface 初始化若失败，host 会在返回原始 setup error 前调用既有 `keep_monitor` shutdown，并在失败/超时时使用显式 `kill + wait`；无法确认 owned child 退出时 setup 保持阻塞并定期重试，child mutex 或 `try_wait` 错误也不得被当作 graceful exit，绝不把 cleanup error 交给 `Drop` 后退出。backend 与 `startup_surface` 只有在全部可失败初始化成功后才会 `app.manage`。该修复不改变当前 `update_install` 的 candidate-consuming fail-closed 语义，也不构成真实 updater、安装器或平台发布证据。
+- alpha.2 Windows Tauri ZIP 源码链已加入：`tauri_windows_portable.py` 从精确 clean commit 仅 stage allowlisted core 和锁定 Windows Python 3.14.6 runtime，以 release schema-3 host manifest 的原始 SHA-256 编译 raw x64 `InvoiceHub.exe`，再生成 ZIP、逐文件 SHA、SBOM、receipt、源码归档和 Mac 上传交接目录。release host 只接受 `windows_portable={distribution:"zip", updater_enabled:false}` 的窄例外，所有其他 release host 仍保持 updater 配置严格校验；用户运行态位于 `%LOCALAPPDATA%\\InvoiceHub`。Windows-only Feed 只含一个真实 ZIP、receipt 和源码身份，macOS 请求返回 `unsupported`，设置页的“前往下载”只打开 GitHub prerelease 页面。该链已通过源码契约，不等于已构建 ZIP 或完成原生窗口/托盘/选择器/monitor 验收。
 
 ## 发布与验证规则
 
 - `src/invoice_hub/version.py` 是版本、协议、通道、公开链接和 package ID 的单一真值。Cargo、Tauri 与 npm 版本只能由同步/校验脚本派生。
-- Windows x64 便携候选的默认源码入口已收缩为自动锁定当前 clean HEAD 的一次哈希锁 runtime 组装、静态验包和中文空格路径的正式根 BAT 启停烟测；自动化可显式传入 SHA。它生成 ZIP/文件 SHA、runtime/build/package manifest、SBOM、build receipt 和 smoke JSON。双 ZIP 比对、离线重建、隔离测试环境与 PS7/PS5.1 双覆盖保留为显式审计，不是默认交付门槛。该入口尚未在本轮 macOS 开发机执行，不能据此声称已有 Windows 产物或烟测证据。
+- alpha.2 Windows Tauri 便携入口以 PowerShell `tauri-windows-portable.ps1` 转发 Python builder；它要求精确 clean HEAD、锁定 Python 3.14.6 runtime、固定 Rust 1.85 MSVC host 和 WebView2 runtime。它生成 ZIP/文件 SHA、runtime/build/package manifest、SBOM、build receipt、源码归档和 `dist/handoff/v0.3.0-alpha.2/`，并在 handoff 前要求 `v0.3.0-alpha.2` 精确指向构建 commit。Windows doctor 只报告缺失的 WebView2，不静默安装。双 ZIP 比对、离线重建、隔离测试环境与 PS7/PS5.1 双覆盖保留为显式审计，不是默认交付门槛。
 - 每项实验必须先记录假设、会改变的决策、最小样本和停止条件。相同机制仅保留一个代表样本；每个 RC 最多一次完整回归。
 - 公开前已运行一次候选内容审计和一次保留 refs 全量审计。后续文档或仓库设置变更不刷新该审计；真实命中才隔离或替换，并按受影响机制复核。
 - 每个平台最终 RC 只做一次安装、启动、目录选择、托盘和更新烟测；修复后只重跑受影响类别。
 
 ## 尚未完成
 
-- development `.app` 烟测覆盖 schema-3 development assembly、固定端口 owned backend、health/background、首页/静态资源、desktop 默认值，以及一个真实 Cmd-Q 的结构化退出样本；internal-alpha 另完成了 App/DMG/receipt 独立 verifier 和一次隔离启动烟测。tray 点击、外部终止和其它平台退出机制没有因此获得同等结论。原生打印、原生 picker、browser/tray、真实单实例与错误端口、合法/篡改更新、真实下载/验签/monitor 停止、安装/重启和其余决策场景仍未在桌面运行环境验证；development/internal-alpha artifact 均不构成平台安装验证。
-- 公开 Release、GitHub Pages Feed、正式 Windows 签名、macOS Developer ID/公证和最终用户安装烟测均尚未进行。
+- development `.app` 烟测覆盖 schema-3 development assembly、固定端口 owned backend、health/background、首页/静态资源、desktop 默认值，以及一个真实 Cmd-Q 的结构化退出样本；internal-alpha 另完成了 App/DMG/receipt 独立 verifier 和一次隔离启动烟测。tray 点击、外部终止和其它平台退出机制没有因此获得同等结论。alpha.2 Windows Tauri ZIP 尚未完成 Rust/MSVC/SDK/WebView2 前置条件安装、raw host 编译、隔离中文空格路径桌面窗口、固定端口冲突、单实例、目录选择、monitor、tray Quit、无残留进程或只读公开 Feed 验收。
+- 公开 Tag、GitHub prerelease、GitHub Pages Feed、资产上传和最终用户 ZIP 烟测均尚未进行；alpha.2 不申请 Windows 签名、MSI 或 NSIS。
 - 真实业务做账迁移、审批、导出和外部账套操作必须在用户当回合明确授权后另行执行。
 
 ## 验证范围说明

@@ -35,4 +35,5 @@ Desktop.ini
 /src-tauri/gen/
 /src-tauri/.dev-staging/
 /src-tauri/.alpha-staging/
+/src-tauri/.windows-portable-staging/
 /src-tauri/target/

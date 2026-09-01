@@ -491,11 +491,13 @@ fn load_bundle_manifest_for_state(
         .and_then(Value::as_object)
         .ok_or(BackendError::BundleManifestInvalid)?;
     let expected_identity = identity_from_json(expected_fields, state_paths, profile)?;
+    let windows_portable_release =
+        windows_portable_release_marker(fields, &expected_identity, profile)?;
     let updater_fields = fields
         .get("updater")
         .and_then(Value::as_object)
         .ok_or(BackendError::BundleManifestInvalid)?;
-    let updater = updater_from_json(updater_fields, profile)?;
+    let updater = updater_from_json(updater_fields, profile, windows_portable_release)?;
     Ok(BackendBundleManifest {
         profile,
         program,
@@ -1097,9 +1099,41 @@ fn identity_from_json(
     })
 }
 
+fn windows_portable_release_marker(
+    fields: &Map<String, Value>,
+    identity: &ExpectedBackendIdentity,
+    profile: BundleProfile,
+) -> Result<bool, BackendError> {
+    let marker = fields.get("windows_portable");
+    if profile != BundleProfile::Release {
+        return if marker.is_none() {
+            Ok(false)
+        } else {
+            Err(BackendError::BundleManifestInvalid)
+        };
+    }
+    let Some(marker) = marker else {
+        return Ok(false);
+    };
+    let marker = marker
+        .as_object()
+        .ok_or(BackendError::BundleManifestInvalid)?;
+    let marker_valid = marker.len() == 2
+        && marker.get("distribution").and_then(Value::as_str) == Some("zip")
+        && marker.get("updater_enabled").and_then(Value::as_bool) == Some(false)
+        && identity.platform == "windows"
+        && identity.architecture == "x86_64"
+        && identity.package_type == "portable";
+    if !marker_valid {
+        return Err(BackendError::BundleManifestInvalid);
+    }
+    Ok(true)
+}
+
 fn updater_from_json(
     fields: &Map<String, Value>,
     profile: BundleProfile,
+    windows_portable_release: bool,
 ) -> Result<UpdaterBundleConfig, BackendError> {
     let enabled =
         required_bool(fields, "enabled").map_err(|_| BackendError::BundleManifestInvalid)?;
@@ -1111,7 +1145,14 @@ fn updater_from_json(
             || fields.contains_key("endpoint")
             || fields.contains_key("public_key")
         {
-            return Err(BackendError::BundleManifestInvalid);
+            if !(profile == BundleProfile::Release
+                && windows_portable_release
+                && fields.len() == 1
+                && !fields.contains_key("endpoint")
+                && !fields.contains_key("public_key"))
+            {
+                return Err(BackendError::BundleManifestInvalid);
+            }
         }
         return Ok(UpdaterBundleConfig {
             enabled: false,
@@ -1430,7 +1471,7 @@ fn thread_sleep_until(deadline: Instant) {
 #[cfg(test)]
 mod tests {
     use std::fs;
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use serde_json::{Map, Value};
@@ -1441,8 +1482,9 @@ mod tests {
         desktop_state_paths_for, fixed_backend_arguments, generate_ownership_challenge,
         generate_ownership_secret, identity_from_json, is_keep_monitor_shutdown_ack,
         ownership_response_for_test, ownership_response_matches, retry_probe,
-        revalidate_backend_after_preferences, state_paths_for_bundle_profile, BackendError,
-        BackendHealth, BundleProfile, DesktopStatePaths, DesktopStatePlatform, HandshakeError,
+        revalidate_backend_after_preferences, state_paths_for_bundle_profile, updater_from_json,
+        windows_portable_release_marker, BackendError, BackendHealth, BundleProfile,
+        DesktopStatePaths, DesktopStatePlatform, ExpectedBackendIdentity, HandshakeError,
     };
 
     fn health() -> BackendHealth {
@@ -1550,44 +1592,45 @@ mod tests {
 
     #[test]
     fn desktop_state_paths_are_derived_from_platform_user_roots() {
+        let windows_local_app_data = if cfg!(target_os = "windows") {
+            PathBuf::from(r"C:\\users\\example\\local-app-data")
+        } else {
+            PathBuf::from("/users/example/local-app-data")
+        };
         let windows = desktop_state_paths_for(
             DesktopStatePlatform::Windows,
-            Some(Path::new("/users/example/local-app-data")),
+            Some(&windows_local_app_data),
             None,
         )
         .expect("Windows state paths");
-        assert_eq!(
-            windows.root,
-            Path::new("/users/example/local-app-data/InvoiceHub")
-        );
+        assert_eq!(windows.root, windows_local_app_data.join("InvoiceHub"));
         assert_eq!(
             windows.config_path,
-            Path::new("/users/example/local-app-data/InvoiceHub/config/app.local.json")
+            windows_local_app_data.join("InvoiceHub/config/app.local.json")
         );
         assert_eq!(
             windows.runtime_dir,
-            Path::new("/users/example/local-app-data/InvoiceHub/runtime")
+            windows_local_app_data.join("InvoiceHub/runtime")
         );
 
-        let macos = desktop_state_paths_for(
-            DesktopStatePlatform::Macos,
-            None,
-            Some(Path::new("/Users/example")),
-        )
-        .expect("macOS state paths");
+        let macos_home = if cfg!(target_os = "windows") {
+            PathBuf::from(r"C:\\Users\\example")
+        } else {
+            PathBuf::from("/Users/example")
+        };
+        let macos = desktop_state_paths_for(DesktopStatePlatform::Macos, None, Some(&macos_home))
+            .expect("macOS state paths");
         assert_eq!(
             macos.root,
-            Path::new("/Users/example/Library/Application Support/InvoiceHub")
+            macos_home.join("Library/Application Support/InvoiceHub")
         );
         assert_eq!(
             macos.config_path,
-            Path::new(
-                "/Users/example/Library/Application Support/InvoiceHub/config/app.local.json"
-            )
+            macos_home.join("Library/Application Support/InvoiceHub/config/app.local.json")
         );
         assert_eq!(
             macos.runtime_dir,
-            Path::new("/Users/example/Library/Application Support/InvoiceHub/runtime")
+            macos_home.join("Library/Application Support/InvoiceHub/runtime")
         );
         assert!(matches!(
             desktop_state_paths_for(
@@ -1788,6 +1831,53 @@ mod tests {
         ));
         assert!(matches!(
             bundle_relative_directory(Path::new("/bundle"), "../escape"),
+            Err(BackendError::BundleManifestInvalid)
+        ));
+    }
+
+    #[test]
+    fn windows_portable_marker_is_the_only_release_updater_disabled_exception() {
+        let portable_identity = ExpectedBackendIdentity {
+            bundle_profile: BundleProfile::Release,
+            build_id: "a".repeat(64),
+            api_contract_version: "contract".to_owned(),
+            bookkeeping_protocol_version: "protocol".to_owned(),
+            capabilities: vec!["capability".to_owned()],
+            product_version: "0.3.0-alpha.2".to_owned(),
+            package_id: "com.invoicehub.windows.x86_64.portable".to_owned(),
+            platform: "windows".to_owned(),
+            architecture: "x86_64".to_owned(),
+            package_type: "portable".to_owned(),
+            config_path: "/config".into(),
+            runtime_dir: "/runtime".into(),
+        };
+        let fields = Map::from_iter([(
+            "windows_portable".to_owned(),
+            serde_json::json!({"distribution": "zip", "updater_enabled": false}),
+        )]);
+        let marker =
+            windows_portable_release_marker(&fields, &portable_identity, BundleProfile::Release)
+                .expect("valid Windows portable marker");
+        let updater = updater_from_json(
+            &Map::from_iter([("enabled".to_owned(), Value::Bool(false))]),
+            BundleProfile::Release,
+            marker,
+        )
+        .expect("release portable updater remains explicitly disabled");
+        assert!(!updater.enabled());
+
+        let mut wrong_platform = portable_identity.clone();
+        wrong_platform.platform = "macos".to_owned();
+        assert!(matches!(
+            windows_portable_release_marker(&fields, &wrong_platform, BundleProfile::Release),
+            Err(BackendError::BundleManifestInvalid)
+        ));
+        assert!(matches!(
+            updater_from_json(
+                &Map::from_iter([("enabled".to_owned(), Value::Bool(false))]),
+                BundleProfile::Release,
+                false,
+            ),
             Err(BackendError::BundleManifestInvalid)
         ));
     }

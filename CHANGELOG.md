@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- 2026-09-01 Windows Tauri 2 portable alpha.2: add the clean-commit Windows
+  x64 ZIP staging/build/handoff path, the hash-bound raw host manifest and
+  required controlled Windows ICO resource, an
+  explicit `updater_enabled=false` portable marker, package/SBOM/file-SHA and
+  receipt verification, and a strict one-artifact `scope: windows-only` alpha
+  Feed. The settings download action opens the prerelease page only; it does
+  not download, replace an existing directory, stop a monitor, or install an
+  update. The ZIP is intentionally unsigned and is not an MSI/NSIS artifact.
+  The Windows doctor now reports, but never installs, the Evergreen WebView2
+  prerequisite. This source change has not created a Tag, Release, Pages Feed,
+  or native Windows smoke evidence.
 - 2026-08-20 Windows portable release path: make the normal x64 portable
   handoff one locked runtime build, static package verification and one formal
   root-BAT smoke in a temporary Chinese-space path. The default command locks

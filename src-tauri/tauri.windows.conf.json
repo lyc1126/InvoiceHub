@@ -15,9 +15,6 @@
     }
   },
   "bundle": {
-    "active": false,
-    "macOS": {
-      "minimumSystemVersion": "13.0"
-    }
+    "active": false
   }
 }

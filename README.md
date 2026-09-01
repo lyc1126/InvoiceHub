@@ -6,7 +6,7 @@ English project name: `InvoiceHub`.
 
 公开仓库从经过审计的脱敏源码快照开始。旧私有提交图、验证材料、Tag 和二进制包均不属于公开历史，也不会作为公开 Release 上传。历史净化范围和发布门槛见[执行记录](docs/release/HISTORY_SANITIZATION_EXECUTION.md)。
 
-首个公开开发版本为 `0.3.0-alpha.1`。它将以 Tauri 2 实现统一桌面壳，复用既有 Python/FastAPI/Web/独立 monitor 和全部业务核心。Tauri 只处理窗口、托盘、单实例、原生面板、打印、后端生命周期、Host RPC 与 updater；安装包仅放 GitHub Releases，更新 Feed 从 `v0.3` 起由同仓库 GitHub Pages 托管。
+当前公开开发源码版本为 `0.3.0-alpha.2`。它以 Tauri 2 实现统一桌面壳，复用既有 Python/FastAPI/Web/独立 monitor 和全部业务核心。alpha.2 的交付物是 Windows 10/11 x64 无签名便携 ZIP：双击 `InvoiceHub.exe` 打开窗口，不生成 MSI/NSIS，不自动安装或覆盖更新。Tauri 只处理窗口、托盘、单实例、原生面板、打印、后端生命周期、Host RPC 与受限更新检查；安装资产仅放 GitHub Releases，Feed 从 `v0.3` 起由同仓库 GitHub Pages 托管。
 
 ## 单仓库与双平台成品
 
@@ -121,7 +121,7 @@ W8/W9 技术与产品能力已完成，但当前真实公司资料夹中的 7 �
 
 ## 开发者与 Agent 阅读路线
 
-开发实现的权威入口是 [`docs/DEVELOPMENT_ARCHITECTURE.md`](docs/DEVELOPMENT_ARCHITECTURE.md)。公开 `main` 已从单一脱敏根提交开始，不继承旧的私有提交、Tag 或 Release 身份；旧图仅保留在私有归档。当前没有公开 Release 或更新 Feed。`codex/tauri2-unified-desktop` 已从公开 `main` 建立并以 `0.3.0-alpha.1` 开始；版本同步、pnpm/Cargo lock、固定 localhost 合同、后端严格握手、私有 Host RPC，以及 handshake 后的 desktop/browser、托盘和单实例已完成受控验证。Host updater 目前只保留检查/preflight 边界：在完整 recovery/relaunch coordinator 出现前，`update_install` 会清除候选并返回不可用，不下载、不停 monitor、不安装或重启。裸源码 checkout 缺少经编译绑定 manifest 时仍以状态 `78` 失败；development assembler 已生成 schema-3 manifest 和显式 venv launcher，并从 clean source commit 构建本地 arm64 `.app`；internal-alpha 另已完成 arm64 `.app/.dmg` 的独立 verifier 与临时 state root 启动烟测。隔离样本验证了 fixed-port owned backend、health/background ready、首页/静态资源、`desktop_available=true`，以及真实 Cmd-Q 触发 shutdown POST、stopped state、host/backend/PID/端口清理；打开的 SSE 连接由既定 `kill + wait` 兜底收束。外部 AppleScript quit 仍可能绕过结构化关闭，且全过程未触碰用户 Application Support。development 与 internal-alpha profile 都不证明原生面板、browser/tray、单实例、真实更新、安装器、DMG/NSIS、签名/公证或平台发布烟测。完整顺序、实验和未覆盖项见 [Tauri 2 执行计划](docs/release/TAURI2_EXECUTION_PLAN.md)。共享核心与平台边界见[平台架构](docs/architecture/PLATFORM_ARCHITECTURE.md)，公开净化记录见[执行记录](docs/release/HISTORY_SANITIZATION_EXECUTION.md)。
+开发实现的权威入口是 [`docs/DEVELOPMENT_ARCHITECTURE.md`](docs/DEVELOPMENT_ARCHITECTURE.md)。公开 `main` 已从单一脱敏根提交开始，不继承旧的私有提交、Tag 或 Release 身份；旧图仅保留在私有归档。当前没有公开 Release 或更新 Feed。alpha.2 已加入 Windows Tauri ZIP 的 clean-commit staging、raw host hash binding、严格 ZIP/receipt/SBOM 验证和 Windows-only Feed 契约；它要求 Rust 1.85 MSVC、Visual Studio C++ Build Tools/Windows SDK 和 Evergreen WebView2 Runtime，doctor 只报告前置条件而不安装它们。发布前，ZIP 必须从精确 tagged commit 构建并在隔离中文空格路径验收；“检查更新/前往下载”只打开 GitHub prerelease 页，安装接口继续 fail-closed。macOS development/internal-alpha 配置仅保留历史证据，不是 alpha.2 的输入或 macOS 资产承诺。完整顺序、实验和未覆盖项见 [Tauri 2 执行计划](docs/release/TAURI2_EXECUTION_PLAN.md)。共享核心与平台边界见[平台架构](docs/architecture/PLATFORM_ARCHITECTURE.md)，公开净化记录见[执行记录](docs/release/HISTORY_SANITIZATION_EXECUTION.md)。
 
 接手工程或定位任务时按以下顺序阅读：
 

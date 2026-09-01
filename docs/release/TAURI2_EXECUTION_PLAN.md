@@ -600,6 +600,16 @@ this table.
 | Stop condition | Stop at the first staging, runtime, manifest, artifact, verifier, port, identity, state-containment, or cleanup failure. Do not retry with the real HOME, change the port, invoke updater/install, sign, notarize, upload, publish, or create a Release/Feed. |
 | Result (2026-08-19) | Passed. The App/DMG/receipt verifier passed with `core_build_id=9188334bf2d10a7a75d99b04683c946cd34139ba0061d64e20eb33e8c5c91f76`, `signature_mode=internal-adhoc`, `updater_enabled=false`, and `public_release=false`. The separate launch smoke reached `ready` on `127.0.0.1:8766`, matched package/build/source identity, left the real Application Support directory untouched, and terminated only its own process group. This is internal evidence, not a release or installation result. |
 
+### L11-W: Windows x64 unsigned portable ZIP alpha.2
+
+| Field | Record |
+| --- | --- |
+| Hypothesis | A clean, exact version 0.3.0-alpha.2 source commit can stage only the allowlisted Python/Web core and locked Python 3.14.6 Windows runtime, compile a raw x64 Tauri host bound to the staged schema-3 release manifest, and produce one unsigned ZIP with a file SHA manifest, runtime/package/build manifests, SBOM, license notices, receipt, source archive and Windows-only alpha Feed. The release host writes all user state below the Windows local application-data InvoiceHub directory, opens the desktop window by default, hides on close, keeps its updater disabled, and never installs or replaces an existing directory. |
+| Decision changed by result | Focused source-contract success permits one clean-commit Windows build and one isolated native ZIP smoke. A verified native pass permits the user-authorized merge, tag, push, prerelease handoff and Pages Feed publication sequence; any failure stops at the first demonstrated source, toolchain, build, identity, process, UI, picker, monitor, tray, Feed or artifact defect and confines repair to that category. |
+| Minimal sample | Validate version/lock/host-marker/Feed/package/SBOM/receipt contracts; run the locked Rust formatter and focused tests, Python focused and full regression, compileall, PowerShell parsing and diff whitespace checks; inspect the non-installing Windows doctor. From the clean tagged commit, stage and build one raw no-bundle x64 host, statically verify the ZIP and receipt, then extract once to a temporary Chinese-space path with isolated local application data. Exercise the desktop window, health/identity, occupied fixed-port failure, single instance, directory picker, monitor, tray Quit, no remaining owned process, and a read-only Feed check whose download action only opens the prerelease page. |
+| Stop condition | Stop at the first version, lock, compiler, runtime, manifest, ZIP, receipt, source archive, port, ownership, desktop, picker, monitor, tray, Feed, or cleanup failure. Do not substitute the legacy BAT portable package, an installer, an arbitrary port, a browser-only surface, a real updater installation, a monitor stop for install, a fake macOS asset, a signed claim, or a publication claim. Do not merge, tag, push, create a Release, upload assets, or publish Pages until local verification and exact clean-source identity both pass. |
+| Result | Pending. This record authorizes only the bounded source and Windows native validation sequence; it is not evidence of a built ZIP, Tag, GitHub Release, Pages Feed, updater installation, or completed platform release. |
+
 ## Fixed scope and validation
 
 - The backend binds only `127.0.0.1:8766`. An unknown listener is a clear
@@ -625,6 +635,7 @@ this table.
 - The five final decision scenarios are startup surface, single instance and
   wrong port, Host RPC authorization, valid/tampered update, and monitor stop
   before install. They are not claimed by the foundation step.
-- Windows 10/11 x64 NSIS and macOS 13+ arm64 DMG/update archives are the only
-  first-release targets. MSI, Windows ARM64, Intel macOS, App Store, and
-  GitHub Packages remain out of scope.
+- alpha.2 has one Windows 10/11 x64 unsigned Tauri portable ZIP target. It
+  does not create MSI, NSIS, a macOS placeholder, or an in-place updater.
+  Windows ARM64, Intel macOS, App Store, and GitHub Packages remain out of
+  scope.

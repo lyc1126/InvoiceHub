@@ -57,7 +57,7 @@ def _package(platform: str = "windows", package_type: str = "portable") -> dict:
     }
 
 
-def _feed(version: str = "0.3.0-alpha.2") -> dict:
+def _feed(version: str = "0.3.0-alpha.3") -> dict:
     release_root = f"https://github.com/lyc1126/InvoiceHub/releases"
     return {
         "schema_version": 1,
@@ -75,7 +75,7 @@ def _feed(version: str = "0.3.0-alpha.2") -> dict:
         },
         "artifacts": {
             "windows-x86_64-portable": {
-                "url": "https://github.com/lyc1126/InvoiceHub/releases/download/v0.3.0-alpha.2/InvoiceHub.zip",
+                "url": f"{release_root}/download/v{version}/InvoiceHub.zip",
                 "size_bytes": 123,
                 "sha256": SHA,
                 "package_id": WINDOWS_PACKAGE_ID,
@@ -83,7 +83,7 @@ def _feed(version: str = "0.3.0-alpha.2") -> dict:
                 "source_commit": SOURCE_COMMIT,
             },
             "macos-arm64-dmg": {
-                "url": "https://github.com/lyc1126/InvoiceHub/releases/download/v0.3.0-alpha.2/InvoiceHub.dmg",
+                "url": f"{release_root}/download/v{version}/InvoiceHub.dmg",
                 "size_bytes": 456,
                 "sha256": SHA,
                 "package_id": MACOS_DMG_PACKAGE_ID,
@@ -91,7 +91,7 @@ def _feed(version: str = "0.3.0-alpha.2") -> dict:
                 "source_commit": SOURCE_COMMIT,
             },
             "macos-arm64-sparkle": {
-                "url": "https://github.com/lyc1126/InvoiceHub/releases/download/v0.3.0-alpha.2/InvoiceHub.zip",
+                "url": f"{release_root}/download/v{version}/InvoiceHub.zip",
                 "size_bytes": 456,
                 "sha256": SHA,
                 "package_id": MACOS_SPARKLE_PACKAGE_ID,
@@ -122,7 +122,7 @@ def test_update_check_reports_available_and_reuses_etag_cache(tmp_path: Path) ->
     second = service.check(force=True)
 
     assert first["status"] == "available"
-    assert first["latest_version"] == "0.3.0-alpha.2"
+    assert first["latest_version"] == "0.3.0-alpha.3"
     assert first["artifact"]["size_bytes"] == 123
     assert calls[1]["If-None-Match"] == '"feed-v1"'
     assert "Cache-Control" not in calls[0]
@@ -538,7 +538,7 @@ def test_failed_check_preserves_last_good_etag_and_feed_for_recovery(tmp_path: P
     assert service.check(force=True)["status"] == "offline"
     cache = json.loads(cache_path.read_text(encoding="utf-8"))
     assert cache["etag"] == '"stable"'
-    assert cache["feed"]["latest_version"] == "0.3.0-alpha.2"
+    assert cache["feed"]["latest_version"] == "0.3.0-alpha.3"
     assert cache["last_success_result"]["status"] == "available"
     assert service.check(force=True)["status"] == "available"
 

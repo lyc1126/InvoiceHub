@@ -41,6 +41,7 @@ def _copy_foundation(tmp_path: Path) -> Path:
         "src/invoice_hub/version.py",
         "src-tauri/Cargo.toml",
         "src-tauri/tauri.conf.json",
+        "src-tauri/tauri.windows.conf.json",
         "package.json",
         "pnpm-lock.yaml",
         "rust-toolchain.toml",
@@ -219,7 +220,9 @@ def test_tauri_scaffold_is_fixed_to_the_expected_localhost_origin() -> None:
     cargo_config = tomllib.loads((ROOT / ".cargo" / "config.toml").read_text(encoding="utf-8"))
     lock = tomllib.loads((ROOT / "src-tauri/Cargo.lock").read_text(encoding="utf-8"))
     config = json.loads((ROOT / "src-tauri/tauri.conf.json").read_text(encoding="utf-8"))
+    windows_config = json.loads((ROOT / "src-tauri/tauri.windows.conf.json").read_text(encoding="utf-8"))
     icon = (ROOT / "src-tauri/icons/icon.png").read_bytes()
+    windows_icon = (ROOT / "src-tauri/icons/icon.ico").read_bytes()
     source = (ROOT / "src-tauri/src/main.rs").read_text(encoding="utf-8")
     contract = (ROOT / "src-tauri/src/lib.rs").read_text(encoding="utf-8")
     locked_packages = {
@@ -236,12 +239,17 @@ def test_tauri_scaffold_is_fixed_to_the_expected_localhost_origin() -> None:
     assert config["productName"] == PRODUCT_NAME
     assert config["version"] == PRODUCT_VERSION
     assert config["identifier"] == TAURI_BUNDLE_IDENTIFIER
+    assert windows_config["productName"] == PRODUCT_NAME
+    assert windows_config["version"] == PRODUCT_VERSION
+    assert windows_config["identifier"] == TAURI_BUNDLE_IDENTIFIER
     assert config["build"]["devUrl"] == "http://127.0.0.1:8766"
     assert config["bundle"]["active"] is False
+    assert windows_config["bundle"]["active"] is False
     assert config["bundle"]["macOS"]["minimumSystemVersion"] == "13.0"
     assert icon.startswith(b"\x89PNG\r\n\x1a\n")
     assert struct.unpack(">II", icon[16:24]) == (512, 512)
     assert icon[24:26] == b"\x08\x06"
+    assert windows_icon[:6] == b"\x00\x00\x01\x00\x07\x00"
     assert "load_bundle_manifest" in source
     assert "std::process::exit(78)" not in source
     assert "fn main() -> ExitCode" in source

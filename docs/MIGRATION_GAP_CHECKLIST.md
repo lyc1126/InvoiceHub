@@ -23,7 +23,7 @@
 - [x] 做账 W8/W9 的严格本地状态、预览/apply、服务端执行校验、批次 manifest 和 dry-run 边界。
 - [x] 现有 macOS SwiftUI/WKWebView 壳仅作为共享后端与原生桥接的参考实现。
 
-## `v0.3.0-alpha.1` Tauri 2 缺口
+## `v0.3.0-alpha.2` Tauri 2 缺口
 
 - [x] 建立 `src-tauri/` foundation、固定 `127.0.0.1:8766` 合同和由 `version.py` 派生的 Cargo/Tauri/npm 产品身份；host 已具备托盘、browser 启动路径、单实例恢复、close-to-hide 和 L6 host 委托 updater 边界。裸源码 checkout 继续在缺少编译绑定 manifest 时以状态 `78` 退出；development assembler 已生成并构建一个本地 arm64 `.app`，但不构成原生面板、打印、发布或平台验收声明。
 - [x] 锁定 pnpm 与 Tauri JavaScript 依赖，并提供不会自动安装 Rust、证书、Xcode 或 Visual Studio 的 Windows/macOS `doctor/bootstrap`。
@@ -36,11 +36,12 @@
 - [x] L8-S/L9：development profile 仅接受显式、已存在、绝对且 canonicalize 后与 bundle/core 及完整 macOS `.app` 容器双向不包含的 `INVOICE_HUB_DEV_STATE_ROOT`，`Contents` sibling 同样 fail-closed，release、缺失或相对覆盖 fail-closed，变量不传给 Python child；在隔离 state root 构建并启动一次 unsigned/ad-hoc macOS arm64 development `.app`。固定端口、health/background、首页/静态资源和 desktop 默认值通过；真实 Application Support 未被触碰。16-bit RGBA 图标导致的 tray 初始化失败已改为 8-bit RGBA，并有 IHDR 回归。
 - [x] P1-Q：clean-commit 外部 AppleScript quit 绕过 shutdown POST 并留下 `server_state=ready`，因此该外部路径仍不作有序退出承诺。修复后的自定义 macOS 应用菜单 Quit/Cmd-Q 与 tray 共用 `app.exit(0)` 且禁止 predefined Quit；隔离的 clean-commit 真实 Cmd-Q 样本已确认 shutdown POST 200、stopped state、monitor 未启动、host/backend/PID/端口清理，SSE 未及时退出时由显式 `kill + wait` 兜底。该结果允许推送开发分支并创建 Draft PR，但不覆盖 tray 点击、Force Quit、SIGKILL 或平台发布。
 - [x] P1 setup cleanup：BackendHost 启动后若 tray、desktop window 或 browser surface 初始化失败，host 在返回原始 setup error 前调用既有 keep-monitor shutdown，并在失败/超时时 kill+wait owned child；如果终止尚不可确认则 setup 保持阻塞并重试，child mutex 或 `try_wait` 错误也不算退出，绝不返回后依赖 Drop。只有成功初始化后才把 backend/surface 注册到 app state。该路径不依赖 `ExitRequested`，且不改变 updater fail-closed 语义。
+- [x] alpha.2 Windows Tauri portable 源码边界：从 clean exact commit stage allowlisted core/Windows Python 3.14.6 runtime，生成 hash-bound raw x64 host、release manifest、ZIP/文件 SHA、SBOM、receipt、源码归档、`dist/handoff` 和严格一个 Windows ZIP 的 `scope: windows-only` Feed；Windows portable marker 唯一允许 release host 显式 `updater_enabled=false`，Mac 不存在资产时返回 `unsupported`，下载动作只打开 prerelease 页面。该项仅覆盖源码和契约，不代表 native build、Tag、Release 或 Pages 已完成。
 
 ## 发布缺口
 
-- [x] 公开来源的 Windows x64 便携候选已有精简源码交付链：默认锁定当前 clean HEAD（自动化可显式 SHA）、哈希锁 runtime/manifest/SBOM/清单、一次静态验包和正式根 BAT 中文空格路径烟测；双组装、离线重建和隔离测试仍是可选审计。尚未在 Windows 真机运行，未生成公开资产或 Release。
-- [ ] Windows 10/11 x64 NSIS 安装器与新的公开构建/签名证据。
+- [ ] 从 `v0.3.0-alpha.2` 的 clean tagged commit 实际构建 Windows 10/11 x64 无签名 Tauri ZIP，并在隔离 `%LOCALAPPDATA%`、中文空格路径完成窗口、固定端口、单实例、选择器、monitor、tray Quit、进程清理和只读 Feed 烟测。
+- [ ] GitHub prerelease 资产、GitHub Pages `updates/alpha/latest.json` 与 Mac 上传交接；Feed 只能含真实 Windows ZIP、SHA、receipt、源码归档和 source/core 身份，不能伪造 macOS 资产。
 - [ ] macOS 13+ arm64 DMG、更新归档、Developer ID、Hardened Runtime、公证、staple、quarantine 与升级证据。
 - [ ] 同仓库 GitHub Pages 更新 Feed、真实资产签名、源码归档、SBOM、收据与最终 provenance 闭环。
 - [ ] 每个平台最终 RC 一次安装、启动、目录选择、托盘、合法/篡改更新与 monitor 停止烟测。

@@ -4,7 +4,7 @@
 
 公开仓库尚未发布二进制或更新 Feed。退休的预公开更新地址、包和 Tag 不兼容新的脱敏 Git 图，不能被迁移、重定向或作为升级来源。
 
-`v0.3` 才引入公开更新体系：安装包只放 GitHub Releases，同仓库 GitHub Pages 提供 Feed。Tauri L6 现只保留代码级 host 检查/preflight 边界；在完整 recovery/relaunch coordinator 出现前，`update_install` 会清除候选并返回不可用，绝不下载、停止 monitor、安装或重启。L9 已构建并隔离烟测一个 schema-3 macOS arm64 development `.app`；该 profile 明确禁用 updater delegation，因而该 app 没有形成真实更新、DMG/NSIS、签名资产或平台更新烟测。不得把现有检查接口、development app、该源码边界或 Swift/Sparkle 参考代码描述为已完成的发行更新器。
+`v0.3` 才引入公开更新体系：安装包只放 GitHub Releases，同仓库 GitHub Pages 提供 Feed。alpha.2 增加严格的 Windows-only alpha Feed：`scope=windows-only` 只允许一个真实 Windows x64 portable ZIP、其 receipt、源码归档和一致的 source commit/core build；它不是完整双平台 Feed/Appcast 的弱化版本。Windows About/设置可检查该 Feed，但“前往下载”只打开 GitHub prerelease 页面。Tauri L6 仍只保留代码级 host 检查/preflight 边界；在完整 recovery/relaunch coordinator 出现前，`update_install` 会清除候选并返回不可用，绝不下载、停止 monitor、安装或重启。alpha.2 ZIP 自身显式 `updater_enabled=false`，不生成 MSI/NSIS 或原地更新。尚未创建真实 Tag、Release 或 Pages Feed；不得把现有检查接口或任何 development/internal-alpha app 描述为已完成的发行更新器。
 
 ## 固定边界
 
@@ -19,9 +19,9 @@
 
 ## 发布元数据门槛
 
-`latest.json` 和平台元数据必须由同一工具从实际资产生成。每次发布都校验版本、URL、长度、SHA-256、签名、source tag、package ID、core build、源码归档、SBOM 和收据的一致性。
+`latest.json` 和平台元数据必须由同一工具从实际资产生成。alpha.2 的 Windows-only generator 必须校验 ZIP URL/大小/SHA、receipt SHA、source archive SHA、source tag/commit、package ID 和 core build 一致性，并严格拒绝 macOS 占位资产。完整双平台 Feed/Appcast 仍由原 metadata finalizer 校验版本、URL、长度、SHA-256、签名、source tag、package ID、core build、源码归档、SBOM 和收据的一致性。
 
-公开 Feed finalizer 必须从实际安装器、签名证据、收据和由固定 release Tag 导出的源码归档重新计算身份。任一平台资产、Tag、源码归档、收据、版本、source commit、core build、package ID、长度、SHA 或签名发生冲突时，阻断 Feed。
+公开 Feed finalizer 必须从实际资产、收据和由固定 release Tag 导出的源码归档重新计算身份。alpha.2 handoff 在写 `latest.json` 前要求 tag 与 ZIP source commit 完全相同；Mac 上传者只能在资产已可访问后创建 prerelease 并发布该 Feed。任一资产、Tag、源码归档、收据、版本、source commit、core build、package ID、长度、SHA 或签名发生冲突时，阻断 Feed。
 
 ## 验证范围
 

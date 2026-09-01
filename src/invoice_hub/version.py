@@ -5,8 +5,8 @@ from __future__ import annotations
 
 PRODUCT_NAME = "InvoiceHub"
 PRODUCT_DISPLAY_NAME = "一站式发票汇总系统"
-PRODUCT_VERSION = "0.3.0-alpha.1"
-PYTHON_PACKAGE_VERSION = "0.3.0a1"
+PRODUCT_VERSION = "0.3.0-alpha.2"
+PYTHON_PACKAGE_VERSION = "0.3.0a2"
 # Formal Windows and macOS artifacts embed exactly this runtime.  Development
 # source mode remains compatible with any supported 3.14 patch release.
 RELEASE_PYTHON_VERSION = "3.14.6"

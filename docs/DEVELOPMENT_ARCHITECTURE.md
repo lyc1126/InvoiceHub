@@ -1,10 +1,10 @@
 # InvoiceHub 开发架构与工程导航
 
 > 文档状态：当前开发实现的权威架构入口
-> 更新日期：2026-08-20
+> 更新日期：2026-09-01
 > 公共权威基线：经过审计的单一脱敏根提交；旧私有提交、Tag、二进制和验证材料不在公开图中
 > 公开状态：候选树、保留 Git 对象和托管面已完成一次内容与凭据审计；公开图从脱敏根提交开始，详见 `docs/release/HISTORY_SANITIZATION_EXECUTION.md`
-> 当前开发线：`codex/tauri2-unified-desktop` 已从公开 `main` 建立，首个版本为 `0.3.0-alpha.1`；Tauri 已完成受控 lock、代码级生命周期/Host RPC/updater contracts、隔离 TestClient L6 API runtime，并构建且隔离烟测一个 macOS arm64 development `.app`。随后在独立 `codex/tauri-macos-internal-alpha` 线上构建并验证了一个 internal-alpha arm64 `.app/.dmg`，另完成一次临时 state root 启动烟测；裸 checkout 仍缺经编译绑定 manifest 并 fail-closed；尚无 Release。
+> 当前开发线：`0.3.0-alpha.2` 已加入 Windows 10/11 x64 无签名 Tauri ZIP 的 clean-commit stage/build/verify/handoff 源码链、strict Windows-only Feed 和 release host marker；尚无 Tag、Release、Pages Feed 或 native Windows smoke。受控 lock、代码级生命周期/Host RPC/updater contracts、隔离 TestClient L6 API runtime，以及 macOS arm64 development/internal-alpha 历史样本仍保留；macOS 配置不是 alpha.2 的构建输入。裸 checkout 仍缺经编译绑定 manifest 并 fail-closed。
 > 校验规则：精确的本地与 GitHub HEAD 以实时 `git rev-parse`、`git ls-remote` 和双向差异为准；发行源码候选不等于双平台成品 RC 或 GitHub 已发布版本
 
 ## 1. 这套文档解决什么问题
@@ -210,7 +210,7 @@ flowchart LR
 | `services` | `AppState`、`MonitorBridge`、`SkinService`、`UpdateService` | 用例编排、并发锁、平台协调与受限更新检查 | HTTP 细节 |
 | `api` | `create_app` | HTTP、错误码、静态文件、SSE | 重复业务算法 |
 | `platform` | `pick_directory`、`open_local_path` | Windows Python 适配；macOS 原生适配在 Swift 壳 | 领域判断 |
-| `release` | `build_core`、三类 manifest、`provenance`、`update_metadata`、`sbom`、`source_snapshot` | 脱敏确定性包、身份/依赖证明、从真实产物/收据/Tag 派生的更新元数据与对应源码；公开 Feed 在 macOS 用 Tag 派生验证器复验实际成品 | 用户业务数据迁移或外部平台发布 |
+| `release` | `build_core`、三类 manifest、`verify_tauri_windows_portable`、`windows_alpha_metadata`、`provenance`、`update_metadata`、`sbom`、`source_snapshot` | 脱敏确定性包、身份/依赖证明，以及从真实 Windows ZIP/receipt/source archive 派生的 strict Windows-only alpha Feed；完整双平台 Feed 仍由原 finalizer 负责 | 用户业务数据迁移、原地更新或外部平台发布 |
 
 ## 8. 端到端主链
 
@@ -258,9 +258,9 @@ BAT/页面/monitor 触发
 | 架构债务 | 路径规范化在 `targets`、`monitoring`、成本和选择合计中有不同语境实现 | 不能仅凭函数同名就机械合并 |
 | 架构债务 | `base_head.html` 存在，但页面仍各自维护 head 和资源版本 | 静态资源变更必须逐模板核对版本参数 |
 | 架构债务 | 当前前端自动化主要是静态契约测试 | UI 改动仍需要真实浏览器/DOM 验收 |
-| 架构债务 | Windows 首版没有内置桌面 WebView 壳 | macOS development `.app` 的单次 L9 smoke 不改变这一事实；`startup_surface=desktop` 仍须在当前 Windows source/portable 路径 fail closed，不能让设置项暗示已实现 |
-| 当前实现 | Windows x64 portable 默认交付只做一次锁定 runtime 组装、静态验包与根 BAT 中文空格路径烟测 | ZIP/依赖锁/manifests/SBOM/清单/烟测 JSON 仍必须闭环；双 ZIP 比对、离线重建和独立测试环境是显式审计，尚无 Windows 真机产物或证据 |
-| 发布阻断 | Windows 与 macOS 正式脚本已实现但真机/签名证据未齐 | 自动化通过不等于 ZIP/DMG 已放行，必须分别执行平台手册 |
+| 当前实现 | alpha.2 已有 Windows Tauri raw host 和无签名 ZIP 源码组装链 | release manifest 原始 SHA-256 绑定进 host；`windows_portable` 是 release updater disabled 的唯一例外；运行态位于 `%LOCALAPPDATA%\\InvoiceHub`，但仍无 Windows native 成品或证据 |
+| 当前实现 | Windows-only alpha Feed 与完整双平台 Feed 分开校验 | alpha Feed 只允许一个 Windows ZIP、receipt 和 source identity；macOS 不存在资产时返回 `unsupported`，下载页不执行安装 |
+| 发布阻断 | Rust 1.85 MSVC、C++ Build Tools/Windows SDK、WebView2 及 Windows native 验收尚未完成 | 自动化通过不等于 ZIP 已放行；必须从 exact tagged clean commit build，在隔离中文空格路径验证窗口、端口、单实例、picker、monitor、tray 和清理 |
 | 未启用能力 | OCR 页面和 API 保留候选文件入口 | core 包未内置正式本地 OCR，提取接口返回禁用状态 |
 | 当前实现 | SQLite 建有 `settings` 和 `cache` 表 | 当前主要业务消费者集中在 `tasks/events`，不能误称已有数据库主存储 |
 

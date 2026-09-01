@@ -87,10 +87,13 @@ TAURI_FOUNDATION_FILES = tuple(
         "scripts/dev/tauri-bootstrap.sh",
         "scripts/dev/tauri-doctor.ps1",
         "scripts/dev/tauri-bootstrap.ps1",
+        "scripts/dev/tauri-windows-portable.ps1",
+        "scripts/dev/tauri_windows_portable.py",
         "src-tauri/Cargo.toml",
         "src-tauri/Cargo.lock",
         "src-tauri/build.rs",
         "src-tauri/tauri.conf.json",
+        "src-tauri/tauri.windows.conf.json",
         "src-tauri/capabilities/no-webview-ipc.json",
         "src-tauri/src/lib.rs",
         "src-tauri/src/backend.rs",
@@ -99,11 +102,16 @@ TAURI_FOUNDATION_FILES = tuple(
         "src-tauri/tests/lifecycle_contract.rs",
         "src-tauri/boot/index.html",
         "src-tauri/icons/icon.png",
+        "src-tauri/icons/icon.ico",
         "src-tauri/README.md",
         "src/invoice_hub/platform/host_rpc.py",
         "tests/test_tauri_foundation.py",
         "tests/test_tauri_host_rpc.py",
         "tests/test_tauri_lifecycle_contract.py",
+        "tests/test_tauri_windows_portable.py",
+        "tests/test_windows_alpha_metadata.py",
+        "src/invoice_hub/release/verify_tauri_windows_portable.py",
+        "src/invoice_hub/release/windows_alpha_metadata.py",
     )
 )
 CURRENT_FACT_DOCS = (
@@ -331,7 +339,7 @@ def test_current_baselines_and_non_drifting_facts_are_explicit() -> None:
     for text in (entry, status):
         assert "main" in text
         assert "脱敏" in text
-        assert "0.3.0-alpha.1" in text
+        assert "0.3.0-alpha.2" in text
     assert "候选树、Git 对象和托管面验证已通过" in flows
     assert "验证通过前，仓库不得公开" not in flows
 

@@ -570,6 +570,23 @@ flowchart LR
 
 Windows 的精确 commit 源码快照必须在 `.gitattributes` 以 `text=auto` 固定自动识别的普通文本为 LF、保持二进制 `-text` 的前提下，以 `git -c core.autocrlf=false archive` 导出。发布契约必须先以 `core.autocrlf=true` 做全新 checkout 并要求无 tracked changes、二进制 blob/checkout 字节相同，再以 true/false 的实际 archive 复算 Core Build ID 并要求二进制字节与身份都一致；构建主机的 Git 配置不得改变发行身份或工作树清洁度。该隔离 checkout 契约必须同时兼容完整源仓库和 GitHub Actions 的浅源仓库；临时 fetch 应显式接受已知浅边界，不能通过要求 CI 拉取完整历史来掩盖测试夹具依赖。
 
+### 6.11.1 Windows Tauri portable alpha.2 组装与交接
+
+这条链与根 BAT 的 Python portable 包独立。`tauri_windows_portable.py stage` 从当前
+clean exact commit 用 `git -c core.autocrlf=false archive` 获取快照，只复制 allowlisted
+`src/invoice_hub`、`web`、结构性 runner/facts、Python 项目元数据和 Windows 3.14.6 lock；它
+不携带配置、发票、日志、runtime、测试或 macOS 内容。stage 生成 build/package/runtime
+manifest、SBOM 和 schema-3 `invoicehub-desktop-host.json`，后者的原始 SHA-256 在 raw
+`InvoiceHub.exe` 编译时作为 `INVOICE_HUB_BUNDLE_MANIFEST_SHA256` 注入。
+
+`build` 只执行 `pnpm exec tauri build --config src-tauri/tauri.windows.conf.json --no-bundle`，
+把 raw x64 PE 放入 ZIP 后生成逐文件 SHA、ZIP SHA 和 receipt。验包器从 ZIP 内容重新核对
+PE、manifest、runtime、SBOM、allowlist 与 receipt，且只接受
+`windows_portable={distribution:"zip",updater_enabled:false}` 和 `updater={enabled:false}`。
+`handoff` 必须重新确认 release tag 与 source commit 相同，才能输出
+`dist/handoff/v0.3.0-alpha.2/` 的 ZIP、SHA、receipt、SBOM、源码归档及 SHA、`latest.json`
+和 Mac 上传说明。此流程不签名、不创建 MSI/NSIS、不替换现有目录，也不写入用户状态。
+
 ### 6.12 macOS 壳启动、所有权与严格握手
 
 ```mermaid
@@ -630,7 +647,7 @@ sequenceDiagram
     end
 ```
 
-`v0.3` 起，自动检查只在有效发行 package manifest 且 `auto_check_updates=true` 时延迟执行；失败不会阻塞 localhost、扫描或汇总，也不会覆盖上次有效 ETag/feed/result。Tauri host 只将随机 Host RPC token 传给其直接启动的 Python backend，backend 启动时捕获并从 descendant 环境清除；token 不得进入网页、Tauri command/event、API 响应或日志，携带 token 的 private loopback transport 必须显式禁用环境代理。更新命令面只有 `update_check/update_install`，backend ownership 使用新 challenge 的 HMAC-SHA256，而不是发送 bearer proof 给端口监听者。网页不得获知 token，也不能把安装或原生能力变成任意 URL、路径或命令代理。`latest.json` 与平台更新元数据由同一工具从真实产物、收据、源码归档与固定 release Tag commit 的受控树生成，并通过版本、URL、长度、签名、source commit、tree SHA、文件数和 core build 一致性校验后才可上线。同一进程具备 Tauri host marker 与 private RPC 时，API、设置页和后台 timer 的 `check_for_updates` 调用都属于 strict delegated-install preflight；只有非 Tauri/非 host 检查不获取 `_host_update_lock` 并保留 `UpdateService.check` 的 cache/ETag/nonblocking-busy 语义。host 检查锁竞争时立即返回不持久化 busy 结果，不访问 metadata/candidate 且不清除既有 approval；install 锁竞争立即以脱敏 `HostRpcError` 失败，不消费 approval 或发送第二次 private RPC。host approval 必须在该 session 取得显式携带 `Cache-Control: no-cache`、不带 ETag 的 fresh allowed Feed `200` body 并重新验证，缓存、`304`、离线和错误不授予 approval。Host updater metadata builder 固定 5 秒总时限；listener loop 主动清除到期 candidate。当前 host 的 install 路径再清除候选并 fail closed，直到 recovery/relaunch coordinator 能在任何失败后恢复既有 monitor/进程状态。未来 coordinator 才可按下载+Minisign、monitor stop/recheck、安装/restart 顺序实施。
+`v0.3` 起，自动检查只在有效发行 package manifest 且 `auto_check_updates=true` 时延迟执行；失败不会阻塞 localhost、扫描或汇总，也不会覆盖上次有效 ETag/feed/result。alpha.2 允许一个显式 `scope=windows-only` Feed：它必须只含 `windows-x86_64-portable` ZIP、receipt、source archive 和一致的 source/core identity；完整双平台 Feed/Appcast validator 不接受这个窄 schema。Windows 请求可显示该 ZIP，macOS 缺少资产时返回 `unsupported`。设置“前往下载”只打开 `release_notes_url` 的 GitHub prerelease 页面，不能下载、替换目录、停止 monitor 或授权安装。Tauri host 只将随机 Host RPC token 传给其直接启动的 Python backend，backend 启动时捕获并从 descendant 环境清除；token 不得进入网页、Tauri command/event、API 响应或日志，携带 token 的 private loopback transport 必须显式禁用环境代理。更新命令面只有 `update_check/update_install`，backend ownership 使用新 challenge 的 HMAC-SHA256，而不是发送 bearer proof 给端口监听者。网页不得获知 token，也不能把安装或原生能力变成任意 URL、路径或命令代理。`latest.json` 与平台更新元数据由同一工具从真实产物、收据、源码归档与固定 release Tag commit 的受控树生成，并通过版本、URL、长度、签名、source commit、tree SHA、文件数和 core build 一致性校验后才可上线。同一进程具备 Tauri host marker 与 private RPC 时，API、设置页和后台 timer 的 `check_for_updates` 调用都属于 strict delegated-install preflight；只有非 Tauri/非 host 检查不获取 `_host_update_lock` 并保留 `UpdateService.check` 的 cache/ETag/nonblocking-busy 语义。host 检查锁竞争时立即返回不持久化 busy 结果，不访问 metadata/candidate 且不清除既有 approval；install 锁竞争立即以脱敏 `HostRpcError` 失败，不消费 approval 或发送第二次 private RPC。host approval 必须在该 session 取得显式携带 `Cache-Control: no-cache`、不带 ETag 的 fresh allowed Feed `200` body 并重新验证，缓存、`304`、离线和错误不授予 approval。Host updater metadata builder 固定 5 秒总时限；listener loop 主动清除到期 candidate。当前 host 的 install 路径再清除候选并 fail closed，直到 recovery/relaunch coordinator 能在任何失败后恢复既有 monitor/进程状态。未来 coordinator 才可按下载+Minisign、monitor stop/recheck、安装/restart 顺序实施。
 
 hosted check 的 lock-contended 分支在 busy 结果后直接返回，不能落入统一的 `updates.checked` 事件写入；这使响应不依赖 SQLite，其他检查与成功路径仍记录事件。
 

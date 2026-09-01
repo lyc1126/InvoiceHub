@@ -2,7 +2,7 @@
 
 > 作用：把自然语言任务转换成“先读哪里、从哪个符号开工、会影响什么、至少测什么”。
 > 公共权威基线：单一脱敏根提交；退休私有提交、Tag、包和验证材料不在公开图中。
-> 当前边界：候选树、Git 对象和托管面验证已完成；`v0.3.0-alpha.1` Tauri 2 开发分支已从公开 `main` 建立，版本/环境/Cargo lock 与代码级 lifecycle/Host RPC/updater 和隔离 TestClient L6 contract 已通过受控验证。裸 checkout 仍缺经编译绑定 manifest；development assembler 已构建并隔离烟测一个 macOS arm64 `.app`，internal-alpha 也已完成 arm64 App/DMG/receipt verifier 与隔离启动烟测，但尚无 Release。
+> 当前边界：候选树、Git 对象和托管面验证已完成；`v0.3.0-alpha.2` 已加入 Windows Tauri ZIP stage/build/verify/handoff、release marker 和 Windows-only Feed 契约。裸 checkout 仍缺经编译绑定 manifest；macOS development/internal-alpha 样本只保留历史证据。尚无 Tag、Release、Pages Feed 或 Windows native ZIP smoke。
 > 校验规则：精确的当前本地与 GitHub HEAD 以实时 Git 引用和双向差异为准。
 
 ## 1. 使用方法
@@ -171,11 +171,11 @@ flowchart TD
 | 导航项 | 内容 |
 |---|---|
 | 首先阅读 | 接口流程第 6.1、6.10 节；AGENTS Windows 与验收规则；`docs/MAC_WINDOWS_WORKFLOW.md` |
-| 首要入口 | 根四个 BAT、`scripts/windows/InvoiceHub.Windows.psm1`、启动/停止/monitor/设置迁移 PS1、`platform/windows.py`、`native_dialogs.py` |
+| 首要入口 | 根四个 BAT、`scripts/windows/InvoiceHub.Windows.psm1`、启动/停止/monitor/设置迁移 PS1、`platform/windows.py`、`native_dialogs.py`；Tauri ZIP 另读 `tauri-windows-portable.ps1`、`tauri_windows_portable.py` 与 `verify_tauri_windows_portable.py` |
 | 必须联动 | config/targets 路径、API 入口、package/build/runtime manifest、server PID/state/log、MonitorBridge、浏览器派发、Windows 锁和 portable 验包 |
 | 产物与消费者 | 用户双击入口、`.lnk`、localhost/monitor 进程、runtime 诊断文件、系统壳/选择器 |
 | 最低自动化 | Windows release contract、release/manifest/allowlist 测试与 `compileall`；默认便携交付只需一次 static package verify，双构建、离线重建和隔离测试环境属于显式审计 |
-| 真实验收 | 默认便携交付：中文空格路径的正式根 BAT 启动、首页与 health、身份和正式停止；浏览器、原生选择器、monitor/stop-all、并发、stale state 和外部占端口仍按相关改动另行验收 |
+| 真实验收 | Tauri ZIP：隔离 `%LOCALAPPDATA%`、中文空格路径的 `InvoiceHub.exe` 窗口/health/identity、固定端口冲突、单实例、目录选择、monitor、tray Quit 和无残留进程；遗留 BAT 交付仍按自己的根 BAT smoke 验收 |
 | 高风险提醒 | 含非 ASCII 且可能由 PS 5.1 执行的发布 PS1 必须 UTF-8 BOM；固定 Program Files 路径不存在不代表没有 PS7，必须继续解析 PATH/App Execution Alias；PS5.1 不得直接信任无 charset JSON 的 `.Content`，必须按原始 UTF-8 字节解码后继续严格身份检查；自动化 Python 测试不能替代成品 BAT；系统壳派发成功后不要重复开 URL |
 
 ## 12.1 macOS 壳、构建握手与原生桥接
@@ -197,7 +197,7 @@ flowchart TD
 | 首先阅读 | 历史净化执行记录；AGENTS 开源冻结/Tauri 规则；接口流程第 6.11 至 6.13 节 |
 | 首要入口 | `version.py`、`release/*`、`HISTORY_SANITIZATION_EXECUTION.md`、`.github` 治理配置；当前 `v0.3` 使用 `scripts/dev/tauri_version_sync.py`、`tauri_doctor.py`、`tauri_bootstrap.py`、`src-tauri/src/backend.rs` 和 `src-tauri/src/host_rpc.rs` |
 | 必须联动 | LICENSE/NOTICE/贡献与安全文档、README/状态/架构地图、依赖锁、公开仓库设置、Release 元数据；Tauri lifecycle/updater 改动再联动 `api/app.py` 的 install body/error/origin、`AppState` metadata approval、`platform/host_rpc.py`、monitor 子进程环境、Web consumers 与 Host RPC contracts |
-| 产物与消费者 | 新的 `v0.3` 才产生 NSIS、DMG/更新归档、Feed、源码归档、SBOM 和发布收据 |
+| 产物与消费者 | alpha.2 产生一个 Windows x64 unsigned Tauri ZIP、SHA、receipt、SBOM、源码归档、strict Windows-only Feed 和 Mac 上传交接；不产生 MSI/NSIS 或 macOS 占位资产 |
 | 最低自动化 | 公开基线运行文档/许可证、候选内容和 all-ref secret/业务数据扫描；foundation 先跑版本同步、doctor fail-closed 与 pnpm lock 测试；lifecycle/updater 变更再跑 isolated Rust HMAC/identity/OpenAPI/post-preference revalidation/RPC revocation、manifest hash、candidate 主动 TTL/order、`.app/Contents` sibling state-root rejection、macOS custom menu/Cmd-Q 共用 `app.exit(0)` 且拒绝 predefined Quit，以及 Python host-RPC direct no-proxy transport、hosted strict `Cache-Control: no-cache` fresh-200/cache-ETag-304 rejection、host-check immediate-busy/approval-retention、non-host check bypass、install-lock immediate-error/approval-retention/no-second-RPC、empty-install-body/redacted-error TestClient contracts，每个 RC 最多一次完整回归 |
 | 真实验收 | `v0.3` 每平台最终 RC 一次安装、启动、目录选择、托盘与更新烟测，失败后仅重跑受影响类别 |
 | 高风险提醒 | 退休预公开包、receipt 和 Tag 不得重打、复用或上传。已完成的历史净化不授权创建 Release、Feed 或 Tauri 线，它们仍须满足各自门槛。每项实验先写假设、决策、最小样本和停止条件；相同失败机制只取一个代表样本。Tauri 不重写业务核心，未知 `127.0.0.1:8766` 占用必须失败；owner proof 只可用 backend-private secret 加 fresh HMAC challenge，读取 preference 后必须再次复核才 arm，绝不可发送 bearer proof 给候选监听者；Host RPC token 只可由 host 传给直接启动的 backend，backend 捕获后必须从 descendant 环境清除，且不得暴露网页/API/日志，携带 token 的 Python loopback transport 必须禁用环境代理，picker timeout/error 不得泄露 host 细节。development state root 还必须与完整 `.app` 容器双向隔离，不能仅比较 `Contents/Resources`。同一进程具备 Tauri marker 与 private RPC 时，所有公开检查均为 strict install preflight；只有非 host 检查保留 cache/ETag/busy 路径。更新 approval 必须来自同一 session 内显式携带 `Cache-Control: no-cache` 的 fresh allowlisted Feed `200` body，cache/ETag/`304` 不可授权；检查锁竞争不得碰 metadata/candidate/既有 approval，安装锁竞争不得消费 approval 或发第二次 RPC；候选最多 300 秒并由 listener 主动清除。当前 install 只清除候选并 fail closed；完整 recovery/relaunch coordinator 实现后才可按下载+Minisign、停止并复核 monitor、安装/重启和失败恢复的顺序执行。 |
@@ -209,9 +209,9 @@ flowchart TD
 | 导航项 | 内容 |
 |---|---|
 | 首先阅读 | 发行计划、接口流程第 3.1/6.13 节；`docs/release/UPDATE_SYSTEM.md` |
-| 首要入口 | `services/update_service.py`、`services/app_state.py::check_for_updates/install_update`、`release/update_metadata.py`、`version.py`、`platform/host_rpc.py`、设置 About 模板/JS/CSS；`v0.3` 增加 Tauri updater 与 Host RPC adapter |
+| 首要入口 | `services/update_service.py`、`services/app_state.py::check_for_updates/install_update`、`release/update_metadata.py`、`windows_alpha_metadata.py`、`version.py`、`platform/host_rpc.py`、设置 About 模板/JS/CSS；alpha.2 增加 Tauri Windows-only Feed adapter |
 | 必须联动 | package identity、preferences、启动后台 timer、事件、Feed、update install API 的 `{}` body/error、manifest hash、monitor lifecycle 和 Host RPC authorization |
-| 产物与消费者 | `v0.3` 生成 GitHub Pages Feed、签名更新资产和 Tauri 安装器 |
+| 产物与消费者 | alpha.2 生成 `updates/alpha/latest.json` 的 strict Windows-only Feed；About/设置只读取并跳转 GitHub prerelease，安装 API 继续 fail-closed |
 | 最低自动化 | 当前先覆盖 hosted fresh Feed `200` approval 与 cache/ETag/`304` rejection、host-check immediate-busy/approval-retention、non-host check bypass、install-lock immediate-error/approval-retention/no-second-RPC、candidate 主动过期/一次性清除、fail-closed install、空 install body/脱敏 503、自定义应用菜单/Cmd-Q 与 tray 共用 `app.exit(0)`、收到的 `ExitRequested` keep-monitor shutdown，以及 state-root/provenance 门禁；下载验签、monitor stop/recheck、安装/restart 只在 recovery/relaunch coordinator 实现后进入同一专题的最小测试 |
 | 真实验收 | 每平台对安装、取消、停止失败与成功重启进行一次最终 RC 烟测 |
 | 高风险提醒 | GET About 不联网，token 只在 host 与其直接启动的 backend 私有通道中传递，绝不进入网页/API/日志或 descendant 环境，也不能成为任意 URL/路径/命令代理。同一进程具备 Tauri marker 与 private RPC 时，`POST /api/v1/update/check`、设置页和后台检查都必须走 strict preflight；只有非 host 检查不得被 host lifecycle 锁排队。host approval 锁竞争必须立即返回非持久化 busy，且不碰 metadata/candidate/既有 approval；install 锁竞争必须立即失败且不消费 approval 或发第二次 RPC。`POST /api/v1/update/install` 只接受 `{}`，且只由 fresh Feed `200` 与版本精确匹配的进程内 approval 委托 host。当前 host 取得请求后清除候选并返回不可用；未来 coordinator 才能先下载+Minisign 验签，再 stop/recheck monitor、安装并在失败时恢复。 |

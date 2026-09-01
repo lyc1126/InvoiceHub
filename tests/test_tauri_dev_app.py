@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+import os
 import shutil
 import stat
 import sys
@@ -48,9 +49,14 @@ def _copy_source_tree(tmp_path: Path) -> Path:
 
 def _venv_python(tmp_path: Path) -> Path:
     venv = tmp_path / "tools" / ".venv"
-    executable = venv / "bin/python"
+    executable = venv / "bin" / ("python.exe" if os.name == "nt" else "python")
     executable.parent.mkdir(parents=True)
-    (venv / "pyvenv.cfg").write_text("home = test\n", encoding="utf-8")
+    (venv / "pyvenv.cfg").write_text(f"home = {sys.base_prefix}\n", encoding="utf-8")
+    if os.name == "nt":
+        shutil.copy2(sys.executable, executable)
+        for runtime_dll in Path(sys.executable).parent.glob("*.dll"):
+            shutil.copy2(runtime_dll, executable.parent / runtime_dll.name)
+        return executable
     try:
         executable.symlink_to(Path(sys.executable))
     except OSError:
