@@ -144,7 +144,10 @@ def _validate_member(path: PurePosixPath, *, is_directory: bool) -> None:
 def _scan_member(name: str, content: bytes) -> None:
     if name.casefold().endswith((".exe", ".dll", ".pyd")):
         return
-    scope = "dependency" if name.casefold().startswith("python/lib/site-packages/") else "project"
+    # The staged Python Lib tree is the locked CPython runtime, not project
+    # source. Standard-library examples legitimately contain password-shaped
+    # assignments, but high-confidence tokens and private keys remain fatal.
+    scope = "dependency" if name.casefold().startswith("python/lib/") else "project"
     try:
         scan_release_text(name, content, scope=scope)
     except ReleaseContentError as exc:

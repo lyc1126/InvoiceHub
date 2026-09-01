@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- 2026-09-01 Windows Tauri portable CPython scan boundary: the second clean
+  assembly stopped before a valid ZIP, receipt, or SHA when the artifact
+  verifier treated the locked CPython `python/Lib/getpass.py` password example
+  as project source. The controlled `python/Lib/**` runtime is now scanned as
+  a dependency: upstream provenance and password-shaped examples are allowed,
+  while GitHub tokens and private keys remain fatal. A ZIP-level regression
+  covers both outcomes.
 - 2026-09-01 Windows Tauri portable runtime cache guard: the first clean
   assembly correctly stopped before a valid ZIP, receipt, or SHA was emitted
   when a diagnostic wrote

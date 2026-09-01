@@ -271,7 +271,7 @@
 | `src/invoice_hub/release/dependency_lock.py` | 解析并验证平台哈希锁及 package/version。 | runtime 准备、SBOM、发行身份测试使用。 |
 | `src/invoice_hub/release/runtime_manifest.py` | 绑定 runtime 树、Python、平台/架构、锁和 import probe；规范 Windows 产品 runtime。 | Windows 安装后删除顶层 `Scripts` 并以 CSV 规则同步 RECORD，裁剪 bytecode 与五个 CPython 标准库 shell helper；所有 probe 使用 `-B`，未知 shell script fail closed；Windows/Mac 构建及成品验证共同使用其余清单能力。 |
 | `src/invoice_hub/release/package_manifest.py` | 绑定成品版本、平台、架构、包型、锁、Feed、source/core identity。 | health、启动器、About、更新服务与验包使用。 |
-| `src/invoice_hub/release/content_scan.py` | 分作用域扫描成品/源码中的秘密和本机绝对路径。 | 自有源码/core 使用严格规则；仅哈希锁定的依赖目录允许上游构建 provenance 路径，私钥和高置信 token 始终阻断。 |
+| `src/invoice_hub/release/content_scan.py` | 分作用域扫描成品/源码中的秘密和本机绝对路径。 | 自有源码/core 使用严格规则；受锁依赖目录与 Windows `python/Lib/**` 允许上游构建 provenance/password-shaped 示例，私钥和高置信 token 始终阻断。 |
 | `src/invoice_hub/release/sbom.py` | 从哈希锁生成确定性 CycloneDX 1.6 SBOM。 | 双平台成品和验证器核对 lock identity。 |
 | `src/invoice_hub/release/settings_migration.py` | 新旧 Windows 包之间的配置/偏好白名单迁移与备份。 | 不复制日志、PID、SQLite、cache、皮肤或业务文件。 |
 | `src/invoice_hub/release/source_snapshot.py` | 从精确 clean commit 生成确定性对应源码 tar.gz，并从 tag commit 重建受控树身份。 | `git archive` 忽略 checkout 工作树；过滤本机配置/秘密/特殊文件，重算 tree SHA、文件数与 core build。 |
@@ -279,7 +279,7 @@
 | `src/invoice_hub/release/update_metadata.py` | latest.json、Sparkle appcast 的同源生成、严格验证与 parity 门禁。 | 只允许 `generate_release_metadata` 先消费已验证 provenance 再写入；绑定三平台产物、对应源码、EdDSA、source commit 与 core build。 |
 | `src/invoice_hub/release/windows_alpha_metadata.py` | alpha.2 strict Windows-only Feed 生成与验证。 | 只接受一个 Windows x64 ZIP、receipt、源码归档与相同 source/core identity；公开 URL 只指向 prerelease/资产，不能带 macOS 占位或安装 payload。 |
 | `src/invoice_hub/release/verify_portable.py` | Windows portable 精确路径白名单、反向 macOS/Python 非产品内容拒绝、身份、秘密、锁与 SBOM 验证。 | 大小写不敏感地拒绝 `python/Doc` 与 `python/Scripts`；PowerShell 验包脚本调用，不替代真实 Windows GUI/BAT。 |
-| `src/invoice_hub/release/verify_tauri_windows_portable.py` | alpha.2 Tauri raw-host ZIP、host manifest、PE x64、SBOM、runtime、file-SHA 与 receipt verifier。 | 以 ZIP 内容而非 receipt 自述为真值；拒绝 macOS、用户状态、项目测试、非产品 runtime、启用 updater 或任意不在 allowlist 的成员。 |
+| `src/invoice_hub/release/verify_tauri_windows_portable.py` | alpha.2 Tauri raw-host ZIP、host manifest、PE x64、SBOM、runtime、file-SHA 与 receipt verifier。 | 以 ZIP 内容而非 receipt 自述为真值；自有 core 严格扫描，受锁 `python/Lib/**` 采用 dependency scope 但高置信 token/私钥仍阻断；拒绝 macOS、用户状态、项目测试、非产品 runtime、启用 updater 或任意不在 allowlist 的成员。 |
 
 ## 13.1 macOS SwiftUI 壳
 

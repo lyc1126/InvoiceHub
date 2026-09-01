@@ -114,7 +114,7 @@ hosted check 的 host-lock 竞争直接返回 busy，不调用 `append_event` �
 2. PowerShell 7 优先，5.1 后备；BAT 先验证固定 Program Files PS7，再从 `PATH`/Microsoft Store App Execution Alias 解析并验证 `pwsh.exe`，也可用 `INVOICE_HUB_FORCE_PS51=1` 强制 5.1 做兼容验收。共享模块准备运行态、验证三类 manifest/内置 Python、探测端口/PID、启动 Uvicorn 并派发浏览器；health 从原始响应流按 UTF-8 解码，避免 PS5.1 在无 charset JSON 上损坏中文路径后再执行严格身份比较。
 3. Web 页面通过 `/api/v1` 执行业务动作；Python/Tk 只提供原生选择器适配，不承载业务逻辑。
 4. monitor 由独立 Python daemon 运行；仅停止 localhost 的 BAT 不得停止 monitor，stop-all 才能同时停止。
-5. alpha.2 的 Tauri builder 从精确 clean tagged commit 的 Git 快照取 allowlisted core，绑定 Python 3.14.6 x64 runtime/依赖锁和 schema-3 host manifest 原始 SHA-256，编译 raw x64 `InvoiceHub.exe` 并生成无签名 ZIP、SBOM、逐文件 SHA、receipt、源码归档和 handoff。它拒绝 macOS、Swift、用户配置、发票、日志和 runtime 状态；`windows_portable={distribution:"zip",updater_enabled:false}` 是 release host 唯一允许禁用 updater 的 marker。真实发布还要在隔离 `%LOCALAPPDATA%` 和中文空格路径验证窗口、包内默认目录和包外目录切换。
+5. alpha.2 的 Tauri builder 从精确 clean tagged commit 的 Git 快照取 allowlisted core，绑定 Python 3.14.6 x64 runtime/依赖锁和 schema-3 host manifest 原始 SHA-256，编译 raw x64 `InvoiceHub.exe` 并生成无签名 ZIP、SBOM、逐文件 SHA、receipt、源码归档和 handoff。它拒绝 macOS、Swift、用户配置、发票、日志和 runtime 状态；自有 core 保持完整内容扫描，受锁 `python/Lib/**` 只以 dependency scope 放行 provenance/password-shaped 示例且 GitHub token/私钥仍阻断；`windows_portable={distribution:"zip",updater_enabled:false}` 是 release host 唯一允许禁用 updater 的 marker。真实发布还要在隔离 `%LOCALAPPDATA%` 和中文空格路径验证窗口、包内默认目录和包外目录切换。
 6. Windows 不在运行中的目录自替换。升级是“下载新 ZIP -> 新目录解压 -> 校验 -> 白名单导入设置 -> 从新目录启动”；源发票保持原位置，日志/PID/SQLite/cache/皮肤不跨版本复制。
 
 ### 4.1 Windows Tauri portable alpha.2

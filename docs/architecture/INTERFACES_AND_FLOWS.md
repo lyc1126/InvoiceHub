@@ -581,7 +581,9 @@ manifest、SBOM 和 schema-3 `invoicehub-desktop-host.json`，后者的原始 SH
 
 `build` 只执行 `pnpm exec tauri build --config src-tauri/tauri.windows.conf.json --no-bundle`，
 把 raw x64 PE 放入 ZIP 后生成逐文件 SHA、ZIP SHA 和 receipt。验包器从 ZIP 内容重新核对
-PE、manifest、runtime、SBOM、allowlist 与 receipt，且只接受
+PE、manifest、runtime、SBOM、allowlist 与 receipt；自有 core 继续接受完整秘密/本机路径扫描，
+受锁 `python/Lib/**` 只按 dependency scope 接受上游 provenance/password-shaped 示例且仍拒绝
+GitHub token/私钥；它只接受
 `windows_portable={distribution:"zip",updater_enabled:false}` 和 `updater={enabled:false}`。
 `handoff` 必须重新确认 release tag 与 source commit 相同，才能输出
 `dist/handoff/v0.3.0-alpha.2/` 的 ZIP、SHA、receipt、SBOM、源码归档及 SHA、`latest.json`

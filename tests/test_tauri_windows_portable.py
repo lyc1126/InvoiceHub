@@ -144,6 +144,21 @@ def _rewrite_archive(archive: Path, update: dict[str, bytes]) -> None:
     _write_archive(archive, files)
 
 
+def _refresh_runtime_archive(archive: Path, root: Path) -> None:
+    lock = root / CORE_DIRECTORY_NAME / "requirements/windows-x64-py314.lock"
+    write_runtime_manifest(
+        root / "python",
+        lock,
+        target_platform="windows",
+        architecture="x86_64",
+        python_version=RELEASE_PYTHON_VERSION,
+        python_executable="python.exe",
+        source="synthetic test runtime",
+        execute_probe=False,
+    )
+    _write_archive(archive, _archive_files(root))
+
+
 def test_tauri_windows_portable_verifier_accepts_hash_bound_unsigned_zip(tmp_path: Path) -> None:
     archive, _root = _valid_archive(tmp_path)
     verification = verify_tauri_windows_portable(archive, execute_runtime_probe=False)
@@ -197,6 +212,21 @@ def test_tauri_windows_portable_verifier_rejects_mac_placeholder_and_updater_ena
         {HOST_MANIFEST_NAME: (json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode("utf-8")},
     )
     with pytest.raises(TauriWindowsPortableVerificationError, match="updater disabled"):
+        verify_tauri_windows_portable(archive, execute_runtime_probe=False)
+
+
+def test_tauri_windows_portable_verifier_uses_dependency_scope_for_locked_cpython_lib(tmp_path: Path) -> None:
+    archive, root = _valid_archive(tmp_path)
+    getpass = root / "python/Lib/getpass.py"
+    getpass.parent.mkdir(parents=True, exist_ok=True)
+    getpass.write_text('password = "documented-example-value"\n', encoding="utf-8")
+    _refresh_runtime_archive(archive, root)
+
+    assert verify_tauri_windows_portable(archive, execute_runtime_probe=False)["ok"] is True
+
+    getpass.write_text('token = "ghp_abcdefghijklmnopqrstuvwxyz123456"\n', encoding="utf-8")
+    _refresh_runtime_archive(archive, root)
+    with pytest.raises(TauriWindowsPortableVerificationError, match="possible secret"):
         verify_tauri_windows_portable(archive, execute_runtime_probe=False)
 
 
