@@ -28,6 +28,7 @@
 - 固定 localhost 为 `127.0.0.1:8766`；未知占用明确失败，不能换端口或接入未知旧进程。
 - 当前 alpha.2 交付目标是 Windows 10/11 x64 无签名 Tauri 2 便携 ZIP；不生成 MSI、NSIS、自动安装或覆盖更新。macOS 的既有 internal-alpha 只保留历史评审证据，macOS 正式 DMG/更新归档另行验收。Intel Mac、Windows ARM64、App Store、云端和增量更新不在当前范围。
 - 更新签名验证、下载、安装前 monitor 停止与重启仍是未来 host recovery/relaunch coordinator 的责任；当前 `update_install` 故意清除候选并返回不可用，不会下载、停止 monitor、安装或重启。
+- 当前 alpha Feed 仍未发布。设置“检查更新”遇到固定 Feed 的 HTTP 404 时，源码将其表达为不持久化的 `UPDATE_FEED_UNAVAILABLE`，而不是“无法连接”；这让 Feed 以后发布后可直接重新检查。官网入口明确提示暂未提供，GitHub/更新日志只通过固定键交给系统默认浏览器打开，不能由页面提交任意 URL。
 
 ## Tauri 2 生命周期边界与开发 `.app`
 

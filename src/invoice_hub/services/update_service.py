@@ -28,13 +28,14 @@ from invoice_hub.release.windows_alpha_metadata import (
     validate_windows_alpha_feed,
 )
 from invoice_hub.storage import atomic_write_json, read_json_object
-from invoice_hub.version import API_CONTRACT_VERSION, PRODUCT_VERSION, UPDATE_FEED_URL
+from invoice_hub.version import API_CONTRACT_VERSION, PRODUCT_VERSION, UPDATE_CHANNEL, UPDATE_FEED_URL
 
 
 UPDATE_STATUSES = {"idle", "checking", "up_to_date", "available", "offline", "invalid", "unsupported"}
 UPDATE_ERROR_CODES = {
     "UPDATE_OFFLINE",
     "UPDATE_FEED_INVALID",
+    "UPDATE_FEED_UNAVAILABLE",
     "UPDATE_HOST_REJECTED",
     "UPDATE_ARTIFACT_NOT_FOUND",
     "UPDATE_VERSION_INVALID",
@@ -492,6 +493,24 @@ class UpdateService:
             "message": "更新检查正在进行，请稍后重试",
         }
 
+    def _unpublished_feed_result(self, checked_at: str) -> dict:
+        """Report a known missing Feed without persisting a stale failure."""
+
+        result = {
+            **self._idle_state(),
+            "ok": False,
+            "status": "unsupported",
+            "checked_at": checked_at,
+            "error_code": "UPDATE_FEED_UNAVAILABLE",
+            "message": (
+                f"当前 {UPDATE_CHANNEL} 版本的更新源尚未发布；"
+                "可通过 GitHub 或更新日志了解项目动态。"
+            ),
+        }
+        with self._lock:
+            self._state = result
+        return dict(result)
+
     def busy_result(self) -> dict:
         """Return the non-persistent concurrent-check result for orchestration callers."""
 
@@ -651,6 +670,10 @@ class UpdateService:
                         feed = json.loads(fetched.body.decode("utf-8"))
                     except (UnicodeError, json.JSONDecodeError) as exc:
                         raise UpdateCheckError("UPDATE_FEED_INVALID", "更新元数据不是有效 UTF-8 JSON") from exc
+                elif fetched.status_code == 404:
+                    # A published Feed can appear after this client ships. Do
+                    # not cache the absence; the next user check must retry it.
+                    return self._unpublished_feed_result(checked_at)
                 else:
                     raise UpdateCheckError("UPDATE_FEED_INVALID", f"更新源返回 HTTP {fetched.status_code}")
                 result = self._evaluate_feed(feed, checked_at)

@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- 2026-09-02 About links and unpublished Feed handling: Settings now treats a
+  fixed update-Feed HTTP 404 as `UPDATE_FEED_UNAVAILABLE` instead of a
+  connection failure, does not cache the missing Feed, and can therefore retry
+  it after publication. The unavailable official-website action gives local
+  guidance; GitHub and changelog actions use a same-origin, empty-body API
+  with fixed link keys and the operating-system browser shell, never a
+  browser-supplied URL.
 - 2026-09-02 Windows Tauri release console boundary: `InvoiceHub.exe` now
   builds as a Windows GUI-subsystem host in release mode, and its owned Python
   backend receives `CREATE_NO_WINDOW` with stdout/stderr redirected to the

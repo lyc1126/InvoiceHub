@@ -1127,10 +1127,17 @@ def test_settings_page_contract() -> None:
     assert "app.css?v=20260802-release-update-v1" in html
     assert "settings-actions.css?v=20260720-shutdown-monitor-choice" in html
     assert "common.js?v=20260729-main-macos-sync" in html
-    assert "page-settings.js?v=20260901-windows-alpha-download" in html
+    assert "page-settings.js?v=20260902-about-links" in html
     assert "/api/v1/settings/rename-invoice-files" in api_app
+    assert '@app.post("/api/v1/about/links/{link_key}")' in api_app
     assert '@app.get("/settings", response_class=HTMLResponse)' in api_app
     assert 'render_page(request, "settings.html"' in api_app
+    about_links = re.search(r'<div class="settings-action-row about-links">(?P<body>.*?)</div>', html, re.S)
+    assert about_links is not None
+    assert 'type="button">官方网站</button>' in about_links.group("body")
+    assert 'type="button">GitHub</button>' in about_links.group("body")
+    assert 'type="button">更新日志</button>' in about_links.group("body")
+    assert "target=" not in about_links.group("body")
 
     for endpoint in (
         "/api/v1/health",
@@ -1146,8 +1153,16 @@ def test_settings_page_contract() -> None:
         "/api/v1/diagnostics/config-health",
         "/api/v1/diagnostics/support-package",
         "/api/v1/server/shutdown",
+        "/api/v1/about/links/",
     ):
         assert endpoint in js
+    for about_token in (
+        "openAboutLink",
+        "官方网站暂未提供；可通过 GitHub 和更新日志了解项目动态。",
+        'openAboutLink("github", refs.github)',
+        'openAboutLink("changelog", refs.changelog)',
+    ):
+        assert about_token in js
     assert "Promise.allSettled" in js
     assert "app.connectEvents(settingsRefs.eventState" in js
     assert "refreshOnFirstOpen: false" in js

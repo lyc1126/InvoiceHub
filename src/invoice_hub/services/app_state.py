@@ -15,7 +15,7 @@ import re
 from invoice_hub.domain.models import TargetProfile, utc_now_text
 from invoice_hub.monitoring.state import MonitorState
 from invoice_hub.monitoring.sync import MonitorSynchronizer
-from invoice_hub.platform import HostRpcCommand, OCR_EXTENSIONS, host_rpc, open_local_path, pick_directory, pick_file
+from invoice_hub.platform import HostRpcCommand, OCR_EXTENSIONS, host_rpc, open_external_url, open_local_path, pick_directory, pick_file
 from invoice_hub.projections.cost_analysis import invoice_cost_breakdown, selection_cost_breakdown
 from invoice_hub.projections.costs import CostProjectionService
 from invoice_hub.projections.documents import (
@@ -105,6 +105,10 @@ BUSINESS_DOSSIER_DIR_HINTS = {
 }
 BUSINESS_DOSSIER_SCAN_MAX_ENTRIES = 4_000
 BUSINESS_DOSSIER_SCAN_MAX_SECONDS = 1.25
+ABOUT_EXTERNAL_LINKS = {
+    "github": PUBLIC_SOURCE_URL,
+    "changelog": CHANGELOG_URL,
+}
 
 BACKGROUND_SYNC_POLL_SECONDS = 0.25
 BACKGROUND_SYNC_MAX_SECONDS = 120.0
@@ -997,6 +1001,17 @@ class AppState:
             },
             "update": self._update_service.state(),
         }
+
+    def open_about_link(self, link_key: str) -> dict:
+        """Open a fixed public project link through the operating system shell."""
+
+        key = str(link_key or "").strip().casefold()
+        try:
+            url = ABOUT_EXTERNAL_LINKS[key]
+        except KeyError as exc:
+            raise ValueError("公开链接不可用") from exc
+        open_external_url(url)
+        return {"ok": True, "link_key": key}
 
     def check_for_updates(self, *, force: bool = False) -> dict:
         # API, settings, and scheduled checks share this method. In a configured

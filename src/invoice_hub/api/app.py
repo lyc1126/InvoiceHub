@@ -462,6 +462,22 @@ def create_app(
     def about(request: Request) -> dict:
         return _state(request).about()
 
+    @app.post("/api/v1/about/links/{link_key}")
+    async def open_about_link(request: Request, link_key: str) -> dict:
+        _require_same_origin_write(request)
+        try:
+            payload = await request.json()
+        except (json.JSONDecodeError, UnicodeError):
+            raise HTTPException(status_code=400, detail="公开链接参数必须是 JSON 对象")
+        if not isinstance(payload, dict) or payload:
+            raise HTTPException(status_code=400, detail="公开链接参数必须为空对象")
+        try:
+            return await run_in_threadpool(_state(request).open_about_link, link_key)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except OSError:
+            raise HTTPException(status_code=503, detail="无法打开系统默认浏览器") from None
+
     @app.post("/api/v1/update/check")
     async def check_for_updates(request: Request) -> dict:
         _require_same_origin_write(request)

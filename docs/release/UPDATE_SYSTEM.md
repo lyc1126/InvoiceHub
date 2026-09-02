@@ -6,10 +6,14 @@
 
 `v0.3` 才引入公开更新体系：安装包只放 GitHub Releases，同仓库 GitHub Pages 提供 Feed。alpha.2 增加严格的 Windows-only alpha Feed：`scope=windows-only` 只允许一个真实 Windows x64 portable ZIP、其 receipt、源码归档和一致的 source commit/core build；它不是完整双平台 Feed/Appcast 的弱化版本。Windows About/设置可检查该 Feed，但“前往下载”只打开 GitHub prerelease 页面。Tauri L6 仍只保留代码级 host 检查/preflight 边界；在完整 recovery/relaunch coordinator 出现前，`update_install` 会清除候选并返回不可用，绝不下载、停止 monitor、安装或重启。alpha.2 ZIP 自身显式 `updater_enabled=false`，不生成 MSI/NSIS 或原地更新。尚未创建真实 Tag、Release 或 Pages Feed；不得把现有检查接口或任何 development/internal-alpha app 描述为已完成的发行更新器。
 
+在 Feed 尚不存在的当前阶段，固定 Feed URL 返回 HTTP 404 表示远端已经响应但 `latest.json` 缺失，而非 GitHub 连接失败。`UpdateService` 将其返回为不持久化的 `unsupported/UPDATE_FEED_UNAVAILABLE`，不写入 cache，因此后续用户检查可以在 Feed 发布后立即重试。设置页官网入口只提示暂未提供；GitHub 和更新日志只能按固定键通过本地 API 交给系统默认浏览器，页面不能提交任意 URL。
+
 ## 固定边界
 
 - `GET /api/v1/about` 只读本地身份，不联网。
+- `POST /api/v1/about/links/{link_key}` 只接受空对象和固定的 `github` / `changelog` 键，由系统壳打开已编译的公开 HTTPS 地址；未知键、页面 URL 和非空 body 都拒绝。
 - 只有用户触发的 `POST /api/v1/update/check` 或显式启用的延迟检查可以访问固定 HTTPS Feed。
+- 固定 Feed 的 HTTP 404 必须表达为未发布的 `UPDATE_FEED_UNAVAILABLE`，不写 cache；DNS、连接、超时和其它 I/O 错误仍是 `UPDATE_OFFLINE`。
 - Feed URL 和允许主机不能由用户配置覆盖。检查必须限制 DNS、连接、重定向、头、正文和总时限，并保留最后一次有效缓存。
 - Host RPC token 只由 host 传给其直接启动的 Python backend；backend 启动时捕获 token 并从 descendant 环境清除，token 绝不进入网页、Tauri command/event、API 响应或日志。
 - `AppState` 在同一进程同时具备 Tauri host marker 和已配置 private Host RPC 时，把 API、设置页和后台 timer 对 `check_for_updates` 的调用都当作 delegated-install preflight：以非阻塞 `_host_update_lock` 串行化 allowlisted Feed metadata gate、host `update_check` 和安装。只有非 Tauri/非 host 进程的公开 `/api/v1/update/check` 保留 `UpdateService.check` 的 cache/ETag/busy 语义。host 检查锁竞争时必须立即返回不持久化 busy 结果，不访问 Feed/host candidate，也不得清除现有 approval；install 锁竞争则必须立即以脱敏 `HostRpcError` 失败，不消费 approval 或发送第二次 private RPC。取得锁后，Tauri host approval 必须在同一 session 取得并重新验证一个显式携带 `Cache-Control: no-cache`、不带 `If-None-Match` 的新 `200` Feed body；持久化缓存、ETag、`304`、离线或错误结果均不得授予 approval。只有该新 Feed 的 `latest_version` 与 host candidate version 完全一致，才授予进程内、一次性的 approval。Tauri updater builder 的 metadata 请求固定 5 秒总时限，不得使用插件/reqwest 默认的无时限请求占住 operation mutex 和 Host RPC 连接槽。

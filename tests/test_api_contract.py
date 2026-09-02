@@ -24,6 +24,7 @@ from invoice_hub.services.app_state import AppState
 from invoice_hub.services.skins import MAX_SKIN_FILE_BYTES, MAX_SKIN_FILES
 from invoice_hub.storage.files import write_csv_rows
 from invoice_hub.targets import target_profile_for
+from invoice_hub.version import CHANGELOG_URL, PUBLIC_SOURCE_URL, WEBSITE_URL
 
 
 def _slow_background_sync_worker(
@@ -534,9 +535,46 @@ def test_about_api_is_local_only_and_update_check_payload_is_strict(tmp_path: Pa
     assert payload["product"]["version"] == "0.3.0-alpha.2"
     assert payload["package"]["manifest_status"] == "missing"
     assert payload["update"]["status"] == "idle"
+    assert payload["links"]["website"] == WEBSITE_URL == ""
 
     assert client.post("/api/v1/update/check", json={"force": "yes"}).status_code == 400
     assert client.post("/api/v1/update/check", json={"force": True, "url": "https://example.com"}).status_code == 400
+
+    update_calls: list[str] = []
+
+    def missing_feed_transport(url, *_args):
+        update_calls.append(url)
+        from invoice_hub.services.update_service import UpdateFetchResult
+
+        return UpdateFetchResult(404, b"", "", url)
+
+    app.state.invoice_hub._update_service.transport = missing_feed_transport
+    unavailable = client.post("/api/v1/update/check", json={"force": True})
+    assert unavailable.status_code == 200
+    assert unavailable.json()["update"]["status"] == "unsupported"
+    assert unavailable.json()["update"]["error_code"] == "UPDATE_FEED_UNAVAILABLE"
+    assert update_calls
+
+    opened_urls: list[str] = []
+    monkeypatch.setattr("invoice_hub.services.app_state.open_external_url", opened_urls.append)
+    assert client.post("/api/v1/about/links/github", json={}).json() == {"ok": True, "link_key": "github"}
+    assert client.post("/api/v1/about/links/changelog", json={}).json() == {"ok": True, "link_key": "changelog"}
+    assert opened_urls == [PUBLIC_SOURCE_URL, CHANGELOG_URL]
+    assert client.post("/api/v1/about/links/website", json={}).status_code == 400
+    assert client.post("/api/v1/about/links/github", json={"url": "https://example.com"}).status_code == 400
+    assert client.post(
+        "/api/v1/about/links/github",
+        headers={"Origin": "https://attacker.example"},
+        json={},
+    ).status_code == 403
+
+    def unavailable_browser(_url: str) -> None:
+        raise OSError("shell unavailable")
+
+    monkeypatch.setattr("invoice_hub.services.app_state.open_external_url", unavailable_browser)
+    failed = client.post("/api/v1/about/links/github", json={})
+    assert failed.status_code == 503
+    assert failed.json() == {"detail": "无法打开系统默认浏览器"}
 
 
 def test_host_delegated_update_install_requires_an_empty_body_and_redacts_failures(tmp_path: Path, monkeypatch) -> None:

@@ -45,7 +45,7 @@
 ## 发布缺口
 
 - [ ] 从包含显式 WebView2 profile 边界的 `v0.3.0-alpha.2` clean tagged commit 实际构建 Windows 10/11 x64 无签名 Tauri ZIP，并在隔离 `%LOCALAPPDATA%`、中文空格路径完成窗口、固定端口、单实例、选择器、monitor、tray Quit、进程清理和只读 Feed 烟测。
-- [ ] GitHub prerelease 资产、GitHub Pages `updates/alpha/latest.json` 与 Mac 上传交接；Feed 只能含真实 Windows ZIP、SHA、receipt、源码归档和 source/core 身份，不能伪造 macOS 资产。
+- [ ] GitHub prerelease 资产、GitHub Pages `updates/alpha/latest.json` 与 Mac 上传交接；Feed 只能含真实 Windows ZIP、SHA、receipt、源码归档和 source/core 身份，不能伪造 macOS 资产。Feed 缺失时设置页只报告 `UPDATE_FEED_UNAVAILABLE`，不把 HTTP 404 误作 GitHub 连接故障或持久化缓存。
 - [ ] macOS 13+ arm64 DMG、更新归档、Developer ID、Hardened Runtime、公证、staple、quarantine 与升级证据。
 - [ ] 同仓库 GitHub Pages 更新 Feed、真实资产签名、源码归档、SBOM、收据与最终 provenance 闭环。
 - [ ] 每个平台最终 RC 一次安装、启动、目录选择、托盘、合法/篡改更新与 monitor 停止烟测。

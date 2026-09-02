@@ -1939,9 +1939,6 @@ app.connectEvents(settingsRefs.eventState, () => loadSettings("event"), { refres
     const build = payload?.build || {};
     if (refs.productName) refs.productName.textContent = product.display_name || product.name || "InvoiceHub";
     if (refs.version) refs.version.textContent = `版本 ${product.version || "--"}`;
-    if (refs.website) refs.website.href = safeExternalHref(payload?.links?.website);
-    if (refs.github) refs.github.href = safeExternalHref(payload?.links?.github);
-    if (refs.changelog) refs.changelog.href = safeExternalHref(payload?.links?.release_notes);
     renderRows(refs.identityList, [
       { label: "平台与架构", value: `${packageInfo.platform || "--"} / ${packageInfo.architecture || "--"}` },
       { label: "包类型", value: packageInfo.type || "--" },
@@ -1997,6 +1994,24 @@ app.connectEvents(settingsRefs.eventState, () => loadSettings("event"), { refres
     }
   }
 
+  async function openAboutLink(linkKey, button) {
+    if (!button || button.disabled) return;
+    app.setBusy(button, true, "打开中...");
+    try {
+      await app.api(`/api/v1/about/links/${encodeURIComponent(linkKey)}`, { method: "POST", body: {} });
+      app.setBanner(settingsRefs.banner, "success", "已交由系统默认浏览器打开。");
+    } catch (error) {
+      app.setBanner(settingsRefs.banner, "warning", error.message || "无法打开系统默认浏览器。");
+    } finally {
+      app.setBusy(button, false);
+    }
+  }
+
+  refs.website?.addEventListener("click", () => {
+    app.setBanner(settingsRefs.banner, "info", "官方网站暂未提供；可通过 GitHub 和更新日志了解项目动态。");
+  });
+  refs.github?.addEventListener("click", () => openAboutLink("github", refs.github));
+  refs.changelog?.addEventListener("click", () => openAboutLink("changelog", refs.changelog));
   refs.checkBtn?.addEventListener("click", checkForUpdates);
   refs.installBtn?.addEventListener("click", installMacUpdate);
 

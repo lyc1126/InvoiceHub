@@ -20,6 +20,7 @@ from invoice_hub.version import (
     RELEASE_PYTHON_VERSION,
     UPDATE_CHANNEL,
     UPDATE_FEED_URL,
+    WEBSITE_URL,
     WINDOWS_PACKAGE_ID,
 )
 
@@ -47,6 +48,8 @@ def test_release_version_identity_is_consistent() -> None:
     assert PRODUCT_VERSION == "0.3.0-alpha.2"
     assert RELEASE_PYTHON_VERSION == "3.14.6"
     assert UPDATE_CHANNEL == "alpha"
+    assert WEBSITE_URL == ""
+    assert UPDATE_FEED_URL.startswith("https://lyc1126.github.io/InvoiceHub/")
     assert UPDATE_FEED_URL.endswith("/updates/alpha/latest.json")
     assert API_CONTRACT_VERSION == "2026-08-02-release-update-v1"
 

@@ -15,11 +15,14 @@ UPDATE_CHANNEL = "alpha"
 MACOS_BUILD_NUMBER = "1"
 API_CONTRACT_VERSION = "2026-08-02-release-update-v1"
 
-WEBSITE_URL = "https://lyc1126.github.io/InvoiceHub/"
+# The project does not currently publish a standalone official website.  The
+# About page gives local guidance for that button instead of opening a dead URL.
+WEBSITE_URL = ""
 PUBLIC_SOURCE_URL = "https://github.com/lyc1126/InvoiceHub"
 RELEASES_URL = f"{PUBLIC_SOURCE_URL}/releases"
 CHANGELOG_URL = f"{PUBLIC_SOURCE_URL}/blob/main/CHANGELOG.md"
-UPDATE_FEED_URL = f"{WEBSITE_URL}updates/{UPDATE_CHANNEL}/latest.json"
+# Feed hosting remains independent from an optional public website.
+UPDATE_FEED_URL = f"https://lyc1126.github.io/InvoiceHub/updates/{UPDATE_CHANNEL}/latest.json"
 
 # Feed and artifact URLs are immutable release metadata, not user configuration.
 UPDATE_ALLOWED_HOSTS = (
