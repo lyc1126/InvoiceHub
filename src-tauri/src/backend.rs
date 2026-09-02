@@ -698,6 +698,10 @@ impl BackendLifecycleState {
 }
 
 impl BackendHost {
+    pub fn runtime_dir(&self) -> &Path {
+        &self.expected_identity.runtime_dir
+    }
+
     pub fn lifecycle_authority(&self) -> BackendLifecycleAuthority {
         BackendLifecycleAuthority {
             child: Arc::clone(&self.child),

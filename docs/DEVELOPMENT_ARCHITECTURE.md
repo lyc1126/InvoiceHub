@@ -1,7 +1,7 @@
 # InvoiceHub 开发架构与工程导航
 
 > 文档状态：当前开发实现的权威架构入口
-> 更新日期：2026-08-28
+> 更新日期：2026-09-02
 > 公共权威基线：经过审计的单一脱敏根提交；旧私有提交、Tag、二进制和验证材料不在公开图中
 > 公开状态：候选树、保留 Git 对象和托管面已完成一次内容与凭据审计；公开图从脱敏根提交开始，详见 `docs/release/HISTORY_SANITIZATION_EXECUTION.md`
 > 当前开发基线：`0.3.0-alpha.2` 的 public-preview 组装、独立 package identity、LaunchServices/quarantine smoke、SSE 关闭修复与 receipt finalization 门禁均已合入公开 `main`：只有组包器内部可验证精确 pending record，发布入口必须验证与实际 DMG SHA-256 绑定的 finalized record。远端同名 Tag 仍指向此前基线，必须在干净 `main` 上经新的明确授权重建。没有 GitHub Release、资产、SignPath 请求或 Feed；最终 macOS 成品必须从 DMG 挂载复制、以隔离 `HOME` 经 LaunchServices 启动并保留 quarantine 验收；internal-alpha 与 L10-E 结果仅作为历史上下文。
@@ -53,6 +53,8 @@ InvoiceHub 不是只有一个 FastAPI 页面。它同时包含发票提取、文
 远端可达历史曾发现真实目录及私有标识。所有者已批准净化；在候选树、保留 Git 对象和托管面验证完成前，公开、Release、Feed 和 `v0.3` 分支创建均暂停。
 
 阻断解除后，`v0.3` 从公开后的 `main` 演进。Tauri 2 只提供窗口、托盘、单实例、原生面板、打印、后端生命周期、随机令牌 Host RPC 和 updater，继续复用 Python/FastAPI/Web/monitor 业务核心。它只能绑定 `127.0.0.1:8766`，未知端口占用必须失败；不能自动换端口或接入旧实例。
+
+应用图标是独立于皮肤的本地展示偏好：Python 只接受随包的 `orange`、`teal`、`violet`，并把选择写入 `runtime/local_state/app_icon_state.json`。在 Tauri mode，私有 Host RPC 必须先把同一图标应用到窗口、任务栏和托盘；只有成功回复后 `AppState` 才持久化，避免活动原生 surface 与下次启动的状态分叉。浏览器 favicon 由同一选择生成，`/backend` 和 `?no_skin=1` 也不依赖皮肤；这不接受任意路径、URL 或上传图标，也不读取或写入 `watch_dir`。
 
 当前代码边界已实现固定端口的 spawned-child ownership：Host 先读取 bundle manifest 的原始字节并要求 SHA-256 与编译期 `INVOICE_HUB_BUNDLE_MANIFEST_SHA256` 相等。裸源码 checkout 没有该输入，因此以状态 `78` 退出；development assembler 则从 allowlisted core、schema-3 manifest 和显式 venv launcher stage 资源后注入该哈希，release profile 仍需独立的正式发行输入。Host 以新 challenge 要求 backend 回传 HMAC-SHA256，随后复核 child PID、build/package identity、静态首页和 OpenAPI 的精确 HTTP 方法。读取严格的 `startup_surface` 偏好后，必须再次发起 fresh challenge/HMAC 与 identity 复核，才 arm 授权并选择 `desktop` 的无 IPC WebView 或 `browser` 的 host-only 固定 origin opener；托盘和单实例重开同一 surface，desktop 关闭只隐藏窗口且不停止 monitor。Tray Quit 与 macOS 自定义应用菜单/Cmd-Q 只请求同一个 `app.exit(0)`；应用菜单不使用会直接绑定原生 `terminate:` 的 predefined Quit。Host 收到普通 `ExitRequested` 后请求结构化 `keep_monitor` shutdown 并有界等待 owned child，错误或超时后显式 `kill + wait`，无法确认 child 已退出则阻止 host 退出；update commit 期间普通 Quit 同样被阻止，只有 macOS 已准备 update relaunch 可跳过重复关闭。外部 AppleScript quit、Force Quit 或信号可以绕过该事件，不属于有序退出承诺。Host 只把 Host RPC token 传给其直接启动的 Python backend，backend 启动时捕获并从 descendant 环境清除；token 不进入 Web、Tauri command/event、API 响应或日志，携带 token 的 private loopback 请求显式绕过环境代理。Rust dialog 最多 120 秒，Python 等待 125 秒并在四条 picker route 上把 private failure 固定映射为脱敏 503；release-host updater metadata 与下载对象另有 5 秒时限。development profile 的 updater 委托明确禁用；它必须显式给出已存在、canonicalize 后与 bundle/core 及完整 macOS `.app` 容器双向不包含的绝对 `INVOICE_HUB_DEV_STATE_ROOT`，`Contents` sibling 同样拒绝，并在启动 Python child 前清除它。enabled updater 只在 startup gate 释放、`BackendHost` manage 后激活；激活先从 expected runtime dir 恢复 marker，随后才接受检查或安装。L9/P1-Q 已使用隔离 state root 验证 `127.0.0.1:8766` owned backend、health/background ready、首页/静态资源、desktop 默认值，以及 clean-commit 样本上真实 Cmd-Q 的 shutdown POST、stopped state、host/backend/PID/端口清理；打开的 SSE 连接由显式 `kill + wait` 兜底收束，且未触碰真实 Application Support。外部终止仍不属于该结论。该样本没有覆盖原生面板、browser/tray、真实单实例、下载/安装、DMG、签名或任何平台 release smoke。
 
@@ -170,7 +172,7 @@ flowchart TB
 │  ├─ targets/                               配置解析、运行目录和档案隔离
 │  ├─ storage/                               原子文件操作与 SQLite 仓库
 │  ├─ monitoring/                            daemon、lock、事件合并和同步
-│  ├─ services/                              AppState、monitor bridge、皮肤与更新服务
+│  ├─ services/                              AppState、monitor bridge、皮肤、图标与更新服务
 │  ├─ api/                                   FastAPI 页面/API/SSE 适配
 │  ├─ platform/                              Windows 原生交互边界
 │  ├─ release/                               双平台清单、组装、验证、SBOM、Feed、源码快照
@@ -207,6 +209,7 @@ flowchart LR
 ```
 
 `server_state.json` 只诊断 localhost。monitor 真值是存活 PID 加 `state_dir/.invoice_monitor.lock`。成本产物必须留在 `watch_dir`；普通汇总必须留在对应档案的 `workspace`。
+`runtime/local_state/app_icon_state.json` 只保存内置应用图标选择；它不是皮肤包、业务配置或发票投影，也不会进入 `watch_dir`。
 
 ## 7. 主要模块如何协作
 
@@ -219,7 +222,7 @@ flowchart LR
 | `bookkeeping` | `VoucherExecutabilityValidator`、映射/迁移/批次仓储 | W8/W9 做账协议与确定性状态 | 浏览器自动化和平台窗口 |
 | `storage` | `atomic_write_json`、`SQLiteRepository` | 原子读写、任务、事件 | 发票主存储 |
 | `monitoring` | `run_monitor`、`MonitorSynchronizer.run_sync` | 持续观察、变化判断、自动重建 | Web 页面生命周期 |
-| `services` | `AppState`、`MonitorBridge`、`SkinService`、`UpdateService` | 用例编排、并发锁、平台协调与受限更新检查 | HTTP 细节 |
+| `services` | `AppState`、`MonitorBridge`、`SkinService`、`AppIconService`、`UpdateService` | 用例编排、并发锁、平台协调与受限更新检查 | HTTP 细节 |
 | `api` | `create_app` | HTTP、错误码、静态文件、SSE | 重复业务算法 |
 | `platform` | `pick_directory`、`open_local_path` | Windows Python 适配；macOS 原生适配在 Swift 壳 | 领域判断 |
 | `release` | `build_core`、三类 manifest、`provenance`、`update_metadata`、`sbom`、`source_snapshot` | 脱敏确定性包、身份/依赖证明、从真实产物/收据/Tag 派生的更新元数据与对应源码；公开 Feed 在 macOS 用 Tag 派生验证器复验实际成品 | 用户业务数据迁移或外部平台发布 |

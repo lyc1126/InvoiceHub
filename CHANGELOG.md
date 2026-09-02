@@ -2,6 +2,8 @@
 
 ## 未发布
 
+- 2026-09-02 应用图标选择：新增暖橙、青碧、罗兰紫三套内置图标，设置中心和皮肤页都可切换；浏览器标签图标随之刷新。`GET/PUT /api/v1/app-icon` 只接受内置 id，选择状态只写入 `runtime/local_state/app_icon_state.json`，不读取或写入 `watch_dir`、发票投影或皮肤包。Tauri host 的私有 `set_app_icon` 命令只接受精确枚举，并先同步当前窗口、任务栏和托盘，Python 收到成功后才持久化选择；Host 失败固定返回脱敏 `503 App icon update unavailable`。本项记录的是源码和契约范围，尚未在 Windows 原生桌面或安装包中运行验收。
+
 - 2026-08-28 `alpha.2` receipt gate 发布基线同步：receipt finalization 门禁已合入公开 `main`，并已通过聚焦门禁及 PR CI；旧的远端 `v0.3.0-alpha.2` Tag 仍指向此前基线，不能用作构建或发布输入。最终仍须把干净 `main` 经新的明确授权重建为同名 Tag，再构建 DMG、完成 Finder/Gatekeeper 与平台成品验收；没有 GitHub Release、资产、Feed、SignPath 请求或最终平台烟测。
 
 - 2026-08-26 macOS public-preview receipt finalization 门禁：组包器先写入唯一允许的 pending receipt，并只在内部 verifier 调用中显式接受它；首次验证成功后才写入与实际 DMG SHA-256 精确绑定的 finalized record，再以默认 verifier 复验。默认验证会拒绝未完成、字段扩展、篡改或与 DMG 不一致的 finalizer；verifier 失败或 120 秒超时会同时报告 stdout/stderr。远端 `v0.3.0-alpha.2` Tag 已按授权重置到当时公开 `main`，但它早于本门禁；只有从包含该门禁的最终干净 `main` 经新授权重建 Tag 后才能构建。没有 GitHub Release、资产、Feed、SignPath 请求或最终平台烟测。

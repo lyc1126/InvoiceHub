@@ -4,7 +4,7 @@
   <title>设置中心</title>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <link rel="stylesheet" href="/static/css/app.css?v=20260802-release-update-v1">
+  <link rel="stylesheet" href="/static/css/app.css?v=20260902-app-icon-skins">
   <link rel="stylesheet" href="/static/css/settings-actions.css?v=20260720-shutdown-monitor-choice">
 </head>
 <body data-page="settings">
@@ -273,6 +273,16 @@
             <p>当前皮肤状态与恢复入口。</p>
           </div>
           <div id="settingsAppearanceList" class="settings-kv"></div>
+          <article class="settings-edit-card settings-app-icon-card" aria-labelledby="settingsAppIconTitle">
+            <div class="settings-edit-card__head">
+              <div>
+                <h4 id="settingsAppIconTitle">应用图标</h4>
+                <p>选择后，Tauri 桌面会同步当前窗口、任务栏和托盘；浏览器标签图标也会刷新。安装包在未启动前仍使用暖橙默认图标。</p>
+              </div>
+            </div>
+            <p id="settingsAppIconStatus" class="settings-action-status" role="status" aria-live="polite">正在读取当前应用图标...</p>
+            <div id="settingsAppIconList" class="app-icon-list settings-app-icon-list" role="radiogroup" aria-label="应用图标"></div>
+          </article>
           <div id="settingsSkinList" class="skin-list settings-skin-list" role="radiogroup" aria-label="可用皮肤"></div>
           <div class="settings-action-row">
             <button id="settingsEnableSkinBtn" class="btn btn--secondary" type="button" disabled>启用选中皮肤</button>
@@ -497,6 +507,6 @@
     </section>
   </div>
   <script src="/static/js/common.js?v=20260729-main-macos-sync"></script>
-  <script src="/static/js/page-settings.js?v=20260803-external-monitor-guard"></script>
+  <script src="/static/js/page-settings.js?v=20260902-app-icon-skins"></script>
 </body>
 </html>

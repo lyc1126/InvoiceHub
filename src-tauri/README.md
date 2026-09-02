@@ -60,8 +60,16 @@ token goes only to the directly spawned Python backend, which captures it and
 removes it from descendants; it never reaches Web content, Tauri commands or
 events, API responses, or logs.
 
-The private loopback listener accepts four picker enums and the two updater
-enums `update_check` and `update_install`. A complete host-owned candidate is
+The private loopback listener accepts four picker enums, the two updater
+enums `update_check` and `update_install`, and the exact built-in application
+icon payload `{"command":"set_app_icon","icon":"orange|teal|violet"}`.
+The icon command has no path, URL, upload, or arbitrary image bytes: it loads
+only the three PNG assets compiled into the host. On startup the host reads
+`runtime/local_state/app_icon_state.json` before creating the tray/window; at
+runtime it updates the tray and window before Python persists the new choice.
+If the window update fails, the tray is restored to the previous icon. The
+same selection controls the browser favicon but remains independent from skins
+and all invoice/watch-directory state. A complete host-owned candidate is
 bounded to 300 seconds; updater metadata and the retained download object both
 use a five-second timeout. Updater-disabled profiles remain inert. An enabled
 profile activates only after the owned startup gate is released and

@@ -153,7 +153,7 @@
 | `src-tauri/Cargo.toml` | Tauri host package metadata, including the explicit `tray-icon` feature, exact direct Tauri/plugin/HMAC dependencies, Unix-only `libc` for descriptor-pinned marker storage, and pinned Windows-only `windows-sys` for handle-relative/no-reparse marker storage. | Version is derived by `tauri_version_sync.py`; direct crates are pinned to published releases and must match `Cargo.lock`. The Windows dependency documents a source-level boundary only and does not imply Windows runtime acceptance. |
 | `src-tauri/Cargo.lock` | Reviewed Rust 1.85-compatible Cargo dependency graph. | Generated only in the controlled toolchain with `.cargo/config.toml`; it locks dependency integrity. Runnable development behavior additionally requires the staged manifest/launcher binding, and remains distinct from release evidence. |
 | `src-tauri/build.rs` | Tauri build-script entry point. | It runs only with the exact direct crate versions and reviewed `Cargo.lock` in a controlled Rust environment. |
-| `src-tauri/tauri.conf.json` | Derived product identity, fixed localhost development origin, no config-created WebView, and disabled bundling configuration. | Must retain `http://127.0.0.1:8766`; `main.rs` creates a WebView only after the owned-backend handshake. |
+| `src-tauri/tauri.conf.json` | Derived product identity, fixed localhost development origin, no config-created WebView, disabled bundling configuration, and the default bundled `png/ico/icns` application icon paths. | Must retain `http://127.0.0.1:8766`; `main.rs` creates a WebView only after the owned-backend handshake. The bundle default remains warm orange until a running host reads the user selection. |
 | `src-tauri/tauri.dev.conf.json` | Development-only bundle configuration. | Enables only the macOS arm64 app bundle used by `tauri_dev_app.py`; it cannot be reused for DMG/NSIS, release signing, or updater inputs. |
 | `src-tauri/tauri.alpha.conf.json` | Internal-alpha bundle configuration for version `0.3.0-alpha.1`. | Enables only the isolated allowlisted App resources staged by `tauri_alpha_release.py`; updater remains disabled and this config is not a public Release or notarization input. |
 | `src-tauri/tauri.public-preview.conf.json` | macOS arm64 public-preview bundle configuration. | 只为 `tauri_public_preview.py` 的独立 staging 组装 release-profile DMG；host manifest 必须精确禁用 updater，不能携带 Feed 或公钥。 |
@@ -161,14 +161,16 @@
 | `src-tauri/capabilities/no-webview-ipc.json` | Explicit zero-permission capability for the future main WebView. | Native picker access cannot become Tauri command/event IPC. |
 | `src-tauri/src/lib.rs` | Fixed backend host/port constants and module exports. | Do not add business-core logic; lifecycle and Host RPC retain this origin invariant. |
 | `src-tauri/src/backend.rs` | Bundle-manifest parsing with raw-byte SHA-256 compile binding, development/internal-alpha/release profile separation, fixed arguments, backend child ownership, HMAC challenge response, identity/OpenAPI handshake, post-preference fresh ownership revalidation, structured keep-monitor shutdown, strict child-exit confirmation, explicit confirmed kill/wait fallback, 100 ms bounded child-exit revocation, cloneable `BackendLifecycleAuthority`, private ownership-secret retention, and updater-runtime activation delegation. | The ordinary development and internal-alpha assemblers inject the compile hash while keeping updater disabled; development can enable only the exact L10-E unreachable endpoint/non-signing-key tuple with no extra updater fields. A bare checkout or mismatch exits `78`. Activation passes strict `runtime_dir`, secret, and shared authority to Host RPC only after gate release and app-state registration. |
+| `src-tauri/src/app_icon.rs` | Parses the three bundled icon ids, loads the runtime selection, decodes bundled PNG bytes, and applies one icon to the tray and current main window. | Invalid/missing runtime state falls back to orange. Tray/window update happens before Python persistence; if the window update fails, the tray is restored to the previous icon so native surfaces do not split. |
 | `src-tauri/src/monitor_recovery.rs` | Source-only lifecycle lease, fail-closed monitor pause/restore transaction, strict scope-bound marker schema, Unix descriptor-pinned/no-follow marker primitives, and platform store selection. | Every marker or bridge action requires the same released owned lease; ready-only pause and later ready restore preserve recovery obligations. For stores following the marker-store protocol, Unix whole-operation `load/publish/clear` serialization is closed by directory `flock`; stale-clear re-reads under the lock, and publish/clear sync directory metadata after the final link/unlink. Same-user direct edits bypassing the protocol remain outside the guarantee. Windows implementation lives in `monitor_recovery/windows_marker_store.rs`; other non-Unix storage returns unavailable. The module remains transport/updater agnostic and is adapted by Host RPC rather than acquiring public authority itself. |
 | `src-tauri/src/monitor_recovery/windows_marker_store.rs` | Windows handle-relative marker store: opens and validates a directory handle, uses NT `RootDirectory` leaf opens and no-replace rename, rejects reparse/non-regular targets, and flushes marker data before the final operation. | Marker operations remain relative to the already-open directory handle and never resolve a caller-supplied path by name; a minimal `x86_64-pc-windows-msvc` temporary crate cross-compile passed, but there is no Windows runtime evidence and the full Tauri Windows target check remains blocked by `ring` requiring `assert.h`. |
 | `src-tauri/src/monitor_bridge.rs` | Fixed-loopback `PythonMonitorRecoveryBridge` adapter with bounded direct TCP requests and authenticated status/stop/start request/response transcripts. | Endpoint, method and empty body are fixed; no caller URL/path/body or proxy is accepted. Each request uses a fresh challenge and HMAC-SHA256 under the backend-private secret without sending that secret; the exact status/body response requires one constant-time-verified proof. The recovery transaction still revalidates the released lifecycle before and after every bridge action, and ordinary browser bridge calls are not promoted into this authenticated updater authority. |
 | `src-tauri/src/update_coordinator.rs` | Pure trait-injected update transaction, `VerifiedUpdate` boundary, strict verify -> pause -> install -> relaunch ordering, and restore-attempt preservation. | Installer never receives raw unverified bytes; candidate mismatch fails before pause/install/relaunch. It does not download, call Tauri updater, persist state, stop a real monitor, or request a platform restart. |
-| `src-tauri/src/host_rpc.rs` | Private random-loopback listener, exact-origin/token/enum authorization, native picker dispatch, host-owned full updater candidates, authenticated startup restore, deferred private commit, Tauri updater adapters, and platform relaunch state. | The token and retained `Update` metadata never enter Web/Tauri IPC/Python API/logs/descendants. The listener expires a generation-checked 300-second candidate; metadata and download use 5-second timeouts. Enabled runtime activates only after gate release/manage and restores the marker first. Install atomically consumes one fresh candidate, reserves/spawns a latch worker, flushes exact success, then executes built-in verified download -> pause -> install -> relaunch. Writer/spawn/latch loss is `CommitLost` with no side effects; failed restore/transaction blocks further updater work. Windows confirms backend exit in `on_before_exit`; macOS prepares and requests restart. |
-| `src-tauri/src/main.rs` | Loads a compiled-bound bundle manifest, installs single-instance/dialog/host-only-opener plugins, creates a custom macOS application Quit item with Cmd-Q, launches and registers `BackendHost`, activates the updater runtime after the released gate, initializes the selected surface, and routes `ExitRequested` through update-aware confirmed shutdown. | A checkout without the manifest exits `78`. Setup keeps the child local until tray/surface success and confirms cleanup before returning errors. Updater activation failure leaves backend/WebUI diagnostics available; successful activation emits only a non-sensitive recovery-runtime diagnostic used by L10-E. Tray Quit and custom Cmd-Q share `app.exit(0)`; reserved/executing commits block ordinary Quit, macOS `relaunch_prepared` skips duplicate shutdown, and other received exits require structured shutdown plus confirmed kill/wait fallback. |
+| `src-tauri/src/host_rpc.rs` | Private random-loopback listener, exact-origin/token/enum authorization, native picker dispatch, built-in `set_app_icon`, host-owned full updater candidates, authenticated startup restore, deferred private commit, Tauri updater adapters, and platform relaunch state. | The token and retained `Update` metadata never enter Web/Tauri IPC/Python API/logs/descendants. `set_app_icon` accepts exactly one bundled id and no caller path/URL/bytes, applies native surfaces before replying success. The listener expires a generation-checked 300-second candidate; metadata and download use 5-second timeouts. Enabled runtime activates only after gate release/manage and restores the marker first. Install atomically consumes one fresh candidate, reserves/spawns a latch worker, flushes exact success, then executes built-in verified download -> pause -> install -> relaunch. Writer/spawn/latch loss is `CommitLost` with no side effects; failed restore/transaction blocks further updater work. Windows confirms backend exit in `on_before_exit`; macOS prepares and requests restart. |
+| `src-tauri/src/main.rs` | Loads a compiled-bound bundle manifest, installs single-instance/dialog/host-only-opener plugins, creates a custom macOS application Quit item with Cmd-Q, launches and registers `BackendHost`, loads the selected app icon before tray/window creation, activates the updater runtime after the released gate, initializes the selected surface, and routes `ExitRequested` through update-aware confirmed shutdown. | A checkout without the manifest exits `78`. Setup keeps the child local until tray/surface success and confirms cleanup before returning errors. Updater activation failure leaves backend/WebUI diagnostics available; successful activation emits only a non-sensitive recovery-runtime diagnostic used by L10-E. Tray Quit and custom Cmd-Q share `app.exit(0)`; reserved/executing commits block ordinary Quit, macOS `relaunch_prepared` skips duplicate shutdown, and other received exits require structured shutdown plus confirmed kill/wait fallback. |
 | `src-tauri/boot/index.html` | Inert local boot asset required by the minimal Tauri configuration. | It is not a replacement frontend; the real application remains the existing localhost Web UI. |
-| `src-tauri/icons/icon.png` | Local icon required by Tauri's macOS context macro and tray setup. | It must remain 8-bit RGBA: the prior 16-bit RGBA encoding caused tray initialization failure, so PNG IHDR has a focused regression. It does not authorize Release branding. |
+| `src-tauri/icons/icon.png` | Warm-orange default PNG used by Tauri's macOS context macro, bundle metadata and first tray setup. | It must remain 8-bit RGBA: the prior 16-bit RGBA encoding caused tray initialization failure, so PNG IHDR has a focused regression. It does not authorize Release branding. |
+| `src-tauri/icons/icon.ico` / `src-tauri/icons/icon.icns` | Warm-orange default Windows/macOS bundle icons. | They provide the pre-launch package identity only; a running host can switch only among the three bundled PNG choices. |
 | `src-tauri/README.md` | Lifecycle scope, development assembly, and release boundary. | Update together with the execution plan whenever Cargo, lifecycle, Host RPC, updater, staging, or packaging status changes. |
 | `src-tauri/tests/monitor_recovery_contract.rs` | Focused transaction and Unix marker-store contracts. | Covers ready/stopped monitor paths, marker corruption/scope/pending state, gate/lease loss, bridge failures, Unix serialization/republication and symlink rejection; it does not invoke a real monitor or updater. |
 | `src-tauri/tests/update_coordinator_contract.rs` | Pure update coordinator contract tests. | Covers verified-artifact promotion, candidate mismatch, ordering, pause/install/relaunch failures and restore-attempt preservation; it does not download, install or restart. |
@@ -261,13 +263,14 @@
 | 文件 | 职责与入口 | 关系与修改影响 |
 |---|---|---|
 | `src/invoice_hub/services/__init__.py` | 导出 `AppState`、过期选择、预览和打印异常及 `create_state`。 | API 应用工厂依赖。 |
-| `src/invoice_hub/services/app_state.py` | 当前统一用例门面：设置、诊断、发票、预览/打印、成本、单据、monitor、皮肤、OCR 占位、更新 metadata/host approval 和关闭。 | 上接 API，下接几乎全部子系统；`_host_update_lock` 串行化 allowlisted Feed gate、host candidate 和一次性 install approval，改动必须按用例做相邻回归。 |
+| `src/invoice_hub/services/app_state.py` | 当前统一用例门面：设置、诊断、发票、预览/打印、成本、单据、monitor、皮肤、应用图标、OCR 占位、更新 metadata/host approval 和关闭。 | 上接 API，下接几乎全部子系统；`update_app_icon` 在 Tauri mode 先要求 private host 成功更新原生 surface，才写 runtime 状态和事件；`_host_update_lock` 串行化 allowlisted Feed gate、host candidate 和一次性 install approval，改动必须按用例做相邻回归。 |
 | `src/invoice_hub/services/app_state.py` 的 business dossier 用例 | 解析当前公司资料夹、一次有界扫描快捷入口/统计并限制打开路径。 | `/api/v1/business-dossier*` 和首页消费；不得改变 `watch_dir` 扫描语义；截断统计必须明确为下界。 |
 | `src/invoice_hub/services/document_rendering.py` | MuPDF 文档打开和安全分页 PNG 渲染的共享适配。 | preview/print 共用；缺依赖、加密、空文档、页尺寸和渲染失败保持结构化错误。 |
 | `src/invoice_hub/services/file_preview.py` | 短期源文件预览 job、闲置续租、页面/文本缓存、SVG/XML/图片安全边界。 | 保留已选源文件顺序；15 分钟闲置 TTL、页数、像素、作业数和缓存上限防止内存滥用。 |
 | `src/invoice_hub/services/invoice_printing.py` | 短期同票 PDF 打印 job 和分页 PNG 缓存。 | 不持久化票面；只接收受控 PDF，过期/容量/加密失败明确返回。 |
 | `src/invoice_hub/services/monitor_bridge.py` | monitor 子进程命令、状态真值、ready 等待和启停。 | AppState 与 control 调用；与 daemon/state 构成生命周期闭环。 |
 | `src/invoice_hub/services/skins.py` | 皮肤 ZIP 安全验证、运行态存储、启用和文件服务。 | API、AppState、common.js 使用；安全回归在 API 测试。 |
+| `src/invoice_hub/services/app_icons.py` | 三个内置图标目录、预览/favicon URL、严格 id 校验和单字段运行态读写。 | 只读写 `runtime/local_state/app_icon_state.json`，坏状态回退 orange；不接受自定义资产，不依赖皮肤或发票目录。 |
 | `src/invoice_hub/services/update_service.py` | HTTPS 白名单更新检查、ETag/cache、版本/契约/平台产物选择和错误状态。 | About/API/启动后台检查消费；绝不执行安装。 |
 
 ## 13. 平台与发布
@@ -275,7 +278,7 @@
 | 文件 | 职责与入口 | 关系与修改影响 |
 |---|---|---|
 | `src/invoice_hub/platform/__init__.py` | 导出 Windows 平台 API。 | AppState 只通过此边界调用选择器和打开路径。 |
-| `src/invoice_hub/platform/host_rpc.py` | Tauri 私有 picker/updater client、直接 backend 启动时的凭据捕获与 descendant 环境清理。 | Host 只向直接启动的后端传递 private configuration；Python 125 秒请求预算必须覆盖 Rust 120 秒 dialog 和响应余量；updater 只接受固定 `update_check/update_install`，只回传版本或成功；monitor、同步和原生子进程不得继承 token/secret。 |
+| `src/invoice_hub/platform/host_rpc.py` | Tauri 私有 picker/updater/app-icon client、直接 backend 启动时的凭据捕获与 descendant 环境清理。 | Host 只向直接启动的后端传递 private configuration；Python 125 秒请求预算必须覆盖 Rust 120 秒 dialog 和响应余量；updater 只接受固定 `update_check/update_install`，图标只接受固定 `set_app_icon` 加内置 id，均只回传窄化成功形状；monitor、同步和原生子进程不得继承 token/secret。 |
 | `src/invoice_hub/platform/native_dialogs.py` | Tk 原生目录/文件选择子进程。 | `platform/windows.py` 从项目根启动；取消选择也返回结构化结果。 |
 | `src/invoice_hub/platform/windows.py` | 打开文件/目录、运行原生选择器、OCR 扩展名。 | AppState 在 Tauri mode 通过 Host RPC 传入固定 picker enum；其它模式保留 Tk，所有子进程清除 host credentials。 |
 | `src/invoice_hub/release/__init__.py` | core 发布边界说明。 | 标记 release 包职责。 |
@@ -369,6 +372,7 @@
 | `tests/test_tauri_recovery_smoke.py` | L10-E App plist/manifest identity、临时路径、marker scope、health/monitor identity 和闭合 HTTP allowlist 契约。 | `scripts/dev/tauri_recovery_smoke.py`；不模拟 check/install，真实 startup-recovery runtime 由 L10-E 有边界的平台样本单独记录。 |
 | `tests/test_tauri_public_preview_smoke.py` | mounted-DMG public-preview App identity、精确 disabled updater、隔离 Application Support、LaunchServices 启动、临时 host/backend 归属和闭合 shutdown HTTP surface。 | `scripts/dev/tauri_public_preview_smoke.py`；锁定 smoke 输入与清理边界，不替代最终 Tag DMG 的 Finder/Gatekeeper 成品验收。 |
 | `tests/test_tauri_host_rpc.py` | Python Host RPC URL/token/enum、updater response narrowing、失败不回退和子进程凭据清理。 | `platform/host_rpc.py`、`platform/windows.py`。 |
+| `tests/test_app_icon.py` | 内置图标资产/缓存、运行态隔离、精确 API body、favicon 覆盖，以及 Tauri host 成功前不得落盘。 | `app_icons.py`、`AppState.update_app_icon`、`api/app.py`、页面模板。 |
 | `tests/test_tauri_lifecycle_contract.py` | Tauri 生命周期静态配置、无 WebView IPC、HMAC/liveness、manifest hash 与 updater candidate/order source contract。 | `src-tauri` lifecycle boundary。 |
 | `src-tauri/tests/lifecycle_contract.rs` | Fixed port、identity、OpenAPI methods、Host RPC authorization/revocation、manifest hash、candidate expiry and update order Rust integration contracts. | `backend.rs`、`host_rpc.rs`、`BackendLifecycleAuthority` delegation tests。 |
 
@@ -376,7 +380,7 @@
 
 | 文件 | 职责与入口 | 关系与修改影响 |
 |---|---|---|
-| `web/static/css/app.css` | 全站布局、表格、状态、响应式和无皮肤默认样式。 | 所有普通模板引用；修改需更新模板 `?v=` 和前端契约。 |
+| `web/static/css/app.css` | 全站布局、表格、状态、应用图标选择控件、响应式和无皮肤默认样式。 | 所有普通模板引用；修改需更新模板 `?v=` 和前端契约。 |
 | `web/static/css/settings-actions.css` | 首页/设置页操作、确认对话框和通知样式。 | `index.html`、`settings.html` 引用；版本参数需同步。 |
 | `web/static/js/common.js` | API 包装、转义、表格 TSV、皮肤、SSE 和导航过渡。 | 所有页面 JS 依赖；SSE 页面通过 `connectEvents` 复用重连语义。 |
 | `web/static/js/page-index.js` | 首页目录草稿、发票列表、筛选、预览续租/自动恢复、批量打印、勾选合计和 monitor 操作。 | 消费 settings/invoices/preview/keep-alive/print/selection/bridge API；弹窗关闭必须停止续租。 |
@@ -385,11 +389,11 @@
 | `web/static/js/page-documents.js` | 入出库标签、目录草稿、预览、导出策略和打开操作。 | 消费 documents/preferences API，并监听汇总事件。 |
 | `web/static/js/page-ocr.js` | OCR 候选目录和禁用服务状态。 | 消费 preferences/ocr API；当前不执行正式 OCR。 |
 | `web/static/js/page-consistency.js` | 同票多格式一致性表。 | 消费 consistency-report API。 |
-| `web/static/js/page-settings.js` | 设置中心、运行控制、重命名、偏好、诊断和关闭系统。 | 消费多数设置/bridge/documents/skins/ocr/diagnostics/shutdown API。 |
-| `web/static/js/page-skins.js` | 皮肤 ZIP 导入、替换、启用和重置。 | 消费 skins API；不执行包内 JS。 |
+| `web/static/js/page-settings.js` | 设置中心、应用图标、运行控制、重命名、偏好、诊断和关闭系统。 | 消费多数设置/bridge/documents/skins/app-icon/ocr/diagnostics/shutdown API；图标成功后同步当前页 favicon。 |
+| `web/static/js/page-skins.js` | 皮肤 ZIP 导入、替换、启用/重置和独立的应用图标选择。 | 消费 skins/app-icon API；不执行包内 JS。 |
 | `web/static/js/page-bookkeeping.js` | 凭证人审、映射规则、账套设置和批次状态。 | 消费 `/api/v1/bookkeeping/*`，持续展示服务端 blockers。 |
 
-## 16. 内置皮肤资产
+## 16. 内置皮肤和应用图标资产
 
 | 文件 | 职责与关系 |
 |---|---|
@@ -412,6 +416,12 @@
 | `web/static/skins/ink-pulse/textures/ink-field-v1.webp` | 原创墨场背景纹理。 | 包内静态资源，无远程依赖。 |
 | `web/static/skins/ink-pulse/textures/ink-splatter-atlas-v1.png` | 原创喷墨纹理图集。 | 包内静态资源，无官方游戏素材。 |
 | `web/static/skins/ink-pulse/textures/panel-print-v1.webp` | 原创面板印刷纹理。 | 包内静态资源，无远程依赖。 |
+| `web/static/app-icon/orange/icon_256.png` | 暖橙默认应用图标的大预览和 Tauri runtime 图像输入。 | 只由内置 id 引用，必须保持 PNG 且不从外网加载。 |
+| `web/static/app-icon/orange/icon_32.png` | 暖橙默认应用图标的 favicon 资产。 | 所有普通页面、`/backend`、打印模板与 `?no_skin=1` 都由服务端注入当前选择。 |
+| `web/static/app-icon/teal/icon_256.png` | 青碧应用图标的大预览和 Tauri runtime 图像输入。 | 只由内置 id 引用，必须保持 PNG 且不从外网加载。 |
+| `web/static/app-icon/teal/icon_32.png` | 青碧应用图标的 favicon 资产。 | 所有普通页面、`/backend`、打印模板与 `?no_skin=1` 都由服务端注入当前选择。 |
+| `web/static/app-icon/violet/icon_256.png` | 罗兰紫应用图标的大预览和 Tauri runtime 图像输入。 | 只由内置 id 引用，必须保持 PNG 且不从外网加载。 |
+| `web/static/app-icon/violet/icon_32.png` | 罗兰紫应用图标的 favicon 资产。 | 所有普通页面、`/backend`、打印模板与 `?no_skin=1` 都由服务端注入当前选择。 |
 
 ## 17. HTML 页面
 
@@ -425,8 +435,8 @@
 | `web/templates/documents.html` | `/documents`。 | page-documents 管理入库/出库预览和目录草稿。 |
 | `web/templates/ocr.html` | `/ocr`。 | 展示当前 OCR 未内置状态和候选文件入口。 |
 | `web/templates/consistency.html` | `/consistency`。 | page-consistency 展示多格式冲突。 |
-| `web/templates/settings.html` | `/settings`。 | page-settings 和 settings-actions；提供 `?no_skin=1` 恢复入口。 |
-| `web/templates/skins.html` | `/skins`。 | page-skins 提供 ZIP 导入/替换/启用。 |
+| `web/templates/settings.html` | `/settings`。 | page-settings、应用图标和 settings-actions；提供 `?no_skin=1` 恢复入口。 |
+| `web/templates/skins.html` | `/skins`。 | page-skins 提供 ZIP 导入/替换/启用及独立应用图标选择。 |
 | `web/templates/bookkeeping.html` | `/bookkeeping`。 | W8/W9 人审、映射、账套和批次视图。 |
 | `web/templates/backend.html` | `/backend` 高级诊断。 | 不注入皮肤；内联请求 health/settings/bridge，不出现在普通首要导航。 |
 

@@ -171,6 +171,30 @@ def test_host_updater_uses_only_fixed_enum_commands_and_hides_candidate_metadata
     assert all(b"url" not in body and b"signature" not in body for body in observed)
 
 
+def test_host_app_icon_uses_a_fixed_bundled_icon_payload_and_exact_success_response(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _configure_host(monkeypatch)
+    observed: list[bytes] = []
+
+    def fake_open(request_value, timeout):
+        assert request_value.full_url == RPC_URL
+        assert request_value.get_header("Origin") == host_rpc.HOST_RPC_EXPECTED_ORIGIN
+        assert request_value.get_header("Authorization") == f"Bearer {TOKEN}"
+        assert timeout == host_rpc.HOST_RPC_TIMEOUT_SECONDS
+        observed.append(request_value.data)
+        return _Response({"ok": True})
+
+    monkeypatch.setattr(host_rpc.request, "build_opener", lambda *_handlers: _Opener(fake_open))
+
+    assert host_rpc.set_app_icon("teal") is None
+    assert observed == [b'{"command":"set_app_icon","icon":"teal"}']
+
+    with pytest.raises(host_rpc.HostRpcError):
+        host_rpc.set_app_icon("unbundled")
+    assert observed == [b'{"command":"set_app_icon","icon":"teal"}']
+
+
 def test_host_updater_rejects_extra_or_inconsistent_private_response_fields(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

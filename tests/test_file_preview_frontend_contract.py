@@ -2,7 +2,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-APP_CSS_VERSION = "20260802-release-update-v1"
+APP_CSS_VERSION = "20260902-app-icon-skins"
 PAGE_INDEX_VERSION = "20260803-external-monitor-guard"
 
 

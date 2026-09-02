@@ -142,8 +142,8 @@ def test_tauri_setup_cleans_up_an_owned_backend_before_returning_surface_failure
     setup = main[main.index(".setup(move |app|") : main.index(".build(tauri::generate_context!())")]
     assert "let backend = BackendHost::launch" in setup
     assert "let setup_result = (|| -> Result<(), Box<dyn Error>>" in setup
-    assert "install_tray(app)?;" in setup
-    assert "create_desktop_window(app)?" in setup
+    assert "install_tray(app, app_icon_id)?;" in setup
+    assert "create_desktop_window(app, app_icon_id)?" in setup
     assert "open_backend_in_browser(&app.handle())?" in setup
     assert "if let Err(error) = setup_result" in setup
     assert "complete_setup_failure_cleanup(&backend);" in setup
@@ -155,8 +155,8 @@ def test_tauri_setup_cleans_up_an_owned_backend_before_returning_surface_failure
     assert setup.index("complete_setup_failure_cleanup(&backend);") < setup.index(
         "return Err(error);"
     )
-    assert setup.index("install_tray(app)?;") < setup.index("app.manage(backend);")
-    assert setup.index("create_desktop_window(app)?") < setup.index("app.manage(backend);")
+    assert setup.index("install_tray(app, app_icon_id)?;") < setup.index("app.manage(backend);")
+    assert setup.index("create_desktop_window(app, app_icon_id)?") < setup.index("app.manage(backend);")
     assert setup.index("open_backend_in_browser(&app.handle())?") < setup.index(
         "app.manage(backend);"
     )
@@ -211,6 +211,31 @@ def test_tauri_webview_is_created_only_after_the_owned_backend_handshake() -> No
     assert capability["permissions"] == []
     assert main.index("BackendHost::launch") < main.index("WebviewWindowBuilder::new")
     assert "WebviewUrl::External(backend_url)" in main
+
+
+def test_tauri_app_icon_is_selected_from_bundled_assets_and_applied_by_the_private_host() -> None:
+    main = (ROOT / "src-tauri" / "src" / "main.rs").read_text(encoding="utf-8")
+    host_rpc = (ROOT / "src-tauri" / "src" / "host_rpc.rs").read_text(encoding="utf-8")
+    app_icon = (ROOT / "src-tauri" / "src" / "app_icon.rs").read_text(encoding="utf-8")
+    config = json.loads((ROOT / "src-tauri" / "tauri.conf.json").read_text(encoding="utf-8"))
+
+    assert (ROOT / "src-tauri" / "icons" / "icon.png").is_file()
+    assert (ROOT / "src-tauri" / "icons" / "icon.ico").is_file()
+    assert (ROOT / "src-tauri" / "icons" / "icon.icns").is_file()
+    for icon_id in ("orange", "teal", "violet"):
+        assert (ROOT / "web" / "static" / "app-icon" / icon_id / "icon_256.png").is_file()
+        assert (ROOT / "web" / "static" / "app-icon" / icon_id / "icon_32.png").is_file()
+        assert f'"{icon_id}"' in app_icon
+
+    assert config["bundle"]["icon"] == ["icons/icon.png", "icons/icon.ico", "icons/icon.icns"]
+    assert "let app_icon_id = app_icon::load_selected(backend.runtime_dir());" in main
+    assert "install_tray(app, app_icon_id)?;" in main
+    assert "create_desktop_window(app, app_icon_id)?" in main
+    assert "tray.set_icon(Some(next_image.clone()))" in app_icon
+    assert "window.set_icon(next_image)" in app_icon
+    assert "HostRpcCommand::SetAppIcon" in host_rpc
+    assert '"set_app_icon"' in host_rpc
+    assert "HostRpcResponse::AppIconUpdated" in host_rpc
 
 
 def test_tauri_checkout_guard_and_liveness_order_fail_closed() -> None:

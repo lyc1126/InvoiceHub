@@ -1,6 +1,6 @@
 # 迁移与公开缺口清单
 
-更新时间：2026-08-28
+更新时间：2026-09-02
 
 ## 公开历史净化
 
@@ -32,6 +32,7 @@
 - [x] 实现 `127.0.0.1:8766` 严格启动/握手：未知占用失败、child PID/build/package identity/OpenAPI 方法复核、HMAC challenge-response 归属证明，以及 manifest 原始字节 SHA-256 必须匹配编译期注入值的状态 `78` fail-closed。schema-3 development manifest 与显式 venv launcher 已被组装并编译绑定；一次隔离启动验证了 owned backend、health/background ready 与首页，退出机制由下方独立 P1-Q 样本限定，不扩大为 release bundle 或平台发布证据。
 - [x] 保持 `startup_surface=desktop|browser` 语义：Tauri child 的缺省偏好为 desktop，既有有效显式偏好保持原值；严格 handshake 后 Rust 才选择 WebView 或固定 origin 的 host-only browser opener，托盘/第二实例重开同一 surface。L9 已验证 development `.app` 的 `desktop_available=true` 与默认 desktop；Windows 便携版仍拒绝新增 desktop 选择，真实 browser、tray、单实例和原生面板仍未验收。
 - [x] 以不返回网页的随机 token 限制 Host RPC，picker 面只开放四种 picker 枚举与精确 localhost origin，更新面独立地只开放 `update_check/update_install`；host 只把 token/secret 传给其直接启动的 backend，backend 启动时捕获并从 descendant 环境清除，Python bearer 请求显式禁用环境代理，WebView capability 为空，token 不进入 Tauri command/event、API 响应或日志；授权先 arm 再由有界 liveness watcher 在 child exit 后撤销；尚未实测原生面板。
+- [x] 应用图标选择：三套随包图标（`orange/teal/violet`）在设置中心和皮肤页可选，`GET/PUT /api/v1/app-icon` 只接受内置 id，状态仅写入 `runtime/local_state/app_icon_state.json`，与皮肤和 `watch_dir` 隔离。Tauri private Host RPC 只接受精确 `{"command":"set_app_icon","icon":"<builtin>"}`，先更新窗口、任务栏和托盘，Python 仅在 host 成功后持久化；非法 payload 和 Host 失败分别拒绝或脱敏 `503`。现有证据仅限源码/契约，不覆盖 Windows 原生桌面、托盘、任务栏或安装包运行。
 - [x] 保持 `POST /api/v1/update/check` 兼容：同一进程具备 Tauri host marker 和 private RPC 时，API、设置页和后台检查都进入 strict host preflight；只有非 Tauri/非 host 检查不获取 host lifecycle 锁并保留 cache/ETag/busy 语义。host approval 只以非阻塞方式获取该锁，竞争时返回不持久化 busy 结果且不触发 metadata/candidate 或清除既有 approval；install 锁竞争立即失败且不消费 approval 或发起第二次 private RPC。获得锁后，AppState 只在同一 session 内取得显式携带 `Cache-Control: no-cache`、不带 ETag 的 fresh allowlisted Feed `200` body、并与 host candidate version 完全一致时授予一次性内存 approval，缓存、ETag、`304`、离线或错误不可授权。host candidate 最多 300 秒，由 listener 主动清除；L10-D 后 `update_install` 可把 fresh candidate 交给响应后私有 commit，但 Web 仍不能提供版本/URL/签名/artifact ID，错误继续脱敏。隔离 Rust/FastAPI TestClient 合同覆盖此源码边界；真实下载、更新、bundle、签名、重启和平台烟测仍未执行。
 - [x] hosted host-lock 竞争的 busy 返回不写 `updates.checked`：该路径不调用 `append_event`，因此不会把“立即/非持久化”响应重新变成 SQLite 写入等待；成功和非竞争检查的事件语义不变。
 - [x] L8-S/L9：development profile 仅接受显式、已存在、绝对且 canonicalize 后与 bundle/core 及完整 macOS `.app` 容器双向不包含的 `INVOICE_HUB_DEV_STATE_ROOT`，`Contents` sibling 同样 fail-closed，release、缺失或相对覆盖 fail-closed，变量不传给 Python child；在隔离 state root 构建并启动一次 unsigned/ad-hoc macOS arm64 development `.app`。固定端口、health/background、首页/静态资源和 desktop 默认值通过；真实 Application Support 未被触碰。16-bit RGBA 图标导致的 tray 初始化失败已改为 8-bit RGBA，并有 IHDR 回归。

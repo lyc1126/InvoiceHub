@@ -87,6 +87,16 @@ the assembler labels dirty inputs `<HEAD>+dirty`.
 | Stop condition | Stop at the first contradictory production-path finding, focused test failure, documentation failure, or new hosted failure mechanism. Do not rerun the old workflow, change `validate_venv_python`, expand into shared-core or release tests, rebuild the development `.app`, create an installer, merge, tag, release, or publish a Feed. |
 | Result | Passed. The development builder is macOS-arm64-only and its existing executable-access validation remains unchanged; only the POSIX-specific fixture was replaced. The focused development-app file passed 7 tests, the directly affected documentation selection passed 13 tests, and `git diff --check` passed. Fix commit `097ea8a` then passed DCO, Windows x64, and macOS arm64; foundation PR #7 merged at `673062d`, and `main` now requires those three stable checks. No development `.app`, installer, release, tag, or Feed action was part of this repair. |
 
+### P1-I: bundled desktop App icon selection source contract
+
+| Field | Record |
+| --- | --- |
+| Hypothesis | A built-in `orange/teal/violet` icon set can remain isolated from skins, `watch_dir`, invoice data, and arbitrary native-file access while one selected ID controls the browser favicon and, when Tauri owns the desktop surface, the window/taskbar and tray icon. |
+| Decision changed by result | Source and contract coverage permits one DCO commit and feature-branch push. It does not permit a Windows native-surface, tray, taskbar, restart-persistence, installer, signing, or release claim. A failure confines repair to the icon service, favicon consumer, private Host RPC parser, or Tauri surface update order. |
+| Minimal sample | `tests/test_app_icon.py`, `tests/test_tauri_host_rpc.py`, `tests/test_tauri_lifecycle_contract.py`, Rust Host RPC/lifecycle contracts, frontend and print static contracts, documentation contracts, `compileall`, and `git diff --check`. The Tauri runtime sample must later confirm all three icon choices on the target desktop platform. |
+| Stop condition | Stop at the first asset-integrity, state-isolation, API, private-payload, surface-order, static-consumer, or documentation failure. Do not accept arbitrary path/URL/image bytes, write icon state under `watch_dir`, assert native success before the host acknowledges it, or represent source tests as Windows runtime evidence. |
+| Result (2026-09-02) | The source change provides versioned PNG assets, default bundle `png/ico/icns`, runtime-local `app_icon_state.json`, browser favicon injection including `?no_skin=1` and print pages, and an exact private `set_app_icon` payload. Python persistence remains after the host accepts the native update. `compileall` and whitespace checks passed in this worktree; focused Python/Rust test execution is pending because this host has no project virtual environment, `pytest`, or Cargo, and Docker is not running. No Windows window, taskbar, tray, restart, or installer execution was performed. |
+
 ## Operating rules
 
 | Change | Required verification | Rebuild |

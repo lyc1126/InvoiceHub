@@ -1,6 +1,6 @@
 # IMPLEMENTATION_STATUS
 
-更新时间：2026-08-26
+更新时间：2026-09-02
 
 ## 公开基线
 
@@ -20,6 +20,7 @@
 - PDF/OFD/XML 票头与成本明细提取、金额合法性保护、两维分类、同票纠偏、普通汇总与成本投影。
 - 独立 monitor、后台 startup sync、文件事件合并、周期兜底、手改三字段保护和可诊断日志。
 - FastAPI 页面/API、目录草稿、监控控制、结构化关闭、源文件预览、批量打印、皮肤安全边界和真实表格/TSV 复制。
+- 三套内置应用图标（暖橙、青碧、罗兰紫）的设置/皮肤页选择、浏览器 favicon 同步和 Tauri 私有 Host RPC；选择独立于皮肤，只保存到 `runtime/local_state/app_icon_state.json`。
 - 做账 W8/W9 的本地文件真值、状态迁移预览、服务端执行校验、批次 manifest 与只读 dry-run 边界。
 - macOS SwiftUI/WKWebView 壳保留为现有平台参考；它不改变共享业务逻辑，也不构成未来 Tauri 发布证据。
 
@@ -33,6 +34,7 @@
 ## Tauri 2 生命周期边界与开发 `.app`
 
 - `src-tauri/` 已提供固定 `127.0.0.1:8766` 的后端生命周期代码：未知占用失败、host 启动的 child PID/manifest/identity/OpenAPI 方法严格握手、单实例恢复窗口，以及仅在成功后创建 WebView。初次握手后严格读取 `startup_surface`，再以新的 HMAC challenge 和 identity probe 复核归属才 arm 授权：`desktop` 创建 WebView，`browser` 只由 host-only opener 打开固定 origin；托盘和第二实例重新打开既定 surface，desktop 关闭只隐藏窗口且不停止 monitor。裸源码 checkout 仍因没有经编译绑定的 manifest 以状态 `78` fail-closed；`scripts/dev/tauri_dev_app.py` 的普通 `stage/build` 只生成 updater-disabled schema-3 development manifest、允许清单内 core 与显式 venv launcher，并将 manifest/launcher SHA-256 绑定进本地 arm64 host。显式 `stage-recovery/build-recovery` 只为 L10-E 写入 Rust host 接受的精确不可安装 tuple；两种 build 都可使用绝对 pnpm 或绝对 Tauri CLI，且都不产生 release manifest、DMG、NSIS 或正式发布输入。
+- 应用图标选择新增三套随包 PNG 资产与 bundle `png/ico/icns` 默认图标；`GET/PUT /api/v1/app-icon` 只接收内置 `orange/teal/violet`，状态只保存到 `runtime/local_state/app_icon_state.json`。Tauri host 的私有 `set_app_icon` payload 必须恰好是该枚举；host 先更新窗口、任务栏和托盘，Python 只在成功响应后写入状态，避免下次启动与当前原生 surface 不一致。该实现只完成源码和契约覆盖，尚未运行 Windows 原生窗口、托盘、任务栏或安装包验收。
 - internal-alpha 发行准备已落地并完成一次真实 arm64 构建：`scripts/dev/tauri_alpha_release.py` 从精确 Git snapshot 复制 allowlist core，校验并嵌入 Python 3.14.6 arm64 runtime，生成 schema-3 host manifest、launcher/build/package/runtime manifest 和 schema-4 receipt；`scripts/dev/verify_tauri_alpha.py` 对工作区副本的 App、DMG、哈希、布局、平台污染和 ad-hoc 模式做 fail-closed 校验并通过。完整 `source_commit` 与 `core_build_id` 留在 [L11-A 执行记录](docs/release/L11_A_INTERNAL_ALPHA_PLAN.md)和交付 receipt；该 artifact 明确为 `updater_enabled=false`、`public_release=false`。另以临时 HOME/state root 完成一次独立启动烟测：固定端口 health 到达 `ready`，身份匹配且未触碰真实 Application Support；该结果仍仅是内部评审证据，不是正式签名、公证、发布或最终用户安装证据。
 - 归属证明使用后端独有的 256 位 secret、宿主每次新建 challenge 和 HMAC-SHA256 响应；secret 不发送给端口监听者。Host RPC token 只由 host 传给其直接启动的 Python backend，backend 启动时捕获并从 descendant 环境清除，绝不进入 WebView、Tauri command/event、API 响应或日志。私有随机 loopback listener 的 picker 面仅保留四种原生选择器枚举，更新命令面独立地仅为 `update_check/update_install`，WebView 没有 IPC 权限；host candidate 最多保留 300 秒，由 listener loop 主动清除并保存完整 cloneable `Update`，Web 只看到版本。同一进程同时具备 Tauri marker 与 configured private RPC 时，API、设置页和后台 timer 均通过 `check_for_updates` 进入 strict host preflight；只有非 Tauri/非 host 检查不获取 `_host_update_lock` 并保留 `UpdateService` 的 cache/ETag/nonblocking-busy 语义。host 检查锁竞争返回不持久化 busy 且不触发 metadata/candidate、不会清除既有 approval；install 锁竞争立即抛脱敏错误，不消费 approval 或发送第二次 RPC。host approval 必须来自同一 session 内显式携带 `Cache-Control: no-cache`、不带 ETag 的 fresh `200` body，缓存、ETag、`304`、离线或错误不授予 approval，随后才要求版本完全一致。安装接口只接受 `{}`，错误固定为脱敏 `503 Update installation unavailable`。Host updater metadata 与下载对象固定 5 秒时限。托盘 Quit 与 macOS 自定义应用菜单/Cmd-Q 共用 `app.exit(0)` 请求；应用菜单不使用会直达原生 `terminate:` 的 predefined Quit。Host 收到普通 `ExitRequested` 后才请求 `POST /api/v1/server/shutdown` 的 `keep_monitor` 结构化关闭并有界等待 owned child，API 错误或超时后显式 `kill + wait`，无法确认 child 已退出则阻止 host 退出；私有 update commit 期间普通 Quit 同样被阻止，只有 macOS 已准备 update relaunch 可跳过重复 shutdown。外部 AppleScript quit、Force Quit、SIGKILL 等可绕过该事件，不属于有序退出承诺。Rust picker 最多等待 120 秒，Python 保留 125 秒响应预算，四条 picker API 的私有错误固定为脱敏 `503 Native picker unavailable`。授权在 post-preference revalidation 后先 arm，随后由 100 ms 有界 child liveness watcher 撤销。Python 启动后捕获并清除 secret/token，monitor、后台同步和原生子进程不会继承它们。
 - L10-R 只完成 source-level 的 Tauri monitor recovery primitive：`BackendHost` 在 tray/surface 成功、`app.manage` 前释放 startup gate，并把 generation、phase、health/owned/process PID 和 state scope 固定为 lifecycle lease。恢复事务会在每次 marker 或未来 bridge 操作前后复核该 lease；仅对已经 `running && ready` 的 owned monitor 写入标记，已有标记、corrupt/cross-scope 标记、未就绪 monitor、ownership 丢失和 bridge failure 都 fail closed。Unix marker store 以 opened-directory descriptor 加 `O_NOFOLLOW`/`openat`/atomic no-clobber `linkat`/`unlinkat` 固定最终操作；在该 L10-R 阶段其它非 Unix 平台返回 unavailable。下方 L10-C source-level slices 后续补充 Windows handle-relative/no-reparse marker store 与 Unix whole-operation protocol hardening。尚未接入 Host RPC、真实 monitor、下载、安装或重启，因此当前 `update_install` 的 candidate-consuming fail-closed 语义不变。

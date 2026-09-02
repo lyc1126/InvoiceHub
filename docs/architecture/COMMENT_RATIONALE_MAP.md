@@ -109,7 +109,7 @@
 | `MonitorBridge.status/_wait_for_ready/start` | 仅见 PID/lock 不能向用户报告启动成功 | lock PID、status PID、running、ready 必须一致 | bridge start/stop 测试 |
 | `MonitorBridge.stop` | stop flag 是协作停止，超时才强制杀进程 | 停止后清 flag/stale lock 并返回真实复核状态 | bridge 生命周期测试 |
 
-## 8. P0：皮肤、单据与文件安全
+## 8. P0：皮肤、应用图标、单据与文件安全
 
 | 文件与符号 | 应说明的原因 | 不能破坏的不变量 | 守护测试 |
 |---|---|---|---|
@@ -117,6 +117,7 @@
 | `validate_skin_zip` | 解压即写盘会造成 zip slip 或放入可执行内容 | 先完整校验路径、类型、大小、重复、symlink、加密，再写 runtime | 皮肤导入/拒绝测试 |
 | `_validate_css` | CSS 可通过 import/url 加载远程或可执行内容 | 只允许包内存在的相对静态资源 | CSS 安全测试 |
 | `SkinService.import_skin` | 导入替换应以临时目录完成，内置皮肤只读 | imported 仅在 runtime；同 id 内置不覆盖 | 导入、替换、存储隔离测试 |
+| `AppState.update_app_icon` 与 `src-tauri/src/app_icon.rs::apply` | 用户选择的 runtime 状态不能先于可见原生 surface；否则窗口/托盘失败后，下次启动会错误声称已切换 | 只接受内置 id；Tauri host 先更新 tray/window，window 失败时恢复先前 tray，Python 仅在 `{"ok":true}` 后写 `runtime/local_state/app_icon_state.json` | `tests/test_app_icon.py`、`tests/test_tauri_host_rpc.py`、Rust Host RPC/lifecycle contract |
 | `ink-pulse/skin.css::ink-pulse-page-in` | Chromium 可在 transform 动画终止帧为 `none` 时仍保留 identity matrix，让 `body` 成为 fixed containing block | `body` 入场 keyframes 只允许 opacity，不得使用 transform/filter/perspective/will-change 等可建立 containing block 的属性 | Ink Pulse CSS 完整 keyframes 属性契约；滚动后真实浏览器验收 |
 | `documents.py::_ensure_detail_rows` | 插行会打乱模板合并区域和 footer 样式 | 先移动后续合并区域，再插行并复制模板行样式 | 超模板行数导出测试 |
 | `documents.py::rmb_uppercase` | “零”的跨四位组规则非直觉，普通数字格式化不能替代 | HALF_UP 到分；万/亿跨组零正确 | RMB 零位测试 |

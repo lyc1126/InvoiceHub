@@ -1,3 +1,4 @@
+pub mod app_icon;
 pub mod backend;
 pub mod host_rpc;
 pub mod monitor_bridge;

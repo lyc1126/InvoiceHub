@@ -4,7 +4,7 @@
   <title>皮肤</title>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <link rel="stylesheet" href="/static/css/app.css?v=20260802-release-update-v1">
+  <link rel="stylesheet" href="/static/css/app.css?v=20260902-app-icon-skins">
 </head>
 <body data-page="skins">
   <header class="topbar">
@@ -28,6 +28,17 @@
     </section>
 
     <section id="skinBanner" class="banner banner--muted" hidden></section>
+
+    <section class="panel app-icon-panel" aria-labelledby="appIconTitle">
+      <div class="panel__head">
+        <div>
+          <h3 id="appIconTitle">应用图标</h3>
+          <p id="appIconStatus">正在读取当前应用图标...</p>
+        </div>
+      </div>
+      <div id="appIconList" class="app-icon-list" role="radiogroup" aria-label="应用图标"></div>
+      <div class="panel__meta">Tauri 桌面会同步当前窗口、任务栏和托盘；浏览器标签图标同时刷新。安装包在未启动前仍使用暖橙默认图标。</div>
+    </section>
 
     <section class="panel skin-upload-panel">
       <div class="panel__head">
@@ -62,6 +73,6 @@
     </section>
   </main>
   <script src="/static/js/common.js?v=20260729-main-macos-sync"></script>
-  <script src="/static/js/page-skins.js?v=20260717-settings-macos-sync"></script>
+  <script src="/static/js/page-skins.js?v=20260902-app-icon-skins"></script>
 </body>
 </html>

@@ -62,7 +62,7 @@ flowchart TB
 | 投影 | `projections/` | 源文件是真值，CSV/XLSX/JSON 可重建；SQLite 不是发票主库 |
 | 路径 | `targets/TargetProfile` | 单活动 `watch_dir`，每个目标有独立 workspace/state/localappdata |
 | 监控 | `monitoring/` + `MonitorBridge` | 独立 daemon、PID+lock 真值、两次启动同步、ready 握手 |
-| 前端 | `web/templates` + `web/static` | 分类、勾选合计、关闭弹窗、皮肤和恢复入口共用 |
+| 前端 | `web/templates` + `web/static` | 分类、勾选合计、关闭弹窗、皮肤、应用图标和恢复入口共用 |
 | 更新检查 | `services/update_service.py` + `release/provenance.py` + `release/update_metadata.py` | `v0.3` 起由同仓库 Pages Feed 和 Tauri updater 处理，About 仍本地读取 |
 | 发布身份 | `version.py` + `release/*manifest.py` + `release/provenance.py` | 版本、package ID、source commit、build ID、依赖锁、Tag 和平台身份必须闭环 |
 
@@ -91,6 +91,7 @@ flowchart TB
 | 监控控制 | BAT/页面调用共享 bridge | 原生命令/页面调用共享 bridge；externalCompatible 禁用壳内启动/停止 | 关闭窗口或 WebUI 不等于停止 monitor |
 | 关闭 WebUI | 结构化 shutdown 或正式停止 BAT | `/api/v1/server/shutdown`，固定 `keep_monitor`、`remember=false` | monitor 停止必须是单独、明确的用户动作 |
 | 启动方式 | `v0.3` 新安装默认 `desktop` | `v0.3` 新安装默认 `desktop`，可选 `browser`，下次启动生效 | 已导入的显式偏好保持原值；关闭窗口/浏览器不停止 monitor |
+| 应用图标 | Tauri host 读取同一运行态选择并同步窗口、任务栏和托盘 | Tauri host 读取同一运行态选择并同步窗口、任务栏和托盘 | 三套内置 id 与浏览器 favicon 共用；bundle 首次启动前保持暖橙默认图标，状态独立于皮肤和 `watch_dir` |
 | 更新 | L10-D 已源码接入 Tauri check/install、Windows installer 前退出与 recovery marker | L10-D 已源码接入 Tauri check/install、macOS prepared restart 与 recovery marker | ordinary development/internal-alpha 仍禁用 updater；L10-E 只提供不可安装的 macOS recovery smoke，真实 Feed、下载、安装与重启仍须双平台验收 |
 | 构建兼容 | package/build/runtime manifest、正式启动 health | 三类 manifest、health、必需页面/API 严格握手 | 构建身份和能力不允许只凭 `health.ok` 判断 |
 | 发布形态 | `v0.3` 为 Windows 10/11 x64 NSIS `.exe` | `v0.3` 为 macOS 13+ arm64 `.dmg` 和更新归档 | 都不得携带本机配置、真实发票、运行态或业务资料 |
@@ -102,7 +103,9 @@ flowchart TB
 
 该一次 smoke 使用 development-only 的显式、已存在、绝对外置 state root，不读写真实 Application Support；host 会 canonicalize 它并拒绝其位于 bundle/core 内或包住 bundle/core。它确认 health/background ready、首页/静态资源和 `desktop_available=true` 的默认 desktop。外部 AppleScript quit 曾绕过 shutdown POST 并留下 stale server state，该外部路径仍不作有序退出承诺；P1-Q 随后在 clean-commit 样本上以真实 Cmd-Q 确认 shutdown POST 200、stopped state、monitor 未运行、host/backend/PID/端口清理，SSE 未及时退出时由显式 kill+wait 兜底。development manifest 明确禁用 updater，且 state-root override 不会传给 Python child。browser、tray 点击、单实例、native picker、打印、下载/验签/安装、DMG、Developer ID、公证和 Windows 均未覆盖。
 
-Host RPC 是 host 的随机 loopback listener；host 只将 token 传给其直接启动的 Python backend，backend 启动时捕获并从 descendant 环境清除。网页没有 token、Tauri command 或 event 通道，token 也不进入 API 响应或日志；backend 的 picker 面只能发起四种固定 picker enum，更新面独立地只能发起 `update_check` / `update_install` 两个固定 enum。同一进程具备 Tauri marker 与 private RPC 时，API、设置页和后台 timer 的公开更新检查都是 strict delegated-install preflight；只有非 Tauri/非 host 检查不获取 `_host_update_lock` 并保留 cache/ETag/nonblocking-busy 语义。host 检查锁竞争立即返回不持久化 busy，且不会调用 metadata/candidate 或清除既有 approval；install 锁竞争立即抛脱敏 `HostRpcError`，不消费 approval 或发第二次 RPC。
+Host RPC 是 host 的随机 loopback listener；host 只将 token 传给其直接启动的 Python backend，backend 启动时捕获并从 descendant 环境清除。网页没有 token、Tauri command 或 event 通道，token 也不进入 API 响应或日志；backend 的 picker 面只能发起四种固定 picker enum，更新面独立地只能发起 `update_check` / `update_install` 两个固定 enum，应用图标面只允许 `set_app_icon` 加 `orange/teal/violet` 之一。同一进程具备 Tauri marker 与 private RPC 时，API、设置页和后台 timer 的公开更新检查都是 strict delegated-install preflight；只有非 Tauri/非 host 检查不获取 `_host_update_lock` 并保留 cache/ETag/nonblocking-busy 语义。host 检查锁竞争立即返回不持久化 busy，且不会调用 metadata/candidate 或清除既有 approval；install 锁竞争立即抛脱敏 `HostRpcError`，不消费 approval 或发第二次 RPC。
+
+应用图标不是外部文件能力：Python API 只接受内置 id，并把最后成功选择保存到用户可写运行态 `runtime/local_state/app_icon_state.json`。启动时 host 在创建 tray/window 前读取该选择；运行中切换时，host 必须先把同一 PNG 应用到 tray 和窗口，失败时恢复先前 tray 并拒绝响应，Python 才能写入状态。浏览器 favicon 从同一选择生成，皮肤、`?no_skin=1` 和 `/backend` 不改变它。此处只定义源码边界，尚未形成 Windows 原生任务栏、托盘、窗口或安装包的运行证据。
 
 Host candidate 最多保留 300 秒。启用 updater 的 profile 只在 startup gate 释放、`BackendHost` 注册后激活，从严格 identity 的 `runtime_dir` 打开 marker store，并先完成 authenticated startup restore；恢复失败保留 marker 和诊断界面并把 updater 固定为失败态。`update_install` 原子消费 fresh 完整候选、reserve runtime 并启动 latch-blocked worker；只有精确 `{"ok":true}` 完整写入并 flush 后才放行 Tauri download 内置验签 -> owned monitor pause/recheck -> install -> platform relaunch。响应写失败、worker spawn 失败或 latch 丢失固定进入 `CommitLost`，且不得下载、写 marker、停止 monitor 或安装。Updater metadata 与下载对象都固定 5 秒时限，不能使用插件默认的无时限请求永久占住 operation mutex。
 

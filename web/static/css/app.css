@@ -1398,6 +1398,84 @@ input[type="number"] { width: 110px; }
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.app-icon-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 12px;
+}
+.app-icon-card {
+  display: grid;
+  grid-template-columns: auto 68px minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
+  min-height: 104px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-2);
+  cursor: pointer;
+}
+.app-icon-card:hover,
+.app-icon-card:focus-within {
+  border-color: #9bb7f3;
+  background: #f8fbff;
+}
+.app-icon-card.is-selected {
+  border-color: var(--primary);
+  box-shadow: inset 0 0 0 1px var(--primary);
+}
+.app-icon-card.is-active {
+  background: #eef4ff;
+}
+.app-icon-card.is-pending,
+.app-icon-list[data-busy="true"] .app-icon-card {
+  cursor: wait;
+}
+.app-icon-card__radio {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: var(--primary);
+}
+.app-icon-card__preview {
+  display: flex;
+  width: 68px;
+  height: 68px;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  background: transparent;
+}
+.app-icon-card__preview img {
+  display: block;
+  width: 68px;
+  height: 68px;
+  object-fit: contain;
+  border: 0;
+  background: transparent;
+}
+.app-icon-card__body {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+.app-icon-card__title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.app-icon-card__title strong {
+  font-size: 16px;
+  letter-spacing: 0;
+}
+.app-icon-card__description {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 .settings-shell {
   width: min(100% - 40px, 1680px);

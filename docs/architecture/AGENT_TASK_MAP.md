@@ -154,17 +154,17 @@ flowchart TD
 | 真实验收 | W9 profile/科目/辅助/映射人审必须基于目标账套重新采集；真实 Safari apply、读回和 reconcile-only 属 W10，每次 apply 仍需当回合明确授权 |
 | 高风险提醒 | 资料夹导航不得变成完整发票扫描或任意本机打开器；截断统计和 `os.scandir` 迭代中断后的累计统计都必须显式标为下界且不能阻塞发票列表。做账不得自动迁移、不绕过 blockers、不猜最新 XLSX、不直接写状态 JSON；测试通过不授权真实账套迁移、审批、导出或导入 |
 
-## 11. 皮肤系统
+## 11. 皮肤与应用图标
 
 | 导航项 | 内容 |
 |---|---|
-| 首先阅读 | 接口流程第 3.6、6.9 节；数据算法第 12.2 节；AGENTS 皮肤安全规则 |
-| 首要入口 | `services/skins.py::validate_skin_zip/SkinService`、`api/app.py::_skin_zip_body/active_skin_link`、page-skins、common 首屏水合 |
-| 必须联动 | 内置 `skin.json/skin.css/asset-sources.json`、字体/纹理、设置外观分类、所有普通模板和 no-skin 恢复 |
-| 产物与消费者 | `runtime/local_state/skins`、服务端 CSS/资产响应、普通页面样式 |
-| 最低自动化 | 皮肤相关 `tests/test_api_contract.py` + `tests/test_frontend_contract.py` + `tests/test_paths.py` 的存储隔离 |
-| 真实验收 | 导入/替换/启用/重置、恶意 ZIP 拒绝、当前皮肤与 no-skin、桌面/移动关键业务表格不被破坏 |
-| 高风险提醒 | 禁止 JS/HTML/脚本/远程资源；先全量校验再写盘；导入目录不能是 watch_dir；内置同 id 不能被覆盖 |
+| 首先阅读 | 接口流程第 3.6、3.6.1、6.9 节；数据算法第 12.2 节；AGENTS 皮肤安全规则 |
+| 首要入口 | `services/skins.py::validate_skin_zip/SkinService`、`services/app_icons.py::AppIconService`、`AppState.update_app_icon`、`api/app.py::_skin_zip_body/active_skin_link/app_icon_favicon_link`、page-skins、page-settings |
+| 必须联动 | 内置 `skin.json/skin.css/asset-sources.json`、字体/纹理、`web/static/app-icon/`、设置外观分类、所有普通模板、打印模板、`/backend` 和 no-skin 恢复 |
+| 产物与消费者 | `runtime/local_state/skins`、`runtime/local_state/app_icon_state.json`、服务端 CSS/图标响应、普通页面 favicon、Tauri host surface |
+| 最低自动化 | 皮肤相关 `tests/test_api_contract.py` + `tests/test_frontend_contract.py` + `tests/test_paths.py` 的存储隔离；图标改动再跑 `tests/test_app_icon.py`、`tests/test_tauri_host_rpc.py`、`tests/test_tauri_lifecycle_contract.py` 和 Rust lifecycle contract |
+| 真实验收 | 导入/替换/启用/重置、恶意 ZIP 拒绝、当前皮肤与 no-skin、桌面/移动关键业务表格不被破坏；图标还要在对应平台检查窗口、任务栏、托盘、favicon 和重启后恢复 |
+| 高风险提醒 | 皮肤禁止 JS/HTML/脚本/远程资源；先全量校验再写盘；导入目录不能是 watch_dir；内置同 id 不能被覆盖。图标不接受自定义路径、URL、字节或额外 Host RPC 字段，Tauri mode 必须先更新 native surface 后持久化 |
 
 ## 12. Windows 正式入口与平台交互
 
@@ -183,7 +183,7 @@ flowchart TD
 | 导航项 | 内容 |
 |---|---|
 | 首先阅读 | [平台架构](PLATFORM_ARCHITECTURE.md)第 5 至 8 节；接口流程第 3.2、6.12 节；`AGENTS.md` macOS 本地壳规则 |
-| 首要入口 | `BackendPaths.swift`、`LocalBackendController.swift`、`BuildHandshake.swift`、`InvoiceHubSparkleUpdater.swift`、`StartupSurface.swift`、`WebView.swift`、`InvoiceHubAPIClient.swift`、`InvoiceHubMacApp.swift`、`src-tauri/src/main.rs`、`src-tauri/src/backend.rs`、`src-tauri/src/monitor_recovery.rs`、`src-tauri/src/monitor_recovery/windows_marker_store.rs`、`src-tauri/src/monitor_bridge.rs`、`src-tauri/src/update_coordinator.rs`、`scripts/dev/tauri_dev_app.py`、`scripts/dev/tauri_recovery_smoke.py`、`scripts/dev/tauri_public_preview_smoke.py`、开发与正式三个 release 脚本 |
+| 首要入口 | `BackendPaths.swift`、`LocalBackendController.swift`、`BuildHandshake.swift`、`InvoiceHubSparkleUpdater.swift`、`StartupSurface.swift`、`WebView.swift`、`InvoiceHubAPIClient.swift`、`InvoiceHubMacApp.swift`、`src-tauri/src/main.rs`、`src-tauri/src/app_icon.rs`、`src-tauri/src/backend.rs`、`src-tauri/src/host_rpc.rs`、`src-tauri/src/monitor_recovery.rs`、`src-tauri/src/monitor_recovery/windows_marker_store.rs`、`src-tauri/src/monitor_bridge.rs`、`src-tauri/src/update_coordinator.rs`、`scripts/dev/tauri_dev_app.py`、`scripts/dev/tauri_recovery_smoke.py`、`scripts/dev/tauri_public_preview_smoke.py`、开发与正式三个 release 脚本 |
 | 必须联动 | Python build/package/runtime manifest/health、OpenAPI 路由、API/做账协议/capabilities、固定端口、Application Support、owned/external、启动方式、升级标记与 monitor 恢复、原生面板和打印 identity；Tauri updater 还要联动 backend 私有 secret、Host RPC runtime gate/candidate、authenticated bridge、platform marker store、coordinator、Windows `on_before_exit`、macOS relaunch 与 ExitRequested；Swift/Sparkle 仅保留参考实现 |
 | 产物与消费者 | ordinary development schema-3 arm64 `.app`（本地 ignored、updater-disabled）；L10-E development recovery-smoke `.app`（本地 ignored、不可安装）；正式 arm64 `.app/DMG/Sparkle ZIP`；三类 manifest/SBOM；Application Support 配置/runtime/PID/log；WKWebView 页面 |
 | 最低自动化 | Swift recovery contracts 继续覆盖参考壳 marker/gate。Tauri setup/updater 改动至少跑锁定 Rust format/check、Host RPC deferred-commit 单测、authenticated bridge、update coordinator、monitor recovery、Windows marker/source contracts，以及 Python valid/tampered/replayed/non-empty HMAC、empty install body/redaction 和 lifecycle/doc contracts；必须锁定 startup restore 晚于 gate/manage、disabled runtime inert、response flush 早于 commit、writer/latch loss 无副作用、并发操作/普通 Quit 拒绝与 relaunch prepared。L10-E 还必须覆盖 ordinary/recovery staging 可重复性、精确 endpoint/key/字段拒绝、临时路径、关闭自动检查、marker scope、health/monitor 身份和 runner 三条 HTTP allowlist。public-preview 还必须锁定 pending receipt 默认拒绝、仅内部首轮允许、finalized output 与 DMG SHA-256 精确绑定、DMG/receipt 复核、quarantine、没有 development state override、`open -n -W -g` 启动和 shutdown 后 SSE 结束；Windows public-preview 还必须锁定 WebView2 hash、单次 marker、两层 Authenticode、包内 EXE 哈希与安装器/SHA-256/receipt 三项 Actions artifact。它们不替代真实 Feed/update；完整 Windows Tauri target check 仍受 `ring`/`assert.h` 环境限制。其余 build/release/Mac/API/前端门禁按修改面运行，制品模式仍必须互斥 |

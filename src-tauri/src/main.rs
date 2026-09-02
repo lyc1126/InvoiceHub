@@ -13,6 +13,7 @@ use tauri_plugin_opener::OpenerExt;
 use invoicehub_desktop::backend::{
     default_bundle_root, load_bundle_manifest, BackendHost, BackendShutdownOutcome, StartupSurface,
 };
+use invoicehub_desktop::app_icon::{self, AppIconId};
 
 const MAIN_WINDOW_LABEL: &str = "main";
 #[cfg(target_os = "macos")]
@@ -108,7 +109,7 @@ fn complete_setup_failure_cleanup(backend: &BackendHost) {
     }
 }
 
-fn install_tray(app: &tauri::App<tauri::Wry>) -> Result<(), Box<dyn Error>> {
+fn install_tray(app: &tauri::App<tauri::Wry>, icon_id: AppIconId) -> Result<(), Box<dyn Error>> {
     let open_item = MenuItem::with_id(app, TRAY_OPEN_ID, "Open InvoiceHub", true, None::<&str>)?;
     let quit_item = MenuItem::with_id(app, TRAY_QUIT_ID, "Quit InvoiceHub", true, None::<&str>)?;
     let menu = Menu::with_items(app, &[&open_item, &quit_item])?;
@@ -122,10 +123,9 @@ fn install_tray(app: &tauri::App<tauri::Wry>) -> Result<(), Box<dyn Error>> {
                 quit_from_tray(app);
             }
         });
-    if let Some(icon) = app.default_window_icon() {
-        tray = tray.icon(icon.clone());
-    }
-    tray.build(app)?;
+    tray = tray.icon(app_icon::image_for(icon_id)?);
+    let tray = tray.build(app)?;
+    app.manage(tray);
     Ok(())
 }
 
@@ -186,10 +186,11 @@ fn main() -> ExitCode {
         .setup(move |app| -> Result<(), Box<dyn Error>> {
             let backend = BackendHost::launch(manifest, app.handle().clone())?;
             let startup_surface = backend.startup_surface();
+            let app_icon_id = app_icon::load_selected(backend.runtime_dir());
             let setup_result = (|| -> Result<(), Box<dyn Error>> {
-                install_tray(app)?;
+                install_tray(app, app_icon_id)?;
                 match startup_surface {
-                    StartupSurface::Desktop => create_desktop_window(app)?,
+                    StartupSurface::Desktop => create_desktop_window(app, app_icon_id)?,
                     StartupSurface::Browser => open_backend_in_browser(&app.handle())?,
                 }
                 Ok(())
@@ -237,7 +238,10 @@ fn main() -> ExitCode {
     ExitCode::SUCCESS
 }
 
-fn create_desktop_window(app: &tauri::App<tauri::Wry>) -> Result<(), Box<dyn Error>> {
+fn create_desktop_window(
+    app: &tauri::App<tauri::Wry>,
+    icon_id: AppIconId,
+) -> Result<(), Box<dyn Error>> {
     let backend_url = invoicehub_desktop::backend_origin().parse()?;
     tauri::WebviewWindowBuilder::new(
         app,
@@ -245,6 +249,7 @@ fn create_desktop_window(app: &tauri::App<tauri::Wry>) -> Result<(), Box<dyn Err
         tauri::WebviewUrl::External(backend_url),
     )
     .title("InvoiceHub")
+    .icon(app_icon::image_for(icon_id)?)?
     .inner_size(1280.0, 860.0)
     .min_inner_size(1024.0, 640.0)
     .build()?;

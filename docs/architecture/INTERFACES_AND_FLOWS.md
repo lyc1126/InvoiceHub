@@ -59,6 +59,8 @@ flowchart LR
 | `PUT /api/v1/settings` | `update_settings` | `{watch_dir}`；有效目录才切换，停止旧 monitor，写配置并触发后台同步 | 首页、设置页；业务失败通常返回 `ok=false` 而非 HTTP 4xx |
 | `GET /api/v1/preferences` | `preferences` | 成本显示、路径显示、单据策略、OCR 候选目录、关闭方式、`startup_surface`、`auto_check_updates` 及 `desktop_available` | costs/documents/OCR/settings 与 macOS 壳 |
 | `PUT /api/v1/preferences` | `save_preferences` | 允许字段的部分更新 | 强制同源写；非法值 `400`；Windows desktop 返回 `422`；写 `runtime/local_state/preferences.json` |
+| `GET /api/v1/app-icon` | `app_icon` | 当前/默认内置图标及预览、favicon URL | 设置中心、皮肤页和服务端页面 head；坏运行态回退暖橙 |
+| `PUT /api/v1/app-icon` | `update_app_icon` | 仅接受精确 `{"icon":"orange|teal|violet"}` | 强制同源写；非法/额外字段 `400`；Tauri private Host RPC 失败固定脱敏 `503 App icon update unavailable` |
 | `GET /api/v1/diagnostics/summary` | `diagnostic_summary` | 配置、产物、运行态、bridge、事件和日志摘要 | 设置页诊断 |
 | `GET /api/v1/diagnostics/config-health` | `config_health` | 路径槽位、目录和配置健康项 | 设置页诊断 |
 | `POST /api/v1/diagnostics/support-package` | `export_support_package` | 支持包路径、大小和清单 | 设置页；不含源发票或投影正文 |
@@ -148,7 +150,7 @@ identity 检查确认 child 仍被拥有，才 arm 授权或创建 surface。未
 
 在非 Tauri mode，它们保留既有同源写入检查。Tauri host 只将 token 传给其直接启动的
 Python backend；backend 启动时捕获 token 并从 descendant 环境清除。该 Python client 的 picker 面只将四种固定 picker enum
-发送到随机 loopback Host RPC listener，更新面独立地只允许 `update_check` / `update_install` 两个固定 enum；token 不会经过页面、
+发送到随机 loopback Host RPC listener，更新面独立地只允许 `update_check` / `update_install` 两个固定 enum，应用图标面只允许精确 `set_app_icon` 加一个内置 id；token 不会经过页面、
 Tauri command/event、API 响应或日志；Rust dialog 最多等待 120 秒，Python 以 125 秒预算保留响应余量。
 Host RPC 失败统一变为不含 token、URL 或 secret 的 `503 Native picker unavailable`；非
 Tauri 的 Tk 行为不变。授权先在 handshake 后 arm，backend child 退出后由 100 ms 有界
@@ -246,6 +248,12 @@ L10-D 复用 L10-R/C 的 lease、marker、fixed-loopback bridge 和 pure coordin
 | `POST /api/v1/skins/{skin_id}/enable` | `enable_skin` | 启用指定皮肤 | 未找到返回服务层错误码 |
 | `POST /api/v1/skins/reset` | `reset_skin` | 恢复无皮肤 | 默认可恢复入口 |
 | `GET /api/v1/skins/{skin_id}/files/{file_path:path}` | `skin_file` | CSS/字体/图片内容，正确 media type | 路径必须停留在皮肤根内 |
+
+### 3.6.1 应用图标
+
+应用图标不是皮肤资源或任意文件上传面。`GET /api/v1/app-icon` 返回唯一当前内置 id、默认 id 和三套固定静态 URL；`PUT /api/v1/app-icon` 只接受恰好一个字符串字段 `icon`，其值只能是 `orange`、`teal` 或 `violet`。服务只读写 `runtime/local_state/app_icon_state.json`，状态缺失、损坏或未知时回退暖橙；它不读取或写入 `watch_dir`、发票投影、SQLite 发票主数据或皮肤 ZIP。
+
+非 Tauri mode 在同源校验后直接持久化选择并让当前页 favicon 刷新。Tauri mode 额外把同一内置 id 交给私有 Host RPC：Rust 必须先更新当前窗口、任务栏和托盘，再返回精确 `{"ok":true}`；Python 只在该响应成功后写状态和事件。Host RPC payload 不能带路径、URL、字节或额外字段，失败不向页面泄露 listener/token/本地错误细节，固定映射为 `503 App icon update unavailable`。`/backend`、打印模板和 `?no_skin=1` 保持当前 favicon，因为图标选择独立于皮肤；当前结论只覆盖源码/契约，不代表 Windows 原生 surface 或安装包已运行验收。
 
 ### 3.7 Monitor bridge、OCR、事件、任务与关闭
 
