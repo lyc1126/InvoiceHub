@@ -38,6 +38,10 @@ release host 的 PE 必须是 GUI subsystem，且 runtime 下的 `server_stdout.
 
 运行时 shell-helper 裁剪、锁定 Rust 1.85 格式/测试、版本同步、聚焦发布契约、完整 Python 回归、`compileall`、PowerShell 解析和 diff whitespace 检查均已通过。独立 test Python 已离线重建其当前源码 `.pth` 绑定；未绑定且路径过长的 pytest 临时目录不构成验证证据。该主机的 Rust 1.85、MSVC/Windows SDK、Node/pnpm、锁文件和系统级 Evergreen WebView2 Runtime 均可用。doctor 曾因错误 Edge Update client ID 和三段版本限制把四段 `131.0.2903.86` runtime 误报缺失；修复并以 18 项 foundation 回归验证后，真实 `tauri-doctor --require-ready` 已放行。随后的 valid candidate 已通过静态验包和 owned backend handshake，但 desktop WebView 在 Tauri 隐式 profile 位置返回 Windows access denied；browser surface 可工作，因此问题被限定为 desktop profile。host 现显式创建并传入 `%LOCALAPPDATA%\\InvoiceHub\\webview`。后续 fresh candidate 已创建隔离桌面窗口，却在首次 monitor 启动时因 bridge/status 读取与 daemon 状态原子替换产生 `WinError 5` 而 fail closed；`MonitorState.read_status()` 现加入已有 TargetProfile 锁，12 项 monitor 回归通过。该源码修复仍须从 clean commit 重建 ZIP 后验证桌面窗口、picker、monitor、tray、Feed、Tag、Release 与 Pages。
 
+### 2026-09-02 console sample
+
+一个 clean exact-commit ZIP 已通过静态验包，并在中文空格路径、隔离 `LOCALAPPDATA` 中直接启动。raw `InvoiceHub.exe` 的 PE subsystem 是 `2`；桌面窗口与 health 出现，owned Python backend 的 `MainWindowHandle=0`，`runtime/server_stdout.log` 与 `runtime/server_stderr.log` 均存在且 stdout 有 HTTP 记录。受控 `keep_monitor` shutdown 后，测试 backend、host 与 `8766` 均已清理。该样本只覆盖控制台隐藏和保留诊断，仍不覆盖 picker、monitor、tray、单实例、Feed、Tag、Release 或 Pages。
+
 ## macOS 新 RC
 
 1. 从同一 clean `RC_SHA` 构建内嵌 core 与 arm64 runtime，生成 manifest、SBOM 和源码归档。

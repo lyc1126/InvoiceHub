@@ -8,8 +8,12 @@
   isolated `%LOCALAPPDATA%\\InvoiceHub\\runtime\\server_stdout.log` and
   `server_stderr.log` diagnostics. The independent portable verifier now
   rejects a console-subsystem host, with focused lifecycle and ZIP contracts
-  covering the source and PE header requirement. A clean ZIP smoke remains
-  required before this becomes release evidence.
+  covering the source and PE header requirement. One clean exact-commit ZIP
+  was statically verified and launched from an isolated Chinese-space path:
+  its PE subsystem was `2`, the desktop window and health endpoint appeared,
+  the backend had no visible window, and both runtime logs were created. This
+  is local candidate evidence only; picker, monitor, tray, Feed, Tag and
+  publication acceptance remain separate work.
 - 2026-09-02 Windows monitor-status transaction repair: the fresh Tauri ZIP
   reached an isolated desktop/backend handshake but its first monitor start
   failed closed while atomically replacing `monitor_status.json` with
