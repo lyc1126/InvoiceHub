@@ -630,6 +630,16 @@ this table.
 | Stop condition | Stop at the first Rust compile/format, picker contract, clean build, native chooser, identity, monitor, tray, Feed, or cleanup failure. Do not replace the fixed port, fall back to Tk while Tauri Host RPC is configured, expose a new IPC command, weaken the redacted `503`, tag, upload, or publish. |
 | Result (2026-09-02) | The source change removed only the redundant outer dispatch. The focused locked-Python test passed `17` cases. This is source-level evidence; the clean ZIP, actual picker window, tray Quit and publication sequence remain pending. |
 
+### L11-W-M: Windows monitor status reader transaction repair
+
+| Field | Record |
+| --- | --- |
+| Hypothesis | The fresh Windows ZIP monitor failure is caused by a bridge/status reader briefly denying the delete-sharing required for the daemon's atomic replacement of `monitor_status.json`; putting status reads in the existing reentrant TargetProfile transaction will serialize that reader with daemon writes without changing monitor startup, sync, port, picker or updater semantics. |
+| Decision changed by result | A focused monitor pass permits one clean source commit and one new ZIP build. The failed candidate must not be tagged, handed off, uploaded or cited as monitor evidence. Any repeat native monitor failure remains a release blocker confined to state I/O/monitor startup. |
+| Minimal sample | One isolated Chinese-space ZIP launch reached desktop/backend identity, then `POST /api/v1/bridge/start` failed closed with `WinError 5` while the daemon wrote `ready=true`; add one regression proving `read_status()` waits for the same profile lock, then run `tests/test_monitoring.py` using an explicit writable pytest base temp directory. |
+| Stop condition | Stop at the first state-lock, daemon readiness, native monitor, package, identity, picker, tray or cleanup failure. Do not reuse the failed ZIP, change the fixed port, claim a PID/lock as ready, tag, upload, publish or create a Release/Feed. |
+| Result (2026-09-02) | The source repair makes `MonitorState.read_status()` participate in the existing TargetProfile transaction; `tests/test_monitoring.py` passed 12 cases under the locked Windows test runtime with a repository-local pytest temp root. No replacement ZIP, native monitor success, Tag, Release, Feed or handoff exists yet. |
+
 ## Fixed scope and validation
 
 - The backend binds only `127.0.0.1:8766`. An unknown listener is a clear

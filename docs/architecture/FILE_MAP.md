@@ -240,7 +240,7 @@
 | `src/invoice_hub/monitoring/control.py` | status/start/stop/notify CLI。 | Windows monitor PS1 调用；构造 MonitorBridge。 |
 | `src/invoice_hub/monitoring/daemon.py` | 独立进程、Watchdog、1 秒事件合并、周期同步和 ready 生命周期。 | 由 MonitorBridge 启动；写 lock/status/events/log。 |
 | `src/invoice_hub/monitoring/polling_observer.py` | 无第三方 watchdog 的有界轮询 observer。 | macOS 正式锁使用；保持 daemon observer 接口和事件合并语义。 |
-| `src/invoice_hub/monitoring/state.py` | PID 真值、lock、文件签名、processed、Excel 手改和通知。 | daemon/synchronizer/bridge 共用；状态文件位于 target profile。 |
+| `src/invoice_hub/monitoring/state.py` | PID 真值、lock、状态读写事务、文件签名、processed、Excel 手改和通知。 | daemon/synchronizer/bridge 共用；状态文件位于 target profile，读取与原子写入共用 profile 锁。 |
 | `src/invoice_hub/monitoring/sync.py` | 重建决策矩阵、schema-only 刷新和普通/成本同步编排。 | daemon 和 AppState 后台启动同步调用。 |
 
 ## 12. 服务层

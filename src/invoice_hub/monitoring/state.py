@@ -330,7 +330,11 @@ class MonitorState:
             return payload
 
     def read_status(self) -> dict:
-        return read_json_object(self.status_file, {})
+        # On Windows, a reader can briefly deny the delete-sharing needed by
+        # os.replace(). Keep status reads inside the same profile transaction
+        # as the daemon's atomic status writes.
+        with self.sync_write_lock():
+            return read_json_object(self.status_file, {})
 
     def load_processed(self) -> dict[str, dict]:
         if not self.processed_file.exists():

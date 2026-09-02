@@ -97,7 +97,7 @@
 | `file_signature/detect_source_changes` | 周期扫描要轻量，事件只是提示，最终以路径+mtime_ns+size 确认 | 无变化不重解析；增删改集合明确 | monitor rebuild/periodic 测试 |
 | `sync_excel_manual_edits` | Excel 可能被占用，且只允许三字段成为覆盖 | 不可读时 GUARD_BLOCK；不接受其它列手改 | schema/手改同步测试 |
 | `MonitorSynchronizer.run_sync` 决策矩阵 | 缺产物、schema 旧、源变化、手改和 force 的处理不同 | schema-only 可只刷新；无变化只 heartbeat；全重建后保存 processed | monitoring 同步与 schema 测试 |
-| `MonitorState.sync_write_lock`、`MonitorSynchronizer.run_sync` 与 `AppState.bridge_rebuild` | daemon、startup child 与手动重建可同时命中同一 TargetProfile，单进程 `AppState._lock` 不能保护跨进程投影写入且会阻塞 API | 以 TargetProfile `state_dir` 为键取得可重入线程锁和 OS 文件锁，覆盖整段读取、决策、投影与 monitor 状态写入；不同 profile 不互相串行 | monitor overlap 与手动重建相邻测试 |
+| `MonitorState.sync_write_lock`、`read_status`、`MonitorSynchronizer.run_sync` 与 `AppState.bridge_rebuild` | daemon、startup child、bridge 状态轮询与手动重建可同时命中同一 TargetProfile；Windows 读者还可能短暂拒绝 `os.replace()` 所需的 delete-sharing | 以 TargetProfile `state_dir` 为键取得可重入线程锁和 OS 文件锁，覆盖整段读取、决策、投影、monitor 状态写入和状态读取；不同 profile 不互相串行 | monitor overlap、状态读写锁与手动重建相邻测试 |
 | `AppState._retire_background_process_async/_wait_for_background_sync_result` | 切换目录或新的 startup sync 不能让旧子进程无限扫描/写入；等待它退出也不能卡住请求入口 | superseded worker 独立有界 terminate/join；等待结果有总 deadline；仍未退出只记录 `server.background_worker_retire_timeout` 诊断，不覆盖活动 TargetProfile 真值 | startup child EOF、超时、retire 测试 |
 | `daemon.run_monitor` 两次 startup_sync | 第一轮扫描与 Watchdog ready 之间存在漏事件窗口 | observer/兜底初始化后必须再补漏，再写 ready=true | bridge ready 和新文件事件测试 |
 | daemon 的 `queue.Queue` 合并 | Watchdog 会产生连续 create/modify/move 事件 | 取得首事件后 1 秒归并，最终仍走签名判断 | daemon event 测试 |

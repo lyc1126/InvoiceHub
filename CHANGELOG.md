@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- 2026-09-02 Windows monitor-status transaction repair: the fresh Tauri ZIP
+  reached an isolated desktop/backend handshake but its first monitor start
+  failed closed while atomically replacing `monitor_status.json` with
+  `WinError 5`. `MonitorState.read_status()` now uses the existing reentrant
+  TargetProfile write transaction, so bridge/health polling cannot briefly
+  deny the delete-sharing required by the daemon's `os.replace()`. A focused
+  monitor regression verifies that status readers wait for the same lock. The
+  failed candidate is not release evidence; a new clean ZIP and native monitor
+  sample remain required.
 - 2026-09-02 Windows Tauri native-picker dispatcher repair: the first native
   candidate returned the redacted picker `503` before a chooser appeared.
   `host_rpc.rs` now calls `tauri-plugin-dialog` directly and leaves its

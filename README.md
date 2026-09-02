@@ -214,6 +214,11 @@ host 直接调用 `tauri-plugin-dialog`，由插件自身完成异步主线程�
 额外排入 `run_on_main_thread`。这一源码修复避免了先前 candidate 的即时
 脱敏 `503`；实际选择器窗口仍须在新的 clean ZIP 验收中确认。
 
+独立 monitor 的 `monitor_status.json` 读取也参与同一 TargetProfile 可重入写入
+事务，避免 Windows bridge/health 轮询短暂持有状态文件时阻断 daemon 的原子
+替换。首次原生 monitor 样本曾在这个点 fail closed；修复后的 fresh ZIP 仍须
+重新验证 `running=true`、`ready=true` 和 `observer_active=true`。
+
 烟测会解压到临时中文空格路径，以根 `启动一站式发票汇总系统.bat -NoBrowser` 启动，验证 `/`、`/api/v1/health` 和 build/package/PID/路径身份，再以根 `停止一站式发票汇总系统.bat` 停止。它只使用包内脱敏空目录，不读取业务目录。若默认 `8766` 落入 Windows TCP 排除范围，证据会保留原始默认配置的启动结果和系统错误，再以包内无业务路径的临时配置选择相邻可用端口继续烟测；这种结果不会宣称默认配置已原样通过。
 
 默认链不再强制第二次 ZIP 比对、断网 wheelhouse 重建、隔离源码测试环境或同时覆盖 PS7/PS5.1。它们仍保留为高级审计：在同一默认命令上追加 `-VerifyReproducibility` 可执行第二次 ZIP SHA 比对；已有 base runtime 和 wheelhouse 时可追加 `-Offline` 做离线运行时重建（不能与 `-Clean` 同用）；`initialize_windows_repackage.ps1` 与 `prepare_windows_test_environment.ps1` 继续用于需要远端 tip 绑定、完整源码回归或供应链复核的场景。

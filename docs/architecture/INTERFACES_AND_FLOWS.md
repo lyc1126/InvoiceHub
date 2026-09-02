@@ -219,7 +219,7 @@ Quit，因为该路径和外部 AppleScript quit 都可能绕过 Tauri `ExitRequ
 
 | 方法与路径 | AppState 入口 | 当前语义 | 消费者/错误 |
 |---|---|---|---|
-| `GET /api/v1/bridge/status` | `bridge_status` | PID + lock 真值，返回 `running/ready/observer_active`、路径和最近状态 | 首页、设置页、backend |
+| `GET /api/v1/bridge/status` | `bridge_status` | PID + lock 真值，读取 `monitor_status.json` 时参与 TargetProfile 事务，返回 `running/ready/observer_active`、路径和最近状态 | 首页、设置页、backend |
 | `POST /api/v1/bridge/health-check` | `bridge_health_check` | bridge 结构化诊断 | 首页 |
 | `POST /api/v1/bridge/rebuild` | `bridge_rebuild` | 同步重建普通汇总和成本分析，记录 task/event | 首页、成本、设置 |
 | `POST /api/v1/bridge/start` | `bridge_start` | 启动独立 daemon，等待 `ready` | 首页、设置；启动不就绪返回 `ok=false` |

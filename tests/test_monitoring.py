@@ -213,6 +213,47 @@ def test_daemon_status_update_waits_for_profile_sync_lock(tmp_path: Path) -> Non
     assert status["observer_active"] is True
 
 
+def test_monitor_status_read_waits_for_profile_sync_lock(tmp_path: Path) -> None:
+    config = load_config(tmp_path)
+    profile = target_profile_for(config)
+    db_path = tmp_path / "runtime" / "invoice_hub.db"
+    writer_state = MonitorState(profile, db_path)
+    reader_state = MonitorState(profile, db_path)
+    writer_state.update_status(ready=True, observer_active=True)
+    entered = threading.Event()
+    release = threading.Event()
+    read_finished = threading.Event()
+    observed: dict = {}
+
+    def hold_lock() -> None:
+        with writer_state.sync_write_lock():
+            entered.set()
+            release.wait(timeout=10)
+
+    def read_status() -> None:
+        observed.update(reader_state.read_status())
+        read_finished.set()
+
+    holder = threading.Thread(target=hold_lock)
+    reader = threading.Thread(target=read_status)
+    holder.start()
+    assert entered.wait(timeout=5)
+    reader.start()
+    try:
+        assert not read_finished.wait(timeout=0.25)
+        release.set()
+        assert read_finished.wait(timeout=5)
+    finally:
+        release.set()
+        holder.join(timeout=5)
+        reader.join(timeout=5)
+
+    assert not holder.is_alive()
+    assert not reader.is_alive()
+    assert observed["ready"] is True
+    assert observed["observer_active"] is True
+
+
 def test_monitor_sync_can_suppress_child_events_and_notifications(tmp_path: Path, monkeypatch) -> None:
     config = load_config(tmp_path)
     watch = tmp_path / "发票文件"

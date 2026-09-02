@@ -39,6 +39,7 @@
 - [x] alpha.2 Windows Tauri portable 源码边界：从 clean exact commit stage allowlisted core/Windows Python 3.14.6 runtime，产品 runtime 在 manifest 前裁剪 `Doc`、顶层 `Scripts`、`__pycache__/.pyc/.pyo` 和五个已知 CPython shell helper，所有 runtime probe 使用 `-B`，staging 在 host 编译前拒绝残留缓存和其它 runtime script，生成 hash-bound raw x64 host、release manifest、ZIP/文件 SHA、SBOM、receipt、源码归档、`dist/handoff` 和严格一个 Windows ZIP 的 `scope: windows-only` Feed；验包器对自有 core 执行完整扫描，受锁 `python/Lib/**` 只允许 dependency scope 的 provenance/password-shaped 示例但仍拒绝 GitHub token/私钥；Windows portable marker 唯一允许 release host 显式 `updater_enabled=false`，Mac 不存在资产时返回 `unsupported`，下载动作只打开 prerelease 页面。该项仅覆盖源码和契约，不代表 native build、Tag、Release 或 Pages 已完成。
 - [x] Windows portable WebView2 profile 也属于 host 的用户状态边界：release host 从同一个 `%LOCALAPPDATA%\\InvoiceHub` root 派生并预创建 `webview`，再显式传给 Tauri desktop WebView。此前有效 candidate 已到达 backend handshake，但隐式 WebView profile 创建返回 Windows access denied；这一源码修复有 Rust contract coverage，尚不构成 native desktop release evidence。
 - [x] Windows native picker dispatcher 只保留插件负责的异步主线程调度：此前 candidate 在选择器显示前返回脱敏 `503`，故 `host_rpc.rs` 移除了包在 `tauri-plugin-dialog` 外的重复 `run_on_main_thread`；聚焦 Host RPC 源码契约通过，但新的 clean ZIP 仍须实际打开目录/文件选择器。
+- [x] Windows monitor status 读取与写入使用同一可重入 TargetProfile 锁：fresh ZIP 的首次 monitor 启动在 daemon 写入 `ready=true` 时以 `WinError 5` fail closed，定位为 bridge/status 轮询读取与 `os.replace()` 的 Windows delete-sharing 冲突；`MonitorState.read_status()` 现加入状态写事务，回归锁定读操作等待 profile 锁。该源码修复不构成新的 ZIP 或 monitor 原生验收，失败候选不得发布。
 
 ## 发布缺口
 
