@@ -8,6 +8,20 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def test_windows_release_host_suppresses_console_and_captures_backend_logs() -> None:
+    main = (ROOT / "src-tauri" / "src" / "main.rs").read_text(encoding="utf-8")
+    backend = (ROOT / "src-tauri" / "src" / "backend.rs").read_text(encoding="utf-8")
+
+    assert 'all(target_os = "windows", not(debug_assertions))' in main
+    assert 'windows_subsystem = "windows"' in main
+    assert "const CREATE_NO_WINDOW: u32 = 0x0800_0000;" in backend
+    assert "fn configure_windows_backend_process" in backend
+    assert 'runtime_dir.join("server_stdout.log")' in backend
+    assert 'runtime_dir.join("server_stderr.log")' in backend
+    assert ".creation_flags(CREATE_NO_WINDOW)" in backend
+    assert "configure_windows_backend_process(&mut command, &manifest.expected_identity.runtime_dir)?;" in backend
+
+
 def test_tauri_lifecycle_uses_exact_official_plugins_and_has_no_webview_command_bridge() -> None:
     cargo = tomllib.loads((ROOT / "src-tauri" / "Cargo.toml").read_text(encoding="utf-8"))
     main = (ROOT / "src-tauri" / "src" / "main.rs").read_text(encoding="utf-8")

@@ -30,6 +30,8 @@ alpha.2 Windows x64 便携 ZIP 是 Tauri host 的非安装交付，不生成 MSI
 3. 在相同 tag 的 clean checkout 运行 `tauri-windows-portable.ps1 handoff`，输出 `dist/handoff/v0.3.0-alpha.2/` 的产品 ZIP、SHA、receipt、SBOM、源码归档及 SHA、strict `latest.json` 和 Mac 上传说明。
 4. 将 ZIP 解压到临时中文空格路径，隔离 `LOCALAPPDATA`，直接启动 `InvoiceHub.exe`；host 必须把 backend/config/runtime 与 WebView2 profile 一并收束在 `%LOCALAPPDATA%\\InvoiceHub`，其中 profile 为预创建的 `webview`。验证窗口、health/identity、固定端口冲突、单实例、目录选择、monitor（含 `running=true`、`ready=true`、`observer_active=true`）、tray Quit、进程清理和只读 Feed 检查。
 
+release host 的 PE 必须是 GUI subsystem，且 runtime 下的 `server_stdout.log`、`server_stderr.log` 必须出现；不得以用户可见控制台承载 HTTP 诊断。
+
 不要求双组装、断网重装或 PS7/PS5.1 双烟测；双组装 SHA 比对、离线重建和源码预门禁仍可显式执行。alpha.2 的 Feed 只能含一个真实 Windows ZIP、receipt 与源码身份；“检查更新/前往下载”只打开 GitHub prerelease，安装接口保持 fail-closed，不能停止 monitor、替换现有目录或伪造 macOS 资产。任何未执行的 Windows 真机行为必须如实标为未覆盖。
 
 ### 2026-09-01 source gate

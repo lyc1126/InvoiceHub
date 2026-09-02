@@ -669,3 +669,13 @@ this table.
   does not create MSI, NSIS, a macOS placeholder, or an in-place updater.
   Windows ARM64, Intel macOS, App Store, and GitHub Packages remain out of
   scope.
+
+### W-Console: Windows release console suppression and retained diagnostics
+
+| Field | Record |
+| --- | --- |
+| Hypothesis | A Windows release host built as GUI subsystem, with its owned Python child started using `CREATE_NO_WINDOW` and stdout/stderr redirected to the derived runtime files, removes the user-visible console without losing backend diagnostics. A ZIP verifier can fail closed when the raw host remains console subsystem. |
+| Decision changed by result | A focused source/PE pass permits one clean alpha.2 ZIP rebuild and one isolated Windows launch sample. Any compiler, PE, log-routing, handshake, or runtime-log failure blocks the candidate and confines repair to the host boundary. |
+| Minimal sample | Static lifecycle and portable-verifier contracts; locked Rust format/tests; inspect the rebuilt PE optional-header subsystem; launch one clean ZIP in a Chinese-space path with isolated `LOCALAPPDATA`, confirm health and runtime server logs, and confirm no console window. |
+| Stop condition | Stop at the first format, compiler, verifier, GUI-subsystem, spawn, identity, log, or launch failure. Do not alter invoice data, monitor policy, updater behavior, release/tag/Feed state, signing, or installation flow. |
+| Result | Source implementation and focused contracts are complete; the clean ZIP launch sample is pending. |

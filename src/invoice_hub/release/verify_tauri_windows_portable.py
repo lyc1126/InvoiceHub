@@ -209,12 +209,15 @@ def _verify_pe_x64(host: Path) -> None:
     if len(content) < 0x40 or content[:2] != b"MZ":
         raise TauriWindowsPortableVerificationError("InvoiceHub.exe is not a PE executable")
     offset = int.from_bytes(content[0x3C:0x40], "little")
-    if offset + 26 > len(content) or content[offset : offset + 4] != b"PE\0\0":
+    optional_header_offset = offset + 24
+    if optional_header_offset + 70 > len(content) or content[offset : offset + 4] != b"PE\0\0":
         raise TauriWindowsPortableVerificationError("InvoiceHub.exe has an invalid PE header")
     if int.from_bytes(content[offset + 4 : offset + 6], "little") != 0x8664:
         raise TauriWindowsPortableVerificationError("InvoiceHub.exe is not an x64 executable")
-    if int.from_bytes(content[offset + 24 : offset + 26], "little") != 0x20B:
+    if int.from_bytes(content[optional_header_offset : optional_header_offset + 2], "little") != 0x20B:
         raise TauriWindowsPortableVerificationError("InvoiceHub.exe is not a PE32+ executable")
+    if int.from_bytes(content[optional_header_offset + 68 : optional_header_offset + 70], "little") != 2:
+        raise TauriWindowsPortableVerificationError("InvoiceHub.exe must use the Windows GUI subsystem")
 
 
 def _verify_host_manifest(root: Path, build: dict[str, Any], package: dict[str, Any]) -> dict[str, Any]:

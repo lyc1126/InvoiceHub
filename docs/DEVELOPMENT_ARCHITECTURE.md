@@ -56,6 +56,8 @@ InvoiceHub 不是只有一个 FastAPI 页面。它同时包含发票提取、文
 
 Tauri `setup` 在 `BackendHost::launch` 后也不立即将 child 放入 app state：tray 或选定 surface 的任何初始化失败都会先通过同一 structured keep-monitor shutdown 及必要的 kill+wait 收束 owned child；若仍不能确认 child 已退出，setup 会保持阻塞并重试，child mutex 或 `try_wait` 错误也不能伪装成 graceful exit，绝不返回错误后交给 `Drop`。只有确认清理且全部初始化成功后才会 `app.manage`，因为 setup failure 不经过正常 `ExitRequested`，且 Drop 不构成可靠收尾。
 
+Windows release host 还必须保持普通桌面应用外观：其 PE 使用 GUI subsystem，Python child 使用 `CREATE_NO_WINDOW`，HTTP 诊断输出只追加到 `%LOCALAPPDATA%\\InvoiceHub\\runtime` 的 server stdout/stderr 文件，不能随双击显示控制台；portable verifier 检查该 PE 字段。
+
 源码采用单仓库共存，平台成品采用互斥边界：Windows 或 macOS 的 checkout 都可包含另一平台工程，但 Windows ZIP 与 macOS `.app/DMG/Sparkle ZIP` 的构建输入、依赖锁、运行时和启动器分别受独立白名单与反向平台拒绝门禁保护。共享 `src/`、`web/` 只避免业务分叉，不表示平台壳或 runtime 可以交叉进入成品。
 
 退休的预公开包和平台资产只保留在私有备份中，绝不能上传、配对或用作公开 Release 证据。macOS 正式发布仍需要新的 Developer ID、签名和公证证据。

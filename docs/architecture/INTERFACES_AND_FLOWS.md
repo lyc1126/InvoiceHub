@@ -166,6 +166,8 @@ surface 的任一可失败初始化失败时，host 必须在返回原 setup err
 才可以 `app.manage` backend 与 `startup_surface`。setup error 不经过正常 `ExitRequested`，因此
 不得依赖 exit handler 或 `Drop` 承担这一路径的清理。
 
+Windows `release` host 是 GUI PE，不得在双击时显示 inherited console。它在启动 owned Python backend 前创建 runtime 目录、以 `CREATE_NO_WINDOW` 阻止子进程分配控制台，并把 stdout/stderr 追加到 `%LOCALAPPDATA%\\InvoiceHub\\runtime\\server_stdout.log` 与 `server_stderr.log`；debug host 保留控制台供开发排障。portable verifier 同时要求 PE subsystem 为 Windows GUI，避免构建配置回退。
+
 macOS 应用菜单的 Quit 是自定义普通菜单项，显式绑定 `CmdOrCtrl+Q`；它与托盘 Quit
 只调用同一个 `app.exit(0)` 请求。不得使用会绑定 Cocoa `terminate:` 的 predefined
 Quit，因为该路径和外部 AppleScript quit 都可能绕过 Tauri `ExitRequested`。Host 收到

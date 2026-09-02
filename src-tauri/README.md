@@ -110,6 +110,12 @@ that exact path to the desktop `WebviewWindowBuilder` as WebView2 user data.
 The default surface is desktop, close hides the window, and tray Quit follows
 the existing structured keep-monitor shutdown path.
 
+The Windows release host uses the GUI PE subsystem, so opening `InvoiceHub.exe`
+does not show a terminal window. Its Python child receives `CREATE_NO_WINDOW`;
+the host appends backend stdout and stderr to `runtime/server_stdout.log` and
+`runtime/server_stderr.log` under the same user-state root. Debug builds retain
+a console for development diagnostics.
+
 The ZIP is unsigned, has no MSI/NSIS installer, and never replaces its own
 directory. Its Windows-only alpha Feed is check-only: the UI may open the
 GitHub prerelease page, while `update_install` remains unavailable. Rust 1.85

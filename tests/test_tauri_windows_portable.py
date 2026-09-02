@@ -29,13 +29,14 @@ from invoice_hub.version import PRODUCT_VERSION, RELEASE_PYTHON_VERSION, WINDOWS
 SOURCE_COMMIT = "a" * 40
 
 
-def _pe_x64() -> bytes:
+def _pe_x64(*, subsystem: int = 2) -> bytes:
     content = bytearray(160)
     content[:2] = b"MZ"
     content[0x3C:0x40] = (64).to_bytes(4, "little")
     content[64:68] = b"PE\0\0"
     content[68:70] = (0x8664).to_bytes(2, "little")
     content[88:90] = (0x20B).to_bytes(2, "little")
+    content[156:158] = subsystem.to_bytes(2, "little")
     return bytes(content)
 
 
@@ -212,6 +213,15 @@ def test_tauri_windows_portable_verifier_rejects_mac_placeholder_and_updater_ena
         {HOST_MANIFEST_NAME: (json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode("utf-8")},
     )
     with pytest.raises(TauriWindowsPortableVerificationError, match="updater disabled"):
+        verify_tauri_windows_portable(archive, execute_runtime_probe=False)
+
+
+def test_tauri_windows_portable_verifier_rejects_console_subsystem(tmp_path: Path) -> None:
+    archive, root = _valid_archive(tmp_path)
+    (root / HOST_NAME).write_bytes(_pe_x64(subsystem=3))
+    _write_archive(archive, _archive_files(root))
+
+    with pytest.raises(TauriWindowsPortableVerificationError, match="Windows GUI subsystem"):
         verify_tauri_windows_portable(archive, execute_runtime_probe=False)
 
 

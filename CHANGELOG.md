@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- 2026-09-02 Windows Tauri release console boundary: `InvoiceHub.exe` now
+  builds as a Windows GUI-subsystem host in release mode, and its owned Python
+  backend receives `CREATE_NO_WINDOW` with stdout/stderr redirected to the
+  isolated `%LOCALAPPDATA%\\InvoiceHub\\runtime\\server_stdout.log` and
+  `server_stderr.log` diagnostics. The independent portable verifier now
+  rejects a console-subsystem host, with focused lifecycle and ZIP contracts
+  covering the source and PE header requirement. A clean ZIP smoke remains
+  required before this becomes release evidence.
 - 2026-09-02 Windows monitor-status transaction repair: the fresh Tauri ZIP
   reached an isolated desktop/backend handshake but its first monitor start
   failed closed while atomically replacing `monitor_status.json` with

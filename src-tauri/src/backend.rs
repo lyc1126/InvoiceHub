@@ -5,9 +5,15 @@ use std::env;
 use std::error::Error;
 use std::fmt;
 use std::fs;
+#[cfg(windows)]
+use std::fs::OpenOptions;
 use std::io::{Read, Write};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, TcpStream};
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
 use std::path::{Component, Path, PathBuf};
+#[cfg(windows)]
+use std::process::Stdio;
 use std::process::{Child, Command};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -48,6 +54,8 @@ const DESKTOP_RUNTIME_RELATIVE_PATH: &str = "runtime";
 const DESKTOP_WEBVIEW_DATA_RELATIVE_PATH: &str = "webview";
 const BUILD_MANIFEST_FILE: &str = "invoice-hub-build.json";
 const PACKAGE_MANIFEST_FILE: &str = "invoice-hub-package.json";
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 // The packager sets this while compiling the signed desktop host from the staged manifest.
 // A checkout intentionally has no value and therefore remains non-runnable.
 const BUNDLE_MANIFEST_SHA256: Option<&str> = option_env!("INVOICE_HUB_BUNDLE_MANIFEST_SHA256");
@@ -648,6 +656,29 @@ pub enum BackendShutdownOutcome {
     Forced,
 }
 
+#[cfg(windows)]
+fn configure_windows_backend_process(
+    command: &mut Command,
+    runtime_dir: &Path,
+) -> Result<(), BackendError> {
+    fs::create_dir_all(runtime_dir).map_err(|_| BackendError::DesktopStateUnavailable)?;
+    let stdout = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(runtime_dir.join("server_stdout.log"))
+        .map_err(|_| BackendError::DesktopStateUnavailable)?;
+    let stderr = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(runtime_dir.join("server_stderr.log"))
+        .map_err(|_| BackendError::DesktopStateUnavailable)?;
+    command
+        .stdout(Stdio::from(stdout))
+        .stderr(Stdio::from(stderr))
+        .creation_flags(CREATE_NO_WINDOW);
+    Ok(())
+}
+
 impl BackendHost {
     pub fn launch(
         manifest: BackendBundleManifest,
@@ -681,6 +712,8 @@ impl BackendHost {
             DESKTOP_UPDATER_ENABLED_ENV,
             if manifest.updater.enabled() { "1" } else { "0" },
         );
+        #[cfg(windows)]
+        configure_windows_backend_process(&mut command, &manifest.expected_identity.runtime_dir)?;
         let child = command
             .spawn()
             .map_err(|_| BackendError::BackendSpawnFailed)?;

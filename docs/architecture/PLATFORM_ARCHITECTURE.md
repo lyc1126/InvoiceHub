@@ -119,6 +119,8 @@ hosted check 的 host-lock 竞争直接返回 busy，不调用 `append_event` �
 
 ### 4.1 Windows Tauri portable alpha.2
 
+release `InvoiceHub.exe` 必须使用 Windows GUI subsystem，不能在双击时显示控制台。host 在启动 Python backend 前创建隔离 runtime，使用 `CREATE_NO_WINDOW`，并把 stdout/stderr 追加到 `%LOCALAPPDATA%\\InvoiceHub\\runtime\\server_stdout.log` 与 `server_stderr.log`；portable verifier 对 PE optional header 施加同一门禁。
+
 `scripts/dev/tauri-windows-portable.ps1` 只转发 `tauri_windows_portable.py`；它不安装 Rust、Visual Studio 或 WebView2。doctor 必须先报告 Rust `1.85.0` MSVC、C++ Build Tools/Windows SDK 和 Evergreen WebView2 Runtime，后者由用户安装。`build` 只在 clean exact commit 上工作，`handoff` 还要求 `v0.3.0-alpha.2` 解析到同一 commit。最终交接目录只包含 ZIP、ZIP SHA、receipt、SBOM、源码归档及 SHA、`latest.json` 和 Mac 上传说明。Feed 的 `scope=windows-only` 严格拒绝 macOS 占位资产；检查更新只能进入 GitHub prerelease 页面，不能改写当前 ZIP、停止 monitor 或调用安装器。此前有效 candidate 在 backend handshake 后由 Tauri 的隐式 WebView profile 位置触发 access denied；显式 profile 边界必须随新的 clean build 进入 native acceptance，不能把 source-level test 当作窗口通过。该 candidate 的 picker 还在显示前返回脱敏 `503`，故 host 直接调用 `tauri-plugin-dialog`，让插件独占异步主线程调度；后续 candidate 的 monitor 又因未锁定 status read 与 Windows `os.replace()` 发生 `WinError 5` 而 fail closed，`MonitorState.read_status()` 已加入 TargetProfile 事务。两项修复均须由新的 clean ZIP 重做 native acceptance。
 
 ## 5. macOS 架构（既有壳与迁移边界）

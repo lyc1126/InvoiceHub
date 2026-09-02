@@ -209,6 +209,8 @@ Tauri release host 不把用户状态写回解压目录：配置和后端运行�
 `%LOCALAPPDATA%\\InvoiceHub\\webview`。因此 ZIP 可以解压到新目录回滚，
 且 WebView2 不依赖 Tauri 按 application ID 推导的隐式 profile 位置。
 
+Windows release `InvoiceHub.exe` 是 GUI 子系统程序，双击不会再显示控制台或原始 HTTP 日志。host 启动 Python backend 时显式使用 `CREATE_NO_WINDOW`，并把其输出追加写入同一用户运行态的 `runtime/server_stdout.log` 与 `runtime/server_stderr.log`；开发调试构建仍保留控制台。
+
 Tauri 的四条原生目录/文件选择 route 仍只把结果交回既有草稿流程；Rust
 host 直接调用 `tauri-plugin-dialog`，由插件自身完成异步主线程调度，不能再
 额外排入 `run_on_main_thread`。这一源码修复避免了先前 candidate 的即时
