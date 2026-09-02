@@ -1981,44 +1981,40 @@ mod tests {
 
     #[test]
     fn desktop_state_paths_are_derived_from_platform_user_roots() {
+        // Path::is_absolute follows the host platform, so use one host-valid
+        // absolute root while exercising both target layout branches.
+        let user_root = std::env::temp_dir().join("invoicehub-desktop-state-test");
+        assert!(user_root.is_absolute());
         let windows = desktop_state_paths_for(
             DesktopStatePlatform::Windows,
-            Some(Path::new("/users/example/local-app-data")),
+            Some(&user_root),
             None,
         )
         .expect("Windows state paths");
-        assert_eq!(
-            windows.root,
-            Path::new("/users/example/local-app-data/InvoiceHub")
-        );
+        assert_eq!(windows.root, user_root.join("InvoiceHub"));
         assert_eq!(
             windows.config_path,
-            Path::new("/users/example/local-app-data/InvoiceHub/config/app.local.json")
+            user_root.join("InvoiceHub/config/app.local.json")
         );
-        assert_eq!(
-            windows.runtime_dir,
-            Path::new("/users/example/local-app-data/InvoiceHub/runtime")
-        );
+        assert_eq!(windows.runtime_dir, user_root.join("InvoiceHub/runtime"));
 
         let macos = desktop_state_paths_for(
             DesktopStatePlatform::Macos,
             None,
-            Some(Path::new("/Users/example")),
+            Some(&user_root),
         )
         .expect("macOS state paths");
         assert_eq!(
             macos.root,
-            Path::new("/Users/example/Library/Application Support/InvoiceHub")
+            user_root.join("Library/Application Support/InvoiceHub")
         );
         assert_eq!(
             macos.config_path,
-            Path::new(
-                "/Users/example/Library/Application Support/InvoiceHub/config/app.local.json"
-            )
+            user_root.join("Library/Application Support/InvoiceHub/config/app.local.json")
         );
         assert_eq!(
             macos.runtime_dir,
-            Path::new("/Users/example/Library/Application Support/InvoiceHub/runtime")
+            user_root.join("Library/Application Support/InvoiceHub/runtime")
         );
         assert!(matches!(
             desktop_state_paths_for(

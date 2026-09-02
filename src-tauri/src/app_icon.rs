@@ -3,8 +3,10 @@
 use std::error::Error;
 use std::fmt;
 use std::fs;
+use std::io::Cursor;
 use std::path::Path;
 
+use png::{BitDepth, ColorType, Decoder};
 use serde_json::Value;
 use tauri::{image::Image, tray::TrayIcon, AppHandle, Manager, Wry};
 
@@ -86,7 +88,21 @@ pub fn load_selected(runtime_dir: &Path) -> AppIconId {
 }
 
 pub fn image_for(icon_id: AppIconId) -> Result<Image<'static>, AppIconError> {
-    Image::from_bytes(icon_id.bytes()).map_err(|_| AppIconError::ImageUnavailable)
+    let decoder = Decoder::new(Cursor::new(icon_id.bytes()));
+    let mut reader = decoder
+        .read_info()
+        .map_err(|_| AppIconError::ImageUnavailable)?;
+    let mut rgba = vec![0; reader.output_buffer_size()];
+    let output = reader
+        .next_frame(&mut rgba)
+        .map_err(|_| AppIconError::ImageUnavailable)?;
+    // Only compile-time bundled 8-bit RGBA PNGs reach this boundary. Tauri's
+    // native tray/window surfaces receive the decoded bytes, never arbitrary image input.
+    if output.color_type != ColorType::Rgba || output.bit_depth != BitDepth::Eight {
+        return Err(AppIconError::ImageUnavailable);
+    }
+    rgba.truncate(output.buffer_size());
+    Ok(Image::new_owned(rgba, output.width, output.height))
 }
 
 pub fn apply(
@@ -111,4 +127,18 @@ pub fn apply(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{image_for, AppIconId};
+
+    #[test]
+    fn bundled_icons_decode_to_owned_rgba() {
+        for icon_id in [AppIconId::Orange, AppIconId::Teal, AppIconId::Violet] {
+            let image = image_for(icon_id).expect("bundled icon decodes");
+            assert_eq!((image.width(), image.height()), (256, 256));
+            assert_eq!(image.rgba().len(), 256 * 256 * 4);
+        }
+    }
 }

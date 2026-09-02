@@ -2,6 +2,8 @@
 
 ## 未发布
 
+- 2026-09-02 Windows Tauri 桌面编译兼容：内置应用图标改由锁定的 PNG 解码器转换为 Tauri 原生 surface 所需的 8-bit RGBA，避免依赖未启用的可选 `Image::from_bytes` API；Windows recovery marker 的唯一 `HANDLE` owner 明确只可 `Send` 转移、不可 `Clone/Sync`，确保跨线程持有仍只在一次 `Drop` 中关闭。临时 marker 保留属性读取权限，目标 rename 改用 `NtSetInformationFile` 保持已验证的目录句柄，因为 Win32 `SetFileInformationByHandle` 会以 `ERROR_INVALID_PARAMETER` 拒绝 non-null `RootDirectory`。Windows runtime contract 已覆盖相对根拒绝、publish/load/exact clear 与 no-clobber；同时修正 lifecycle 集成测试越过私有 parser、以及 Windows 上把 Unix 路径传给 `Path::is_absolute()` 的基线测试错误。锁定 Rust 全套测试、desktop check、Python/前端/发布聚焦契约和 `compileall` 已通过；这仍不表述为原生窗口、托盘、打印、updater 或安装器运行验收。
+
 - 2026-09-02 Windows portable 启停身份兼容：正式启动器仍优先以 `Win32_Process` 的 Python、模块、root 和 config 命令行作严格进程证明；只有系统拒绝读取该 CIM 元数据时，才允许以存活 PID 的解释器路径加 health 中同一 PID、配置、runtime、build/package 身份的完整绑定作为受限回退。新启动的直接子进程只使用自己的短生命周期句柄做失败清理，持久 PID 的停止路径仍先验证身份。该项覆盖便携包正式 BAT 的兼容边界，不把它表述为 Tauri 窗口、任务栏、托盘或打印弹窗的原生验收。
 
 - 2026-09-02 Windows 应用图标与打印许可兼容整合：将三套内置应用图标选择与默认开启的 `allow_print_popups` 偏好放入同一桌面壳。图标状态独立保存，打印许可只在 host 启动时严格读取；Windows release host 继续显式使用 `%LOCALAPPDATA%\\InvoiceHub\\webview` 作为 WebView2 数据目录，并以 GUI 子系统、`CREATE_NO_WINDOW` 和 runtime stdout/stderr 日志保持无控制台启动。当前记录的是合并后的源码/静态契约范围，尚未将图标切换或打印窗口作为新的原生 Windows 验收结论。

@@ -22,6 +22,7 @@ getrandom = { version = "=0.3.4", features = [] }
 serde_json = { version = "=1.0.151", features = [] }
 hmac = { version = "=0.12.1", features = [] }
 sha2 = { version = "=0.10.9", features = [] }
+png = { version = "=0.17.16", features = [] }
 
 [target.'cfg(unix)'.dependencies]
 libc = { version = "=0.2.189", features = [] }

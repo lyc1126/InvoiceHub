@@ -608,6 +608,16 @@ this table.
 | Security boundary | The fixed-loopback bridge has no request-level ownership authentication and is not an ownership proof. Before real wiring, bind each request/response to a backend-private fresh challenge/HMAC or equivalent authenticated header, retain lifecycle revalidation before and after the request, and never send a bearer secret to a candidate fixed port. |
 | Result (2026-08-23) | Passed as source-level seams only: 56 Rust focused checks passed (backend authority 14, bridge 9, coordinator unit 2 plus contract 12, recovery 17, Windows host static 1, strict OpenAPI 1), and 42 Python contracts passed (lifecycle 13, development documentation 12, foundation 17). The strict OpenAPI handshake requires `GET /api/v1/bridge/status`, `POST /api/v1/bridge/stop`, and `POST /api/v1/bridge/start`; missing or wrong `/bridge/start` methods are rejected. The minimal `x86_64-pc-windows-msvc` temporary-crate cross-compile passed; no Windows runtime was run, and the full Tauri Windows target check remains blocked by `ring` requiring `assert.h`. No HostRpc/updater/startup-restore/real-monitor integration was added. The Unix marker-store protocol now closes whole-operation `load/publish/clear` serialization with directory `flock`, stale-clear re-read, and durable directory metadata sync after publish/clear link operations; direct edits bypassing the protocol remain outside the guarantee. |
 
+### L10-C-W: Windows marker runtime contract correction
+
+| Field | Record |
+| --- | --- |
+| Hypothesis | The Windows marker store can retain its directory-handle-relative/no-reparse boundary at runtime if temporary handles retain attribute-read access and the no-replace rename uses the native information call that accepts `RootDirectory`. |
+| Decision changed by result | A pass permits treating the marker store as having narrow Windows runtime-contract evidence and unblocks a locked desktop compile check. It does not authorize a native Tauri surface, monitor recovery against a real daemon, Feed/update, installer, signing, publication, or platform-release claim. |
+| Minimal sample | One isolated Windows temporary directory: reject a relative root, publish/load/exact clear one marker, then verify a second publish never clobbers it. Run the static contract, locked Rust test suite and desktop binary check; run affected Python/frontend/release contracts plus `compileall`. |
+| Stop condition | Stop at the first handle ownership, attribute validation, no-replace rename, marker value, compiler, contract, or documentation failure. Do not start Tauri/FastAPI, bind the product port, touch a real monitor/updater, download/install/restart, sign, publish, or create a Release/Feed. |
+| Result (2026-09-02) | Passed on Windows. The original `SetFileInformationByHandle(FileRenameInfo)` call returned `ERROR_INVALID_PARAMETER (87)` even with `DELETE` access because it rejects non-null `RootDirectory`; a bounded native probe confirmed the failure and that `NtSetInformationFile(FileRenameInformation)` succeeds with the same pinned directory handle. The store now keeps `FILE_READ_ATTRIBUTES` on its temporary handle, keeps unique `HANDLE` ownership as `Send` only, and uses the native call for the no-replace rename. The runtime contract passed all four cases; locked Rust verification passed 41 library tests, 6 lifecycle contracts, 12 recovery contracts, 12 coordinator contracts, 4 Windows marker contracts and the desktop binary check. The affected Python/frontend/release documentation contracts and `compileall` passed. No product process, fixed product-port bind, native window/tray/print, real monitor/updater, download/install/restart, signing, publication, or Release action was run. |
+
 ### L10-D: authenticated recovery/relaunch runtime coordinator
 
 | Field | Record |
@@ -695,9 +705,10 @@ this table.
   the released owned lifecycle lease; Unix marker operations are
   descriptor-pinned/no-follow and serialize whole `load/publish/clear`
   operations with directory `flock`, stale-clear re-read, and directory metadata
-  sync. Windows marker storage remains source-level, its minimal temporary-crate
-  cross-compile passed, full Tauri Windows target check is still blocked by
-  `ring` requiring `assert.h`, and no Windows marker runtime is claimed.
+  sync. Windows marker storage has a narrow runtime contract for relative-root
+  rejection, publish/load/exact-clear and no-clobber; it uses native
+  `NtSetInformationFile` for the pinned-directory rename, and the locked desktop
+  check now passes. This is not native surface, updater, or installer evidence.
 - L10-D activates only after gate release and `BackendHost` registration, opens
   the marker store under the strict backend `runtime_dir`, and completes startup
   restore before accepting updater work. Restore failure retains the marker and

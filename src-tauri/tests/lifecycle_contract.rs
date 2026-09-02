@@ -8,8 +8,7 @@ use invoicehub_desktop::backend::{
     validate_openapi_routes, BackendError, BackendHealth, BundleProfile, ExpectedBackendIdentity,
     HandshakeError, StartupPreferences, StartupSurface,
 };
-use invoicehub_desktop::app_icon::AppIconId;
-use invoicehub_desktop::host_rpc::{HostRpcAuthorizationError, HostRpcAuthorizer, HostRpcCommand};
+use invoicehub_desktop::host_rpc::{HostRpcAuthorizationError, HostRpcAuthorizer};
 use serde_json::json;
 
 fn expected_identity() -> ExpectedBackendIdentity {
@@ -131,10 +130,6 @@ fn host_rpc_rejects_wrong_token_origin_command_and_revoked_ownership() {
     assert_eq!(
         authorizer.authorize("http://127.0.0.1:8766", &[7; 32], "set_app_icon"),
         Ok(())
-    );
-    assert_eq!(
-        HostRpcCommand::from_payload(br#"{"command":"set_app_icon","icon":"teal"}"#),
-        Ok(HostRpcCommand::SetAppIcon(AppIconId::Teal))
     );
     ownership_verified.store(false, std::sync::atomic::Ordering::Release);
     assert_eq!(

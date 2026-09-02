@@ -64,7 +64,8 @@ The private loopback listener accepts four picker enums, the two updater
 enums `update_check` and `update_install`, and the exact built-in application
 icon payload `{"command":"set_app_icon","icon":"orange|teal|violet"}`.
 The icon command has no path, URL, upload, or arbitrary image bytes: it loads
-only the three PNG assets compiled into the host. On startup the host reads
+only the three PNG assets compiled into the host, decodes them through the
+pinned PNG dependency, and accepts only 8-bit RGBA pixels for native surfaces. On startup the host reads
 `runtime/local_state/app_icon_state.json` before creating the tray/window; at
 runtime it updates the tray and window before Python persists the new choice.
 If the window update fails, the tray is restored to the previous icon. The
@@ -99,6 +100,15 @@ pure update coordinator, shared lifecycle authority, the Windows
 handle-relative/no-reparse marker store, and Unix whole-operation locking. The
 historical L10-C verification passed 56 Rust checks and 42 Python contracts; it
 did not itself wire Host RPC, updater, startup restore, or a real monitor.
+
+The Windows marker store retains `FILE_READ_ATTRIBUTES` on each temporary
+marker handle because its no-reparse/regular-file validation occurs through that
+same handle before any write. The handle is uniquely owned and only `Send`, so
+the eventual `Drop` remains the sole close operation. Its no-replace rename uses
+`NtSetInformationFile` with the pinned directory handle: Win32
+`SetFileInformationByHandle` rejects the equivalent non-null `RootDirectory`
+payload. The Windows runtime contract covers only marker publication/load/exact
+clear/no-clobber, not a native window, updater, or installer.
 
 L10-D wires those seams into the owned host runtime. Every recovery request and
 exact response uses a fresh challenge and HMAC-SHA256 under the existing
