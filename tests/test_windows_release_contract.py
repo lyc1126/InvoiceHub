@@ -311,9 +311,22 @@ def test_windows_launcher_is_release_closed_and_identity_bound() -> None:
     assert "function Test-IHLaunchedProcessIdentity" in module
     assert "function Test-IHVerifiedProcessIdentity" in module
     assert "Test-IHHealthIdentity" in module
+    assert "if ($null -eq $Health) { return $false }" in module
     assert "Test-IHVerifiedProcessIdentity" in start
     assert "Test-IHLaunchedProcessIdentity" in start
     assert "Test-IHVerifiedProcessIdentity" in stop
+
+    smoke = _text("scripts/dev/smoke_windows_portable.ps1")
+    assert "Start-Process -FilePath $commandProcessor" in smoke
+    assert "$batchProcess.WaitForExit" in smoke
+    assert "RedirectStandardOutput" in smoke
+    assert "Formal BAT did not exit within" in smoke
+    assert "page-settings.js?v=20260902-app-icons-print-popups-v1" in smoke
+    assert "allow_print_popups" in smoke
+    assert '"orange", "teal", "violet"' in smoke
+    assert "function Remove-IHSmokeExtraction" in smoke
+    assert "ReparsePoint" in smoke
+    assert "retained_after_retry" in smoke
     assert "source commits do not match" in module
     assert "will not switch ports automatically" in start
     assert "Open-IHBrowser" in start

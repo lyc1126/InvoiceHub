@@ -272,6 +272,7 @@ function Test-IHHealthBackedProcessIdentity {
     # CIM command-line metadata is the normal proof. If Windows denies that metadata,
     # require both the expected executable and health's exact PID/config/package binding.
     if ($null -ne (Get-IHProcessMetadata -ProcessId $ProcessId)) { return $false }
+    if ($null -eq $Health) { return $false }
     $process = Get-IHProcess -ProcessId $ProcessId
     if ($null -eq $process) { return $false }
     try {

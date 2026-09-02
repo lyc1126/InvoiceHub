@@ -10,6 +10,8 @@ $sourceRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot "..\\.."))
 $archivePath = [System.IO.Path]::GetFullPath($Archive)
 $extractRoot = ""
 $activeConfigPath = ""
+$startBatch = ""
+$stopBatch = ""
 $serviceStarted = $false
 $failureMessage = ""
 $evidence = [ordered]@{
@@ -22,6 +24,7 @@ $evidence = [ordered]@{
     extraction = [ordered]@{
         unicode_space_path = $true
         retained = [bool]$KeepExtractedPackage
+        cleanup_status = if ($KeepExtractedPackage) { "retained_by_request" } else { "pending" }
     }
     port = [ordered]@{
         default_port = $null
@@ -32,6 +35,7 @@ $evidence = [ordered]@{
     }
     start = $null
     health = $null
+    settings = $null
     stop = $null
     error = ""
 }
@@ -74,11 +78,47 @@ function Get-IHFileTail {
     }
 }
 
+function Remove-IHSmokeExtraction {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [int]$TimeoutSeconds = 8
+    )
+    if (-not [System.IO.Directory]::Exists($Path)) { return [pscustomobject]@{ removed = $true; error = "" } }
+    $tempRoot = [System.IO.Path]::GetFullPath([System.IO.Path]::GetTempPath()).TrimEnd([System.IO.Path]::DirectorySeparatorChar) + [System.IO.Path]::DirectorySeparatorChar
+    $candidate = [System.IO.Path]::GetFullPath($Path)
+    if (-not $candidate.StartsWith($tempRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+        return [pscustomobject]@{ removed = $false; error = "Temporary extraction escaped the system temp root." }
+    }
+    try {
+        $item = Get-Item -LiteralPath $candidate -Force -ErrorAction Stop
+        if (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+            return [pscustomobject]@{ removed = $false; error = "Temporary extraction is a reparse point." }
+        }
+    } catch {
+        return [pscustomobject]@{ removed = $false; error = $_.Exception.Message }
+    }
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    $lastError = ""
+    while ((Get-Date) -lt $deadline) {
+        try {
+            Remove-Item -LiteralPath $candidate -Recurse -Force -ErrorAction Stop
+            if (-not [System.IO.Directory]::Exists($candidate)) {
+                return [pscustomobject]@{ removed = $true; error = "" }
+            }
+        } catch {
+            $lastError = $_.Exception.Message
+        }
+        Start-Sleep -Milliseconds 250
+    }
+    return [pscustomobject]@{ removed = -not [System.IO.Directory]::Exists($candidate); error = $lastError }
+}
+
 function Invoke-IHBatch {
     param(
         [Parameter(Mandatory = $true)][string]$BatchPath,
         [Parameter(Mandatory = $true)][string]$WorkingDirectory,
-        [string[]]$Arguments = @()
+        [string[]]$Arguments = @(),
+        [int]$TimeoutSeconds = 45
     )
     $commandProcessor = [string]$env:ComSpec
     if ([string]::IsNullOrWhiteSpace($commandProcessor)) {
@@ -91,12 +131,43 @@ function Invoke-IHBatch {
     foreach ($argument in $Arguments) {
         $parts += ('"' + ([string]$argument).Replace('"', '""') + '"')
     }
-    Push-Location -LiteralPath $WorkingDirectory
+    if ($TimeoutSeconds -lt 1) { throw "Formal BAT timeout must be at least one second." }
+    $captureRoot = [System.IO.Path]::GetTempPath()
+    $captureId = [guid]::NewGuid().ToString("N")
+    $stdoutPath = Join-Path $captureRoot ("invoicehub-bat-" + $captureId + ".stdout.log")
+    $stderrPath = Join-Path $captureRoot ("invoicehub-bat-" + $captureId + ".stderr.log")
+    $batchProcess = $null
+    $output = @()
+    $exitCode = -1
     try {
-        $output = @(& $commandProcessor /d /c ($parts -join " ") 2>&1)
-        $exitCode = $LASTEXITCODE
+        # Wait for cmd.exe itself, not for an inherited output pipe held by the
+        # localhost child. Otherwise a successful start cannot reach the formal stop.
+        $batchProcess = Start-Process -FilePath $commandProcessor `
+            -ArgumentList @("/d", "/c", ($parts -join " ")) `
+            -WorkingDirectory $WorkingDirectory `
+            -WindowStyle Hidden `
+            -RedirectStandardOutput $stdoutPath `
+            -RedirectStandardError $stderrPath `
+            -PassThru
+        $timeoutMilliseconds = [Math]::Max(1000, $TimeoutSeconds * 1000)
+        if (-not $batchProcess.WaitForExit($timeoutMilliseconds)) {
+            Stop-Process -Id $batchProcess.Id -Force -ErrorAction SilentlyContinue
+            $batchProcess.WaitForExit(5000) | Out-Null
+            throw "Formal BAT did not exit within $TimeoutSeconds seconds."
+        }
+        $exitCode = $batchProcess.ExitCode
+        foreach ($capturePath in @($stdoutPath, $stderrPath)) {
+            if ([System.IO.File]::Exists($capturePath)) {
+                $output += Get-Content -LiteralPath $capturePath -Raw -Encoding UTF8
+            }
+        }
     } finally {
-        Pop-Location
+        if ($null -ne $batchProcess) { $batchProcess.Dispose() }
+        foreach ($capturePath in @($stdoutPath, $stderrPath)) {
+            if ([System.IO.File]::Exists($capturePath)) {
+                Remove-Item -LiteralPath $capturePath -Force -ErrorAction SilentlyContinue
+            }
+        }
     }
     return [pscustomobject]@{
         exit_code = [int]$exitCode
@@ -195,7 +266,7 @@ try {
     $evidence["port"]["default_excluded"] = [bool]$defaultExcluded
 
     if ($defaultExcluded) {
-        $defaultStart = Invoke-IHBatch -BatchPath $startBatch -WorkingDirectory $extractRoot -Arguments @("-NoBrowser")
+        $defaultStart = Invoke-IHBatch -BatchPath $startBatch -WorkingDirectory $extractRoot -Arguments @("-NoBrowser") -TimeoutSeconds $TimeoutSeconds
         $defaultContext = Get-IHLaunchContext -Root $extractRoot
         $evidence["port"]["default_start"] = [ordered]@{
             exit_code = $defaultStart.exit_code
@@ -225,7 +296,7 @@ try {
         if (-not [string]::IsNullOrWhiteSpace($activeConfigPath)) {
             $startArguments += @("-ConfigPath", $activeConfigPath)
         }
-        $startResult = Invoke-IHBatch -BatchPath $startBatch -WorkingDirectory $extractRoot -Arguments $startArguments
+        $startResult = Invoke-IHBatch -BatchPath $startBatch -WorkingDirectory $extractRoot -Arguments $startArguments -TimeoutSeconds $TimeoutSeconds
         $evidence["start"] = [ordered]@{
             exit_code = $startResult.exit_code
             output = ConvertTo-IHSafeEvidenceText -Text $startResult.output -PackageRoot $extractRoot
@@ -257,11 +328,35 @@ try {
     }
     if (-not $identityValid) { throw "Formal BAT did not serve the expected package identity." }
 
+    $settingsUrl = $context.Config.Url.TrimEnd('/') + "/settings"
+    $preferencesUrl = $context.Config.Url.TrimEnd('/') + "/api/v1/preferences"
+    $appIconUrl = $context.Config.Url.TrimEnd('/') + "/api/v1/app-icon"
+    $settingsResponse = Invoke-WebRequest -UseBasicParsing -Uri $settingsUrl -TimeoutSec $TimeoutSeconds
+    $preferences = Invoke-RestMethod -Uri $preferencesUrl -Method Get -TimeoutSec $TimeoutSeconds
+    $appIcon = Invoke-RestMethod -Uri $appIconUrl -Method Get -TimeoutSec $TimeoutSeconds
+    $expectedSettingsScript = "page-settings.js?v=20260902-app-icons-print-popups-v1"
+    $expectedIconIds = @("orange", "teal", "violet")
+    $iconIds = @($appIcon.icons | ForEach-Object { [string]$_.id })
+    $settingsScriptCurrent = ([string]$settingsResponse.Content).Contains($expectedSettingsScript)
+    $printPopupsEnabled = ($preferences.preferences.allow_print_popups -eq $true)
+    $iconIdsValid = ($iconIds.Count -eq $expectedIconIds.Count) -and (($expectedIconIds | Where-Object { $_ -notin $iconIds }).Count -eq 0)
+    $evidence["settings"] = [ordered]@{
+        http_status = [int]$settingsResponse.StatusCode
+        page_settings_script = $expectedSettingsScript
+        page_settings_script_current = [bool]$settingsScriptCurrent
+        allow_print_popups = [bool]$printPopupsEnabled
+        app_icon_ids = @($iconIds | Sort-Object)
+        app_icon_ids_valid = [bool]$iconIdsValid
+    }
+    if ([int]$settingsResponse.StatusCode -ne 200 -or -not $settingsScriptCurrent -or -not $printPopupsEnabled -or -not $iconIdsValid) {
+        throw "Portable settings page did not serve app-icon/print-popup contracts."
+    }
+
     $stopArguments = @()
     if (-not [string]::IsNullOrWhiteSpace($activeConfigPath)) {
         $stopArguments += @("-ConfigPath", $activeConfigPath)
     }
-    $stopResult = Invoke-IHBatch -BatchPath $stopBatch -WorkingDirectory $extractRoot -Arguments $stopArguments
+    $stopResult = Invoke-IHBatch -BatchPath $stopBatch -WorkingDirectory $extractRoot -Arguments $stopArguments -TimeoutSeconds $TimeoutSeconds
     $serviceStarted = $false
     $healthAfterStop = Get-IHHealth -Url $context.Config.Url -TimeoutSeconds 2
     $stateStatus = ""
@@ -284,13 +379,20 @@ try {
     $evidence["status"] = "failed"
     $evidence["error"] = $failureMessage
 } finally {
-    if ($serviceStarted -and -not [string]::IsNullOrWhiteSpace($extractRoot)) {
+    $cleanupRequired = $serviceStarted
+    if (-not $cleanupRequired -and -not [string]::IsNullOrWhiteSpace($extractRoot) -and [System.IO.File]::Exists($stopBatch)) {
+        try {
+            $cleanupContext = Get-IHLaunchContext -Root $extractRoot -ConfigPath $activeConfigPath
+            $cleanupRequired = -not [string]::IsNullOrWhiteSpace((Read-IHPidSnapshot -PidFile $cleanupContext.PidFile))
+        } catch {}
+    }
+    if ($cleanupRequired -and -not [string]::IsNullOrWhiteSpace($extractRoot)) {
         try {
             $cleanupStopArguments = @()
             if (-not [string]::IsNullOrWhiteSpace($activeConfigPath)) {
                 $cleanupStopArguments += @("-ConfigPath", $activeConfigPath)
             }
-            $cleanupStop = Invoke-IHBatch -BatchPath $stopBatch -WorkingDirectory $extractRoot -Arguments $cleanupStopArguments
+            $cleanupStop = Invoke-IHBatch -BatchPath $stopBatch -WorkingDirectory $extractRoot -Arguments $cleanupStopArguments -TimeoutSeconds $TimeoutSeconds
             $evidence["cleanup_stop"] = [ordered]@{
                 exit_code = $cleanupStop.exit_code
                 output = ConvertTo-IHSafeEvidenceText -Text $cleanupStop.output -PackageRoot $extractRoot
@@ -303,12 +405,20 @@ try {
     if ([string]::IsNullOrWhiteSpace($EvidencePath)) {
         $EvidencePath = Join-Path $sourceRoot "dist\\evidence\\windows-portable-smoke-failed.json"
     }
+    if (-not $KeepExtractedPackage -and -not [string]::IsNullOrWhiteSpace($extractRoot) -and [System.IO.Directory]::Exists($extractRoot)) {
+        $cleanup = Remove-IHSmokeExtraction -Path $extractRoot
+        $evidence["extraction"]["retained"] = -not [bool]$cleanup.removed
+        $evidence["extraction"]["cleanup_status"] = if ($cleanup.removed) { "removed" } else { "retained_after_retry" }
+        if (-not $cleanup.removed) {
+            $cleanupError = ConvertTo-IHSafeEvidenceText -Text ([string]$cleanup.error) -PackageRoot $extractRoot
+            $evidence["status"] = "failed"
+            $evidence["error"] = "Temporary smoke extraction cleanup failed: $cleanupError"
+            $failureMessage = $evidence["error"]
+        }
+    }
     $evidenceDirectory = [System.IO.Path]::GetDirectoryName($EvidencePath)
     [System.IO.Directory]::CreateDirectory($evidenceDirectory) | Out-Null
     $evidence | ConvertTo-Json -Depth 16 | Set-Content -LiteralPath $EvidencePath -Encoding UTF8
-    if (-not $KeepExtractedPackage -and -not [string]::IsNullOrWhiteSpace($extractRoot) -and [System.IO.Directory]::Exists($extractRoot)) {
-        Remove-Item -LiteralPath $extractRoot -Recurse -Force
-    }
 }
 
 if (-not [string]::IsNullOrWhiteSpace($failureMessage)) { throw $failureMessage }

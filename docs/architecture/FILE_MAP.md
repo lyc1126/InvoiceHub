@@ -108,7 +108,7 @@
 | `scripts/dev/prepare_windows_runtime.ps1` | 准备精确 Python 3.14.6 x64、wheelhouse 和 runtime manifest。 | 每次从只读 `base-python` 复制产品 runtime，保留基线 `Doc`、裁剪产品 `Doc`，固定锁定安装时间并恢复环境，再规范产品 `Scripts/RECORD`；不能回退未知 Python。 |
 | `scripts/dev/build_windows_portable.ps1` | Windows portable 总编排与双构建 SHA 比较。 | 接受精确 source commit；以禁用 `core.autocrlf` 的 Git archive 取源码，再调用 runtime 准备、core 组装与验包。 |
 | `scripts/dev/build_windows_portable_release.ps1` | 旧 Windows portable ZIP 的发布构建与 BAT smoke 编排。 | 保留用于历史兼容和受限验证；当前 public-preview 交付走独立 NSIS 入口，不能把旧 ZIP 证据提升为新预览发布结论。 |
-| `scripts/dev/smoke_windows_portable.ps1` | 旧 Windows portable ZIP 的隔离 BAT/localhost smoke。 | 生成脱敏临时配置与运行态，覆盖端口、启动、health、停止与日志；不替代 Windows Tauri 原生窗口或安装器验收。 |
+| `scripts/dev/smoke_windows_portable.ps1` | 旧 Windows portable ZIP 的隔离 BAT/localhost smoke。 | 生成脱敏临时配置与运行态，以有界 `cmd.exe` 等待和短期 stdout/stderr 捕获覆盖端口、启动、health、`/settings` 版本、默认打印许可、内置图标 id、停止与日志；不替代 Windows Tauri 原生窗口或安装器验收。 |
 | `scripts/dev/tauri-windows-portable.ps1` | Windows Tauri portable alpha ZIP 的 PowerShell 包装。 | 只转发精确 Python builder 参数；不接受任意 Python 或未验证的 Tauri 输出。 |
 | `scripts/dev/tauri_windows_portable.py` | Windows Tauri portable alpha ZIP 的 clean-source staging、组装、验证与交接入口。 | 使用严格源码/runtime/host-manifest/文件哈希链；属于未签名的历史 alpha 路线，不与当前 NSIS public-preview 混淆。 |
 | `scripts/dev/generate_synthetic_release_fixture.py` | 生成不含真实业务信息的 PDF/XML/OFD 发布验收目录和 SHA manifest。 | Windows 真机 monitor/投影/预览验收使用；未知文件目录拒绝写入。 |
