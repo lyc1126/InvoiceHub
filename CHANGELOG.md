@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- 2026-09-02 Desktop print-popup preference: Settings now exposes the default-on
+  `allow_print_popups` preference and preserves it during portable settings
+  migration. The Tauri host reads the boolean only at startup: when enabled it
+  accepts only an exact `about:blank` child window that can navigate solely to
+  a bounded local `/invoices/print/{job_id}` page; when disabled it denies the
+  child window. This has source and contract coverage, not a new native print
+  acceptance claim.
 - 2026-09-02 Update Feed HTTP 404 transport repair: `urllib` raises an
   `HTTPError` before the normal response-status path, so the fixed Feed's
   actual missing `latest.json` now becomes a bounded `404` fetch result. The

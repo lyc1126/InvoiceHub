@@ -6,6 +6,7 @@
 use std::error::Error;
 use std::path::Path;
 use std::process::ExitCode;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 #[cfg(target_os = "macos")]
 use tauri::menu::Submenu;
@@ -21,6 +22,11 @@ use invoicehub_desktop::backend::{
 };
 
 const MAIN_WINDOW_LABEL: &str = "main";
+const PRINT_POPUP_INITIAL_URL: &str = "about:blank";
+const PRINT_POPUP_ROUTE_PREFIX: &str = "/invoices/print/";
+const PRINT_POPUP_JOB_ID_MIN_LENGTH: usize = 20;
+const PRINT_POPUP_JOB_ID_MAX_LENGTH: usize = 80;
+static PRINT_POPUP_WINDOW_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 #[cfg(target_os = "macos")]
 const APP_QUIT_ID: &str = "invoicehub-app-quit";
 const TRAY_OPEN_ID: &str = "invoicehub-open";
@@ -188,9 +194,11 @@ fn main() -> ExitCode {
             let setup_result = (|| -> Result<(), Box<dyn Error>> {
                 install_tray(app)?;
                 match startup_surface {
-                    StartupSurface::Desktop => {
-                        create_desktop_window(app, backend.webview_data_directory())?
-                    }
+                    StartupSurface::Desktop => create_desktop_window(
+                        app,
+                        backend.webview_data_directory(),
+                        backend.allow_print_popups(),
+                    )?,
                     StartupSurface::Browser => open_backend_in_browser(&app.handle())?,
                 }
                 Ok(())
@@ -224,8 +232,10 @@ fn main() -> ExitCode {
 fn create_desktop_window(
     app: &tauri::App<tauri::Wry>,
     webview_data_directory: &Path,
+    allow_print_popups: bool,
 ) -> Result<(), Box<dyn Error>> {
     let backend_url = invoicehub_desktop::backend_origin().parse()?;
+    let app_handle = app.handle().clone();
     tauri::WebviewWindowBuilder::new(
         app,
         MAIN_WINDOW_LABEL,
@@ -235,6 +245,51 @@ fn create_desktop_window(
     .inner_size(1280.0, 860.0)
     .min_inner_size(1024.0, 640.0)
     .data_directory(webview_data_directory.to_path_buf())
+    .on_new_window(move |url, features| {
+        if !allow_print_popups || !is_print_popup_initial_url(url.as_str()) {
+            return tauri::webview::NewWindowResponse::Deny;
+        }
+        let label = format!(
+            "invoice-print-{}",
+            PRINT_POPUP_WINDOW_SEQUENCE.fetch_add(1, Ordering::Relaxed),
+        );
+        let builder =
+            tauri::WebviewWindowBuilder::new(&app_handle, label, tauri::WebviewUrl::External(url))
+                .title("InvoiceHub - 发票打印")
+                .inner_size(1000.0, 760.0)
+                .min_inner_size(640.0, 480.0)
+                .window_features(features)
+                .on_navigation(|destination| is_print_popup_navigation_url(destination.as_str()));
+        match builder.build() {
+            Ok(window) => tauri::webview::NewWindowResponse::Create { window },
+            Err(error) => {
+                eprintln!("InvoiceHub could not create its print popup: {error}");
+                tauri::webview::NewWindowResponse::Deny
+            }
+        }
+    })
     .build()?;
     Ok(())
+}
+
+fn is_print_popup_initial_url(url: &str) -> bool {
+    url == PRINT_POPUP_INITIAL_URL
+}
+
+fn is_print_popup_navigation_url(url: &str) -> bool {
+    if is_print_popup_initial_url(url) {
+        return true;
+    }
+    let prefix = format!(
+        "{}{}",
+        invoicehub_desktop::backend_origin(),
+        PRINT_POPUP_ROUTE_PREFIX
+    );
+    let Some(job_id) = url.strip_prefix(&prefix) else {
+        return false;
+    };
+    (PRINT_POPUP_JOB_ID_MIN_LENGTH..=PRINT_POPUP_JOB_ID_MAX_LENGTH).contains(&job_id.len())
+        && job_id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
 }

@@ -2177,6 +2177,26 @@ body[data-page="settings"] .document-actions {
 .settings-segmented--wide .settings-segment {
   flex: 0 1 auto;
 }
+.settings-preference-toggle {
+  display: inline-flex;
+  min-height: 44px;
+  align-items: center;
+  gap: 10px;
+  color: var(--text);
+  cursor: pointer;
+  font-weight: 700;
+}
+.settings-preference-toggle input {
+  width: 20px;
+  height: 20px;
+  margin: 0;
+  flex: 0 0 auto;
+  accent-color: var(--primary);
+  cursor: pointer;
+}
+.settings-preference-toggle input:disabled {
+  cursor: not-allowed;
+}
 html[data-long-path-display="wrap"] .path-inline,
 html[data-long-path-display="wrap"] .path-cell,
 html[data-long-path-display="wrap"] .settings-path {

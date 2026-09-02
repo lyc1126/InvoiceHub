@@ -26,6 +26,7 @@ PREFERENCE_KEYS = {
     "ocr_candidate_dir",
     "startup_surface",
     "auto_check_updates",
+    "allow_print_popups",
 }
 
 

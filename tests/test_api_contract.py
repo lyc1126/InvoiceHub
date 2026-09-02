@@ -413,6 +413,7 @@ def test_preferences_api_defaults_and_persistence(tmp_path: Path, monkeypatch) -
         "system_shutdown_behavior": "ask",
         "ocr_candidate_dir": "",
         "auto_check_updates": True,
+        "allow_print_popups": True,
         "startup_surface": "desktop" if sys.platform == "darwin" else "browser",
     }
     assert payload["allowed"]["cost_row_limit"] == [30, 60, 100]
@@ -421,6 +422,7 @@ def test_preferences_api_defaults_and_persistence(tmp_path: Path, monkeypatch) -
     assert payload["allowed"]["system_shutdown_behavior"] == ["ask", "keep_monitor", "stop_monitor"]
     assert payload["allowed"]["startup_surface"] == ["browser", "desktop"]
     assert payload["allowed"]["desktop_available"] is (sys.platform == "darwin")
+    assert payload["allowed"]["allow_print_popups"] == [False, True]
 
     preferences_path = Path(payload["preferences_path"]).resolve()
     assert preferences_path == (tmp_path / "runtime" / "local_state" / "preferences.json").resolve()
@@ -438,6 +440,7 @@ def test_preferences_api_defaults_and_persistence(tmp_path: Path, monkeypatch) -
             "system_shutdown_behavior": "stop_monitor",
             "ocr_candidate_dir": "ocr候选",
             "auto_check_updates": False,
+            "allow_print_popups": False,
             "startup_surface": "browser",
         },
     )
@@ -449,6 +452,7 @@ def test_preferences_api_defaults_and_persistence(tmp_path: Path, monkeypatch) -
     assert preferences["system_shutdown_behavior"] == "stop_monitor"
     assert preferences["ocr_candidate_dir"] == str((tmp_path / "ocr候选").resolve())
     assert preferences["auto_check_updates"] is False
+    assert preferences["allow_print_popups"] is False
     assert preferences["startup_surface"] == "browser"
     assert json.loads(preferences_path.read_text(encoding="utf-8")) == preferences
 
@@ -470,6 +474,10 @@ def test_preferences_api_defaults_and_persistence(tmp_path: Path, monkeypatch) -
     invalid_shutdown = client.put("/api/v1/preferences", json={"system_shutdown_behavior": "close_everything"})
     assert invalid_shutdown.status_code == 400
     assert "系统关闭方式" in invalid_shutdown.json()["detail"]
+
+    invalid_print_popup = client.put("/api/v1/preferences", json={"allow_print_popups": "enabled"})
+    assert invalid_print_popup.status_code == 400
+    assert "发票打印弹窗许可" in invalid_print_popup.json()["detail"]
 
     app.state.invoice_hub._package_manifest["platform"] = "windows"
     unsupported_desktop = client.put("/api/v1/preferences", json={"startup_surface": "desktop"})

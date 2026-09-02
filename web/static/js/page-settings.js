@@ -1601,6 +1601,8 @@ app.connectEvents(settingsRefs.eventState, () => loadSettings("event"), { refres
     startupSurfaceButtons: [...document.querySelectorAll("[data-settings-startup-surface]")],
     autoUpdateButtons: [...document.querySelectorAll("[data-settings-auto-check-updates]")],
     startupSurfaceHint: document.getElementById("settingsStartupSurfaceHint"),
+    printPopupCheckbox: document.getElementById("settingsAllowPrintPopups"),
+    printPopupHint: document.getElementById("settingsPrintPopupHint"),
     ocrCandidateInput: document.getElementById("settingsOcrCandidateDirInput"),
     pickOcrCandidateBtn: document.getElementById("settingsPickOcrCandidateDirBtn"),
     useWatchDirBtn: document.getElementById("settingsUseWatchDirForOcrBtn"),
@@ -1615,6 +1617,7 @@ app.connectEvents(settingsRefs.eventState, () => loadSettings("event"), { refres
     system_shutdown_behavior: "ask",
     startup_surface: "browser",
     auto_check_updates: true,
+    allow_print_popups: true,
     ocr_candidate_dir: "",
   };
 
@@ -1639,6 +1642,7 @@ app.connectEvents(settingsRefs.eventState, () => loadSettings("event"), { refres
       system_shutdown_behavior: shutdownBehavior,
       startup_surface: ["browser", "desktop"].includes(String(source.startup_surface || "")) ? String(source.startup_surface) : defaults.startup_surface,
       auto_check_updates: typeof source.auto_check_updates === "boolean" ? source.auto_check_updates : defaults.auto_check_updates,
+      allow_print_popups: typeof source.allow_print_popups === "boolean" ? source.allow_print_popups : defaults.allow_print_popups,
       ocr_candidate_dir: String(source.ocr_candidate_dir || "").trim(),
     };
   }
@@ -1691,11 +1695,21 @@ app.connectEvents(settingsRefs.eventState, () => loadSettings("event"), { refres
       button.setAttribute("aria-pressed", value === state.preferences.auto_check_updates ? "true" : "false");
       button.disabled = Boolean(state.busy);
     });
+    if (refs.printPopupCheckbox) {
+      refs.printPopupCheckbox.checked = state.preferences.allow_print_popups;
+      refs.printPopupCheckbox.disabled = Boolean(state.busy);
+    }
     if (refs.startupSurfaceHint) {
       refs.startupSurfaceHint.className = "settings-action-status settings-action-status--muted";
       refs.startupSurfaceHint.textContent = state.desktopAvailable
         ? "macOS 支持桌面窗口或系统默认浏览器；下次启动生效。"
         : "Windows 便携版当前仅支持系统默认浏览器；桌面窗口将在后续版本提供。";
+    }
+    if (refs.printPopupHint) {
+      refs.printPopupHint.className = "settings-action-status settings-action-status--muted";
+      refs.printPopupHint.textContent = state.preferences.allow_print_popups
+        ? "已允许发票打印弹窗。桌面端更改将在下次启动 InvoiceHub 后生效。"
+        : "已阻止发票打印弹窗。重新启动 InvoiceHub 后，批量打印将保持关闭。";
     }
   }
 
@@ -1722,6 +1736,7 @@ app.connectEvents(settingsRefs.eventState, () => loadSettings("event"), { refres
       { label: "已导出单据处理", value: labelDocumentStrategy(prefs.document_export_existing_strategy) },
       { label: "系统关闭方式", value: settingsShutdownBehaviorLabel(prefs.system_shutdown_behavior) },
       { label: "启动方式", value: prefs.startup_surface === "desktop" ? "桌面窗口" : "系统默认浏览器" },
+      { label: "发票打印弹窗许可", value: prefs.allow_print_popups ? "已允许（桌面端下次启动生效）" : "已关闭（桌面端下次启动生效）" },
       { label: "自动检查更新", value: prefs.auto_check_updates ? "已开启（仅元数据）" : "已关闭" },
       { label: "OCR 候选目录", html: prefs.ocr_candidate_dir ? pathText(prefs.ocr_candidate_dir) : app.escapeHtml("当前发票目录") },
       { label: "当前发票目录", html: pathText(settings?.watch_dir) },
@@ -1821,6 +1836,16 @@ app.connectEvents(settingsRefs.eventState, () => loadSettings("event"), { refres
       if (value === state.preferences.auto_check_updates) return;
       savePreferencePatch({ auto_check_updates: value }, button, value ? "已开启自动检查更新。" : "已改为仅手工检查更新。");
     });
+  });
+
+  refs.printPopupCheckbox?.addEventListener("change", () => {
+    const value = Boolean(refs.printPopupCheckbox.checked);
+    if (value === state.preferences.allow_print_popups) return;
+    savePreferencePatch(
+      { allow_print_popups: value },
+      null,
+      value ? "已允许发票打印弹窗，将在下次启动 InvoiceHub 后生效。" : "已关闭发票打印弹窗，将在下次启动 InvoiceHub 后生效。",
+    );
   });
 
   refs.ocrCandidateInput?.addEventListener("input", markOcrCandidateDirty);

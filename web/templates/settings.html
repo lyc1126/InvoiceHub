@@ -4,7 +4,7 @@
   <title>设置中心</title>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <link rel="stylesheet" href="/static/css/app.css?v=20260802-release-update-v1">
+  <link rel="stylesheet" href="/static/css/app.css?v=20260902-print-popup-permission">
   <link rel="stylesheet" href="/static/css/settings-actions.css?v=20260720-shutdown-monitor-choice">
 </head>
 <body data-page="settings">
@@ -352,6 +352,19 @@
             </div>
             <div id="settingsStartupSurfaceHint" class="settings-action-status" role="status">正在读取当前平台支持情况...</div>
           </article>
+          <article class="settings-edit-card" aria-labelledby="settingsPrintPopupTitle">
+            <div class="settings-edit-card__head">
+              <div>
+                <h4 id="settingsPrintPopupTitle">发票打印弹窗许可</h4>
+                <p>仅允许 InvoiceHub 打开受限的本地打印窗口，不允许网站或普通页面打开其他弹窗。</p>
+              </div>
+            </div>
+            <label class="settings-preference-toggle" for="settingsAllowPrintPopups">
+              <input id="settingsAllowPrintPopups" type="checkbox" checked aria-describedby="settingsPrintPopupHint">
+              <span>允许发票打印弹窗</span>
+            </label>
+            <div id="settingsPrintPopupHint" class="settings-action-status" role="status">正在读取发票打印弹窗许可...</div>
+          </article>
           <article class="settings-edit-card" aria-labelledby="settingsAutoUpdateTitle">
             <div class="settings-edit-card__head">
               <div>
@@ -497,6 +510,6 @@
     </section>
   </div>
   <script src="/static/js/common.js?v=20260729-main-macos-sync"></script>
-  <script src="/static/js/page-settings.js?v=20260902-about-links"></script>
+  <script src="/static/js/page-settings.js?v=20260902-print-popup-permission"></script>
 </body>
 </html>

@@ -126,6 +126,12 @@ pub enum StartupSurface {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct StartupPreferences {
+    pub startup_surface: StartupSurface,
+    pub allow_print_popups: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HandshakeError {
     BackendNotReady,
     PidMismatch,
@@ -584,17 +590,25 @@ pub fn probe_backend_with_retry(
     )
 }
 
-pub fn load_startup_surface() -> Result<StartupSurface, BackendError> {
+pub fn load_startup_preferences() -> Result<StartupPreferences, BackendError> {
     let response = local_get(PREFERENCES_PATH)?;
     if response.status != 200 {
         return Err(BackendError::StartupSurfaceInvalid);
     }
     let value: Value =
         serde_json::from_slice(&response.body).map_err(|_| BackendError::StartupSurfaceInvalid)?;
-    parse_startup_surface(&value)
+    parse_startup_preferences(&value)
+}
+
+pub fn load_startup_surface() -> Result<StartupSurface, BackendError> {
+    Ok(load_startup_preferences()?.startup_surface)
 }
 
 pub fn parse_startup_surface(value: &Value) -> Result<StartupSurface, BackendError> {
+    Ok(parse_startup_preferences(value)?.startup_surface)
+}
+
+pub fn parse_startup_preferences(value: &Value) -> Result<StartupPreferences, BackendError> {
     let fields = value
         .as_object()
         .ok_or(BackendError::StartupSurfaceInvalid)?;
@@ -614,11 +628,19 @@ pub fn parse_startup_surface(value: &Value) -> Result<StartupSurface, BackendErr
         Some(false) => return Err(BackendError::DesktopSurfaceUnavailable),
         None => return Err(BackendError::StartupSurfaceInvalid),
     }
-    match preferences.get("startup_surface").and_then(Value::as_str) {
-        Some("desktop") => Ok(StartupSurface::Desktop),
-        Some("browser") => Ok(StartupSurface::Browser),
-        _ => Err(BackendError::StartupSurfaceInvalid),
-    }
+    let startup_surface = match preferences.get("startup_surface").and_then(Value::as_str) {
+        Some("desktop") => StartupSurface::Desktop,
+        Some("browser") => StartupSurface::Browser,
+        _ => return Err(BackendError::StartupSurfaceInvalid),
+    };
+    let allow_print_popups = preferences
+        .get("allow_print_popups")
+        .and_then(Value::as_bool)
+        .ok_or(BackendError::StartupSurfaceInvalid)?;
+    Ok(StartupPreferences {
+        startup_surface,
+        allow_print_popups,
+    })
 }
 
 pub fn validate_openapi_routes(openapi: &Value) -> Result<(), HandshakeError> {
@@ -647,6 +669,7 @@ pub struct BackendHost {
     liveness_shutdown: Arc<AtomicBool>,
     liveness_worker: Mutex<Option<JoinHandle<()>>>,
     startup_surface: StartupSurface,
+    allow_print_popups: bool,
     _host_rpc: HostRpcServer,
 }
 
@@ -729,8 +752,8 @@ impl BackendHost {
             }
             return Err(error);
         }
-        let startup_surface = match load_startup_surface() {
-            Ok(surface) => surface,
+        let startup_preferences = match load_startup_preferences() {
+            Ok(preferences) => preferences,
             Err(error) => {
                 if let Ok(mut child) = child.lock() {
                     let _ = child.kill();
@@ -749,6 +772,7 @@ impl BackendHost {
             }
             return Err(error);
         }
+        let startup_surface = startup_preferences.startup_surface;
         let liveness_shutdown = Arc::new(AtomicBool::new(false));
         // Arm before the watcher starts so an already-exited child cannot re-enable Host RPC.
         ownership_verified.store(true, Ordering::Release);
@@ -766,6 +790,7 @@ impl BackendHost {
             liveness_shutdown,
             liveness_worker: Mutex::new(Some(liveness_worker)),
             startup_surface,
+            allow_print_popups: startup_preferences.allow_print_popups,
             _host_rpc: host_rpc,
         })
     }
@@ -836,6 +861,10 @@ impl BackendHost {
 
     pub fn startup_surface(&self) -> StartupSurface {
         self.startup_surface
+    }
+
+    pub fn allow_print_popups(&self) -> bool {
+        self.allow_print_popups
     }
 
     pub fn webview_data_directory(&self) -> &Path {

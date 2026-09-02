@@ -12,6 +12,7 @@ const state = {
   selectionSummaryLoading: false,
   selectionSummaryReturnFocus: null,
   printJobLoading: false,
+  allowPrintPopups: true,
   filePreviewJobLoading: false,
   filePreviewContentLoading: false,
   filePreviewRequestId: 0,
@@ -922,6 +923,15 @@ async function printSelectedInvoices() {
   if (!items.length || state.printJobLoading) return;
   setInvoiceActionMenuOpen(false);
 
+  if (!state.allowPrintPopups) {
+    showOperationNotice(
+      "warning",
+      "发票打印弹窗许可已关闭",
+      "请在 设置 > 偏好 中开启“发票打印弹窗许可”，重新启动 InvoiceHub 后再打印。",
+    );
+    return;
+  }
+
   let printWindow = null;
   try {
     printWindow = window.open("about:blank", "_blank");
@@ -1498,6 +1508,9 @@ function handleSelectionSummaryKeydown(event) {
 async function loadSettings(generation) {
   const settings = await app.api("/api/v1/settings");
   if (!isCurrentRefresh(generation)) return { status: "stale" };
+  state.allowPrintPopups = typeof settings?.preferences?.allow_print_popups === "boolean"
+    ? settings.preferences.allow_print_popups
+    : true;
   state.savedWatchDir = settings.watch_dir || "";
   if (!state.watchDirDirty) state.pendingWatchDir = "";
   if (!state.watchDirDirty) setWatchDirInputValue(state.savedWatchDir);

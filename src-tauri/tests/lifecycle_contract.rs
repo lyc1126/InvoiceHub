@@ -4,8 +4,9 @@ use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
 use invoicehub_desktop::backend::{
-    assert_loopback_port_available, parse_startup_surface, validate_openapi_routes, BackendError,
-    BackendHealth, BundleProfile, ExpectedBackendIdentity, HandshakeError, StartupSurface,
+    assert_loopback_port_available, parse_startup_preferences, parse_startup_surface,
+    validate_openapi_routes, BackendError, BackendHealth, BundleProfile, ExpectedBackendIdentity,
+    HandshakeError, StartupPreferences, StartupSurface,
 };
 use invoicehub_desktop::host_rpc::{HostRpcAuthorizationError, HostRpcAuthorizer, HostRpcCommand};
 use serde_json::json;
@@ -167,12 +168,19 @@ fn strict_openapi_requires_the_expected_http_methods() {
 }
 
 #[test]
-fn startup_surface_parser_requires_a_desktop_capable_owned_backend() {
+fn startup_preferences_parser_requires_a_desktop_capable_owned_backend() {
     let desktop = json!({
         "ok": true,
-        "preferences": {"startup_surface": "desktop"},
+        "preferences": {"startup_surface": "desktop", "allow_print_popups": true},
         "allowed": {"desktop_available": true}
     });
+    assert!(matches!(
+        parse_startup_preferences(&desktop),
+        Ok(StartupPreferences {
+            startup_surface: StartupSurface::Desktop,
+            allow_print_popups: true,
+        })
+    ));
     assert!(matches!(
         parse_startup_surface(&desktop),
         Ok(StartupSurface::Desktop)
@@ -180,9 +188,16 @@ fn startup_surface_parser_requires_a_desktop_capable_owned_backend() {
 
     let browser = json!({
         "ok": true,
-        "preferences": {"startup_surface": "browser"},
+        "preferences": {"startup_surface": "browser", "allow_print_popups": false},
         "allowed": {"desktop_available": true}
     });
+    assert!(matches!(
+        parse_startup_preferences(&browser),
+        Ok(StartupPreferences {
+            startup_surface: StartupSurface::Browser,
+            allow_print_popups: false,
+        })
+    ));
     assert!(matches!(
         parse_startup_surface(&browser),
         Ok(StartupSurface::Browser)
@@ -190,7 +205,7 @@ fn startup_surface_parser_requires_a_desktop_capable_owned_backend() {
 
     let unavailable = json!({
         "ok": true,
-        "preferences": {"startup_surface": "browser"},
+        "preferences": {"startup_surface": "browser", "allow_print_popups": true},
         "allowed": {"desktop_available": false}
     });
     assert!(matches!(
@@ -201,7 +216,9 @@ fn startup_surface_parser_requires_a_desktop_capable_owned_backend() {
     for malformed in [
         json!({"ok": true, "preferences": {}, "allowed": {"desktop_available": true}}),
         json!({"ok": true, "preferences": {"startup_surface": "external"}, "allowed": {"desktop_available": true}}),
-        json!({"ok": true, "preferences": {"startup_surface": "desktop"}, "allowed": {}}),
+        json!({"ok": true, "preferences": {"startup_surface": "desktop", "allow_print_popups": true}, "allowed": {}}),
+        json!({"ok": true, "preferences": {"startup_surface": "desktop"}, "allowed": {"desktop_available": true}}),
+        json!({"ok": true, "preferences": {"startup_surface": "desktop", "allow_print_popups": "true"}, "allowed": {"desktop_available": true}}),
     ] {
         assert!(matches!(
             parse_startup_surface(&malformed),

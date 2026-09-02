@@ -81,6 +81,7 @@ DEFAULT_PREFERENCES = {
     "system_shutdown_behavior": "ask",
     "ocr_candidate_dir": "",
     "auto_check_updates": True,
+    "allow_print_popups": True,
 }
 SUPPORT_PACKAGE_EVENT_LIMIT = 80
 SUPPORT_PACKAGE_LOG_TAIL_LINES = 240
@@ -889,6 +890,10 @@ class AppState:
         if isinstance(auto_check_updates, bool):
             result["auto_check_updates"] = auto_check_updates
 
+        allow_print_popups = source.get("allow_print_popups", result["allow_print_popups"])
+        if isinstance(allow_print_popups, bool):
+            result["allow_print_popups"] = allow_print_popups
+
         result["ocr_candidate_dir"] = self._normalize_optional_path_text(source.get("ocr_candidate_dir", result["ocr_candidate_dir"]))
         return result
 
@@ -905,6 +910,7 @@ class AppState:
                 "system_shutdown_behavior": sorted(PREFERENCE_SYSTEM_SHUTDOWN_BEHAVIORS),
                 "startup_surface": sorted(PREFERENCE_STARTUP_SURFACES),
                 "desktop_available": self._desktop_surface_available(),
+                "allow_print_popups": [False, True],
             },
         }
 
@@ -961,6 +967,13 @@ class AppState:
                 raise ValueError("自动检查更新必须是布尔值")
             updated["auto_check_updates"] = value
             changed.append("auto_check_updates")
+
+        if "allow_print_popups" in source:
+            value = source.get("allow_print_popups")
+            if not isinstance(value, bool):
+                raise ValueError("发票打印弹窗许可必须是布尔值")
+            updated["allow_print_popups"] = value
+            changed.append("allow_print_popups")
 
         if "ocr_candidate_dir" in source:
             updated["ocr_candidate_dir"] = self._normalize_optional_path_text(source.get("ocr_candidate_dir"))

@@ -49,11 +49,18 @@ by Tauri's Windows resource build and is generated from that controlled PNG.
 With a valid manifest, the host rejects an occupied fixed port, spawns its own
 backend, and requires a fresh HMAC-SHA256 ownership challenge plus child PID,
 build/package identity, static-home, and OpenAPI-method checks. It repeats the
-ownership proof after reading `startup_surface`, then creates the zero-IPC
-desktop WebView or uses the fixed-origin host-only browser opener. The Host RPC
-token goes only to the directly spawned Python backend, which captures it and
-removes it from descendants; it never reaches Web content, Tauri commands or
-events, API responses, or logs.
+ownership proof after reading `startup_surface` and the strict boolean
+`allow_print_popups`, then creates the zero-IPC desktop WebView or uses the
+fixed-origin host-only browser opener. The shared default for that preference
+is `true`; it is changed in Settings and takes effect for the desktop host on
+the next launch. When enabled, the desktop WebView accepts a new window only
+for exact `about:blank`, and the child can navigate only to the exact local
+`/invoices/print/{job_id}` path with no query/fragment and a bounded ASCII job
+ID. When disabled, every child-window request is denied. The child has no
+additional business or Host RPC capability. The Host RPC token goes only to the
+directly spawned Python backend, which captures it and removes it from
+descendants; it never reaches Web content, Tauri commands or events, API
+responses, or logs.
 
 The private loopback listener accepts four picker enums and the two updater
 enums `update_check` and `update_install`. A candidate is bounded to 300

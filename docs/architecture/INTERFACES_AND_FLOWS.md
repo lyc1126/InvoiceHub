@@ -38,7 +38,7 @@ flowchart LR
 | `GET /skins` | `skins.html` + `page-skins.js` | skins 列表、导入、替换、启用、重置 | 上传体必须是原始 ZIP；不执行包内代码 | 皮肤 API 与前端契约 |
 | `GET /backend` | `backend.html` 内联脚本 | health、settings、bridge/status | 不注入皮肤，不进入普通首要导航 | API/前端契约 |
 | `GET /invoices/{invoice_key}` | `detail.html` + `page-detail.js` | invoice detail、manual-fields、open-file、open-location | `invoice_key` 是当前汇总位置键，不是长期主键 | 详情与成本拆分 API 测试 |
-| `GET /invoices/print/{job_id}` | `invoice_print.html` 内联打印脚本 | print job、逐页 PNG | 不注入活动皮肤；全部图片完成 `load + decode` 和两次渲染帧后调用 `window.print()`；票面跟随实际页框；私有 no-store；macOS 子窗口只允许该同端口受控路径 | 打印服务/前端契约、真实浏览器分页与 macOS 策略测试 |
+| `GET /invoices/print/{job_id}` | `invoice_print.html` 内联打印脚本 | print job、逐页 PNG | 不注入活动皮肤；全部图片完成 `load + decode` 和两次渲染帧后调用 `window.print()`；票面跟随实际页框；私有 no-store；macOS/Tauri 子窗口仅允许该同端口、无 query/fragment 的受控路径 | 打印服务/前端契约、Rust popup policy、真实浏览器分页与原生策略测试 |
 | `GET /favicon.ico` | 静态响应 | 无业务数据 | `include_in_schema=false`，但仍属于 FastAPI 路由契约 | API 静态契约 |
 
 所有普通页面由 `_template()` 做有限占位替换，不是 Jinja2 模板引擎。活动皮肤由服务端在 `</head>` 前注入；`/backend` 和带 `?no_skin=1` 的请求跳过注入。
@@ -56,8 +56,8 @@ flowchart LR
 | `POST /api/v1/update/install` | `install_update` | 只接受空 JSON 对象 `{}`；只消费本进程已批准且与 allowlisted Feed 最新版本完全一致的 host candidate | Tauri 配置时要求精确 host origin；当前 host 清除候选后 fail closed，直到 recovery/relaunch coordinator 完整实现；版本/URL/路径/签名一律拒绝；Host RPC 失败固定 `503 Update installation unavailable`，不得泄露 token 或候选元数据 |
 | `GET /api/v1/settings` | `settings` | 主机端口、活动 TargetProfile、普通/成本产物、最近目录、偏好、bridge、诊断路径 | 首页、设置页、backend |
 | `PUT /api/v1/settings` | `update_settings` | `{watch_dir}`；有效目录才切换，停止旧 monitor，写配置并触发后台同步 | 首页、设置页；业务失败通常返回 `ok=false` 而非 HTTP 4xx |
-| `GET /api/v1/preferences` | `preferences` | 成本显示、路径显示、单据策略、OCR 候选目录、关闭方式、`startup_surface`、`auto_check_updates` 及 `desktop_available` | costs/documents/OCR/settings 与 macOS 壳 |
-| `PUT /api/v1/preferences` | `save_preferences` | 允许字段的部分更新 | 强制同源写；非法值 `400`；Windows desktop 返回 `422`；写 `runtime/local_state/preferences.json` |
+| `GET /api/v1/preferences` | `preferences` | 成本显示、路径显示、单据策略、OCR 候选目录、关闭方式、`startup_surface`、`auto_check_updates`、默认 `true` 的 `allow_print_popups` 及 `desktop_available` | costs/documents/OCR/settings 与桌面壳 |
+| `PUT /api/v1/preferences` | `save_preferences` | 允许字段的部分更新，包括严格布尔 `allow_print_popups` | 强制同源写；非法值 `400`；Windows desktop 返回 `422`；写 `runtime/local_state/preferences.json`；桌面壳于下次启动读取打印许可 |
 | `GET /api/v1/diagnostics/summary` | `diagnostic_summary` | 配置、产物、运行态、bridge、事件和日志摘要 | 设置页诊断 |
 | `GET /api/v1/diagnostics/config-health` | `config_health` | 路径槽位、目录和配置健康项 | 设置页诊断 |
 | `POST /api/v1/diagnostics/support-package` | `export_support_package` | 支持包路径、大小和清单 | 设置页；不含源发票或投影正文 |
@@ -155,8 +155,8 @@ Host RPC 失败统一变为不含 token、URL 或 secret 的 `503 Native picker 
 Tauri 的 Tk 行为不变。授权先在 handshake 后 arm，backend child 退出后由 100 ms 有界
 Rust liveness watcher 撤销，watcher 不能重新授权已退出 child。握手完成后 host 才读取
 `GET /api/v1/preferences` 的严格 `{ok, preferences.startup_surface,
-allowed.desktop_available}` 形状并重新证明 ownership：desktop 创建空 IPC WebView，browser
-只由 host-only opener 打开固定 localhost origin；托盘和第二实例重开同一 surface，desktop
+preferences.allow_print_popups, allowed.desktop_available}` 形状并重新证明 ownership：desktop 创建空 IPC WebView，browser
+只由 host-only opener 打开固定 localhost origin。Tauri 只在启动时读取打印许可：关闭时拒绝所有 child window，开启时也仅接受精确 `about:blank`，且 child 仅可导航至受限本地打印 job 路径；托盘和第二实例重开同一 surface，desktop
 close 只隐藏窗口且不会调用 monitor stop。当前这条流程只做 source/contract verification，
 尚未打开真实 native picker、浏览器、托盘或窗口。
 
@@ -469,7 +469,9 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    Click["用户点击打印"] --> Popup["同步打开 about:blank"]
+    Click["用户点击打印"] --> Permission{"打印弹窗许可开启？"}
+    Permission -->|否| Settings["提示到设置页开启"]
+    Permission -->|是| Popup["同步打开 about:blank"]
     Popup --> Request["POST print-jobs\ninvoice_key + source_path"]
     Request --> Validate["复核位置身份 + 同票家族"]
     Validate --> Choose["选当前目录 PDF\nOFD/XML 可回退同票 PDF"]

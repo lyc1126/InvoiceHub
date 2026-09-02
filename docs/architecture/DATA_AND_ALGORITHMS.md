@@ -500,7 +500,7 @@ CycloneDX 1.6 SBOM 由平台哈希锁确定性生成，组件版本和 lock SHA 
 
 更新服务只接受编译进包内的 HTTPS Feed 和主机白名单，重定向后再次校验；连接预算 3 秒、端到端预算 5 秒、响应上限 256KB。缓存位于 `runtime/local_state/update-cache.json`，保存 ETag、上次有效 feed/result 和最近尝试时间；离线、无效或未来最低契约失败只更新错误状态，不清除最后有效元数据，也不获得成功结果的 24 小时 TTL。Tauri host approval 例外地必须取得不带 `If-None-Match` 的 fresh allowlisted Feed `200` body 并在同一 session 重验；缓存、ETag、`304`、离线或错误不能形成 approval。
 
-`preferences.json` 保持 `startup_surface=browser|desktop` 与 `auto_check_updates=bool`。`v0.3` Tauri 新安装默认 desktop，导入的显式偏好保持原值并在下次启动生效，browser 模式隐藏主窗口、只打开一次默认浏览器并常驻托盘。安装协调标记只用于跨 host 重启的 monitor 协调，不保存发票、解析结果或安装授权；停止失败、取消或安装失败均不改变运行状态。
+`preferences.json` 保持 `startup_surface=browser|desktop`、`auto_check_updates=bool` 与默认 `true` 的 `allow_print_popups=bool`。`v0.3` Tauri 新安装默认 desktop，导入的显式偏好保持原值并在下次启动生效，browser 模式隐藏主窗口、只打开一次默认浏览器并常驻托盘。Tauri 只在启动时使用打印许可决定是否接受受限打印子窗口；缺失或非布尔值不能放宽该 host 边界。安装协调标记只用于跨 host 重启的 monitor 协调，不保存发票、解析结果或安装授权；停止失败、取消或安装失败均不改变运行状态。
 
 ## 13. 失败策略总表
 

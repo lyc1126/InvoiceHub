@@ -235,7 +235,7 @@ host 直接调用 `tauri-plugin-dialog`，由插件自身完成异步主线程�
 - 普通汇总：当前活动档案 `运行状态/targets/<target_id>/workspace/发票汇总.csv` 与 `发票汇总.xlsx`
 - 成本分析：当前 `watch_dir/成本发票明细.csv`、`watch_dir/成本发票汇总.xlsx`、`watch_dir/成本开票状态.json`
 - 单据默认信息：`runtime/local_state/documents/defaults.json`
-- 设置偏好：`runtime/local_state/preferences.json`，保存成本页显示行数、长路径显示、单据重复导出策略、OCR 候选目录和系统关闭方式（每次询问/保留监控/同时停止监控）
+- 设置偏好：`runtime/local_state/preferences.json`，保存成本页显示行数、长路径显示、单据重复导出策略、OCR 候选目录、系统关闭方式（每次询问/保留监控/同时停止监控）、启动方式、自动检查更新和默认开启的发票打印弹窗许可。桌面壳在下次启动时读取打印许可；关闭后不会创建打印子窗口。
 - 诊断支持包：`runtime/local_state/support_packages/*.zip`，只包含 manifest、诊断摘要、健康检查、事件尾部和日志尾部，不包含源发票或可重建投影正文
 - SQLite 只存任务、事件、设置和缓存，不作为发票主存储。
 

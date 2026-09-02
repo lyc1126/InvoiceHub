@@ -177,6 +177,7 @@
 | `invoice_printing.py` 的短期 job | 打印票面数据同样敏感且可能很大，用户选择又可能在重建后指向不同文件 | 复核 `invoice_key + source_path` 和 watch_dir；TTL/数量/页面/像素/缓存上限；不写 SQLite 或投影 | print 服务与 API 测试 |
 | `WebPopupConfigurationPolicy.installRestrictedPrintBridge/createWebViewWith` | WebKit 把新窗口的内部状态交给 delegate 回调提供的 `WKWebViewConfiguration`；另造配置会破坏该生命周期，直接继承又会泄露主窗口 bridge | 必须复用 callback 提供的 configuration，只替换其 user-content controller，并且仅注册 `invoiceHubMacPrint` | Swift popup configuration / origin / print policy 测试 |
 | `WebPopupPolicy/WebPrintPolicy` 与 `WebView` 打印子窗口 | WebKit child window 默认会继承配置级消息能力，普通 popup 不能成为原生能力逃逸路径 | 仅 trusted main frame 的 exact about:blank；只允许同端口、无 query/fragment 的同一登记 print job 路径（可重载），子窗口只注册 print handler | Swift popup/origin/print policy 测试 |
+| `main.rs::create_desktop_window/on_new_window` 与 `BackendHost::allow_print_popups` | Tauri 默认拒绝网页新窗口会导致受控批量打印被误报为浏览器拦截；直接允许 popup 又会把本地 WebView 变成通用多窗口容器 | `allow_print_popups` 默认开启但只在 host 启动时严格读取；关闭时所有 child window 拒绝，开启时也只接受 exact `about:blank`，child 只能进入同端口、无 query/fragment、受限 ASCII job ID 的 `/invoices/print/{job_id}`，并且不获得新业务或 Host RPC 能力 | Rust lifecycle popup-policy、Python API/前端静态契约；原生打印另行验收 |
 | `PrintPopupRegistry/PrintPopupQuarantine/windowWillClose` | AppKit/WebKit 没有在关闭窗口后可安全释放整张 WKWebView 对象图的完成回调；在 close callback 或猜测的定时回合释放会触发 teardown 崩溃 | 关闭时先撤销消息接收并从 active registry 移除，再把 window、WebView 与 handler 强引用到进程生命周期 quarantine；SwiftUI 重建也不得手动清 delegate/config 或提前释放它们 | Swift popup quarantine 与 close-during-print 测试；2026-07-31 真实开发 `.app` 的系统面板取消和子窗口关闭无新增 IPS |
 
 ## 10. P1：兼容与跨层契约

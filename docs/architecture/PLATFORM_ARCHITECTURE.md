@@ -1,7 +1,7 @@
 # InvoiceHub 平台架构：共享核心、Windows 与 macOS
 
 > 文档状态：当前跨平台实现的权威附录
-> 更新日期：2026-09-01
+> 更新日期：2026-09-02
 > 公共基线：单一脱敏根提交。退休的私有提交、Tag、包和验证材料不属于公开发行输入。
 > 当前发行状态：候选树、保留 Git 对象和托管面验证已完成，仓库现为 public；`v0.3.0-alpha.2` 已有 Windows x64 无签名 Tauri ZIP 的源码组装、verify、handoff 和 strict Windows-only Feed 边界。一个 macOS arm64 development `.app` 与一个 internal-alpha `.app/.dmg` 仍只是历史评审样本；尚无 Tag、Release、Pages Feed 或 Windows native ZIP smoke。
 
@@ -84,6 +84,7 @@ flowchart TB
 |---|---|---|---|
 | 用户入口 | 当前源码为根 BAT 转发 `scripts/windows`；`v0.3` 为 Tauri host | 既有 SwiftUI `.app` 仅作开发/边界参考；`v0.3` 为 Tauri host | 都启动或连接同一 FastAPI 核心 |
 | 页面容器 | 当前源码可用系统外部浏览器；`v0.3` 可为 Tauri WebView | 既有 `WKWebView` 行为供迁移对照 | 页面 DOM、JS、CSS 和 `/api/v1` 相同；打印子窗口不继承通用原生 bridge |
+| 打印子窗口许可 | 设置默认允许；关闭后首页不再请求新窗口 | 同一共享偏好供页面提示；现有 WKWebView 保持自身受限 print bridge | Tauri 仅在启动时读取 `allow_print_popups`；即使允许也只放行 `about:blank -> /invoices/print/{job_id}` 的本地受限路径 |
 | 目录/文件选择 | Python/Tk 子进程，项目根为 cwd | Swift `NSOpenPanel` bridge / `WKUIDelegate` | 选择结果只形成草稿，保存仍经过后端设置接口 |
 | 运行态根 | Windows Tauri release host 使用 `%LOCALAPPDATA%\\InvoiceHub`；源码 BAT 保持既有运行态 | 既有 macOS 壳使用 Application Support；`v0.3` 两端均使用用户可写运行态 | 源码/包资源只读，用户状态与构建内容分离 |
 | localhost 控制 | 当前 Windows 源码使用 PowerShell；`v0.3` 由 Tauri host 管理 | `v0.3` 同样由 Tauri host 管理 | 固定 `127.0.0.1:8766`；未知占用者都必须明确失败，不能换端口规避 |
@@ -101,6 +102,8 @@ flowchart TB
 裸 `src-tauri/` checkout 只保留可审查的 fail-closed 边界：`main.rs` 找不到经编译绑定 manifest 时以状态 `78` 退出，在插件初始化、端口连接和 WebView 创建之前停止。`scripts/dev/tauri_dev_app.py` 仅为 development profile 复制 allowlisted core、生成 schema-3 manifest 和显式 venv launcher，并把 manifest/launcher SHA-256 绑定到本地 arm64 `.app`。该 app 已完成一次隔离 L9 smoke；它不是 DMG、更新归档或 release 输入。有效 development manifest 才会固定使用 `127.0.0.1:8766`，拒绝未知占用，启动自己的 backend child，并以 backend-private 256 位 secret 与 fresh HMAC challenge 证明归属。初次 child PID、manifest identity、`/` 和 OpenAPI 精确方法通过后，host 读取 startup preference 并以新的 challenge/HMAC 和 identity 再次确认 ownership；只有第二次检查通过才创建空 IPC capability 的 WebView。
 
 该一次 smoke 使用 development-only 的显式、已存在、绝对外置 state root，不读写真实 Application Support；host 会 canonicalize 它并拒绝其位于 bundle/core 内或包住 bundle/core。它确认 health/background ready、首页/静态资源和 `desktop_available=true` 的默认 desktop。外部 AppleScript quit 曾绕过 shutdown POST 并留下 stale server state，该外部路径仍不作有序退出承诺；P1-Q 随后在 clean-commit 样本上以真实 Cmd-Q 确认 shutdown POST 200、stopped state、monitor 未运行、host/backend/PID/端口清理，SSE 未及时退出时由显式 kill+wait 兜底。development manifest 明确禁用 updater，且 state-root override 不会传给 Python child。browser、tray 点击、单实例、native picker、打印、下载/验签/安装、DMG、Developer ID、公证和 Windows 均未覆盖。
+
+Tauri desktop host 在 second ownership proof 后严格解析 `allow_print_popups`；它不因旧 preferences 文件缺字段而扩大许可。默认值由共享后端补为 `true`。许可关闭时 `on_new_window` 一律拒绝；许可开启时仍只接受主页面同步创建的精确 `about:blank`，新 WebView 只能导航到固定 `127.0.0.1:8766` origin 的 `/invoices/print/{job_id}`，不得携带 query/fragment，job ID 同时受长度和 ASCII 字符集约束。子窗口复用 WebView 运行态而没有新的业务/Host RPC 能力。该项只有 source/contract 覆盖，不替代原生打印验收。
 
 Host RPC 是 host 的随机 loopback listener；host 只将 token 传给其直接启动的 Python backend，backend 启动时捕获并从 descendant 环境清除。网页没有 token、Tauri command 或 event 通道，token 也不进入 API 响应或日志；backend 的 picker 面只能发起四种固定 picker enum，更新面独立地只能发起 `update_check` / `update_install` 两个固定 enum。同一进程具备 Tauri marker 与 private RPC 时，API、设置页和后台 timer 的公开更新检查都是 strict delegated-install preflight；只有非 Tauri/非 host 检查不获取 `_host_update_lock` 并保留 cache/ETag/nonblocking-busy 语义。host 检查锁竞争立即返回不持久化 busy，且不会调用 metadata/candidate 或清除既有 approval；install 锁竞争立即抛脱敏 `HostRpcError`，不消费 approval 或发第二次 RPC。当前取得 install 锁后也只清除候选并返回不可用，直到 recovery/relaunch coordinator 完整实现。Rust dialog 最多等待 120 秒，Python 以 125 秒预算保留响应余量，并把 private `HostRpcError` 固定映射为脱敏 503；非 Tauri 的 Tk picker 不变。Updater metadata 请求固定 5 秒总时限，不能使用插件默认的无时限请求永久占住 operation mutex。成功握手和 post-preference revalidation 后才 arm 授权，再启动 100 ms 有界 child liveness watcher；watcher 只能在 child 退出后撤销授权，不能重新授权已退出 child。此后 host 严格使用 `startup_surface`：desktop 创建 WebView，browser 用无 WebView JS 注入的 host-only opener 派发固定 origin；托盘和第二实例重开当前 surface，desktop close 仅隐藏窗口而不停止 monitor。托盘 Quit 与 macOS 自定义应用菜单/Cmd-Q 只请求同一个 `app.exit(0)`；应用菜单不使用 predefined Quit。只有 host 实际收到的 `ExitRequested` 才先执行结构化 `keep_monitor` shutdown 并等待 owned child，错误/超时后显式 `kill + wait`，无法确认 child 已退出则阻止 host 退出；外部 AppleScript quit、Force Quit 或信号可能绕过该事件，不属于有序退出承诺。上述源码路径由隔离离线 contracts 和一个 clean-commit 真实 Cmd-Q 样本验证；原生面板、browser/tray 点击、单实例、updater、安装包或平台发布烟测仍未完成。
 

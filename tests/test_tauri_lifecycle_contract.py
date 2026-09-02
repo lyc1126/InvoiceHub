@@ -99,8 +99,8 @@ def test_tauri_setup_selects_surface_only_after_handshake_and_keeps_close_host_o
     backend = (ROOT / "src-tauri" / "src" / "backend.rs").read_text(encoding="utf-8")
 
     assert "INVOICE_HUB_DESKTOP_HOST" in backend
-    assert backend.index("probe_backend_with_retry") < backend.index("load_startup_surface")
-    assert backend.index("let startup_surface = match load_startup_surface()") < backend.index(
+    assert backend.index("probe_backend_with_retry") < backend.index("load_startup_preferences")
+    assert backend.index("let startup_preferences = match load_startup_preferences()") < backend.index(
         "revalidate_backend_after_preferences("
     )
     assert backend.index("revalidate_backend_after_preferences(") < backend.index(
@@ -151,7 +151,9 @@ def test_tauri_setup_cleans_up_an_owned_backend_before_returning_surface_failure
     assert "let backend = BackendHost::launch" in setup
     assert "let setup_result = (|| -> Result<(), Box<dyn Error>>" in setup
     assert "install_tray(app)?;" in setup
-    assert "create_desktop_window(app, backend.webview_data_directory())?" in setup
+    assert "create_desktop_window(" in setup
+    assert "backend.webview_data_directory()," in setup
+    assert "backend.allow_print_popups()," in setup
     assert "open_backend_in_browser(&app.handle())?" in setup
     assert "if let Err(error) = setup_result" in setup
     assert "complete_setup_failure_cleanup(&backend);" in setup
@@ -164,9 +166,7 @@ def test_tauri_setup_cleans_up_an_owned_backend_before_returning_surface_failure
         "return Err(error);"
     )
     assert setup.index("install_tray(app)?;") < setup.index("app.manage(backend);")
-    assert setup.index(
-        "create_desktop_window(app, backend.webview_data_directory())?"
-    ) < setup.index("app.manage(backend);")
+    assert setup.index("create_desktop_window(") < setup.index("app.manage(backend);")
     assert setup.index("open_backend_in_browser(&app.handle())?") < setup.index(
         "app.manage(backend);"
     )
@@ -309,3 +309,24 @@ def test_tauri_configuration_remains_fixed_to_the_product_localhost_origin() -> 
     assert config["build"]["devUrl"] == "http://127.0.0.1:8766"
     assert config["bundle"]["active"] is False
     assert config["bundle"]["macOS"]["minimumSystemVersion"] == "13.0"
+
+
+def test_tauri_print_popup_policy_only_allows_local_print_jobs() -> None:
+    main = (ROOT / "src-tauri" / "src" / "main.rs").read_text(encoding="utf-8")
+    backend = (ROOT / "src-tauri" / "src" / "backend.rs").read_text(encoding="utf-8")
+
+    assert "pub struct StartupPreferences" in backend
+    assert "pub fn parse_startup_preferences" in backend
+    assert 'get("allow_print_popups")' in backend
+    assert "allow_print_popups: startup_preferences.allow_print_popups" in backend
+    assert "pub fn allow_print_popups(&self) -> bool" in backend
+    assert "backend.allow_print_popups()," in main
+    assert 'const PRINT_POPUP_INITIAL_URL: &str = "about:blank";' in main
+    assert 'const PRINT_POPUP_ROUTE_PREFIX: &str = "/invoices/print/";' in main
+    assert "PRINT_POPUP_JOB_ID_MIN_LENGTH" in main
+    assert "PRINT_POPUP_JOB_ID_MAX_LENGTH" in main
+    assert ".on_new_window(move |url, features|" in main
+    assert "!allow_print_popups || !is_print_popup_initial_url(url.as_str())" in main
+    assert ".window_features(features)" in main
+    assert ".on_navigation(|destination| is_print_popup_navigation_url(destination.as_str()))" in main
+    assert "tauri::webview::NewWindowResponse::Deny" in main

@@ -2,8 +2,8 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-APP_CSS_VERSION = "20260802-release-update-v1"
-PAGE_INDEX_VERSION = "20260803-external-monitor-guard"
+APP_CSS_VERSION = "20260902-print-popup-permission"
+PAGE_INDEX_VERSION = "20260902-print-popup-permission"
 
 
 def _assets() -> tuple[str, str, str]:
