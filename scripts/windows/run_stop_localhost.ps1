@@ -18,7 +18,8 @@ if ([string]::IsNullOrWhiteSpace($snapshot)) {
 $processId = [int]$snapshot
 $process = Get-IHProcess -ProcessId $processId
 if ($null -ne $process) {
-    if (-not (Test-IHProcessIdentity -ProcessId $processId -Python $context.Python -Root $root -ConfigPath $context.ConfigPath)) {
+    $health = Get-IHHealth -Url $context.Config.Url -TimeoutSeconds 1
+    if (-not (Test-IHVerifiedProcessIdentity -ProcessId $processId -Python $context.Python -Root $root -ConfigPath $context.ConfigPath -RuntimeDir $context.Config.RuntimeDir -BuildManifest $context.Build -PackageManifest $context.Package -Health $health)) {
         throw "PID $processId does not belong to this exact InvoiceHub root and config. Refusing to stop it."
     }
     Stop-Process -Id $processId -ErrorAction Stop
@@ -27,7 +28,8 @@ if ($null -ne $process) {
         Start-Sleep -Milliseconds 100
     }
     if ($null -ne (Get-IHProcess -ProcessId $processId)) {
-        if (-not (Test-IHProcessIdentity -ProcessId $processId -Python $context.Python -Root $root -ConfigPath $context.ConfigPath)) {
+        $remainingHealth = Get-IHHealth -Url $context.Config.Url -TimeoutSeconds 1
+        if (-not (Test-IHVerifiedProcessIdentity -ProcessId $processId -Python $context.Python -Root $root -ConfigPath $context.ConfigPath -RuntimeDir $context.Config.RuntimeDir -BuildManifest $context.Build -PackageManifest $context.Package -Health $remainingHealth)) {
             throw "PID $processId changed identity while stopping. Refusing to force-stop it."
         }
         Stop-Process -Id $processId -Force -ErrorAction Stop

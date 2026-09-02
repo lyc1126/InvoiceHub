@@ -2,6 +2,8 @@
 
 ## 未发布
 
+- 2026-09-02 Windows portable 启停身份兼容：正式启动器仍优先以 `Win32_Process` 的 Python、模块、root 和 config 命令行作严格进程证明；只有系统拒绝读取该 CIM 元数据时，才允许以存活 PID 的解释器路径加 health 中同一 PID、配置、runtime、build/package 身份的完整绑定作为受限回退。新启动的直接子进程只使用自己的短生命周期句柄做失败清理，持久 PID 的停止路径仍先验证身份。该项覆盖便携包正式 BAT 的兼容边界，不把它表述为 Tauri 窗口、任务栏、托盘或打印弹窗的原生验收。
+
 - 2026-09-02 Windows 应用图标与打印许可兼容整合：将三套内置应用图标选择与默认开启的 `allow_print_popups` 偏好放入同一桌面壳。图标状态独立保存，打印许可只在 host 启动时严格读取；Windows release host 继续显式使用 `%LOCALAPPDATA%\\InvoiceHub\\webview` 作为 WebView2 数据目录，并以 GUI 子系统、`CREATE_NO_WINDOW` 和 runtime stdout/stderr 日志保持无控制台启动。当前记录的是合并后的源码/静态契约范围，尚未将图标切换或打印窗口作为新的原生 Windows 验收结论。
 
 - 2026-09-02 应用图标选择：新增暖橙、青碧、罗兰紫三套内置图标，设置中心和皮肤页都可切换；浏览器标签图标随之刷新。`GET/PUT /api/v1/app-icon` 只接受内置 id，选择状态只写入 `runtime/local_state/app_icon_state.json`，不读取或写入 `watch_dir`、发票投影或皮肤包。Tauri host 的私有 `set_app_icon` 命令只接受精确枚举，并先同步当前窗口、任务栏和托盘，Python 收到成功后才持久化选择；Host 失败固定返回脱敏 `503 App icon update unavailable`。本项记录的是源码和契约范围，尚未在 Windows 原生桌面或安装包中运行验收。

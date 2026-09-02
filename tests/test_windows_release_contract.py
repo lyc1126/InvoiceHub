@@ -307,6 +307,13 @@ def test_windows_launcher_is_release_closed_and_identity_bound() -> None:
     assert "Test-IHHealthIdentity" in start
     assert "package_id" in start and "build_id" in start
     assert "source_commit" in module
+    assert "function Test-IHHealthBackedProcessIdentity" in module
+    assert "function Test-IHLaunchedProcessIdentity" in module
+    assert "function Test-IHVerifiedProcessIdentity" in module
+    assert "Test-IHHealthIdentity" in module
+    assert "Test-IHVerifiedProcessIdentity" in start
+    assert "Test-IHLaunchedProcessIdentity" in start
+    assert "Test-IHVerifiedProcessIdentity" in stop
     assert "source commits do not match" in module
     assert "will not switch ports automatically" in start
     assert "Open-IHBrowser" in start

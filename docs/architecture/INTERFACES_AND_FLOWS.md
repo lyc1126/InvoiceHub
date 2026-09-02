@@ -349,7 +349,7 @@ sequenceDiagram
     end
 ```
 
-`/` 返回 200 不表示后台投影已完成；`health.background_status` 和事件用于区分 `initializing/running/ready/failed`。正式 BAT 不能只把 `%ProgramFiles%\PowerShell\7\pwsh.exe` 当成 PS7 真值：固定路径不可用时继续通过 `where.exe pwsh.exe` 解析 `PATH`/Microsoft Store App Execution Alias，并验证主版本为 7；`INVOICE_HUB_FORCE_PS51=1` 仍直接选择 5.1。当前启动脚本实现以首页 200 为就绪探测，随后 `Get-IHHealth` 必须从原始响应流按 UTF-8 解码再解析 JSON，因为 PS5.1 会在 `application/json` 无 charset 时错误解释 `.Content`；中文空格路径还原后仍执行完整 PID、配置、runtime、build/package 身份校验。长期启动真值约束仍要求同时关注端口、PID 和 stale state，修改启动链时必须按 `AGENTS.md` 做相邻回归。
+`/` 返回 200 不表示后台投影已完成；`health.background_status` 和事件用于区分 `initializing/running/ready/failed`。正式 BAT 不能只把 `%ProgramFiles%\PowerShell\7\pwsh.exe` 当成 PS7 真值：固定路径不可用时继续通过 `where.exe pwsh.exe` 解析 `PATH`/Microsoft Store App Execution Alias，并验证主版本为 7；`INVOICE_HUB_FORCE_PS51=1` 仍直接选择 5.1。当前启动脚本实现以首页 200 为就绪探测，随后 `Get-IHHealth` 必须从原始响应流按 UTF-8 解码再解析 JSON，因为 PS5.1 会在 `application/json` 无 charset 时错误解释 `.Content`；中文空格路径还原后仍执行完整 PID、配置、runtime、build/package 身份校验。`Win32_Process` 的命令行信息仍是持久 PID 的首选证明；仅当 CIM 拒绝读取该元数据时，启动复用和正式 stop 才能以同 PID 的解释器路径加 health 中精确 config/runtime/build/package 绑定回退，缺失或任一不一致一律拒绝。新启动的直接子进程句柄只用于该启动回合的失败清理。长期启动真值约束仍要求同时关注端口、PID 和 stale state，修改启动链时必须按 `AGENTS.md` 做相邻回归。
 
 startup child、monitor daemon 与手动 `bridge/rebuild` 对同一 TargetProfile 都共用 `state_dir/.invoice_sync.lock` 的 profile 范围 OS 写锁，锁覆盖读取、决策、投影和 monitor 状态的完整写入段。子进程运行时显式关闭普通 sync SSE 与桌面通知；父进程只在 generation 和完整 profile 身份仍匹配时，才重建当前缓存、补发 `invoice.changed/cost_analysis.updated/monitor.sync_*` 与 `server.background_ready/failed`。身份不匹配时不改当前缓存或状态，只写含 captured/active target 的 `server.background_stale`。被替代的子进程和等待结果都有有界终止/等待；无法按时退出仅产生 `server.background_worker_retire_timeout` 诊断，不能把旧结果复活为当前目录状态。
 

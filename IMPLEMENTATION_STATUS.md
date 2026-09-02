@@ -21,6 +21,7 @@
 - 独立 monitor、后台 startup sync、文件事件合并、周期兜底、手改三字段保护和可诊断日志。
 - FastAPI 页面/API、目录草稿、监控控制、结构化关闭、源文件预览、批量打印、皮肤安全边界和真实表格/TSV 复制。
 - 三套内置应用图标（暖橙、青碧、罗兰紫）的设置/皮肤页选择、浏览器 favicon 同步和 Tauri 私有 Host RPC；选择独立于皮肤，只保存到 `runtime/local_state/app_icon_state.json`。
+- Windows portable 正式 BAT 保留 `Win32_Process` 命令行的严格身份校验；受限会话拒绝 CIM 元数据时，只接受解释器路径与 health 的 PID、配置、运行目录、build/package 全部一致的回退。新启动的 `Start-Process` 子进程只在本轮失败清理中使用其句柄，持久 PID 的 stop 仍经过身份复核；这不构成 Tauri 原生界面或安装包验收。
 - 做账 W8/W9 的本地文件真值、状态迁移预览、服务端执行校验、批次 manifest 与只读 dry-run 边界。
 - macOS SwiftUI/WKWebView 壳保留为现有平台参考；它不改变共享业务逻辑，也不构成未来 Tauri 发布证据。
 

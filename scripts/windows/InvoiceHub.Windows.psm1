@@ -218,6 +218,15 @@ function Open-IHBrowser {
 function Get-IHProcess {
     param([Parameter(Mandatory = $true)][int]$ProcessId)
     try {
+        return Get-Process -Id $ProcessId -ErrorAction Stop
+    } catch {
+        return $null
+    }
+}
+
+function Get-IHProcessMetadata {
+    param([Parameter(Mandatory = $true)][int]$ProcessId)
+    try {
         return Get-CimInstance Win32_Process -Filter ("ProcessId = {0}" -f $ProcessId) -ErrorAction Stop
     } catch {
         return $null
@@ -231,7 +240,7 @@ function Test-IHProcessIdentity {
         [Parameter(Mandatory = $true)][string]$Root,
         [Parameter(Mandatory = $true)][string]$ConfigPath
     )
-    $process = Get-IHProcess -ProcessId $ProcessId
+    $process = Get-IHProcessMetadata -ProcessId $ProcessId
     if ($null -eq $process) { return $false }
     $actualExecutable = [string]$process.ExecutablePath
     if ([string]::IsNullOrWhiteSpace($actualExecutable)) { return $false }
@@ -248,6 +257,73 @@ function Test-IHProcessIdentity {
     $escapedConfig = [regex]::Escape([System.IO.Path]::GetFullPath($ConfigPath))
     $pattern = '^"?' + $escapedPython + '"?\s+-m\s+invoice_hub\.api\.main\s+--root\s+"' + $escapedRoot + '"\s+--config\s+"' + $escapedConfig + '"\s*$'
     return [regex]::IsMatch([string]$process.CommandLine, $pattern, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+}
+
+function Test-IHHealthBackedProcessIdentity {
+    param(
+        [Parameter(Mandatory = $true)][int]$ProcessId,
+        [Parameter(Mandatory = $true)][string]$Python,
+        [Parameter(Mandatory = $true)][string]$ConfigPath,
+        [Parameter(Mandatory = $true)][string]$RuntimeDir,
+        [Parameter(Mandatory = $true)]$BuildManifest,
+        [Parameter(Mandatory = $true)]$PackageManifest,
+        [AllowNull()]$Health
+    )
+    # CIM command-line metadata is the normal proof. If Windows denies that metadata,
+    # require both the expected executable and health's exact PID/config/package binding.
+    if ($null -ne (Get-IHProcessMetadata -ProcessId $ProcessId)) { return $false }
+    $process = Get-IHProcess -ProcessId $ProcessId
+    if ($null -eq $process) { return $false }
+    try {
+        $actualExecutable = [string]$process.Path
+        if ([string]::IsNullOrWhiteSpace($actualExecutable)) { return $false }
+        if (-not [System.IO.Path]::GetFullPath($actualExecutable).Equals(
+            [System.IO.Path]::GetFullPath($Python),
+            [System.StringComparison]::OrdinalIgnoreCase
+        )) { return $false }
+    } catch {
+        return $false
+    }
+    return Test-IHHealthIdentity -Health $Health -ProcessId $ProcessId -ConfigPath $ConfigPath -RuntimeDir $RuntimeDir -BuildManifest $BuildManifest -PackageManifest $PackageManifest
+}
+
+function Test-IHVerifiedProcessIdentity {
+    param(
+        [Parameter(Mandatory = $true)][int]$ProcessId,
+        [Parameter(Mandatory = $true)][string]$Python,
+        [Parameter(Mandatory = $true)][string]$Root,
+        [Parameter(Mandatory = $true)][string]$ConfigPath,
+        [Parameter(Mandatory = $true)][string]$RuntimeDir,
+        [Parameter(Mandatory = $true)]$BuildManifest,
+        [Parameter(Mandatory = $true)]$PackageManifest,
+        [AllowNull()]$Health
+    )
+    if (Test-IHProcessIdentity -ProcessId $ProcessId -Python $Python -Root $Root -ConfigPath $ConfigPath) {
+        return $true
+    }
+    return Test-IHHealthBackedProcessIdentity -ProcessId $ProcessId -Python $Python -ConfigPath $ConfigPath -RuntimeDir $RuntimeDir -BuildManifest $BuildManifest -PackageManifest $PackageManifest -Health $Health
+}
+
+function Test-IHLaunchedProcessIdentity {
+    param(
+        [Parameter(Mandatory = $true)][System.Diagnostics.Process]$Process,
+        [Parameter(Mandatory = $true)][string]$Python
+    )
+    # The Start-Process handle is only used for its own short-lived cleanup path.
+    # Persisted PID files still require Test-IHVerifiedProcessIdentity before a stop.
+    try {
+        if ($Process.HasExited) { return $false }
+        $current = Get-IHProcess -ProcessId $Process.Id
+        if ($null -eq $current -or $current.HasExited) { return $false }
+        if ($current.StartTime.ToUniversalTime().Ticks -ne $Process.StartTime.ToUniversalTime().Ticks) { return $false }
+        $actualExecutable = [string]$current.Path
+        return [System.IO.Path]::GetFullPath($actualExecutable).Equals(
+            [System.IO.Path]::GetFullPath($Python),
+            [System.StringComparison]::OrdinalIgnoreCase
+        )
+    } catch {
+        return $false
+    }
 }
 
 function Test-IHTcpPort {
@@ -462,6 +538,7 @@ Export-ModuleMember -Function @(
     "Get-IHLaunchContext",
     "Get-IHMutexName",
     "Get-IHProcess",
+    "Get-IHProcessMetadata",
     "Get-IHRoot",
     "Initialize-IHConfig",
     "Invoke-IHPythonModule",
@@ -472,6 +549,9 @@ Export-ModuleMember -Function @(
     "Resolve-IHPython",
     "Set-IHProcessEnvironment",
     "Test-IHHealthIdentity",
+    "Test-IHHealthBackedProcessIdentity",
+    "Test-IHLaunchedProcessIdentity",
     "Test-IHProcessIdentity",
+    "Test-IHVerifiedProcessIdentity",
     "Test-IHTcpPort"
 )

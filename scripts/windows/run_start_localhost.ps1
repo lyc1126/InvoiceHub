@@ -18,7 +18,7 @@ try {
     $health = Get-IHHealth -Url $context.Config.Url -TimeoutSeconds 1
     if ($null -ne $health) {
         $healthPid = [int]$health.pid
-        if ((Test-IHProcessIdentity -ProcessId $healthPid -Python $context.Python -Root $root -ConfigPath $context.ConfigPath) -and
+        if ((Test-IHVerifiedProcessIdentity -ProcessId $healthPid -Python $context.Python -Root $root -ConfigPath $context.ConfigPath -RuntimeDir $context.Config.RuntimeDir -BuildManifest $context.Build -PackageManifest $context.Package -Health $health) -and
             (Test-IHHealthIdentity -Health $health -ProcessId $healthPid -ConfigPath $context.ConfigPath -RuntimeDir $context.Config.RuntimeDir -BuildManifest $context.Build -PackageManifest $context.Package)) {
             Set-Content -LiteralPath $context.PidFile -Encoding ASCII -Value ([string]$healthPid)
             Write-Host "InvoiceHub localhost is already ready: $($context.Config.Url)"
@@ -80,7 +80,7 @@ try {
         if ($process.HasExited) { break }
         $health = Get-IHHealth -Url $context.Config.Url -TimeoutSeconds 1
         if ($null -ne $health -and
-            (Test-IHProcessIdentity -ProcessId $process.Id -Python $context.Python -Root $root -ConfigPath $context.ConfigPath) -and
+            (Test-IHVerifiedProcessIdentity -ProcessId $process.Id -Python $context.Python -Root $root -ConfigPath $context.ConfigPath -RuntimeDir $context.Config.RuntimeDir -BuildManifest $context.Build -PackageManifest $context.Package -Health $health) -and
             (Test-IHHealthIdentity -Health $health -ProcessId $process.Id -ConfigPath $context.ConfigPath -RuntimeDir $context.Config.RuntimeDir -BuildManifest $context.Build -PackageManifest $context.Package)) {
             $verified = $true
             break
@@ -88,7 +88,7 @@ try {
         Start-Sleep -Milliseconds 100
     }
     if (-not $verified) {
-        if (-not $process.HasExited -and (Test-IHProcessIdentity -ProcessId $process.Id -Python $context.Python -Root $root -ConfigPath $context.ConfigPath)) {
+        if (-not $process.HasExited -and (Test-IHLaunchedProcessIdentity -Process $process -Python $context.Python)) {
             Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
         }
         Remove-IHPidSnapshot -PidFile $context.PidFile -Snapshot ([string]$process.Id)
