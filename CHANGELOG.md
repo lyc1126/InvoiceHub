@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- 2026-09-02 Update Feed HTTP 404 transport repair: `urllib` raises an
+  `HTTPError` before the normal response-status path, so the fixed Feed's
+  actual missing `latest.json` now becomes a bounded `404` fetch result. The
+  existing unavailable-Feed handling can therefore show `UPDATE_FEED_UNAVAILABLE`
+  rather than the misleading connection error; the regression covers the real
+  exception shape as well as the service result.
 - 2026-09-02 About links and unpublished Feed handling: Settings now treats a
   fixed update-Feed HTTP 404 as `UPDATE_FEED_UNAVAILABLE` instead of a
   connection failure, does not cache the missing Feed, and can therefore retry

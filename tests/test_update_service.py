@@ -336,6 +336,26 @@ def test_update_fetch_does_not_accept_late_304_headers(monkeypatch) -> None:
     assert observed_timeouts == [3.0]
 
 
+def test_update_fetch_returns_real_http_404_as_a_result(monkeypatch) -> None:
+    class MissingFeedOpener:
+        def open(self, request, *, timeout):
+            del timeout
+            raise HTTPError(request.full_url, 404, "Not Found", {"ETag": '"missing"'}, None)
+
+    monkeypatch.setattr(update_service, "build_opener", lambda *_handlers: MissingFeedOpener())
+
+    result = fetch_update_feed(
+        UPDATE_FEED_URL,
+        {},
+        UPDATE_ALLOWED_HOSTS,
+        connect_timeout=3.0,
+        total_timeout=5.0,
+        max_bytes=1024,
+    )
+
+    assert result == UpdateFetchResult(404, b"", '"missing"', UPDATE_FEED_URL)
+
+
 def test_update_fetch_wall_deadline_returns_when_transport_is_stuck(monkeypatch) -> None:
     entered = threading.Event()
     release = threading.Event()

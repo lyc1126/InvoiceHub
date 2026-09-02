@@ -353,9 +353,18 @@ def _fetch_update_feed_with_deadline(
     try:
         response = opener.open(request, timeout=deadline.connection_timeout_for_next_phase())
     except HTTPError as exc:
-        if exc.code == 304:
-            deadline.ensure_remaining()
-            return UpdateFetchResult(304, b"", str(exc.headers.get("ETag") or ""), validated_url)
+        if exc.code in {304, 404}:
+            try:
+                deadline.ensure_remaining()
+                final_url = _validate_https_url(str(exc.geturl() or validated_url), allowed_hosts)
+                return UpdateFetchResult(
+                    exc.code,
+                    b"",
+                    str((exc.headers or {}).get("ETag") or ""),
+                    final_url,
+                )
+            finally:
+                exc.close()
         raise
 
     with response:
