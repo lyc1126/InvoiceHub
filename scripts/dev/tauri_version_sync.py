@@ -17,7 +17,6 @@ SEMVER_PATTERN = re.compile(r"^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$")
 CARGO_VERSION_PATTERN = re.compile(
     r"(?ms)(^\[package\][^\[]*?^version\s*=\s*)\"[^\"]*\""
 )
-TAURI_IDENTITY_CONFIGS = ("tauri.conf.json", "tauri.windows.conf.json")
 
 
 class VersionSyncError(ValueError):
@@ -90,7 +89,12 @@ def synchronize(root: Path, *, write: bool) -> dict[str, str]:
     identity = load_identity(root)
     package_path = root / "package.json"
     cargo_path = root / "src-tauri" / "Cargo.toml"
-    tauri_paths = tuple(root / "src-tauri" / name for name in TAURI_IDENTITY_CONFIGS)
+    tauri_paths = (
+        root / "src-tauri" / "tauri.conf.json",
+        root / "src-tauri" / "tauri.alpha.conf.json",
+        root / "src-tauri" / "tauri.public-preview.conf.json",
+        root / "src-tauri" / "tauri.windows-preview.conf.json",
+    )
     for path in (package_path, cargo_path, *tauri_paths):
         if not path.is_file():
             raise VersionSyncError(f"derived identity target is missing: {path}")

@@ -1,3 +1,4 @@
+import asyncio
 import importlib
 import hashlib
 import hmac
@@ -667,6 +668,7 @@ def test_server_shutdown_api_preserves_or_stops_monitor_and_finalizes_state(tmp_
     assert keep_payload["monitor_running"] is True
     assert stop_calls == []
     assert scheduled_states == [state]
+    assert state.server_shutdown_requested is True
     assert client.get("/api/v1/preferences").json()["preferences"]["system_shutdown_behavior"] == "keep_monitor"
 
     stopping_state = json.loads(state.layout.server_state.read_text(encoding="utf-8"))
@@ -705,6 +707,75 @@ def test_server_shutdown_api_preserves_or_stops_monitor_and_finalizes_state(tmp_
     assert stop_client.get("/api/v1/preferences").json()["preferences"]["system_shutdown_behavior"] == "ask"
     stop_state.finalize_server_shutdown()
     assert json.loads(stop_state.layout.server_state.read_text(encoding="utf-8"))["status"] == "stopped"
+
+
+def test_event_stream_finishes_after_structured_shutdown_is_requested(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr("invoice_hub.services.app_state.AppState.run_background_diagnostics", lambda self, trigger="startup_sync": None)
+    monitor = {"running": False, "pid": 0}
+    monkeypatch.setattr("invoice_hub.services.app_state.AppState.bridge_status", lambda self: dict(monitor))
+    monkeypatch.setattr(
+        "invoice_hub.services.app_state.AppState.bridge_stop",
+        lambda self: {"ok": True, "running": False, "status": dict(monitor)},
+    )
+    app = create_app(tmp_path, shutdown_scheduler=lambda state: None)
+    state = app.state.invoice_hub
+
+    async def collect_stream_messages() -> list[dict]:
+        messages: list[dict] = []
+        first_request = True
+        connected = asyncio.Event()
+        disconnect = asyncio.Event()
+
+        async def receive() -> dict:
+            nonlocal first_request
+            if first_request:
+                first_request = False
+                return {"type": "http.request", "body": b"", "more_body": False}
+            await disconnect.wait()
+            return {"type": "http.disconnect"}
+
+        async def send(message: dict) -> None:
+            messages.append(message)
+            if message["type"] == "http.response.body" and b": connected " in message.get("body", b""):
+                connected.set()
+
+        stream = asyncio.create_task(
+            app(
+                {
+                    "type": "http",
+                    "asgi": {"version": "3.0", "spec_version": "2.3"},
+                    "http_version": "1.1",
+                    "method": "GET",
+                    "scheme": "http",
+                    "path": "/api/v1/events/stream",
+                    "raw_path": b"/api/v1/events/stream",
+                    "query_string": b"",
+                    "headers": [],
+                    "client": ("testclient", 50000),
+                    "server": ("testserver", 80),
+                    "root_path": "",
+                },
+                receive,
+                send,
+            )
+        )
+        try:
+            await asyncio.wait_for(connected.wait(), timeout=1)
+            result = state.request_server_shutdown("stop_monitor")
+            assert result["scheduled"] is True
+            assert state.server_shutdown_requested is True
+            await asyncio.wait_for(stream, timeout=3)
+        finally:
+            disconnect.set()
+            if not stream.done():
+                stream.cancel()
+                await asyncio.gather(stream, return_exceptions=True)
+        return messages
+
+    messages = asyncio.run(collect_stream_messages())
+    body = b"".join(message.get("body", b"") for message in messages if message["type"] == "http.response.body")
+    assert b": connected " in body
+    assert messages[-1] == {"type": "http.response.body", "body": b"", "more_body": False}
 
 
 def test_server_shutdown_does_not_close_webui_when_monitor_remains_running(tmp_path: Path, monkeypatch) -> None:
@@ -2370,6 +2441,127 @@ def test_bridge_status_contract_exposes_monitor_lifecycle(tmp_path: Path) -> Non
     ):
         assert key in status
     assert status["sync_interval_seconds"] == 60
+
+
+def _monitor_recovery_headers(
+    secret: bytes,
+    method: str,
+    path: str,
+    challenge: str,
+) -> dict[str, str]:
+    empty_body_sha256 = hashlib.sha256(b"").hexdigest()
+    message = (
+        "invoicehub-monitor-recovery-request-v1\n"
+        f"{method}\n{path}\n{challenge}\n{empty_body_sha256}"
+    ).encode("ascii")
+    return {
+        "X-InvoiceHub-Monitor-Recovery-Challenge": challenge,
+        "X-InvoiceHub-Monitor-Recovery-Request": hmac.new(
+            secret,
+            message,
+            hashlib.sha256,
+        ).hexdigest(),
+        "Content-Length": "0",
+    }
+
+
+def _monitor_recovery_response_proof(
+    secret: bytes,
+    method: str,
+    path: str,
+    challenge: str,
+    status_code: int,
+    body: bytes,
+) -> str:
+    message = (
+        "invoicehub-monitor-recovery-response-v1\n"
+        f"{method}\n{path}\n{challenge}\n{status_code}\n{hashlib.sha256(body).hexdigest()}"
+    ).encode("ascii")
+    return hmac.new(secret, message, hashlib.sha256).hexdigest()
+
+
+def test_monitor_recovery_auth_signs_exact_response_and_rejects_replay(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        "invoice_hub.services.app_state.AppState.run_background_diagnostics",
+        lambda self, trigger="startup_sync": None,
+    )
+    secret = bytes.fromhex("5a" * 32)
+    challenge = "ab" * 32
+    monkeypatch.setenv(host_rpc.DESKTOP_HOST_SECRET_ENV, secret.hex())
+    app = create_app(tmp_path)
+    client = TestClient(app)
+    path = "/api/v1/bridge/status"
+    headers = _monitor_recovery_headers(secret, "GET", path, challenge)
+
+    response = client.get(path, headers=headers)
+
+    assert response.status_code == 200
+    assert response.headers["X-InvoiceHub-Monitor-Recovery-Response"] == (
+        _monitor_recovery_response_proof(
+            secret,
+            "GET",
+            path,
+            challenge,
+            response.status_code,
+            response.content,
+        )
+    )
+    assert response.headers["Cache-Control"] == "no-store"
+    assert client.get(path, headers=headers).status_code == 403
+
+    ordinary = client.get(path)
+    assert ordinary.status_code == 200
+    assert "X-InvoiceHub-Monitor-Recovery-Response" not in ordinary.headers
+
+
+def test_monitor_recovery_auth_rejects_tampered_or_incomplete_requests(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        "invoice_hub.services.app_state.AppState.run_background_diagnostics",
+        lambda self, trigger="startup_sync": None,
+    )
+    secret = bytes.fromhex("6b" * 32)
+    challenge = "cd" * 32
+    path = "/api/v1/bridge/status"
+    monkeypatch.setenv(host_rpc.DESKTOP_HOST_SECRET_ENV, secret.hex())
+    app = create_app(tmp_path)
+    client = TestClient(app)
+    valid = _monitor_recovery_headers(secret, "GET", path, challenge)
+
+    tampered = dict(valid)
+    tampered["X-InvoiceHub-Monitor-Recovery-Request"] = "00" * 32
+    assert client.get(path, headers=tampered).status_code == 403
+    assert client.get(
+        path,
+        headers={"X-InvoiceHub-Monitor-Recovery-Challenge": challenge},
+    ).status_code == 403
+    assert client.get(
+        path,
+        headers={
+            "X-InvoiceHub-Monitor-Recovery-Request": valid[
+                "X-InvoiceHub-Monitor-Recovery-Request"
+            ]
+        },
+    ).status_code == 403
+
+    wrong_method = _monitor_recovery_headers(secret, "POST", path, "de" * 32)
+    assert client.get(path, headers=wrong_method).status_code == 403
+    wrong_path = _monitor_recovery_headers(
+        secret,
+        "GET",
+        "/api/v1/bridge/start",
+        "ef" * 32,
+    )
+    assert client.get(path, headers=wrong_path).status_code == 403
+
+    nonempty = _monitor_recovery_headers(secret, "GET", path, "fa" * 32)
+    nonempty.pop("Content-Length")
+    assert client.request("GET", path, headers=nonempty, content=b"x").status_code == 403
 
 
 

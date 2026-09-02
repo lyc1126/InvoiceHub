@@ -8,6 +8,7 @@ use invoicehub_desktop::backend::{
     validate_openapi_routes, BackendError, BackendHealth, BundleProfile, ExpectedBackendIdentity,
     HandshakeError, StartupPreferences, StartupSurface,
 };
+use invoicehub_desktop::app_icon::AppIconId;
 use invoicehub_desktop::host_rpc::{HostRpcAuthorizationError, HostRpcAuthorizer, HostRpcCommand};
 use serde_json::json;
 
@@ -21,7 +22,7 @@ fn expected_identity() -> ExpectedBackendIdentity {
             "invoices.file-preview.v1".to_owned(),
             "monitor.ready-handshake.v1".to_owned(),
         ],
-        product_version: "0.3.0-alpha.1".to_owned(),
+        product_version: "0.3.0-alpha.2".to_owned(),
         package_id: "com.invoicehub.macos.arm64.dmg".to_owned(),
         platform: "macos".to_owned(),
         architecture: "arm64".to_owned(),
@@ -125,7 +126,15 @@ fn host_rpc_rejects_wrong_token_origin_command_and_revoked_ownership() {
     );
     assert_eq!(
         authorizer.authorize("http://127.0.0.1:8766", &[7; 32], "pick_watch_dir"),
-        Ok(HostRpcCommand::PickWatchDirectory)
+        Ok(())
+    );
+    assert_eq!(
+        authorizer.authorize("http://127.0.0.1:8766", &[7; 32], "set_app_icon"),
+        Ok(())
+    );
+    assert_eq!(
+        HostRpcCommand::from_payload(br#"{"command":"set_app_icon","icon":"teal"}"#),
+        Ok(HostRpcCommand::SetAppIcon(AppIconId::Teal))
     );
     ownership_verified.store(false, std::sync::atomic::Ordering::Release);
     assert_eq!(
@@ -147,10 +156,28 @@ fn strict_openapi_requires_the_expected_http_methods() {
             "/api/v1/update/install": {"post": {}},
             "/api/v1/server/shutdown": {"post": {}},
             "/api/v1/bridge/status": {"get": {}},
-            "/api/v1/bridge/stop": {"post": {}}
+            "/api/v1/bridge/stop": {"post": {}},
+            "/api/v1/bridge/start": {"post": {}}
         }
     });
     assert_eq!(validate_openapi_routes(&valid), Ok(()));
+
+    let mut missing_start = valid.clone();
+    missing_start["paths"]
+        .as_object_mut()
+        .expect("OpenAPI paths object")
+        .remove("/api/v1/bridge/start");
+    assert_eq!(
+        validate_openapi_routes(&missing_start),
+        Err(HandshakeError::OpenApiMismatch)
+    );
+
+    let mut wrong_start_method = valid.clone();
+    wrong_start_method["paths"]["/api/v1/bridge/start"] = json!({"get": {}});
+    assert_eq!(
+        validate_openapi_routes(&wrong_start_method),
+        Err(HandshakeError::OpenApiMismatch)
+    );
 
     let wrong_method = json!({
         "paths": {

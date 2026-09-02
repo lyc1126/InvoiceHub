@@ -9,6 +9,7 @@ import os
 import re
 import signal
 import threading
+from collections import deque
 from collections.abc import Callable
 from pathlib import Path
 from typing import AsyncIterator
@@ -29,6 +30,7 @@ from invoice_hub.services import (
     UnsupportedStartupSurfaceError,
     create_state,
 )
+from invoice_hub.services.app_icons import DEFAULT_APP_ICON_ID, AppIconService, AppIconServiceError
 from invoice_hub.services.skins import MAX_SKIN_ZIP_BYTES, SkinServiceError
 from invoice_hub.version import PRODUCT_VERSION
 
@@ -44,11 +46,18 @@ PREVIEW_CONTENT_HEADERS = {
 
 DESKTOP_HOST_CHALLENGE_HEADER = "x-invoicehub-desktop-host-challenge"
 DESKTOP_HOST_RESPONSE_HEADER = "X-InvoiceHub-Desktop-Host-Response"
+MONITOR_RECOVERY_CHALLENGE_HEADER = "x-invoicehub-monitor-recovery-challenge"
+MONITOR_RECOVERY_REQUEST_HEADER = "x-invoicehub-monitor-recovery-request"
+MONITOR_RECOVERY_RESPONSE_HEADER = "X-InvoiceHub-Monitor-Recovery-Response"
 _DESKTOP_HOST_VALUE_PATTERN = re.compile(r"[0-9a-f]{64}")
+_MONITOR_RECOVERY_REPLAY_LIMIT = 128
+_EMPTY_BODY_SHA256 = hashlib.sha256(b"").hexdigest()
 NATIVE_PICKER_FAILURE_STATUS = 503
 NATIVE_PICKER_FAILURE_DETAIL = "Native picker unavailable"
 UPDATE_INSTALL_FAILURE_STATUS = 503
 UPDATE_INSTALL_FAILURE_DETAIL = "Update installation unavailable"
+APP_ICON_FAILURE_STATUS = 503
+APP_ICON_FAILURE_DETAIL = "App icon update unavailable"
 
 
 def _schedule_process_shutdown(state: AppState, delay_seconds: float = 0.8) -> None:
@@ -63,7 +72,13 @@ def _schedule_process_shutdown(state: AppState, delay_seconds: float = 0.8) -> N
     timer.start()
 
 
-def _template(name: str, context: dict[str, object] | None = None, web_dir: Path = WEB_DIR, skin_link: str = "") -> str:
+def _template(
+    name: str,
+    context: dict[str, object] | None = None,
+    web_dir: Path = WEB_DIR,
+    skin_link: str = "",
+    favicon_link: str = "",
+) -> str:
     context = context or {}
     path = web_dir / "templates" / name
     text = path.read_text(encoding="utf-8")
@@ -73,8 +88,9 @@ def _template(name: str, context: dict[str, object] | None = None, web_dir: Path
         else:
             rendered = str(value)
         text = text.replace("{{" + key + "}}", rendered)
-    if skin_link and "</head>" in text:
-        text = text.replace("</head>", f"  {skin_link}\n</head>", 1)
+    head_links = "\n".join(link for link in (favicon_link, skin_link) if link)
+    if head_links and "</head>" in text:
+        text = text.replace("</head>", f"  {head_links}\n</head>", 1)
     return text
 
 
@@ -131,6 +147,17 @@ def _run_host_update_install(action: Callable[[], dict]) -> dict:
         ) from None
 
 
+def _run_app_icon_update(action: Callable[[str], dict], icon_id: str) -> dict:
+    try:
+        return action(icon_id)
+    except host_rpc.HostRpcError:
+        # The private host failure must not reveal listener details to browser code.
+        raise HTTPException(
+            status_code=APP_ICON_FAILURE_STATUS,
+            detail=APP_ICON_FAILURE_DETAIL,
+        ) from None
+
+
 def _consume_desktop_host_secret() -> bytes | None:
     raw = str(os.environ.pop(host_rpc.DESKTOP_HOST_SECRET_ENV, "") or "").strip()
     if not _DESKTOP_HOST_VALUE_PATTERN.fullmatch(raw):
@@ -150,6 +177,98 @@ def _desktop_host_challenge_response(request: Request) -> Response:
         status_code=204,
         headers={
             DESKTOP_HOST_RESPONSE_HEADER: response,
+            "Cache-Control": "no-store",
+        },
+    )
+
+
+def _monitor_recovery_request_message(method: str, path: str, challenge: str) -> bytes:
+    return (
+        "invoicehub-monitor-recovery-request-v1\n"
+        f"{method}\n{path}\n{challenge}\n{_EMPTY_BODY_SHA256}"
+    ).encode("ascii")
+
+
+def _monitor_recovery_response_message(
+    method: str,
+    path: str,
+    challenge: str,
+    status_code: int,
+    body: bytes,
+) -> bytes:
+    body_sha256 = hashlib.sha256(body).hexdigest()
+    return (
+        "invoicehub-monitor-recovery-response-v1\n"
+        f"{method}\n{path}\n{challenge}\n{status_code}\n{body_sha256}"
+    ).encode("ascii")
+
+
+def _consume_monitor_recovery_auth(
+    request: Request,
+    *,
+    method: str,
+    path: str,
+) -> tuple[bytes, str] | None:
+    challenge = str(request.headers.get(MONITOR_RECOVERY_CHALLENGE_HEADER) or "").strip()
+    request_proof = str(request.headers.get(MONITOR_RECOVERY_REQUEST_HEADER) or "").strip()
+    if not challenge and not request_proof:
+        return None
+
+    secret = getattr(request.app.state, "desktop_host_secret", None)
+    if (
+        not isinstance(secret, bytes)
+        or len(secret) != 32
+        or not _DESKTOP_HOST_VALUE_PATTERN.fullmatch(challenge)
+        or not _DESKTOP_HOST_VALUE_PATTERN.fullmatch(request_proof)
+        or str(request.headers.get("content-length") or "").strip() != "0"
+        or bool(str(request.headers.get("transfer-encoding") or "").strip())
+    ):
+        raise HTTPException(status_code=403, detail="桌面监控恢复请求已拒绝")
+    expected = hmac.new(
+        secret,
+        _monitor_recovery_request_message(method, path, challenge),
+        hashlib.sha256,
+    ).hexdigest()
+    if not hmac.compare_digest(expected, request_proof):
+        raise HTTPException(status_code=403, detail="桌面监控恢复请求已拒绝")
+
+    replay_lock = request.app.state.monitor_recovery_replay_lock
+    replay_order = request.app.state.monitor_recovery_replay_order
+    replay_seen = request.app.state.monitor_recovery_replay_seen
+    with replay_lock:
+        if challenge in replay_seen:
+            raise HTTPException(status_code=403, detail="桌面监控恢复请求已拒绝")
+        if len(replay_order) >= _MONITOR_RECOVERY_REPLAY_LIMIT:
+            replay_seen.discard(replay_order.popleft())
+        replay_order.append(challenge)
+        replay_seen.add(challenge)
+    return secret, challenge
+
+
+def _monitor_recovery_response(
+    request: Request,
+    *,
+    method: str,
+    path: str,
+    action: Callable[[], dict],
+) -> Response:
+    auth = _consume_monitor_recovery_auth(request, method=method, path=path)
+    if auth is None:
+        return JSONResponse(content=action())
+
+    secret, challenge = auth
+    body = json.dumps(action(), ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    response_proof = hmac.new(
+        secret,
+        _monitor_recovery_response_message(method, path, challenge, 200, body),
+        hashlib.sha256,
+    ).hexdigest()
+    return Response(
+        content=body,
+        status_code=200,
+        media_type="application/json",
+        headers={
+            MONITOR_RECOVERY_RESPONSE_HEADER: response_proof,
             "Cache-Control": "no-store",
         },
     )
@@ -348,6 +467,9 @@ def create_app(
     app = FastAPI(title="一站式发票汇总系统", version=PRODUCT_VERSION)
     app.state.invoice_hub = state
     app.state.desktop_host_secret = desktop_host_secret
+    app.state.monitor_recovery_replay_lock = threading.Lock()
+    app.state.monitor_recovery_replay_order = deque()
+    app.state.monitor_recovery_replay_seen = set()
     app.state.shutdown_scheduler = shutdown_scheduler or _schedule_process_shutdown
     app.mount("/static", StaticFiles(directory=str(web_dir / "static")), name="static")
 
@@ -379,8 +501,33 @@ def create_app(
         escaped_href = html.escape(href, quote=True)
         return f'<link id="activeSkinStylesheet" rel="stylesheet" href="{escaped_href}" data-skin-id="{skin_id}">'
 
+    def app_icon_favicon_link(request: Request) -> str:
+        # App icons are independent from skins, so backend and ?no_skin pages keep it.
+        favicon_url = AppIconService.favicon_url(DEFAULT_APP_ICON_ID)
+        try:
+            payload = _state(request).app_icon()
+            current_icon = str(payload.get("icon") or "").strip()
+            for item in payload.get("icons") or []:
+                if isinstance(item, dict) and str(item.get("id") or "") == current_icon:
+                    candidate = str(item.get("favicon_url") or "").strip()
+                    if candidate:
+                        favicon_url = candidate
+                    break
+        except Exception:
+            favicon_url = AppIconService.favicon_url(DEFAULT_APP_ICON_ID)
+        return (
+            '<link id="appIconLink" rel="icon" type="image/png" '
+            f'href="{html.escape(favicon_url, quote=True)}">'
+        )
+
     def render_page(request: Request, name: str, bootstrap: dict[str, object], skin: bool = True) -> str:
-        return _template(name, {"BOOTSTRAP_JSON": bootstrap}, web_dir=web_dir, skin_link=active_skin_link(request) if skin else "")
+        return _template(
+            name,
+            {"BOOTSTRAP_JSON": bootstrap},
+            web_dir=web_dir,
+            skin_link=active_skin_link(request) if skin else "",
+            favicon_link=app_icon_favicon_link(request),
+        )
 
     @app.get("/", response_class=HTMLResponse)
     def index(request: Request) -> str:
@@ -422,6 +569,7 @@ def create_app(
             {"BASE_HEAD": base_head, "BOOTSTRAP_JSON": {"page": "bookkeeping"}},
             web_dir=web_dir,
             skin_link=active_skin_link(request),
+            favicon_link=app_icon_favicon_link(request),
         )
 
     @app.get("/invoices/print/{job_id}", response_class=HTMLResponse)
@@ -434,6 +582,7 @@ def create_app(
             "invoice_print.html",
             {"PRINT_JOB_JSON": payload},
             web_dir=web_dir,
+            favicon_link=app_icon_favicon_link(request),
         )
         return HTMLResponse(
             content,
@@ -848,6 +997,24 @@ def create_app(
     def skins(request: Request) -> dict:
         return _state(request).skins()
 
+    @app.get("/api/v1/app-icon")
+    def app_icon(request: Request) -> dict:
+        return _state(request).app_icon()
+
+    @app.put("/api/v1/app-icon")
+    async def update_app_icon(request: Request) -> dict:
+        _require_same_origin_write(request)
+        try:
+            payload = await request.json()
+        except (json.JSONDecodeError, UnicodeError):
+            raise HTTPException(status_code=400, detail="请求体必须是仅含 icon 的 JSON 对象")
+        if not isinstance(payload, dict) or set(payload) != {"icon"} or not isinstance(payload.get("icon"), str):
+            raise HTTPException(status_code=400, detail="请求体必须是仅含字符串字段 icon 的 JSON 对象")
+        try:
+            return await run_in_threadpool(_run_app_icon_update, _state(request).update_app_icon, payload["icon"])
+        except AppIconServiceError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+
     @app.post("/api/v1/skins/import")
     async def import_skin(request: Request) -> dict:
         try:
@@ -894,8 +1061,13 @@ def create_app(
         return Response(content=payload.content or b"", media_type=payload.media_type)
 
     @app.get("/api/v1/bridge/status")
-    def bridge_status(request: Request) -> dict:
-        return _state(request).bridge_status()
+    def bridge_status(request: Request) -> Response:
+        return _monitor_recovery_response(
+            request,
+            method="GET",
+            path="/api/v1/bridge/status",
+            action=_state(request).bridge_status,
+        )
 
     @app.get("/favicon.ico", include_in_schema=False)
     def favicon() -> Response:
@@ -910,12 +1082,22 @@ def create_app(
         return _state(request).bridge_rebuild()
 
     @app.post("/api/v1/bridge/start")
-    def bridge_start(request: Request) -> dict:
-        return _state(request).bridge_start()
+    def bridge_start(request: Request) -> Response:
+        return _monitor_recovery_response(
+            request,
+            method="POST",
+            path="/api/v1/bridge/start",
+            action=_state(request).bridge_start,
+        )
 
     @app.post("/api/v1/bridge/stop")
-    def bridge_stop(request: Request) -> dict:
-        return _state(request).bridge_stop()
+    def bridge_stop(request: Request) -> Response:
+        return _monitor_recovery_response(
+            request,
+            method="POST",
+            path="/api/v1/bridge/stop",
+            action=_state(request).bridge_stop,
+        )
 
     @app.post('/api/v1/bridge/open-log')
     def bridge_open_log(request: Request) -> dict:
@@ -1190,13 +1372,19 @@ def create_app(
             raise HTTPException(status_code=404, detail="task not found")
 
     async def event_stream(request: Request, after: int | None) -> AsyncIterator[str]:
-        cursor = _resolve_event_stream_cursor(_state(request), after, request.headers.get("last-event-id"))
+        state = _state(request)
+        cursor = _resolve_event_stream_cursor(state, after, request.headers.get("last-event-id"))
         idle_ticks = 0
         yield f": connected {cursor}\n\n"
         while True:
+            # The shutdown response must reach the WebView before Uvicorn begins
+            # graceful termination. Ending this owned SSE stream then prevents the
+            # browser connection from holding the localhost process open forever.
+            if state.server_shutdown_requested:
+                return
             if await request.is_disconnected():
                 return
-            events = _state(request).wait_events(cursor)
+            events = state.wait_events(cursor)
             for event in events:
                 cursor = max(cursor, int(event["seq"]))
                 yield f"id: {event['seq']}\nevent: {event['event_type']}\ndata: {json.dumps(event, ensure_ascii=False)}\n\n"

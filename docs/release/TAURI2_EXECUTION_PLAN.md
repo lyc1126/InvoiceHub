@@ -16,12 +16,14 @@ bookkeeping, or monitoring.
 
 ## Current P1 boundary
 
-`update_install` is deliberately unavailable while the host lacks a complete
-recovery/relaunch coordinator. It consumes any in-memory candidate and returns
-the existing redacted unavailable error; it must not download, stop monitor,
-install, or restart. The historical L6 order is a future coordinator
-requirement, not a currently executable flow. Tray Quit and the application
-menu/Cmd-Q must request `app.exit(0)`, which enters the common Tauri
+L10-D has wired the complete recovery/relaunch coordinator into updater-enabled
+host profiles. L10-E has now exercised only its authenticated startup restore
+with an exact, non-installing development recovery-smoke profile; the existing
+ordinary development and internal-alpha assemblers still emit
+`updater.enabled=false`. The smoke did not perform an update check, reach a
+Feed, retain an installable verification key, download, install, or restart.
+Tray Quit and the application menu/Cmd-Q must request
+`app.exit(0)`, which enters the common Tauri
 `ExitRequested` path. A native predefined Quit item or an external macOS
 termination request can bypass that event and therefore cannot be claimed as
 an orderly-shutdown path. Every `ExitRequested` that the host receives first
@@ -83,7 +85,27 @@ the assembler labels dirty inputs `<HEAD>+dirty`.
 | Decision changed by result | A focused local pass permits one DCO fix-forward commit and a new branch push; the new hosted Windows pass then permits the three stable checks to become `main` ruleset requirements. Any failure keeps the ruleset unchanged and confines repair to `tests/test_tauri_dev_app.py` unless new evidence identifies a production defect. |
 | Minimal sample | One representative failing hosted Windows job log; one focused `tests/test_tauri_dev_app.py` run on the existing macOS environment; the documentation contract category and `git diff --check`; then the automatically triggered DCO, Windows, and macOS checks for the new commit. |
 | Stop condition | Stop at the first contradictory production-path finding, focused test failure, documentation failure, or new hosted failure mechanism. Do not rerun the old workflow, change `validate_venv_python`, expand into shared-core or release tests, rebuild the development `.app`, create an installer, merge, tag, release, or publish a Feed. |
-| Result | The source review and local portion passed on 2026-08-17. The development builder is macOS-arm64-only and its existing executable-access validation remains unchanged; only the POSIX-specific fixture was replaced. The focused development-app file passed 7 tests, the directly affected documentation selection passed 13 tests, and `git diff --check` passed. The two completed Windows runs for the previous head failed at the same single test, while DCO and macOS passed; only one Windows log is used as the representative sample. The new-head hosted DCO, Windows, and macOS result remains pending at this commit. |
+| Result | Passed. The development builder is macOS-arm64-only and its existing executable-access validation remains unchanged; only the POSIX-specific fixture was replaced. The focused development-app file passed 7 tests, the directly affected documentation selection passed 13 tests, and `git diff --check` passed. Fix commit `097ea8a` then passed DCO, Windows x64, and macOS arm64; foundation PR #7 merged at `673062d`, and `main` now requires those three stable checks. No development `.app`, installer, release, tag, or Feed action was part of this repair. |
+
+### P1-I: bundled desktop App icon selection source contract
+
+| Field | Record |
+| --- | --- |
+| Hypothesis | A built-in `orange/teal/violet` icon set can remain isolated from skins, `watch_dir`, invoice data, and arbitrary native-file access while one selected ID controls the browser favicon and, when Tauri owns the desktop surface, the window/taskbar and tray icon. |
+| Decision changed by result | Source and contract coverage permits one DCO commit and feature-branch push. It does not permit a Windows native-surface, tray, taskbar, restart-persistence, installer, signing, or release claim. A failure confines repair to the icon service, favicon consumer, private Host RPC parser, or Tauri surface update order. |
+| Minimal sample | `tests/test_app_icon.py`, `tests/test_tauri_host_rpc.py`, `tests/test_tauri_lifecycle_contract.py`, Rust Host RPC/lifecycle contracts, frontend and print static contracts, documentation contracts, `compileall`, and `git diff --check`. The Tauri runtime sample must later confirm all three icon choices on the target desktop platform. |
+| Stop condition | Stop at the first asset-integrity, state-isolation, API, private-payload, surface-order, static-consumer, or documentation failure. Do not accept arbitrary path/URL/image bytes, write icon state under `watch_dir`, assert native success before the host acknowledges it, or represent source tests as Windows runtime evidence. |
+| Result (2026-09-02) | The source change provides versioned PNG assets, default bundle `png/ico/icns`, runtime-local `app_icon_state.json`, browser favicon injection including `?no_skin=1` and print pages, and an exact private `set_app_icon` payload. Python persistence remains after the host accepts the native update. `compileall` and whitespace checks passed in this worktree; focused Python/Rust test execution is pending because this host has no project virtual environment, `pytest`, or Cargo, and Docker is not running. No Windows window, taskbar, tray, restart, or installer execution was performed. |
+
+### P1-IW: icon selection and print-popup Windows host compatibility
+
+| Field | Record |
+| --- | --- |
+| Hypothesis | The bundled `orange/teal/violet` icon selection can coexist with a default-on `allow_print_popups` preference without widening the native surface: the Tauri host must persist an icon only after a successful native update, read the popup preference only at startup, and create a child WebView only for `about:blank -> /invoices/print/{job_id}`. The Windows host must continue to use an explicit `%LOCALAPPDATA%\\InvoiceHub\\webview` data directory, GUI subsystem, `CREATE_NO_WINDOW`, and runtime stdout/stderr logs. |
+| Decision changed by result | Passing source and static contracts permits a merge commit and a source-archive verification asset. It does not permit a Windows native window, taskbar, tray, WebView2, printing, installer, signing, or release claim. A failure confines repair to the preference parser, popup navigation policy, icon Host RPC ordering, or Windows child-process boundary. |
+| Minimal sample | Targeted icon, preferences, frontend/print, Host RPC, Tauri lifecycle and documentation contracts; JavaScript syntax; PNG/ICO format inspection; exact Host RPC payload inspection; and `git diff --check`. A future Windows runtime sample must verify all three icons, persisted selection, disabled/enabled print popup behavior, taskbar/tray state, WebView2 data location, and no console window. |
+| Stop condition | Stop at the first unsafe popup route, unexpected Host RPC field, persistence-before-native-success path, asset-format failure, Windows-profile regression, or static contract failure. Do not infer native behavior from a browser surface or package a release from an unverified working tree. |
+| Result (2026-09-02) | Passed at the source/static boundary. With the locked Python 3.14.6 test runtime, 166 focused icon, preferences, API, frontend/print, Host RPC, lifecycle, documentation, and foundation contracts passed; a further 72 Windows-release, Tauri development/public-preview/recovery, update, and macOS-release contracts passed with 1 expected skip. `node --check` passed for the index, settings, and skins scripts; `compileall src tests`, PNG/ICO format inspection, and exact Host RPC payload inspection also passed. Rust/Cargo was unavailable, so no Rust test or Tauri build ran. No Windows native surface, taskbar, tray, WebView2, print dialog, installer, signing, or release action is authorized by this source-level result. |
 
 ## Operating rules
 
@@ -128,23 +150,28 @@ the assembler labels dirty inputs `<HEAD>+dirty`.
    still require real platform validation and are not claimed by that smoke.
 6. [x] Close P1-Q with one clean-commit custom application-menu/Cmd-Q smoke.
 7. [x] Push `codex/tauri2-unified-desktop`, open Draft PR #7, and let DCO,
-   macOS, and Windows CI identify the exact stable check names. DCO and macOS
-   passed on the first PR head; Windows exposed the P1-W fixture defect above.
-8. [ ] Only after those checks pass, add them to the `main` ruleset and enable
-   strict required-status policy; do not merge without explicit owner approval.
-9. [ ] After the foundation PR is accepted, implement the missing
-   recovery/relaunch coordinator and deterministic Tauri NSIS/DMG/update-
-   archive assembly/verification as separate bounded development work. The
-   local L11-A internal-alpha App/DMG assembly is a non-public prerequisite
-   experiment; it does not close this formal release item or enable
-   `update_install` before every failure path restores prior state.
-10. [ ] Exercise the five decision scenarios on development/alpha artifacts:
+   macOS, and Windows CI identify the exact stable check names. P1-W was
+   repaired at `097ea8a`; all three checks passed and PR #7 merged at `673062d`.
+8. [x] Add the passing DCO, Windows x64, and macOS arm64 checks to the `main`
+   ruleset as required status checks.
+9. [x] Complete L10-R as a source-only monitor recovery foundation: a released
+   lifecycle lease, fail-closed transaction, and Unix descriptor-pinned marker
+   store. At the L10-R checkpoint, it had no Host RPC, real monitor, installer,
+   or restart integration, and non-Unix marker storage remained unavailable;
+   the later L10-C source slice below supersedes this narrow platform note.
+10. [ ] Implement the missing complete recovery/relaunch coordinator and
+   deterministic Tauri NSIS/DMG/update-archive assembly/verification as
+   separate bounded development work. The local L11-A internal-alpha App/DMG
+   assembly is a non-public prerequisite experiment; it does not close this
+   formal release item or enable `update_install` before every failure path
+   restores prior state.
+11. [ ] Exercise the five decision scenarios on development/alpha artifacts:
    both startup surfaces; single instance and wrong port; Host RPC
    authorization; valid/tampered update; and monitor stop before install.
-11. [ ] Only after the alpha/beta gates pass, cut a clean RC, run its one full
+12. [ ] Only after the alpha/beta gates pass, cut a clean RC, run its one full
     regression, build/sign/notarize both target-platform artifacts, and run
     each platform's one final RC smoke.
-12. [ ] Create immutable Tag/Release assets and switch the GitHub Pages Feed
+13. [ ] Create immutable Tag/Release assets and switch the GitHub Pages Feed
     last, after provenance, redownload, source archive, SBOM and signature
     checks all close.
 
@@ -568,7 +595,38 @@ this table.
 | Decision changed by result | A passing source-level transaction permits a DCO implementation commit and focused Rust/documentation verification, but does not authorize real download, signature verification, installer replacement, relaunch, or enabling `update_install`. Any failure blocks updater integration and confines repair to the marker/recovery module. |
 | Minimal sample | One representative owned running monitor, one originally stopped monitor, one stop/status/start failure path, one unowned backend, and one invalid/symlink marker; run focused Rust formatting/tests when the locked offline cache is available, plus the affected documentation contract and `git diff --check`. |
 | Stop condition | Stop at the first marker, ownership, monitor-state, compiler, test, or documentation-contract failure. Do not start Tauri/FastAPI, bind `127.0.0.1:8766`, call a real updater, download or verify an update, stop a real monitor, build a bundle, sign, publish, or create a Release/Feed. |
-| Result (2026-08-18) | Stopped during the source-level safety review. The candidate could not bind each bridge operation to a captured lifecycle generation/phase/health PID/owned PID/process PID lease or require a released startup gate; its final marker publication and clear operations also remained path-based after parent checks, so a same-user parent/destination swap could not be ruled out. The candidate and its implementation claims were removed rather than committing an unaudited primitive. `update_install` remains candidate-consuming and fail-closed; no monitor, download, signature verification, installer replacement, relaunch, bundle, signing, or release smoke occurred. A later coordinator must define the lease and opened-directory/no-follow final-operation contract before retrying this experiment. |
+| Result (2026-08-20) | Passed as L10-R source foundation only. `BackendHost` now exposes a released lifecycle lease containing generation, phase, health PID, owned PID, process PID and a state scope; child exit, failed health revalidation and shutdown invalidate it, and the startup gate is released only after tray/surface setup succeeds. The transaction revalidates before and after every marker or future bridge operation, never overwrites a pending marker, pauses only an owned `running && ready` monitor, and clears only after a later owned `running && ready` status. Marker JSON is strict and scope-bound; Unix persistence keeps an opened directory descriptor and performs no-follow `openat`, atomic no-clobber `linkat`, `fstatat` and `unlinkat` final operations. At this checkpoint, non-Unix marker storage returned unavailable; the later L10-C entry below records the Windows source-level marker store and Unix whole-operation protocol hardening. Focused Rust contracts cover running/stopped, pending/corrupt/cross-scope markers, held gate, ownership loss, unready/stop/start failures and Unix symlink/no-clobber marker cases; no real bridge, monitor, updater, download, signature verification, installer replacement, relaunch, bundle, signing or release smoke was run. `update_install` remains candidate-consuming and fail-closed. |
+
+### L10-C: source-level recovery/update foundation slices
+
+| Field | Record |
+| --- | --- |
+| Hypothesis | The recovery foundation can expose injectable fixed-loopback monitor, verified-artifact update, shared lifecycle-authority, and Windows marker-store seams without widening Host RPC, updater, startup-restore, or real-monitor authority. |
+| Decision changed by result | A passing source-level slice permits documentation and focused-contract review only. It does not authorize real Host RPC, updater download/install/restart, startup restore, monitor control, or platform runtime claims. |
+| Minimal sample | Rust: 56 focused checks (backend authority 14, bridge 9, coordinator unit 2 plus contract 12, recovery 17, Windows host static 1, strict OpenAPI 1); Python: 42 contracts (lifecycle 13, development documentation 12, foundation 17); plus one minimal `x86_64-pc-windows-msvc` temporary-crate cross-compile. |
+| Stop condition | Stop at the first source, contract, compiler, or documentation failure. Do not launch Tauri/FastAPI, bind `127.0.0.1:8766`, run a real monitor or updater, download/install/restart, create an artifact, package, sign, publish, or claim Windows runtime coverage. |
+| Security boundary | The fixed-loopback bridge has no request-level ownership authentication and is not an ownership proof. Before real wiring, bind each request/response to a backend-private fresh challenge/HMAC or equivalent authenticated header, retain lifecycle revalidation before and after the request, and never send a bearer secret to a candidate fixed port. |
+| Result (2026-08-23) | Passed as source-level seams only: 56 Rust focused checks passed (backend authority 14, bridge 9, coordinator unit 2 plus contract 12, recovery 17, Windows host static 1, strict OpenAPI 1), and 42 Python contracts passed (lifecycle 13, development documentation 12, foundation 17). The strict OpenAPI handshake requires `GET /api/v1/bridge/status`, `POST /api/v1/bridge/stop`, and `POST /api/v1/bridge/start`; missing or wrong `/bridge/start` methods are rejected. The minimal `x86_64-pc-windows-msvc` temporary-crate cross-compile passed; no Windows runtime was run, and the full Tauri Windows target check remains blocked by `ring` requiring `assert.h`. No HostRpc/updater/startup-restore/real-monitor integration was added. The Unix marker-store protocol now closes whole-operation `load/publish/clear` serialization with directory `flock`, stale-clear re-read, and durable directory metadata sync after publish/clear link operations; direct edits bypassing the protocol remain outside the guarantee. |
+
+### L10-D: authenticated recovery/relaunch runtime coordinator
+
+| Field | Record |
+| --- | --- |
+| Hypothesis | The existing L10-R/C seams can be wired into the owned Tauri runtime without widening the public API: every Rust-to-Python monitor request and response can be bound to one fresh challenge with the backend-private HMAC secret; the public `update_install` request can reserve one host-owned candidate and receive its response before a private fixed-enum commit starts; and a later verified owned startup can restore a marked monitor only after the startup gate is released. |
+| Decision changed by result | A passing implementation and focused contract set permits one DCO source commit and later development-artifact validation. It does not authorize NSIS/DMG assembly, a real update download or install, signing, publication, Feed activation, or a platform release claim. Any authentication, dispatch-order, lifecycle, marker, compiler, or contract failure keeps `update_install` fail closed and confines repair to L10-D. |
+| Minimal sample | Rust contracts for authenticated fixed-endpoint bridge requests/responses, response-before-private-commit ordering, candidate reservation/expiry/dispatch loss, verified download before pause, failure recovery, startup restore after the released owned gate, and existing lifecycle/marker/platform boundaries. Python contracts for valid/tampered/replayed monitor HMAC requests, signed response binding, unchanged ordinary bridge calls, strict empty install body/redacted errors, and documentation drift. Run locked formatting/offline focused tests and binary check when the existing toolchain/cache is available, plus `compileall` and `git diff --check`. |
+| Stop condition | Stop at the first request/response authentication, response-before-commit, candidate identity, lease, marker, recovery, compiler, or focused-contract failure. Do not launch Tauri/FastAPI, bind `127.0.0.1:8766`, call a real monitor or updater, download/install/restart, build an artifact, package, sign, notarize, publish, push, or create a Release/Feed. |
+| Result (2026-08-24) | Passed for L10-D source/contract integration. Locked offline Rust verification passed formatting, the desktop binary check, the tests check, and 74 tests: 38 library tests (including 11 Host RPC and 10 authenticated bridge tests), 6 lifecycle contracts, 17 monitor-recovery contracts, 12 coordinator contracts, and 1 Windows marker static contract. The pre-existing Host RPC parser sample used only test-bound `127.0.0.1:0`; the sandbox rejected that bind, and the same locked test passed in the approved local non-sandbox run. Focused Python verification passed 63 unique tests: 4 API install/bridge/auth contracts plus 59 lifecycle, Host RPC, foundation, and documentation contracts with `DeprecationWarning` treated as errors. Version synchronization, `compileall`, and `git diff --check` passed. The implementation retains the private ownership secret, authenticates both sides of each recovery call, activates only after gate/manage and startup restore, reserves a complete candidate behind response-before-commit, records response/worker/latch loss as `CommitLost`, runs the existing verified-download/recovery coordinator, and separates Windows installer exit from macOS prepared restart. No product process, product-port bind, real Feed/monitor/updater/download/install/restart, artifact build, signing, notarization, publication, push, PR, or platform runtime smoke was run. |
+
+### L10-E: non-installing updater recovery-smoke profile
+
+| Field | Record |
+| --- | --- |
+| Hypothesis | A compile-bound development manifest can activate the L10-D updater runtime solely for authenticated startup recovery while remaining structurally unable to install an update: the ordinary development profile stays disabled, and the smoke variant accepts only one fixed HTTPS loopback endpoint plus a deliberately non-verifying public-key sentinel. |
+| Decision changed by result | A source and runtime pass permits later, separately bounded valid/tampered update work on a purpose-built alpha artifact. A failure blocks that work and confines repair to the smoke manifest, startup activation, authenticated monitor restore, or isolated cleanup mechanism that failed. It does not authorize a real Feed, update candidate, download, install, restart, NSIS/DMG, signing, notarization, publication, push, or PR. |
+| Minimal sample | Source contracts for the exact smoke tuple and arbitrary endpoint/key rejection; deterministic normal and recovery staging; a direct app-only build from the current reviewed source; then one macOS arm64 launch with a temporary development state root, empty watch directory, disabled automatic update checks, and a valid pre-seeded recovery marker. Observe owned health, authenticated monitor restoration to `running && ready`, marker removal, explicit monitor stop, and bounded cleanup of only the spawned sample. |
+| Stop condition | Stop at the first manifest/profile, compiler, test, fixed-port, ownership, authentication, marker, monitor-ready, cleanup, or documentation failure. Do not retry with the real HOME/Application Support, a real watch directory, another port, a reachable endpoint, a verification-capable key, `update_check`, `update_install`, download, installer, restart, DMG/NSIS, signing, notarization, upload, Release, Feed, push, or PR. |
+| Result (2026-08-24) | Passed within the non-installing boundary. Preflight first caught that the runner used the display name instead of Tauri's actual `CFBundleExecutable`; it now validates the fixed `Info.plist` executable, identifier, package type, and version against the host identity. The first launch then failed closed before backend/monitor startup because an absent development `plugins.updater` node deserialized as `null`; the overlay now supplies only an empty `pubkey` object, with no endpoint or verification authority, while the hash-bound manifest and Rust parser still supply and enforce the exact sentinel tuple. A locked Rust 1.85/Tauri CLI 2.11.4 offline app-only rebuild succeeded. The first sample to enter the recovery path used build ID `8e40363fa673017e993727cf3f5dec347b24927c5ce1a0a4b945601737621873`; owned health and monitor paths matched the temporary state, the monitor reached `running && ready`, `marker_removed=true`, explicit stop returned `monitor_stopped=true`, and the runner reported `update_requests=0`. Backend PID 6629 and monitor PID 6638 were absent afterward; `127.0.0.1:8766`, the process-pattern audit, and the temporary sample-directory audit were all clear. Final focused verification passed 77 Python development/recovery/lifecycle/foundation/Host RPC/documentation contracts with `DeprecationWarning` treated as errors; locked Rust formatting and offline desktop/tests `cargo check`, version synchronization, focused `compileall`, and `git diff --check` also passed. No Feed, candidate, update check, download, signature validation, install, restart, NSIS/DMG, signing, notarization, publication, push, PR, or Release action was performed or validated. |
 
 ### P1-SC: setup-failure termination confirmation
 
@@ -600,45 +658,15 @@ this table.
 | Stop condition | Stop at the first staging, runtime, manifest, artifact, verifier, port, identity, state-containment, or cleanup failure. Do not retry with the real HOME, change the port, invoke updater/install, sign, notarize, upload, publish, or create a Release/Feed. |
 | Result (2026-08-19) | Passed. The App/DMG/receipt verifier passed with `core_build_id=9188334bf2d10a7a75d99b04683c946cd34139ba0061d64e20eb33e8c5c91f76`, `signature_mode=internal-adhoc`, `updater_enabled=false`, and `public_release=false`. The separate launch smoke reached `ready` on `127.0.0.1:8766`, matched package/build/source identity, left the real Application Support directory untouched, and terminated only its own process group. This is internal evidence, not a release or installation result. |
 
-### L11-W: Windows x64 unsigned portable ZIP alpha.2
+### P1-PP: macOS public-preview LaunchServices and SSE shutdown repair
 
 | Field | Record |
 | --- | --- |
-| Hypothesis | A clean, exact version 0.3.0-alpha.2 source commit can stage only the allowlisted Python/Web core and locked Python 3.14.6 Windows runtime, compile a raw x64 Tauri host bound to the staged schema-3 release manifest, and produce one unsigned ZIP with a file SHA manifest, runtime/package/build manifests, SBOM, license notices, receipt, source archive and Windows-only alpha Feed. The release host writes all user state below the Windows local application-data InvoiceHub directory, opens the desktop window by default, hides on close, keeps its updater disabled, and never installs or replaces an existing directory. |
-| Decision changed by result | Focused source-contract success permits one clean-commit Windows build and one isolated native ZIP smoke. A verified native pass permits the user-authorized merge, tag, push, prerelease handoff and Pages Feed publication sequence; any failure stops at the first demonstrated source, toolchain, build, identity, process, UI, picker, monitor, tray, Feed or artifact defect and confines repair to that category. |
-| Minimal sample | Validate version/lock/host-marker/Feed/package/SBOM/receipt contracts; run the locked Rust formatter and focused tests, Python focused and full regression, compileall, PowerShell parsing and diff whitespace checks; inspect the non-installing Windows doctor. From the clean tagged commit, stage and build one raw no-bundle x64 host, statically verify the ZIP and receipt, then extract once to a temporary Chinese-space path with isolated local application data. Exercise the desktop window, health/identity, occupied fixed-port failure, single instance, directory picker, monitor, tray Quit, no remaining owned process, and a read-only Feed check whose download action only opens the prerelease page. |
-| Stop condition | Stop at the first version, lock, compiler, runtime, manifest, ZIP, receipt, source archive, port, ownership, desktop, picker, monitor, tray, Feed, or cleanup failure. Do not substitute the legacy BAT portable package, an installer, an arbitrary port, a browser-only surface, a real updater installation, a monitor stop for install, a fake macOS asset, a signed claim, or a publication claim. Do not merge, tag, push, create a Release, upload assets, or publish Pages until local verification and exact clean-source identity both pass. |
-| Result (2026-09-01) | The source gate passed: locked Rust 1.85 `fmt --check`, 17 library tests and 6 lifecycle tests; version synchronization; focused release contracts; the complete Python suite; `compileall`; PowerShell parsing; and `git diff --check`. The isolated test Python was repaired through its offline preparer so its `.pth` binds the current source; an earlier unbound, overlong pytest temp root is not evidence. The original WebView2 stop was a doctor false negative: it used the wrong Edge Update client ID and rejected the installed four-component `131.0.2903.86` version. After the narrow doctor repair, its 18 foundation tests and the real `--require-ready` check passed with Rust/MSVC/SDK, Node/pnpm, locks and WebView2 ready. One product runtime rebuilt from the approved base and its raw x64 host compiled. The first ZIP assembly stopped before a valid ZIP, receipt, or SHA was emitted because a diagnostic without `-B` wrote `python/Lib/__pycache__/__future__.cpython-314.pyc`; normalization now removes bytecode/cache directories, runtime probes use `-B`, and staging rejects cache content before host compilation. After that repair, a second clean assembly also stopped before a valid ZIP, receipt, or SHA because the verifier classified CPython `python/Lib/getpass.py` as project source and matched its password-shaped example. The verifier now scopes the locked `python/Lib/**` tree as dependency content, still rejects high-confidence GitHub tokens/private keys, and has ZIP-level positive/negative regression coverage. A new clean checkout/build is required; ZIP verification, native smoke, handoff, Tag, Release and Pages Feed remain unexecuted. This is not evidence of a built ZIP, updater installation, or completed platform release. |
-
-### L11-W-R: Windows WebView2 profile-directory repair
-
-| Field | Record |
-| --- | --- |
-| Hypothesis | The valid portable candidate reached the owned backend handshake, then failed only while Tauri/Wry created its implicit application-ID WebView2 profile. Giving the desktop WebView an already-created folder below the same isolated `%LOCALAPPDATA%\\InvoiceHub` state root will preserve the portable runtime boundary and remove that access-denied cause without changing backend, port, updater, or browser-surface behavior. |
-| Decision changed by result | If the rebuilt ZIP opens its desktop window, retain the explicit `webview` data directory as the Windows release-state contract and continue the remaining native acceptance matrix. If it fails, stop before Tag/Release/Feed work and investigate the desktop/WebView layer only. |
-| Minimal sample | One statically verified ZIP was extracted to a Chinese-space path with isolated LocalAppData. It completed the backend handshake and identity checks; an occupied fixed-port representative failed with the expected status `101` and left no candidate process. The desktop attempt returned Windows `os error 5`, while the same candidate's browser surface reached the backend, isolating the failure to desktop WebView creation. |
-| Stop condition | Do not reuse the failed ZIP as release evidence, retry against a real user profile, change the fixed port, treat the browser path as desktop coverage, or proceed to tag/publish. Build one new clean candidate after the source repair and stop on the first static, desktop, picker, monitor, tray, cleanup, or Feed failure. |
-| Result (2026-09-01) | The host now derives `%LOCALAPPDATA%\\InvoiceHub\\webview`, creates it before launching the owned child, retains it on `BackendHost`, and passes it to `WebviewWindowBuilder::data_directory`. Locked Rust `cargo fmt --check --all` and offline library tests passed after the change. This is source-level evidence only: a fresh clean ZIP, independent verifier pass and native desktop acceptance are still required. |
-
-### L11-W-P: Windows native-picker direct-plugin dispatcher repair
-
-| Field | Record |
-| --- | --- |
-| Hypothesis | The first otherwise valid Windows candidate returned `503 Native picker unavailable` before a directory chooser appeared because `select_path` queued a second `run_on_main_thread` dispatch around `tauri-plugin-dialog`, even though the plugin owns its asynchronous main-thread marshalling. Calling the plugin directly should preserve the private RPC timeout/error boundary while removing that redundant rejection point. |
-| Decision changed by result | A focused source-contract pass permits one new clean-commit build and one representative real native picker sample. It does not permit Tag, Release, Feed, or a claim that picker behavior has passed. A failed real chooser stops the release at the picker boundary. |
-| Minimal sample | Remove only the outer dispatch and its now-unused error variant; assert that `select_path` directly calls the plugin's file/folder picker without `run_on_main_thread`; run the focused Host RPC test against the locked test Python with an explicit bounded pytest base temp directory. |
-| Stop condition | Stop at the first Rust compile/format, picker contract, clean build, native chooser, identity, monitor, tray, Feed, or cleanup failure. Do not replace the fixed port, fall back to Tk while Tauri Host RPC is configured, expose a new IPC command, weaken the redacted `503`, tag, upload, or publish. |
-| Result (2026-09-02) | The source change removed only the redundant outer dispatch. The focused locked-Python test passed `17` cases. This is source-level evidence; the clean ZIP, actual picker window, tray Quit and publication sequence remain pending. |
-
-### L11-W-M: Windows monitor status reader transaction repair
-
-| Field | Record |
-| --- | --- |
-| Hypothesis | The fresh Windows ZIP monitor failure is caused by a bridge/status reader briefly denying the delete-sharing required for the daemon's atomic replacement of `monitor_status.json`; putting status reads in the existing reentrant TargetProfile transaction will serialize that reader with daemon writes without changing monitor startup, sync, port, picker or updater semantics. |
-| Decision changed by result | A focused monitor pass permits one clean source commit and one new ZIP build. The failed candidate must not be tagged, handed off, uploaded or cited as monitor evidence. Any repeat native monitor failure remains a release blocker confined to state I/O/monitor startup. |
-| Minimal sample | One isolated Chinese-space ZIP launch reached desktop/backend identity, then `POST /api/v1/bridge/start` failed closed with `WinError 5` while the daemon wrote `ready=true`; add one regression proving `read_status()` waits for the same profile lock, then run `tests/test_monitoring.py` using an explicit writable pytest base temp directory. |
-| Stop condition | Stop at the first state-lock, daemon readiness, native monitor, package, identity, picker, tray or cleanup failure. Do not reuse the failed ZIP, change the fixed port, claim a PID/lock as ready, tag, upload, publish or create a Release/Feed. |
-| Result (2026-09-02) | The source repair makes `MonitorState.read_status()` participate in the existing TargetProfile transaction; `tests/test_monitoring.py` passed 12 cases under the locked Windows test runtime with a repository-local pytest temp root. No replacement ZIP, native monitor success, Tag, Release, Feed or handoff exists yet. |
+| Hypothesis | A public-preview DMG smoke can preserve the user-visible launch boundary by mounting and copying the App, retaining quarantine, and using LaunchServices with an isolated `HOME`; when the smoke requests the fixed structured `stop_monitor` shutdown, the App's own SSE stream can end before Uvicorn graceful termination waits indefinitely on the WKWebView EventSource. |
+| Decision changed by result | A focused pass permits one DCO repair commit and a new clean-commit public-preview DMG build. It does not approve a Tag rewrite, Gatekeeper interaction, GitHub Release, Feed, updater, notarization, or a final platform-release claim. Any failure confines the repair to LaunchServices environment isolation, receipt/signature/quarantine validation, SSE shutdown handling, or bounded cleanup. |
+| Minimal sample | Static contracts for the exact release-disabled updater object, mounted-DMG copy, receipt/ad-hoc verification, quarantine, `open -n -W -g`, removed development-state override, fixed localhost allowlist, exact shutdown body, exact temporary host/backend ownership, and SSE EOF after a successful structured shutdown. Run `tests/test_tauri_public_preview_smoke.py`, `tests/test_macos_release_contract.py`, and `tests/test_tauri_recovery_smoke.py`, then focused `compileall` and `git diff --check`. One representative pre-repair candidate may be used only to determine the failed runtime mechanism; it cannot become final evidence after source changes. |
+| Stop condition | Stop at the first identity, DMG, receipt, signature, quarantine, LaunchServices, state containment, fixed-port, health, monitor, SSE, shutdown, ownership, or cleanup failure. Do not direct-execute the Mach-O, remove quarantine, use real Application Support, use a development state override, probe any updater path, construct a Feed, sign/notarize, upload, publish, or alter a Tag/Release. |
+| Result (2026-08-26, corrected 2026-08-27) | The representative mounted candidate established that direct `Contents/MacOS` execution aborts during Tauri/AppKit application registration, while LaunchServices with a temporary `HOME` created isolated Application Support state and reached owned health plus monitor start/ready/stop. That candidate then exposed an open WebView EventSource holding Uvicorn after a successful structured shutdown. The repair adds `AppState.server_shutdown_requested` and ends `event_stream` after the shutdown request has been accepted, preserving the shutdown response and monitor semantics. The new public-preview smoke uses only `open -n -W -g`, removes private/development overrides, validates exact temporary App ownership using full `ps` command fields, and cleans only its host/backend plus its own `open -W` command. `22` focused Python contracts passed across the public-preview, macOS release, and recovery smoke suites; focused `compileall` and `git diff --check` passed. The remote Tag was later reset under explicit authorization to the then-current `main`; a subsequent public-preview assembly exposed a receipt finalization gap, now closed by the implemented pending-record/finalized-record gate. The final clean `main` still needs a newly authorized Tag rewrite before any build. A clean final Tag build, actual quarantine/Finder interaction, and all Release evidence remain pending. |
 
 ## Fixed scope and validation
 
@@ -658,24 +686,42 @@ this table.
   environments. It never reaches Web content, a Tauri command/event, API
   response, or logs; Web content can access only enumerated commands from the
   expected localhost origin.
-- `POST /api/v1/update/check` remains compatible. `POST /api/v1/update/install`
-  accepts only `{}` but currently consumes its process-local candidate and
-  fails closed. It performs no download, monitor stop, installation, or restart
-  until a recovery/relaunch coordinator can restore failed paths safely.
+- `POST /api/v1/update/check` remains compatible and
+  `POST /api/v1/update/install` still accepts only `{}`. L10-D wires the private
+  install branch for updater-enabled profiles without accepting or returning a
+  version, URL, signature, path, or artifact ID. Current development and
+  internal-alpha profiles remain updater-disabled and therefore inert.
+- L10-R/C remains the foundation: every marker or bridge operation revalidates
+  the released owned lifecycle lease; Unix marker operations are
+  descriptor-pinned/no-follow and serialize whole `load/publish/clear`
+  operations with directory `flock`, stale-clear re-read, and directory metadata
+  sync. Windows marker storage remains source-level, its minimal temporary-crate
+  cross-compile passed, full Tauri Windows target check is still blocked by
+  `ring` requiring `assert.h`, and no Windows marker runtime is claimed.
+- L10-D activates only after gate release and `BackendHost` registration, opens
+  the marker store under the strict backend `runtime_dir`, and completes startup
+  restore before accepting updater work. Restore failure retains the marker and
+  diagnostic backend/WebUI while fixing the runtime in a failed state.
+- Every host recovery request and exact response binds to a fresh challenge and
+  HMAC-SHA256 transcript under the backend-private ownership secret. Python
+  rejects incomplete, tampered, non-empty, transfer-encoded, or replayed
+  authenticated requests; Rust requires exactly one response proof and verifies
+  it in constant time. The secret is never sent to the fixed port. Ordinary Web
+  bridge calls retain their prior unauthenticated localhost semantics and do not
+  gain updater authority.
+- `update_install` atomically consumes one fresh complete host candidate,
+  reserves the runtime, and starts a private execute/cancel-latched worker. The
+  exact success response is written and flushed before the worker can perform
+  Tauri built-in download/signature verification -> pause -> install -> relaunch.
+  Writer/spawn/latch loss is explicit `CommitLost` with no update effects;
+  restore/transaction failure is explicit `Failed`. Windows updater `2.10.1`
+  confirms backend termination in `on_before_exit` before installer launch;
+  macOS stops backend, marks relaunch prepared, then calls `request_restart()`.
+  Reserved/executing commits reject concurrent updater operations and ordinary
+  Quit.
 - The five final decision scenarios are startup surface, single instance and
   wrong port, Host RPC authorization, valid/tampered update, and monitor stop
   before install. They are not claimed by the foundation step.
-- alpha.2 has one Windows 10/11 x64 unsigned Tauri portable ZIP target. It
-  does not create MSI, NSIS, a macOS placeholder, or an in-place updater.
-  Windows ARM64, Intel macOS, App Store, and GitHub Packages remain out of
-  scope.
-
-### W-Console: Windows release console suppression and retained diagnostics
-
-| Field | Record |
-| --- | --- |
-| Hypothesis | A Windows release host built as GUI subsystem, with its owned Python child started using `CREATE_NO_WINDOW` and stdout/stderr redirected to the derived runtime files, removes the user-visible console without losing backend diagnostics. A ZIP verifier can fail closed when the raw host remains console subsystem. |
-| Decision changed by result | A focused source/PE pass permits one clean alpha.2 ZIP rebuild and one isolated Windows launch sample. Any compiler, PE, log-routing, handshake, or runtime-log failure blocks the candidate and confines repair to the host boundary. |
-| Minimal sample | Static lifecycle and portable-verifier contracts; locked Rust format/tests; inspect the rebuilt PE optional-header subsystem; launch one clean ZIP in a Chinese-space path with isolated `LOCALAPPDATA`, confirm health and runtime server logs, and confirm no console window. |
-| Stop condition | Stop at the first format, compiler, verifier, GUI-subsystem, spawn, identity, log, or launch failure. Do not alter invoice data, monitor policy, updater behavior, release/tag/Feed state, signing, or installation flow. |
-| Result | Passed on 2026-09-02 for the console boundary only. A clean exact-commit local ZIP passed the independent static verifier; its raw host PE subsystem was `2`. From a Chinese-space extraction with isolated `LOCALAPPDATA`, the desktop window and health endpoint appeared, the owned Python backend had no visible window, and both runtime server logs existed with HTTP output. A controlled keep-monitor shutdown then released the owned backend, host, and fixed port. This does not claim native picker, monitor, tray, single-instance, Feed, Tag, Release, or Pages coverage. |
+- Windows 10/11 x64 NSIS and macOS 13+ arm64 DMG/update archives are the only
+  first-release targets. MSI, Windows ARM64, Intel macOS, App Store, and
+  GitHub Packages remain out of scope.

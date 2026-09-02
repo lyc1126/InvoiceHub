@@ -1,7 +1,7 @@
 # InvoiceHub 完整文件地图
 
 > 公共基线：经过审计的单一脱敏根提交及其公开后代；旧私有提交、Tag、包和验证材料不在公开图中。
-> 当前治理变化以 `docs/release/HISTORY_SANITIZATION_EXECUTION.md` 为真值。公开门槛已完成；`v0.3.0-alpha.2` 已有经审查的 Cargo lock、代码级 lifecycle 边界和 Windows x64 unsigned Tauri ZIP stage/build/verify/handoff 源码链。裸 checkout 缺 manifest 而 fail-closed；macOS development/internal-alpha 仅保留历史证据。尚无 Tag、Release、Pages Feed 或 Windows native ZIP smoke。
+> 当前治理变化以 `docs/release/HISTORY_SANITIZATION_EXECUTION.md` 为真值。公开门槛已完成；`v0.3` Tauri 2 开发分支已从 `main` 建立，已有经审查的 Cargo lock 和代码级生命周期边界。裸 checkout 缺 manifest 而 fail-closed；development assembler 已构建并隔离烟测一个本地 macOS arm64 `.app`，internal-alpha 也已完成 arm64 App/DMG/receipt verifier 与隔离启动烟测，尚无 Release。
 > 本表覆盖当前受版本控制的全部工程文件，包括架构文档与文档契约测试；运行态、投影和本机未跟踪内容只登记生成规则，不使用会随增删文件失真的固定数量。
 > 路径是导航键；职责和关系按符号而不是易漂移的行号描述。
 
@@ -84,6 +84,7 @@
 | `docs/architecture/AGENT_TASK_MAP.md` | 按任务定位代码、联动点和验收。 | AGENTS 的按任务强制阅读规则依赖此表。 |
 | `docs/architecture/COMMENT_RATIONALE_MAP.md` | 注释债和设计原因清单。 | 后续复杂模块真实改动时据此逐点补注释，不批量注释。 |
 | `docs/BASELINE_FROM_OLD_PROJECT.md` | 旧项目能力迁移基线。 | 只用于行为对照，不规定重构版目录；与迁移清单互补。 |
+| `docs/legacy/OLD_WORKSPACE_CHANGELOG_INDEX.md` | 旧工作区功能与故障的脱敏回溯索引。 | 只提供类别、不变量和当前查询入口；原始非公开 Changelog 不得复制、链接或写入公开工作树。 |
 | `docs/GIT_BRANCH_WORKTREE_FORK_GUIDE.md` | 分支、worktree、PR 和回退操作指南。 | 受 AGENTS Git 规则约束；稳定基线变化时同步。 |
 | `docs/MAC_WINDOWS_WORKFLOW.md` | Mac 开发与 Windows 正式验收分工。 | 与 Docker、PowerShell、正式 BAT 和发布验收相关。 |
 | `docs/MIGRATION_GAP_CHECKLIST.md` | 旧能力迁移缺口和验收状态。 | 功能迁移、验收口径和开发交接能力变化时更新。 |
@@ -100,14 +101,16 @@
 
 | 文件 | 职责与入口 | 关系与修改影响 |
 |---|---|---|
-| `scripts/dev/build_core.ps1` | Windows portable 构建兼容包装。 | 转发精确 source commit、可选离线模式和可选双构建审计。 |
+| `scripts/dev/build_core.ps1` | 开发侧 core 构建包装。 | 选择 `.venv` 或 `py -3`，调用 `invoice_hub.release.build_core`。 |
 | `scripts/dev/windows_release_config.ps1` | 读取并校验 Windows 机器打包配置。 | 在下载、Python 选择和 staging 清理前核对 `version.py`、派生路径、锁与安全相对路径；输出配置 SHA。 |
 | `scripts/dev/initialize_windows_repackage.ps1` | Windows 真机打包会话初始化门禁。 | 强制 remote release tip、HEAD、独立交付 RC_SHA 三者相等，核对工具/磁盘/clean 状态并写会话证据。 |
 | `scripts/dev/prepare_windows_test_environment.ps1` | 准备隔离的 CPython 3.14.6 x64 源码测试环境。 | 同时安装 Windows runtime 锁与 test-tools 锁，使用独立 wheelhouse，并以环境内受边界校验的 `.pth` 绑定当前 RC `src`；成品 runtime 不携带该绑定。 |
 | `scripts/dev/prepare_windows_runtime.ps1` | 准备精确 Python 3.14.6 x64、wheelhouse 和 runtime manifest。 | 每次从只读 `base-python` 复制产品 runtime，保留基线 `Doc`、裁剪产品 `Doc`，固定锁定安装时间并恢复环境，再规范产品 `Scripts/RECORD`；不能回退未知 Python。 |
-| `scripts/dev/build_windows_portable.ps1` | Windows portable 单次构建与静态验包。 | 接受精确 source commit；以禁用 `core.autocrlf` 的 Git archive 取源码，准备锁定 runtime、组装、验包并写 hash receipt；`-VerifyReproducibility` 才追加第二次 ZIP SHA 比对。 |
-| `scripts/dev/build_windows_portable_release.ps1` | Windows x64 便携包默认单命令交付入口。 | 默认锁定当前 clean `HEAD`，编排一次构建/静态验包及随后正式 BAT 烟测；自动化可显式提交 SHA，`-Offline`、`-Clean` 与双构建审计保持显式。 |
-| `scripts/dev/smoke_windows_portable.ps1` | Windows 便携包正式根 BAT 烟测。 | 临时解压到中文空格路径，检查默认 TCP 排除端口，验证 `/`、health、身份和停止，并写脱敏 JSON 证据。 |
+| `scripts/dev/build_windows_portable.ps1` | Windows portable 总编排与双构建 SHA 比较。 | 接受精确 source commit；以禁用 `core.autocrlf` 的 Git archive 取源码，再调用 runtime 准备、core 组装与验包。 |
+| `scripts/dev/build_windows_portable_release.ps1` | 旧 Windows portable ZIP 的发布构建与 BAT smoke 编排。 | 保留用于历史兼容和受限验证；当前 public-preview 交付走独立 NSIS 入口，不能把旧 ZIP 证据提升为新预览发布结论。 |
+| `scripts/dev/smoke_windows_portable.ps1` | 旧 Windows portable ZIP 的隔离 BAT/localhost smoke。 | 生成脱敏临时配置与运行态，覆盖端口、启动、health、停止与日志；不替代 Windows Tauri 原生窗口或安装器验收。 |
+| `scripts/dev/tauri-windows-portable.ps1` | Windows Tauri portable alpha ZIP 的 PowerShell 包装。 | 只转发精确 Python builder 参数；不接受任意 Python 或未验证的 Tauri 输出。 |
+| `scripts/dev/tauri_windows_portable.py` | Windows Tauri portable alpha ZIP 的 clean-source staging、组装、验证与交接入口。 | 使用严格源码/runtime/host-manifest/文件哈希链；属于未签名的历史 alpha 路线，不与当前 NSIS public-preview 混淆。 |
 | `scripts/dev/generate_synthetic_release_fixture.py` | 生成不含真实业务信息的 PDF/XML/OFD 发布验收目录和 SHA manifest。 | Windows 真机 monitor/投影/预览验收使用；未知文件目录拒绝写入。 |
 | `scripts/dev/verify_windows_portable.ps1` | 解压并验证 Windows 候选 ZIP。 | 调用 Python 静态验证并检查包内解释器/import/Tk/pip。 |
 | `scripts/dev/verify_release_source.ps1` | Windows 源码、身份、测试和文档预门禁。 | CI 与真机手册共用；要求 clean source commit，并在选择解释器前拒绝非精确 Python 3.14.6 patch。 |
@@ -120,9 +123,16 @@
 | `scripts/dev/tauri-bootstrap.sh` | macOS/POSIX bootstrap 包装。 | 只转发到 Python bootstrap。 |
 | `scripts/dev/tauri-doctor.ps1` | Windows doctor 包装。 | 使用 `py -3` 或已解析的 `python` 转发；两者均缺失时明确 `exit 2`，不安装系统工具。 |
 | `scripts/dev/tauri-bootstrap.ps1` | Windows bootstrap 包装。 | 使用 `py -3` 或已解析的 `python` 转发；两者均缺失时明确 `exit 2`，不安装系统工具。 |
-| `scripts/dev/tauri-windows-portable.ps1` | Windows Tauri portable CLI 包装。 | 优先 `py -3`，再严格回退已解析 Python；只转发 stage/build/verify/handoff，不安装 Rust、SDK 或 WebView2。 |
-| `scripts/dev/tauri_windows_portable.py` | alpha.2 Windows x64 Tauri ZIP stage/build/verify/handoff 主入口。 | 只接受 clean exact commit 和锁定 Python runtime；以 manifest SHA 编译 raw host，生成 ZIP/SHA/receipt/source handoff，拒绝用户状态、签名、安装、发布和 macOS 资产。 |
-| `scripts/dev/tauri_dev_app.py` | macOS arm64 Tauri development `.app` 的 allowlisted staging 与 app-only build 入口。 | `stage` 需要显式绝对 venv Python，生成 schema-3 manifest、显式 launcher 和 SHA-256 绑定；`build` 还需要绝对 pnpm，只构建 ignored `.app`，不生成 DMG/更新归档、不签名/公证、不启动应用。 |
+| `scripts/dev/tauri_dev_app.py` | macOS arm64 Tauri development `.app` 的 allowlisted staging 与 app-only build 入口。 | 普通 `stage/build` 生成 updater-disabled schema-3 manifest；显式 `stage-recovery/build-recovery` 只写 L10-E 固定不可安装 tuple。build 接受绝对 pnpm 或绝对 Tauri CLI，只构建 ignored `.app`，不生成 DMG/更新归档、不签名/公证、不启动应用。 |
+| `scripts/dev/tauri_recovery_smoke.py` | L10-E macOS arm64 authenticated startup-recovery 隔离 runner。 | 只接受 plist executable/identifier/version、host manifest、launcher hash 与 core build identity 一致的精确 recovery-smoke App；创建临时 HOME/state/runtime/watch、关闭自动更新检查并预置 scope marker。localhost allowlist 只有 health、bridge status 和 bridge stop；确认身份后停止临时 monitor，并只终止自己创建的进程组，绝不调用 update check/install。 |
+| `scripts/dev/tauri_public_preview.py` | macOS public-preview DMG 组装入口。 | release profile 只允许精确 disabled updater；产物是 ad-hoc、未公证且与 internal-alpha receipt 隔离。pending receipt 仅用于一次内部 verifier pass，120 秒超时或任一 verifier 失败都会带 stdout/stderr 失败。 |
+| `scripts/dev/verify_tauri_public_preview.py` | macOS public-preview DMG 与独立 receipt 验证器。 | 复核 public-release 身份、ad-hoc 签名、未公证状态与 staging 布局；默认拒绝 pending 或篡改 finalizer，只接受与实际 DMG SHA-256 精确绑定的 verifier output，不把 receipt 作为正式签名或公证证据。 |
+| `scripts/dev/tauri_public_preview_smoke.py` | macOS public-preview 成品 smoke 入口。 | 从 mounted DMG 复制 App、复核 receipt/ad-hoc 签名并保留 quarantine；只经 LaunchServices 与隔离 `HOME` 启动，核验 health、monitor 和结构化退出，不允许 development state override 或任意 localhost 请求。 |
+| `scripts/dev/tauri_windows_public_preview.ps1` | Windows NSIS public-preview 组装与验包入口。 | 先验证下载哈希，再按应用签名、NSIS、安装器签名顺序执行并比较包内 EXE。 |
+| `scripts/dev/tauri_windows_preview_stage.py` | Windows public-preview 的 clean-source staging 入口。 | 复用 Windows portable 的源码白名单与敏感内容扫描，验证 3.14.6 runtime，写 NSIS package/build/SBOM/host manifest，并将其 SHA-256 编译绑定到 Tauri host。 |
+| `docs/release/WINDOWS_PUBLIC_PREVIEW_CONFIG.json` | Windows public-preview 的受控 WebView2 下载、NSIS marker、包身份及安装器/SHA-256/receipt 名称锁。 | workflow 与 PowerShell 组包器必须先验证此处 SHA-256，不能以 URL 或版本号替代字节锁。 |
+| `docs/release/WINDOWS_PUBLIC_PREVIEW_RUNBOOK.md` | Windows 10/11 x64 public-preview 的人工执行、取证和烟测手册。 | 只从最终精确 Tag 的 GitHub-hosted workflow 获取三项 artifact；强制两层 Authenticode、receipt/哈希、current-user 安装和未签名卸载器披露，不自动上传 Release。 |
+| `.github/workflows/windows-public-preview.yml` | 仅 GitHub-hosted Windows runner、精确 Tag 手动触发的 SignPath NSIS public-preview 工作流。 | 使用两个 SignPath artifact configuration，复核内外层 Authenticode 与包内 EXE 字节一致性后，只上传安装器、SHA-256 和 receipt 三项 Actions artifact，不创建或修改 GitHub Release。 |
 | `scripts/dev/tauri_alpha_release.py` | internal-alpha macOS arm64 clean-snapshot staging、Tauri App 构建、ad-hoc DMG 组装和 schema-4 receipt 入口。 | 只接受 allowlisted core、锁定 Python 3.14.6 runtime 和固定 manifest；默认拒绝 dirty source、用户状态、Windows 文件、updater/Feed/Release 输入；可用 `--tauri-cli` 绕过失效的 pnpm 包装层。 |
 | `scripts/dev/verify_tauri_alpha.py` | internal-alpha App/DMG/receipt 的独立 fail-closed 验证器。 | 校验 manifest、launcher/runtime/package/build SHA、布局、架构、ad-hoc 签名和平台污染；不把 receipt 单独当作正式签名、公证或发布证据。 |
 | `scripts/tools/jierui_probe_template.py` | 捷锐模板探测辅助入口。 | 只生成或核对结构性事实，不写真实凭证状态。 |
@@ -144,22 +154,32 @@
 
 | 文件 | 职责与入口 | 关系与修改影响 |
 |---|---|---|
-| `src-tauri/Cargo.toml` | Tauri host package metadata, including the explicit `tray-icon` feature and exact direct Tauri/plugin/HMAC dependencies. | Version is derived by `tauri_version_sync.py`; direct crates are pinned to published releases and must match `Cargo.lock`. |
+| `src-tauri/Cargo.toml` | Tauri host package metadata, including the explicit `tray-icon` feature, exact direct Tauri/plugin/HMAC dependencies, Unix-only `libc` for descriptor-pinned marker storage, and pinned Windows-only `windows-sys` for handle-relative/no-reparse marker storage. | Version is derived by `tauri_version_sync.py`; direct crates are pinned to published releases and must match `Cargo.lock`. The Windows dependency documents a source-level boundary only and does not imply Windows runtime acceptance. |
 | `src-tauri/Cargo.lock` | Reviewed Rust 1.85-compatible Cargo dependency graph. | Generated only in the controlled toolchain with `.cargo/config.toml`; it locks dependency integrity. Runnable development behavior additionally requires the staged manifest/launcher binding, and remains distinct from release evidence. |
 | `src-tauri/build.rs` | Tauri build-script entry point. | It runs only with the exact direct crate versions and reviewed `Cargo.lock` in a controlled Rust environment. |
-| `src-tauri/tauri.conf.json` | Derived product identity, fixed localhost development origin, no config-created WebView, and disabled bundling configuration. | Must retain `http://127.0.0.1:8766`; `main.rs` creates a WebView only after the owned-backend handshake. |
-| `src-tauri/tauri.windows.conf.json` | Windows x64 raw-host Tauri configuration derived from `version.py`. | Keeps no-bundle output and zero WebView IPC; `tauri_version_sync.py` validates its identity before alpha.2 portable build. |
+| `src-tauri/tauri.conf.json` | Derived product identity, fixed localhost development origin, no config-created WebView, disabled bundling configuration, and the default bundled `png/ico/icns` application icon paths. | Must retain `http://127.0.0.1:8766`; `main.rs` creates a WebView only after the owned-backend handshake. The bundle default remains warm orange until a running host reads the user selection. |
+| `src-tauri/tauri.windows.conf.json` | Windows Tauri portable alpha 的历史 bundle overlay。 | 只配合 `tauri_windows_portable.py` 的 staging/ZIP 路线；不得替代当前 Windows NSIS public-preview 配置。 |
 | `src-tauri/tauri.dev.conf.json` | Development-only bundle configuration. | Enables only the macOS arm64 app bundle used by `tauri_dev_app.py`; it cannot be reused for DMG/NSIS, release signing, or updater inputs. |
 | `src-tauri/tauri.alpha.conf.json` | Internal-alpha bundle configuration for version `0.3.0-alpha.1`. | Enables only the isolated allowlisted App resources staged by `tauri_alpha_release.py`; updater remains disabled and this config is not a public Release or notarization input. |
+| `src-tauri/tauri.public-preview.conf.json` | macOS arm64 public-preview bundle configuration. | 只为 `tauri_public_preview.py` 的独立 staging 组装 release-profile DMG；host manifest 必须精确禁用 updater，不能携带 Feed 或公钥。 |
+| `src-tauri/tauri.windows-preview.conf.json` | Windows x64 current-user NSIS public-preview bundle configuration. | 只接收 Windows staging、offline WebView2 installer 和无 Tauri 签名的 NSIS 打包；应用与外层安装器由 SignPath 分两步签名。 |
 | `src-tauri/capabilities/no-webview-ipc.json` | Explicit zero-permission capability for the future main WebView. | Native picker access cannot become Tauri command/event IPC. |
 | `src-tauri/src/lib.rs` | Fixed backend host/port constants and module exports. | Do not add business-core logic; lifecycle and Host RPC retain this origin invariant. |
-| `src-tauri/src/backend.rs` | Bundle-manifest parsing with raw-byte SHA-256 compile binding, development/internal-alpha/release profile separation, fixed arguments, backend child ownership, HMAC challenge response, identity/OpenAPI handshake, post-preference fresh ownership revalidation, structured keep-monitor shutdown, strict child-exit confirmation, explicit confirmed kill/wait fallback, 100 ms bounded child-exit revocation, Windows WebView2 user-data path derivation, and release-child console/log handling. | The assemblers inject `INVOICE_HUB_BUNDLE_MANIFEST_SHA256`; a bare checkout or mismatch exits `78`. Only the Windows release `windows_portable={distribution:"zip",updater_enabled:false}` marker permits a disabled updater; all other release hosts remain strict. Windows release derives and creates `%LOCALAPPDATA%\\InvoiceHub\\webview` before desktop surface setup so WebView2 cannot escape the portable user-state root. It also uses `CREATE_NO_WINDOW` and appends backend stdout/stderr to that root's `runtime/server_stdout.log` and `server_stderr.log`. Monitor stop/recheck for installation is deliberately absent until the recovery/relaunch coordinator is implemented. |
-| `src-tauri/src/host_rpc.rs` | Private random-loopback listener, exact-origin/token/enum authorization, native picker dispatch, and host updater candidate storage. | Host passes the token only to its directly spawned Python backend; it is not a Tauri command, event, WebView value, Python API response, log, or descendant environment value. `select_path` calls `tauri-plugin-dialog` directly because the plugin owns asynchronous main-thread dispatch; do not add an outer `run_on_main_thread`. The update surface is only `update_check/update_install`; the bounded listener actively clears a generation-checked 300-second candidate, and updater metadata requests have a 5-second total timeout. Current install consumes the candidate and fails closed without download or runtime changes; a future recovery/relaunch coordinator must preserve download+Minisign, monitor stop/recheck, install/restart, and failure recovery. |
-| `src-tauri/src/main.rs` | Loads a compiled-bound bundle manifest, installs single-instance/dialog/host-only-opener plugins, uses a GUI subsystem for Windows release builds, creates a custom macOS application Quit item with Cmd-Q, launches `BackendHost`, initializes the selected desktop WebView or fixed-origin browser surface, and routes every received `ExitRequested` through confirmed backend shutdown. | A checkout without the manifest exits with status `78` before connection. Desktop setup passes the backend-derived Windows WebView2 data directory to `WebviewWindowBuilder`; setup keeps the spawned child local until tray and surface initialization succeed, and any setup error first uses structured keep-monitor shutdown and kill/wait fallback, remaining blocked/retrying until child termination is confirmed before returning the original error. Tray Quit and the custom application-menu/Cmd-Q item share `app.exit(0)` and must not use the native predefined Quit selector; kill/wait failure prevents host exit. External termination may bypass the event. L9/P1-Q completed one desktop/default launch and one real Cmd-Q exit; tray click/second-instance/browser behavior remain unexercised. |
+| `src-tauri/src/backend.rs` | Bundle-manifest parsing with raw-byte SHA-256 compile binding, development/internal-alpha/release profile separation, fixed arguments, backend child ownership, HMAC challenge response, strict startup preferences, explicit WebView2 state path, Windows no-console child setup, identity/OpenAPI handshake, post-preference fresh ownership revalidation, structured keep-monitor shutdown, strict child-exit confirmation, cloneable `BackendLifecycleAuthority`, private ownership-secret retention, and updater-runtime activation delegation. | The ordinary development and internal-alpha assemblers inject the compile hash while keeping updater disabled; development can enable only the exact L10-E unreachable endpoint/non-signing-key tuple with no extra updater fields. A bare checkout or mismatch exits `78`. `allow_print_popups` must be a bool; Windows creates `%LOCALAPPDATA%\\InvoiceHub\\webview` before the child and redirects its hidden stdout/stderr to runtime logs. Activation passes strict `runtime_dir`, secret, and shared authority to Host RPC only after gate release and app-state registration. |
+| `src-tauri/src/app_icon.rs` | Parses the three bundled icon ids, loads the runtime selection, decodes bundled PNG bytes, and applies one icon to the tray and current main window. | Invalid/missing runtime state falls back to orange. Tray/window update happens before Python persistence; if the window update fails, the tray is restored to the previous icon so native surfaces do not split. |
+| `src-tauri/src/monitor_recovery.rs` | Source-only lifecycle lease, fail-closed monitor pause/restore transaction, strict scope-bound marker schema, Unix descriptor-pinned/no-follow marker primitives, and platform store selection. | Every marker or bridge action requires the same released owned lease; ready-only pause and later ready restore preserve recovery obligations. For stores following the marker-store protocol, Unix whole-operation `load/publish/clear` serialization is closed by directory `flock`; stale-clear re-reads under the lock, and publish/clear sync directory metadata after the final link/unlink. Same-user direct edits bypassing the protocol remain outside the guarantee. Windows implementation lives in `monitor_recovery/windows_marker_store.rs`; other non-Unix storage returns unavailable. The module remains transport/updater agnostic and is adapted by Host RPC rather than acquiring public authority itself. |
+| `src-tauri/src/monitor_recovery/windows_marker_store.rs` | Windows handle-relative marker store: opens and validates a directory handle, uses NT `RootDirectory` leaf opens and no-replace rename, rejects reparse/non-regular targets, and flushes marker data before the final operation. | Marker operations remain relative to the already-open directory handle and never resolve a caller-supplied path by name; a minimal `x86_64-pc-windows-msvc` temporary crate cross-compile passed, but there is no Windows runtime evidence and the full Tauri Windows target check remains blocked by `ring` requiring `assert.h`. |
+| `src-tauri/src/monitor_bridge.rs` | Fixed-loopback `PythonMonitorRecoveryBridge` adapter with bounded direct TCP requests and authenticated status/stop/start request/response transcripts. | Endpoint, method and empty body are fixed; no caller URL/path/body or proxy is accepted. Each request uses a fresh challenge and HMAC-SHA256 under the backend-private secret without sending that secret; the exact status/body response requires one constant-time-verified proof. The recovery transaction still revalidates the released lifecycle before and after every bridge action, and ordinary browser bridge calls are not promoted into this authenticated updater authority. |
+| `src-tauri/src/update_coordinator.rs` | Pure trait-injected update transaction, `VerifiedUpdate` boundary, strict verify -> pause -> install -> relaunch ordering, and restore-attempt preservation. | Installer never receives raw unverified bytes; candidate mismatch fails before pause/install/relaunch. It does not download, call Tauri updater, persist state, stop a real monitor, or request a platform restart. |
+| `src-tauri/src/host_rpc.rs` | Private random-loopback listener, exact-origin/token/enum authorization, native picker dispatch, built-in `set_app_icon`, host-owned full updater candidates, authenticated startup restore, deferred private commit, Tauri updater adapters, and platform relaunch state. | The token and retained `Update` metadata never enter Web/Tauri IPC/Python API/logs/descendants. `set_app_icon` accepts exactly one bundled id and no caller path/URL/bytes, applies native surfaces before replying success. The listener expires a generation-checked 300-second candidate; metadata and download use 5-second timeouts. Enabled runtime activates only after gate release/manage and restores the marker first. Install atomically consumes one fresh candidate, reserves/spawns a latch worker, flushes exact success, then executes built-in verified download -> pause -> install -> relaunch. Writer/spawn/latch loss is `CommitLost` with no side effects; failed restore/transaction blocks further updater work. Windows confirms backend exit in `on_before_exit`; macOS prepares and requests restart. |
+| `src-tauri/src/main.rs` | Loads a compiled-bound bundle manifest, installs single-instance/dialog/host-only-opener plugins, creates a custom macOS application Quit item with Cmd-Q, launches and registers `BackendHost`, loads the selected app icon before tray/window creation, creates the desktop surface with the explicit WebView profile and restricted print popup policy, activates the updater runtime after the released gate, and routes `ExitRequested` through update-aware confirmed shutdown. | A checkout without the manifest exits `78`. Setup keeps the child local until tray/surface success and confirms cleanup before returning errors. The release host uses the Windows GUI subsystem; child window creation requires startup permission plus exact `about:blank` and bounded local print navigation. Updater activation failure leaves backend/WebUI diagnostics available; successful activation emits only a non-sensitive recovery-runtime diagnostic used by L10-E. Tray Quit and custom Cmd-Q share `app.exit(0)`; reserved/executing commits block ordinary Quit, macOS `relaunch_prepared` skips duplicate shutdown, and other received exits require structured shutdown plus confirmed kill/wait fallback. |
 | `src-tauri/boot/index.html` | Inert local boot asset required by the minimal Tauri configuration. | It is not a replacement frontend; the real application remains the existing localhost Web UI. |
-| `src-tauri/icons/icon.png` | Local source icon required by Tauri's macOS context macro and tray setup. | It must remain 8-bit RGBA: the prior 16-bit RGBA encoding caused tray initialization failure, so PNG IHDR has a focused regression. It is also the controlled source for the Windows ICO and does not authorize Release branding. |
-| `src-tauri/icons/icon.ico` | Multi-resolution Windows resource icon generated from the controlled PNG. | Tauri's x64 raw-host build requires this file even when bundling is disabled; the foundation contract locks its ICO header so a missing or wrong-format resource stops before release assembly. |
+| `src-tauri/icons/icon.png` | Warm-orange default PNG used by Tauri's macOS context macro, bundle metadata and first tray setup. | It must remain 8-bit RGBA: the prior 16-bit RGBA encoding caused tray initialization failure, so PNG IHDR has a focused regression. It does not authorize Release branding. |
+| `src-tauri/icons/icon.ico` / `src-tauri/icons/icon.icns` | Warm-orange default Windows/macOS bundle icons. | They provide the pre-launch package identity only; a running host can switch only among the three bundled PNG choices. |
 | `src-tauri/README.md` | Lifecycle scope, development assembly, and release boundary. | Update together with the execution plan whenever Cargo, lifecycle, Host RPC, updater, staging, or packaging status changes. |
+| `src-tauri/tests/monitor_recovery_contract.rs` | Focused transaction and Unix marker-store contracts. | Covers ready/stopped monitor paths, marker corruption/scope/pending state, gate/lease loss, bridge failures, Unix serialization/republication and symlink rejection; it does not invoke a real monitor or updater. |
+| `src-tauri/tests/update_coordinator_contract.rs` | Pure update coordinator contract tests. | Covers verified-artifact promotion, candidate mismatch, ordering, pause/install/relaunch failures and restore-attempt preservation; it does not download, install or restart. |
+| `src-tauri/tests/windows_marker_store_contract.rs` | Windows marker-store source/static contract. | Locks handle-relative `RootDirectory`, no-reparse/no-replace behavior and platform gating; the minimal Windows cross-compile passed, but Windows runtime is unverified and the full Tauri target check remains blocked by `ring`/`assert.h`. |
 
 ## 5. Python 包入口与 API
 
@@ -168,7 +188,7 @@
 | `src/invoice_hub/__init__.py` | 包说明和 `__version__`。 | 被包导入和发布元数据使用；版本策略变化时同步发布文档。 |
 | `src/invoice_hub/version.py` | 产品/包版本、API 契约、通道、链接、白名单和 package ID 单一真值。 | Python、Swift 脚本、manifest、About、Feed 与测试必须一致。 |
 | `src/invoice_hub/api/__init__.py` | 惰性导出 `create_app`。 | 保持外部工厂入口，同时避免执行 `api.main` 前抢先实例化默认 AppState。 |
-| `src/invoice_hub/api/app.py` | FastAPI 应用、页面路由、API、错误码、静态资源和 SSE。 | 上游是浏览器；下游是 `AppState`、皮肤文件和模板；四条 Tauri picker route 将 private `HostRpcError` 映射为固定、脱敏的 503，update-install 只接受 `{}` 并将 host failure 映射为 `503 Update installation unavailable`；主要由 API/前端契约测试覆盖。 |
+| `src/invoice_hub/api/app.py` | FastAPI 应用、页面路由、API、错误码、静态资源、SSE，以及三条 monitor recovery route 的可选 authenticated response wrapper。 | 上游是浏览器；下游是 `AppState`、皮肤文件和模板。普通 bridge 调用保持原语义；只有带完整 recovery 认证头、空 body 且 challenge 未重放的 host 请求才执行 HMAC 校验并签名精确响应。四条 Tauri picker route 与 update install 继续把 private failure 映射为固定脱敏 503，install 只接受 `{}`。 |
 | `src/invoice_hub/api/main.py` | 参数化 uvicorn CLI 入口。 | 读取 root/config/host/port 后通过模块应用只构造一个 AppState；正式 BAT 当前直接启动 uvicorn app。 |
 
 ## 6. 领域模型
@@ -240,7 +260,7 @@
 | `src/invoice_hub/monitoring/control.py` | status/start/stop/notify CLI。 | Windows monitor PS1 调用；构造 MonitorBridge。 |
 | `src/invoice_hub/monitoring/daemon.py` | 独立进程、Watchdog、1 秒事件合并、周期同步和 ready 生命周期。 | 由 MonitorBridge 启动；写 lock/status/events/log。 |
 | `src/invoice_hub/monitoring/polling_observer.py` | 无第三方 watchdog 的有界轮询 observer。 | macOS 正式锁使用；保持 daemon observer 接口和事件合并语义。 |
-| `src/invoice_hub/monitoring/state.py` | PID 真值、lock、状态读写事务、文件签名、processed、Excel 手改和通知。 | daemon/synchronizer/bridge 共用；状态文件位于 target profile，读取与原子写入共用 profile 锁。 |
+| `src/invoice_hub/monitoring/state.py` | PID 真值、lock、文件签名、processed、Excel 手改和通知。 | daemon/synchronizer/bridge 共用；状态文件位于 target profile。 |
 | `src/invoice_hub/monitoring/sync.py` | 重建决策矩阵、schema-only 刷新和普通/成本同步编排。 | daemon 和 AppState 后台启动同步调用。 |
 
 ## 12. 服务层
@@ -248,38 +268,39 @@
 | 文件 | 职责与入口 | 关系与修改影响 |
 |---|---|---|
 | `src/invoice_hub/services/__init__.py` | 导出 `AppState`、过期选择、预览和打印异常及 `create_state`。 | API 应用工厂依赖。 |
-| `src/invoice_hub/services/app_state.py` | 当前统一用例门面：设置、诊断、发票、预览/打印、成本、单据、monitor、皮肤、OCR 占位、更新 metadata/host approval 和关闭。 | 上接 API，下接几乎全部子系统；`_host_update_lock` 串行化 allowlisted Feed gate、host candidate 和一次性 install approval，改动必须按用例做相邻回归。 |
+| `src/invoice_hub/services/app_state.py` | 当前统一用例门面：设置、诊断、发票、预览/打印、成本、单据、monitor、皮肤、应用图标、OCR 占位、更新 metadata/host approval 和关闭。 | 上接 API，下接几乎全部子系统；`update_app_icon` 在 Tauri mode 先要求 private host 成功更新原生 surface，才写 runtime 状态和事件；`_host_update_lock` 串行化 allowlisted Feed gate、host candidate 和一次性 install approval，改动必须按用例做相邻回归。 |
 | `src/invoice_hub/services/app_state.py` 的 business dossier 用例 | 解析当前公司资料夹、一次有界扫描快捷入口/统计并限制打开路径。 | `/api/v1/business-dossier*` 和首页消费；不得改变 `watch_dir` 扫描语义；截断统计必须明确为下界。 |
 | `src/invoice_hub/services/document_rendering.py` | MuPDF 文档打开和安全分页 PNG 渲染的共享适配。 | preview/print 共用；缺依赖、加密、空文档、页尺寸和渲染失败保持结构化错误。 |
 | `src/invoice_hub/services/file_preview.py` | 短期源文件预览 job、闲置续租、页面/文本缓存、SVG/XML/图片安全边界。 | 保留已选源文件顺序；15 分钟闲置 TTL、页数、像素、作业数和缓存上限防止内存滥用。 |
 | `src/invoice_hub/services/invoice_printing.py` | 短期同票 PDF 打印 job 和分页 PNG 缓存。 | 不持久化票面；只接收受控 PDF，过期/容量/加密失败明确返回。 |
 | `src/invoice_hub/services/monitor_bridge.py` | monitor 子进程命令、状态真值、ready 等待和启停。 | AppState 与 control 调用；与 daemon/state 构成生命周期闭环。 |
 | `src/invoice_hub/services/skins.py` | 皮肤 ZIP 安全验证、运行态存储、启用和文件服务。 | API、AppState、common.js 使用；安全回归在 API 测试。 |
-| `src/invoice_hub/services/update_service.py` | HTTPS 白名单更新检查、ETag/cache、版本/契约/平台产物选择和错误状态。 | About/API/启动后台检查消费；显式 `scope=windows-only` 只进入 strict alpha validator，缺少 macOS asset 返回 `unsupported`，不削弱完整双平台 Feed；绝不执行安装。 |
+| `src/invoice_hub/services/app_icons.py` | 三个内置图标目录、预览/favicon URL、严格 id 校验和单字段运行态读写。 | 只读写 `runtime/local_state/app_icon_state.json`，坏状态回退 orange；不接受自定义资产，不依赖皮肤或发票目录。 |
+| `src/invoice_hub/services/update_service.py` | HTTPS 白名单更新检查、ETag/cache、版本/契约/平台产物选择和错误状态。 | About/API/启动后台检查消费；绝不执行安装。 |
 
 ## 13. 平台与发布
 
 | 文件 | 职责与入口 | 关系与修改影响 |
 |---|---|---|
 | `src/invoice_hub/platform/__init__.py` | 导出 Windows 平台 API。 | AppState 只通过此边界调用选择器和打开路径。 |
-| `src/invoice_hub/platform/host_rpc.py` | Tauri 私有 picker/updater client、直接 backend 启动时的凭据捕获与 descendant 环境清理。 | Host 只向直接启动的后端传递 private configuration；Python 125 秒请求预算必须覆盖 Rust 120 秒 dialog 和响应余量；updater 只接受固定 `update_check/update_install`，只回传版本或成功；monitor、同步和原生子进程不得继承 token/secret。 |
+| `src/invoice_hub/platform/host_rpc.py` | Tauri 私有 picker/updater/app-icon client、直接 backend 启动时的凭据捕获与 descendant 环境清理。 | Host 只向直接启动的后端传递 private configuration；Python 125 秒请求预算必须覆盖 Rust 120 秒 dialog 和响应余量；updater 只接受固定 `update_check/update_install`，图标只接受固定 `set_app_icon` 加内置 id，均只回传窄化成功形状；monitor、同步和原生子进程不得继承 token/secret。 |
 | `src/invoice_hub/platform/native_dialogs.py` | Tk 原生目录/文件选择子进程。 | `platform/windows.py` 从项目根启动；取消选择也返回结构化结果。 |
 | `src/invoice_hub/platform/windows.py` | 打开文件/目录、运行原生选择器、OCR 扩展名。 | AppState 在 Tauri mode 通过 Host RPC 传入固定 picker enum；其它模式保留 Tk，所有子进程清除 host credentials。 |
 | `src/invoice_hub/release/__init__.py` | core 发布边界说明。 | 标记 release 包职责。 |
 | `src/invoice_hub/release/build_core.py` | 从精确 Git commit 组装确定性 Windows ZIP，写脱敏配置、清单、SBOM 和文件 SHA。 | Windows 构建脚本调用；不读取本机未跟踪/业务数据。 |
 | `src/invoice_hub/release/build_manifest.py` | 确定性 build ID、API 契约、做账协议和能力清单。 | health、macOS Swift 握手和 `build_and_run.sh --verify` 三方核对。 |
 | `src/invoice_hub/release/dependency_lock.py` | 解析并验证平台哈希锁及 package/version。 | runtime 准备、SBOM、发行身份测试使用。 |
-| `src/invoice_hub/release/runtime_manifest.py` | 绑定 runtime 树、Python、平台/架构、锁和 import probe；规范 Windows 产品 runtime。 | Windows 安装后删除顶层 `Scripts` 并以 CSV 规则同步 RECORD，裁剪 bytecode 与五个 CPython 标准库 shell helper；所有 probe 使用 `-B`，未知 shell script fail closed；Windows/Mac 构建及成品验证共同使用其余清单能力。 |
+| `src/invoice_hub/release/runtime_manifest.py` | 绑定 runtime 树、Python、平台/架构、锁和 import probe；规范 Windows 产品 runtime。 | Windows 安装后删除顶层 `Scripts` 并以 CSV 规则同步 RECORD，Windows/Mac 构建及成品验证共同使用其余清单能力。 |
 | `src/invoice_hub/release/package_manifest.py` | 绑定成品版本、平台、架构、包型、锁、Feed、source/core identity。 | health、启动器、About、更新服务与验包使用。 |
-| `src/invoice_hub/release/content_scan.py` | 分作用域扫描成品/源码中的秘密和本机绝对路径。 | 自有源码/core 使用严格规则；受锁依赖目录与 Windows `python/Lib/**` 允许上游构建 provenance/password-shaped 示例，私钥和高置信 token 始终阻断。 |
+| `src/invoice_hub/release/content_scan.py` | 分作用域扫描成品/源码中的秘密和本机绝对路径。 | 自有源码/core 使用严格规则；仅哈希锁定的依赖目录允许上游构建 provenance 路径，私钥和高置信 token 始终阻断。 |
 | `src/invoice_hub/release/sbom.py` | 从哈希锁生成确定性 CycloneDX 1.6 SBOM。 | 双平台成品和验证器核对 lock identity。 |
 | `src/invoice_hub/release/settings_migration.py` | 新旧 Windows 包之间的配置/偏好白名单迁移与备份。 | 不复制日志、PID、SQLite、cache、皮肤或业务文件。 |
 | `src/invoice_hub/release/source_snapshot.py` | 从精确 clean commit 生成确定性对应源码 tar.gz，并从 tag commit 重建受控树身份。 | `git archive` 忽略 checkout 工作树；过滤本机配置/秘密/特殊文件，重算 tree SHA、文件数与 core build。 |
 | `src/invoice_hub/release/provenance.py` | 新平台公开 Feed 的最终身份门禁。 | 从实际产物/收据/源码归档重算身份，并把归档与固定 release Tag commit 的受控树逐项核对。 |
 | `src/invoice_hub/release/update_metadata.py` | latest.json、Sparkle appcast 的同源生成、严格验证与 parity 门禁。 | 只允许 `generate_release_metadata` 先消费已验证 provenance 再写入；绑定三平台产物、对应源码、EdDSA、source commit 与 core build。 |
-| `src/invoice_hub/release/windows_alpha_metadata.py` | alpha.2 strict Windows-only Feed 生成与验证。 | 只接受一个 Windows x64 ZIP、receipt、源码归档与相同 source/core identity；公开 URL 只指向 prerelease/资产，不能带 macOS 占位或安装 payload。 |
 | `src/invoice_hub/release/verify_portable.py` | Windows portable 精确路径白名单、反向 macOS/Python 非产品内容拒绝、身份、秘密、锁与 SBOM 验证。 | 大小写不敏感地拒绝 `python/Doc` 与 `python/Scripts`；PowerShell 验包脚本调用，不替代真实 Windows GUI/BAT。 |
-| `src/invoice_hub/release/verify_tauri_windows_portable.py` | alpha.2 Tauri raw-host ZIP、host manifest、Windows GUI PE x64、SBOM、runtime、file-SHA 与 receipt verifier。 | 以 ZIP 内容而非 receipt 自述为真值；自有 core 严格扫描，受锁 `python/Lib/**` 采用 dependency scope 但高置信 token/私钥仍阻断；拒绝 console-subsystem PE、macOS、用户状态、项目测试、非产品 runtime、启用 updater 或任意不在 allowlist 的成员。 |
+| `src/invoice_hub/release/verify_tauri_windows_portable.py` | 未签名 Windows Tauri portable alpha ZIP 的 fail-closed 验证器。 | 校验 ZIP 白名单、GUI subsystem、host/package/build/SBOM/receipt 和逐文件 SHA；不构成当前 NSIS 或签名发布验收。 |
+| `src/invoice_hub/release/windows_alpha_metadata.py` | Windows-only Tauri portable alpha 的严格 metadata 生成/校验工具。 | 只处理单一 alpha artifact 的受限交接 metadata，不创建通用 Feed 或公开 Release 资格。 |
 
 ## 13.1 macOS SwiftUI 壳
 
@@ -318,7 +339,7 @@
 | 文件 | 主要覆盖 | 关联生产模块 |
 |---|---|---|
 | `tests/fixtures/sample_invoice.xml` | 最小结构化发票样本。 | extraction、summary、cost XML 链路。 |
-| `tests/test_api_contract.py` | API 字段、设置、关闭、诊断、SSE、皮肤、成本、选择合计和重命名。 | `api/app.py`、`AppState`、skins、costs、summary。 |
+| `tests/test_api_contract.py` | API 字段、设置、关闭、诊断、SSE、皮肤、成本、选择合计、重命名，以及 monitor recovery HMAC request/response/replay/empty-body contracts。 | `api/app.py`、`AppState`、skins、costs、summary。 |
 | `tests/test_file_preview.py` | 预览 job、来源复核、分页、文本、容量与安全边界。 | file_preview、document_rendering、AppState、API。 |
 | `tests/test_file_preview_frontend_contract.py` | 首页预览 DOM、交互和静态资源契约。 | index.html、page-index.js、app.css。 |
 | `tests/test_documents.py` | 单据状态、预览、人民币大写、模板扩行、导出和路径限制。 | documents、AppState documents API。 |
@@ -336,11 +357,12 @@
 | `tests/test_source_snapshot.py` | clean commit 源码快照、排除/秘密与确定性。 | release/source_snapshot。 |
 | `tests/test_release_provenance.py` | 真实包/收据/源码/Tag 的 finalizer、Sparkle ZIP 路径和重复条目边界。 | release/provenance。 |
 | `tests/test_update_metadata.py` | latest/appcast schema、三产物/core/source/EdDSA parity。 | release/update_metadata。 |
-| `tests/test_windows_alpha_metadata.py` | Windows-only alpha Feed 的一个 ZIP/receipt/source identity、macOS unsupported 和反向占位拒绝。 | `windows_alpha_metadata` 与 `UpdateService`。 |
 | `tests/test_update_service.py` | 白名单、重定向、超时/大小、ETag/cache、版本与契约状态。 | services/update_service。 |
 | `tests/test_settings_migration.py` | 配置/偏好白名单、备份、Windows browser 归一和业务排除。 | release/settings_migration。 |
 | `tests/test_polling_observer.py` | macOS polling observer 的事件/停止契约。 | monitoring/polling_observer、daemon。 |
 | `tests/test_windows_release_contract.py` | Windows BAT/PS1/module/manifest/browser/stale 静态契约，以及 fresh PowerShell 初始化器、浅源归档和确定性磁盘阈值动态契约。 | scripts/windows、scripts/dev Windows 发行链；初始化器成功路径不得依赖宿主临时卷余量，低于配置阈值必须失败且不写 receipt。 |
+| `tests/test_tauri_windows_portable.py` | 未签名 Windows Tauri portable alpha ZIP 的布局、hash、GUI subsystem 与 verifier 契约。 | `tauri_windows_portable.py`、`verify_tauri_windows_portable.py`；不替代当前 NSIS public-preview 或 Windows 原生运行证据。 |
+| `tests/test_windows_alpha_metadata.py` | Windows Tauri portable alpha metadata 的 schema、artifact 与 release-boundary 契约。 | `windows_alpha_metadata.py`；拒绝把 alpha handoff metadata 当成公开 Feed。 |
 | `tests/test_macos_release_contract.py` | Mac runtime/build/verify/Sparkle/签名脚本静态契约。 | macOS 正式发行文件。 |
 | `tests/test_api_bookkeeping.py` | 做账 API、错误模型和废弃接口 410。 | AppState、api、bookkeeping。 |
 | `tests/test_bookkeeping_decisions.py` | W9 会计决定与提案 revision。 | decisions、vouchers。 |
@@ -355,17 +377,19 @@
 | `tests/test_summary_and_costs.py` | 金额防污染、同票纠偏、结构化成本、均价、参考状态和 schema 刷新。 | extraction、summary、cost_analysis、costs。 |
 | `tests/test_development_documentation.py` | 文件地图、链接、接口路由、基线、旧事实和敏感路径门禁。 | 本架构文档、README、AGENTS、CLAUDE 和 Git 指南。 |
 | `tests/test_tauri_foundation.py` | 版本派生、单点 drift 修复、doctor fail-closed、固定 origin、MSRV resolver、Cargo/pnpm lock 与非安装 bootstrap。 | Tauri foundation scripts, configuration, and plan; Rust compile is separately recorded, and no platform smoke test is claimed. |
-| `tests/test_tauri_dev_app.py` | Development `.app` allowlist staging、schema-3 manifest/launcher 哈希绑定、state-root 隔离与 app-only 构建参数契约。 | `scripts/dev/tauri_dev_app.py`、`src-tauri/tauri.dev.conf.json`；只证明开发组装输入，不证明 DMG/NSIS、签名、公证或平台发布。 |
-| `tests/test_tauri_host_rpc.py` | Python Host RPC URL/token/enum、updater response narrowing、失败不回退、插件拥有 picker 主线程调度和子进程凭据清理。 | `platform/host_rpc.py`、`platform/windows.py`、`src-tauri/src/host_rpc.rs`。 |
+| `tests/test_tauri_dev_app.py` | Development `.app` allowlist staging、ordinary/recovery manifest 可重复性、固定不可安装 updater tuple、无权限的空 plugin-config 占位、launcher 哈希绑定与 app-only 构建参数契约。 | `scripts/dev/tauri_dev_app.py`、`src-tauri/tauri.dev.conf.json`；只证明开发组装输入，不证明 DMG/NSIS、签名、公证或平台发布。 |
+| `tests/test_tauri_recovery_smoke.py` | L10-E App plist/manifest identity、临时路径、marker scope、health/monitor identity 和闭合 HTTP allowlist 契约。 | `scripts/dev/tauri_recovery_smoke.py`；不模拟 check/install，真实 startup-recovery runtime 由 L10-E 有边界的平台样本单独记录。 |
+| `tests/test_tauri_public_preview_smoke.py` | mounted-DMG public-preview App identity、精确 disabled updater、隔离 Application Support、LaunchServices 启动、临时 host/backend 归属和闭合 shutdown HTTP surface。 | `scripts/dev/tauri_public_preview_smoke.py`；锁定 smoke 输入与清理边界，不替代最终 Tag DMG 的 Finder/Gatekeeper 成品验收。 |
+| `tests/test_tauri_host_rpc.py` | Python Host RPC URL/token/enum、updater response narrowing、失败不回退和子进程凭据清理。 | `platform/host_rpc.py`、`platform/windows.py`。 |
+| `tests/test_app_icon.py` | 内置图标资产/缓存、运行态隔离、精确 API body、favicon 覆盖，以及 Tauri host 成功前不得落盘。 | `app_icons.py`、`AppState.update_app_icon`、`api/app.py`、页面模板。 |
 | `tests/test_tauri_lifecycle_contract.py` | Tauri 生命周期静态配置、无 WebView IPC、HMAC/liveness、manifest hash 与 updater candidate/order source contract。 | `src-tauri` lifecycle boundary。 |
-| `tests/test_tauri_windows_portable.py` | Windows Tauri ZIP host-marker、PE/manifest/SBOM/file-SHA/receipt verifier 与 clean-tag handoff gate。 | `tauri_windows_portable.py` 和 `verify_tauri_windows_portable.py`。 |
-| `src-tauri/tests/lifecycle_contract.rs` | Fixed port、identity、OpenAPI methods、Host RPC authorization/revocation、manifest hash、candidate expiry and update order Rust integration contracts. | `backend.rs`、`host_rpc.rs`。 |
+| `src-tauri/tests/lifecycle_contract.rs` | Fixed port、identity、OpenAPI methods、Host RPC authorization/revocation、manifest hash、candidate expiry and update order Rust integration contracts. | `backend.rs`、`host_rpc.rs`、`BackendLifecycleAuthority` delegation tests。 |
 
 ## 15. 前端公共资源
 
 | 文件 | 职责与入口 | 关系与修改影响 |
 |---|---|---|
-| `web/static/css/app.css` | 全站布局、表格、状态、响应式和无皮肤默认样式。 | 所有普通模板引用；修改需更新模板 `?v=` 和前端契约。 |
+| `web/static/css/app.css` | 全站布局、表格、状态、应用图标选择控件、响应式和无皮肤默认样式。 | 所有普通模板引用；修改需更新模板 `?v=` 和前端契约。 |
 | `web/static/css/settings-actions.css` | 首页/设置页操作、确认对话框和通知样式。 | `index.html`、`settings.html` 引用；版本参数需同步。 |
 | `web/static/js/common.js` | API 包装、转义、表格 TSV、皮肤、SSE 和导航过渡。 | 所有页面 JS 依赖；SSE 页面通过 `connectEvents` 复用重连语义。 |
 | `web/static/js/page-index.js` | 首页目录草稿、发票列表、筛选、预览续租/自动恢复、批量打印、勾选合计和 monitor 操作。 | 消费 settings/invoices/preview/keep-alive/print/selection/bridge API；弹窗关闭必须停止续租。 |
@@ -374,11 +398,11 @@
 | `web/static/js/page-documents.js` | 入出库标签、目录草稿、预览、导出策略和打开操作。 | 消费 documents/preferences API，并监听汇总事件。 |
 | `web/static/js/page-ocr.js` | OCR 候选目录和禁用服务状态。 | 消费 preferences/ocr API；当前不执行正式 OCR。 |
 | `web/static/js/page-consistency.js` | 同票多格式一致性表。 | 消费 consistency-report API。 |
-| `web/static/js/page-settings.js` | 设置中心、运行控制、重命名、偏好、诊断和关闭系统。 | 消费多数设置/bridge/documents/skins/ocr/diagnostics/shutdown API。 |
-| `web/static/js/page-skins.js` | 皮肤 ZIP 导入、替换、启用和重置。 | 消费 skins API；不执行包内 JS。 |
+| `web/static/js/page-settings.js` | 设置中心、应用图标、运行控制、重命名、偏好、诊断和关闭系统。 | 消费多数设置/bridge/documents/skins/app-icon/ocr/diagnostics/shutdown API；图标成功后同步当前页 favicon。 |
+| `web/static/js/page-skins.js` | 皮肤 ZIP 导入、替换、启用/重置和独立的应用图标选择。 | 消费 skins/app-icon API；不执行包内 JS。 |
 | `web/static/js/page-bookkeeping.js` | 凭证人审、映射规则、账套设置和批次状态。 | 消费 `/api/v1/bookkeeping/*`，持续展示服务端 blockers。 |
 
-## 16. 内置皮肤资产
+## 16. 内置皮肤和应用图标资产
 
 | 文件 | 职责与关系 |
 |---|---|
@@ -401,6 +425,12 @@
 | `web/static/skins/ink-pulse/textures/ink-field-v1.webp` | 原创墨场背景纹理。 | 包内静态资源，无远程依赖。 |
 | `web/static/skins/ink-pulse/textures/ink-splatter-atlas-v1.png` | 原创喷墨纹理图集。 | 包内静态资源，无官方游戏素材。 |
 | `web/static/skins/ink-pulse/textures/panel-print-v1.webp` | 原创面板印刷纹理。 | 包内静态资源，无远程依赖。 |
+| `web/static/app-icon/orange/icon_256.png` | 暖橙默认应用图标的大预览和 Tauri runtime 图像输入。 | 只由内置 id 引用，必须保持 PNG 且不从外网加载。 |
+| `web/static/app-icon/orange/icon_32.png` | 暖橙默认应用图标的 favicon 资产。 | 所有普通页面、`/backend`、打印模板与 `?no_skin=1` 都由服务端注入当前选择。 |
+| `web/static/app-icon/teal/icon_256.png` | 青碧应用图标的大预览和 Tauri runtime 图像输入。 | 只由内置 id 引用，必须保持 PNG 且不从外网加载。 |
+| `web/static/app-icon/teal/icon_32.png` | 青碧应用图标的 favicon 资产。 | 所有普通页面、`/backend`、打印模板与 `?no_skin=1` 都由服务端注入当前选择。 |
+| `web/static/app-icon/violet/icon_256.png` | 罗兰紫应用图标的大预览和 Tauri runtime 图像输入。 | 只由内置 id 引用，必须保持 PNG 且不从外网加载。 |
+| `web/static/app-icon/violet/icon_32.png` | 罗兰紫应用图标的 favicon 资产。 | 所有普通页面、`/backend`、打印模板与 `?no_skin=1` 都由服务端注入当前选择。 |
 
 ## 17. HTML 页面
 
@@ -414,8 +444,8 @@
 | `web/templates/documents.html` | `/documents`。 | page-documents 管理入库/出库预览和目录草稿。 |
 | `web/templates/ocr.html` | `/ocr`。 | 展示当前 OCR 未内置状态和候选文件入口。 |
 | `web/templates/consistency.html` | `/consistency`。 | page-consistency 展示多格式冲突。 |
-| `web/templates/settings.html` | `/settings`。 | page-settings 和 settings-actions；提供 `?no_skin=1` 恢复入口。 |
-| `web/templates/skins.html` | `/skins`。 | page-skins 提供 ZIP 导入/替换/启用。 |
+| `web/templates/settings.html` | `/settings`。 | page-settings、应用图标和 settings-actions；提供 `?no_skin=1` 恢复入口。 |
+| `web/templates/skins.html` | `/skins`。 | page-skins 提供 ZIP 导入/替换/启用及独立应用图标选择。 |
 | `web/templates/bookkeeping.html` | `/bookkeeping`。 | W8/W9 人审、映射、账套和批次视图。 |
 | `web/templates/backend.html` | `/backend` 高级诊断。 | 不注入皮肤；内联请求 health/settings/bridge，不出现在普通首要导航。 |
 

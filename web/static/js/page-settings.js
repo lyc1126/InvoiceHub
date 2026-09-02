@@ -436,6 +436,10 @@ app.connectEvents(settingsRefs.eventState, () => loadSettings("event"), { refres
 
     resetSkinBtn: document.getElementById("settingsResetSkinBtn"),
 
+    appIconStatus: document.getElementById("settingsAppIconStatus"),
+
+    appIconList: document.getElementById("settingsAppIconList"),
+
   };
 
   const state = {
@@ -455,6 +459,12 @@ app.connectEvents(settingsRefs.eventState, () => loadSettings("event"), { refres
     skins: null,
 
     skinBusy: "",
+
+    appIcons: null,
+
+    appIconBusy: "",
+
+    pendingAppIconId: "",
 
   };
 
@@ -802,6 +812,204 @@ app.connectEvents(settingsRefs.eventState, () => loadSettings("event"), { refres
 
 
 
+  function appIconItems(payload) {
+
+    return Array.isArray(payload?.icons) ? payload.icons : [];
+
+  }
+
+
+
+  function appIconId(icon) {
+
+    return String(icon?.id || "").trim();
+
+  }
+
+
+
+  function currentAppIconId() {
+
+    return String(state.appIcons?.icon || "").trim();
+
+  }
+
+
+
+  function appIconById(iconId) {
+
+    return appIconItems(state.appIcons).find((icon) => appIconId(icon) === String(iconId || "").trim());
+
+  }
+
+
+
+  function setPageFavicon(icon) {
+
+    const href = String(icon?.favicon_url || "").trim();
+
+    if (!href) return;
+
+    let link = document.getElementById("appIconLink");
+
+    if (!link) {
+
+      link = document.createElement("link");
+
+      link.id = "appIconLink";
+
+      link.rel = "icon";
+
+      link.type = "image/png";
+
+      document.head.appendChild(link);
+
+    }
+
+    link.setAttribute("href", href);
+
+  }
+
+
+
+  function renderAppIconCard(icon) {
+
+    const id = appIconId(icon);
+
+    const active = id === currentAppIconId();
+
+    const checked = id === (state.pendingAppIconId || currentAppIconId());
+
+    const pending = id === state.pendingAppIconId;
+
+    const busy = Boolean(state.appIconBusy);
+
+    const name = String(icon?.name || id);
+
+    const description = String(icon?.description || "");
+
+    const previewUrl = String(icon?.preview_url || "");
+
+    return `<label class="app-icon-card${active ? " is-active" : ""}${checked ? " is-selected" : ""}${pending ? " is-pending" : ""}">
+
+      <input class="app-icon-card__radio" type="radio" name="settingsAppIconChoice" data-settings-app-icon-select="${app.escapeHtml(id)}" value="${app.escapeHtml(id)}"${checked ? " checked" : ""}${busy ? " disabled" : ""}>
+
+      <span class="app-icon-card__preview" aria-hidden="true"><img src="${app.escapeHtml(previewUrl)}" alt=""></span>
+
+      <span class="app-icon-card__body"><span class="app-icon-card__title"><strong>${app.escapeHtml(name)}</strong>${active ? app.statusPill("当前使用", "success") : ""}</span><span class="app-icon-card__description">${app.escapeHtml(description)}</span></span>
+
+    </label>`;
+
+  }
+
+
+
+  function renderAppIcons(payload) {
+
+    state.appIcons = payload || null;
+
+    if (!refs.appIconList || !refs.appIconStatus) return;
+
+    const items = appIconItems(state.appIcons);
+
+    const current = appIconById(currentAppIconId());
+
+    refs.appIconList.dataset.busy = state.appIconBusy ? "true" : "false";
+
+    refs.appIconList.setAttribute("aria-busy", state.appIconBusy ? "true" : "false");
+
+    refs.appIconList.innerHTML = items.length
+
+      ? items.map(renderAppIconCard).join("")
+
+      : '<div class="empty-state">暂无可用应用图标</div>';
+
+    if (!items.length) {
+
+      refs.appIconStatus.textContent = "应用图标：读取失败";
+
+    } else if (state.appIconBusy) {
+
+      refs.appIconStatus.textContent = `正在应用：${appIconById(state.pendingAppIconId)?.name || state.pendingAppIconId}`;
+
+    } else {
+
+      refs.appIconStatus.textContent = `当前应用图标：${current?.name || currentAppIconId()}`;
+
+    }
+
+  }
+
+
+
+  function renderAppIconError(error) {
+
+    state.appIcons = null;
+
+    if (refs.appIconStatus) refs.appIconStatus.textContent = "应用图标：读取失败";
+
+    if (refs.appIconList) refs.appIconList.innerHTML = `<div class="empty-state">${app.escapeHtml(error?.message || "应用图标读取失败")}</div>`;
+
+  }
+
+
+
+  async function selectAppIcon(iconId) {
+
+    const next = appIconById(iconId);
+
+    if (!next || state.appIconBusy) {
+
+      renderAppIcons(state.appIcons);
+
+      return;
+
+    }
+
+    if (appIconId(next) === currentAppIconId()) {
+
+      renderAppIcons(state.appIcons);
+
+      return;
+
+    }
+
+    state.appIconBusy = "update";
+
+    state.pendingAppIconId = appIconId(next);
+
+    renderAppIcons(state.appIcons);
+
+    try {
+
+      const payload = await app.api("/api/v1/app-icon", { method: "PUT", body: { icon: appIconId(next) } });
+
+      state.appIcons = payload;
+
+      state.pendingAppIconId = "";
+
+      setPageFavicon(appIconById(payload?.icon));
+
+      app.setBanner(settingsRefs.banner, "success", `应用图标已切换为：${appIconById(payload?.icon)?.name || payload?.icon}`);
+
+    } catch (error) {
+
+      state.pendingAppIconId = "";
+
+      app.setBanner(settingsRefs.banner, "danger", error.message || "应用图标更新失败");
+
+    } finally {
+
+      state.appIconBusy = "";
+
+      renderAppIcons(state.appIcons);
+
+    }
+
+  }
+
+
+
   async function loadPhase2Settings() {
 
     const settled = await Promise.allSettled([
@@ -814,6 +1022,8 @@ app.connectEvents(settingsRefs.eventState, () => loadSettings("event"), { refres
 
       app.api("/api/v1/cost-analysis"),
 
+      app.api("/api/v1/app-icon"),
+
     ]);
 
     const settings = settled[0].status === "fulfilled" ? settled[0].value : null;
@@ -823,6 +1033,8 @@ app.connectEvents(settingsRefs.eventState, () => loadSettings("event"), { refres
     const skins = settled[2].status === "fulfilled" ? settled[2].value : null;
 
     const costs = settled[3].status === "fulfilled" ? settled[3].value : null;
+
+    const appIcons = settled[4].status === "fulfilled" ? settled[4].value : null;
 
     if (settings || costs) renderWatchDirEditor(settings, costs);
 
@@ -835,6 +1047,14 @@ app.connectEvents(settingsRefs.eventState, () => loadSettings("event"), { refres
     }
 
     if (skins) renderSkins(skins);
+
+    if (!state.appIconBusy) {
+
+      if (appIcons) renderAppIcons(appIcons);
+
+      else renderAppIconError(settled[4].reason);
+
+    }
 
   }
 
@@ -1337,6 +1557,16 @@ app.connectEvents(settingsRefs.eventState, () => loadSettings("event"), { refres
   refs.enableSkinBtn?.addEventListener("click", enableSelectedSkin);
 
   refs.resetSkinBtn?.addEventListener("click", resetSkin);
+
+  refs.appIconList?.addEventListener("change", (event) => {
+
+    const input = event.target.closest("[data-settings-app-icon-select]");
+
+    if (!input) return;
+
+    selectAppIcon(input.dataset.settingsAppIconSelect || input.value);
+
+  });
 
   window.addEventListener("resize", app.debounce(() => {
 

@@ -35,5 +35,9 @@ UPDATE_ALLOWED_HOSTS = (
 WINDOWS_PACKAGE_ID = "com.invoicehub.windows.x86_64.portable"
 MACOS_DMG_PACKAGE_ID = "com.invoicehub.macos.arm64.dmg"
 MACOS_SPARKLE_PACKAGE_ID = "com.invoicehub.macos.arm64.sparkle"
+# Public preview installation identities are distinct from historical portable
+# and internal-alpha artifacts, so receipts cannot be reused across channels.
+WINDOWS_NSIS_PREVIEW_PACKAGE_ID = "com.invoicehub.windows.x86_64.nsis-preview"
+MACOS_PUBLIC_PREVIEW_PACKAGE_ID = "com.invoicehub.macos.arm64.preview-dmg"
 MACOS_SPARKLE_KEYCHAIN_ACCOUNT = "com.invoicehub.release"
 TAURI_BUNDLE_IDENTIFIER = "com.invoicehub.desktop"

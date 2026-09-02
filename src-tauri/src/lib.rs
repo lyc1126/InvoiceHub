@@ -1,5 +1,9 @@
+pub mod app_icon;
 pub mod backend;
 pub mod host_rpc;
+pub mod monitor_bridge;
+pub mod monitor_recovery;
+pub mod update_coordinator;
 
 pub const FIXED_BACKEND_HOST: &str = "127.0.0.1";
 pub const FIXED_BACKEND_PORT: u16 = 8766;

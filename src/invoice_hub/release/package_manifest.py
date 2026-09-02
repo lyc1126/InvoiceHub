@@ -11,6 +11,7 @@ from typing import Any
 
 from invoice_hub.version import (
     MACOS_DMG_PACKAGE_ID,
+    MACOS_PUBLIC_PREVIEW_PACKAGE_ID,
     MACOS_SPARKLE_PACKAGE_ID,
     PRODUCT_VERSION,
     RELEASE_PYTHON_VERSION,
@@ -18,6 +19,7 @@ from invoice_hub.version import (
     UPDATE_CHANNEL,
     UPDATE_FEED_URL,
     WINDOWS_PACKAGE_ID,
+    WINDOWS_NSIS_PREVIEW_PACKAGE_ID,
 )
 
 
@@ -30,10 +32,12 @@ PACKAGE_ID_PATTERN = re.compile(r"^[a-z0-9]+(?:[._-][a-z0-9]+)+$")
 SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 SUPPORTED_PLATFORMS = {"windows", "macos"}
 SUPPORTED_ARCHITECTURES = {"x86_64", "arm64"}
-SUPPORTED_PACKAGE_TYPES = {"portable", "dmg", "sparkle"}
+SUPPORTED_PACKAGE_TYPES = {"portable", "nsis", "dmg", "preview-dmg", "sparkle"}
 PACKAGE_ID_BY_TARGET = {
     ("windows", "x86_64", "portable"): WINDOWS_PACKAGE_ID,
+    ("windows", "x86_64", "nsis"): WINDOWS_NSIS_PREVIEW_PACKAGE_ID,
     ("macos", "arm64", "dmg"): MACOS_DMG_PACKAGE_ID,
+    ("macos", "arm64", "preview-dmg"): MACOS_PUBLIC_PREVIEW_PACKAGE_ID,
     ("macos", "arm64", "sparkle"): MACOS_SPARKLE_PACKAGE_ID,
 }
 

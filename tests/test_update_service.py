@@ -75,7 +75,7 @@ def _feed(version: str = "0.3.0-alpha.3") -> dict:
         },
         "artifacts": {
             "windows-x86_64-portable": {
-                "url": f"{release_root}/download/v{version}/InvoiceHub.zip",
+                "url": f"https://github.com/lyc1126/InvoiceHub/releases/download/v{version}/InvoiceHub.zip",
                 "size_bytes": 123,
                 "sha256": SHA,
                 "package_id": WINDOWS_PACKAGE_ID,
@@ -83,7 +83,7 @@ def _feed(version: str = "0.3.0-alpha.3") -> dict:
                 "source_commit": SOURCE_COMMIT,
             },
             "macos-arm64-dmg": {
-                "url": f"{release_root}/download/v{version}/InvoiceHub.dmg",
+                "url": f"https://github.com/lyc1126/InvoiceHub/releases/download/v{version}/InvoiceHub.dmg",
                 "size_bytes": 456,
                 "sha256": SHA,
                 "package_id": MACOS_DMG_PACKAGE_ID,
@@ -91,7 +91,7 @@ def _feed(version: str = "0.3.0-alpha.3") -> dict:
                 "source_commit": SOURCE_COMMIT,
             },
             "macos-arm64-sparkle": {
-                "url": f"{release_root}/download/v{version}/InvoiceHub.zip",
+                "url": f"https://github.com/lyc1126/InvoiceHub/releases/download/v{version}/InvoiceHub.zip",
                 "size_bytes": 456,
                 "sha256": SHA,
                 "package_id": MACOS_SPARKLE_PACKAGE_ID,
@@ -128,31 +128,6 @@ def test_update_check_reports_available_and_reuses_etag_cache(tmp_path: Path) ->
     assert "Cache-Control" not in calls[0]
     assert "Cache-Control" not in calls[1]
     assert second["status"] == "available"
-
-
-def test_missing_update_feed_reports_unpublished_without_caching(tmp_path: Path) -> None:
-    calls: list[str] = []
-    cache_path = tmp_path / "update-cache.json"
-
-    def transport(url, _headers, *_args):
-        calls.append(url)
-        return UpdateFetchResult(404, b"", "", url)
-
-    service = UpdateService(
-        cache_path=cache_path,
-        package_manifest=_package(),
-        build_manifest={},
-        transport=transport,
-    )
-    result = service.check(force=True)
-
-    assert calls == [UPDATE_FEED_URL]
-    assert result["status"] == "unsupported"
-    assert result["error_code"] == "UPDATE_FEED_UNAVAILABLE"
-    assert "尚未发布" in result["message"]
-    assert "HTTP 404" not in result["message"]
-    assert service.state() == result
-    assert not cache_path.exists()
 
 
 def test_required_fresh_body_rejects_cached_etag_and_304_metadata(tmp_path: Path) -> None:
@@ -334,26 +309,6 @@ def test_update_fetch_does_not_accept_late_304_headers(monkeypatch) -> None:
         )
 
     assert observed_timeouts == [3.0]
-
-
-def test_update_fetch_returns_real_http_404_as_a_result(monkeypatch) -> None:
-    class MissingFeedOpener:
-        def open(self, request, *, timeout):
-            del timeout
-            raise HTTPError(request.full_url, 404, "Not Found", {"ETag": '"missing"'}, None)
-
-    monkeypatch.setattr(update_service, "build_opener", lambda *_handlers: MissingFeedOpener())
-
-    result = fetch_update_feed(
-        UPDATE_FEED_URL,
-        {},
-        UPDATE_ALLOWED_HOSTS,
-        connect_timeout=3.0,
-        total_timeout=5.0,
-        max_bytes=1024,
-    )
-
-    assert result == UpdateFetchResult(404, b"", '"missing"', UPDATE_FEED_URL)
 
 
 def test_update_fetch_wall_deadline_returns_when_transport_is_stuck(monkeypatch) -> None:

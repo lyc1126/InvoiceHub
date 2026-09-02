@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import importlib.util
 import json
@@ -154,6 +155,32 @@ def test_stage_is_byte_stable_when_the_input_commit_and_timestamp_are_fixed(tmp_
     assert second.host_manifest_path.read_bytes() == first_manifest_bytes
 
 
+def test_recovery_stage_uses_only_the_fixed_non_installing_updater_tuple(tmp_path: Path) -> None:
+    module = _load_module()
+    root = _copy_source_tree(tmp_path)
+    python = _venv_python(tmp_path)
+    kwargs = {
+        "source_commit": "e" * 40,
+        "built_at": "2026-08-24T00:00:00Z",
+    }
+
+    recovery = module.stage(root, python, recovery_smoke=True, **kwargs)
+    recovery_host = json.loads(recovery.host_manifest_path.read_text(encoding="utf-8"))
+    assert recovery.recovery_smoke is True
+    assert recovery_host["profile"] == "development"
+    assert recovery_host["updater"] == {
+        "enabled": True,
+        "endpoint": module.RECOVERY_SMOKE_ENDPOINT,
+        "public_key": module.RECOVERY_SMOKE_PUBLIC_KEY,
+    }
+    assert b"NOT A SIGNING KEY" in base64.b64decode(module.RECOVERY_SMOKE_PUBLIC_KEY)
+
+    ordinary = module.stage(root, python, **kwargs)
+    ordinary_host = json.loads(ordinary.host_manifest_path.read_text(encoding="utf-8"))
+    assert ordinary.recovery_smoke is False
+    assert ordinary_host["updater"] == {"enabled": False}
+
+
 def test_implicit_build_metadata_marks_dirty_worktrees(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     module = _load_module()
     head = "d" * 40
@@ -224,6 +251,10 @@ def test_development_overlay_is_app_only_and_base_config_stays_disabled() -> Non
         ".dev-staging/invoice-hub-dev-launcher.sh": "invoice-hub-dev-launcher.sh",
         ".dev-staging/invoicehub-desktop-host.json": "invoicehub-desktop-host.json",
     }
+    # The plugin rejects an absent config as JSON null before its Rust builder
+    # can apply the hash-bound manifest key. This empty placeholder carries no
+    # endpoint or signing authority and ordinary development stays disabled.
+    assert overlay["plugins"]["updater"] == {"pubkey": ""}
 
 
 def test_build_command_injects_the_manifest_hash_and_requests_only_the_app(tmp_path: Path) -> None:
@@ -247,6 +278,32 @@ def test_build_command_injects_the_manifest_hash_and_requests_only_the_app(tmp_p
         "app",
     ]
     assert environment["INVOICE_HUB_BUNDLE_MANIFEST_SHA256"] == "c" * 64
+
+
+def test_build_command_can_use_an_explicit_tauri_cli_without_pnpm(tmp_path: Path) -> None:
+    module = _load_module()
+    root = _copy_source_tree(tmp_path)
+    tauri_cli = tmp_path / "tooling/tauri"
+    tauri_cli.parent.mkdir(parents=True)
+    tauri_cli.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    tauri_cli.chmod(0o755)
+
+    command, environment = module.build_command(
+        root,
+        None,
+        "f" * 64,
+        tauri_cli=tauri_cli,
+    )
+
+    assert command == [
+        str(tauri_cli),
+        "build",
+        "--config",
+        str(root / "src-tauri/tauri.dev.conf.json"),
+        "--bundles",
+        "app",
+    ]
+    assert environment["INVOICE_HUB_BUNDLE_MANIFEST_SHA256"] == "f" * 64
 
 
 def test_build_gate_rejects_non_macos_arm64_hosts() -> None:

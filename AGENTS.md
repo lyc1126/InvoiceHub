@@ -33,6 +33,19 @@
 - 修改跨模块影响范围、最低测试或验收入口时，同步 `docs/architecture/AGENT_TASK_MAP.md`；产生新的非直觉约束、兼容原因或失败保护时，同步 `docs/architecture/COMMENT_RATIONALE_MAP.md`，必要时再把长期不变量写回本文件。
 - 整合开发分支完成验收并合并 `main` 后，必须在同一任务内把架构文档的开发实现基线和稳定发布基线切换到新的 `main` commit，不保留两套相互漂移的架构说明。
 
+## 文档语言与代码注释规则
+
+- `CHANGELOG.md` 的标题、分节和新增/修订记录一律使用中文；代码标识符、API 路径、命令、配置键、协议名、产品名和不可翻译的专有名词可保留原文。翻译历史记录时不得改变版本、哈希、接口、验证范围或未覆盖项的事实含义。
+- 每次编辑代码时，必须判断本轮改动是否包含局部代码不能自明的业务规则、跨层/跨功能衔接、时序、安全边界、兼容约束或失败恢复语义；存在时必须在最靠近该判断、交接或保护分支的位置补充简洁注释。纯语法、直观数据转换、已由命名和类型完整表达的逻辑不得为了凑数逐行注释。
+- 新增或修改跨功能流程时，衔接注释必须让开发者一眼看出：上游输入或状态来自哪里、下游哪个功能/消费者会使用它、为何必须保持当前顺序或不变量，以及放宽或失败时会造成什么后果。典型交接包括页面 -> API -> 服务 -> 投影、monitor -> 状态文件 -> SSE/页面、host -> backend -> 原生能力，以及读取 -> 校验 -> 写入/通知。
+- 注释只陈述当前代码和测试能证明的事实；优先一至三行，并与 `docs/architecture/COMMENT_RATIONALE_MAP.md` 的原因、不变量和守护测试同步。复杂编排可使用稳定的阶段标题帮助导航，但不得用大段流水账、猜测性历史或重复代码本身代替设计说明。
+
+## 非公开历史功能与故障回溯
+
+- [旧工作区功能与故障回溯索引](docs/legacy/OLD_WORKSPACE_CHANGELOG_INDEX.md) 是公开工作树中唯一允许的旧工作区 Changelog 备查入口；它只提供脱敏的功能类别、故障症状、不变量和当前查询路线，不是原始记录的副本。
+- 回溯顺序固定为：当前源码/测试和真值文档 -> 当前 `CHANGELOG.md` -> 旧项目能力基线 -> 脱敏索引。若仍不足，只有所有者可在公开工作树外的私有归档人工核对，并只能将新的脱敏结论写回本仓库。
+- 原始非公开 Changelog 及其附件、绝对路径、软链接、局部摘录、验证数据和构建/运行记录不得复制、链接、暂存、提交或写入本工作树的 ignored 目录；不得把它们作为公开图、测试夹具、发布输入或行为真值。
+
 ## 第一性原则
 
 - 源发票是事实；CSV/XLSX/JSON 是可重建投影。
@@ -226,6 +239,7 @@
 - macOS 内部候选的 staging App、Sparkle ZIP App、DMG App 与 DMG 容器必须全部为 ad-hoc 签名，并拒绝 Developer ID Authority 或 Team ID；验证器必须显式且互斥地使用 `--expect-internal-adhoc` 或 `--expect-notarized`，不得用自动猜测或无模式验证混淆内部候选与正式产物。
 - Sparkle 发布私钥只允许使用 Keychain account `com.invoicehub.release`，`sign_update` 必须显式传递该 account。macOS 构建收据固定为 schema 4 并记录 `signature_mode`、`sparkle_keychain_account` 与 v4 验证器；公开 provenance/finalizer 只接受 `developer-id-notarized` 正式收据，仍须对实际制品独立执行 `--artifact-only --expect-notarized`，内部 ad-hoc 收据永远不能放行 Feed。
 - macOS 发布验收必须额外覆盖：`.app/.dmg`、Developer ID、Hardened Runtime、公证/staple、quarantine、无 Docker/开发 `.venv`、包外发票目录、Application Support、原生面板、关闭窗口/monitor，以及一次真实 Sparkle 旧版到新版升级。
+- macOS public-preview 的 DMG smoke 必须从挂载卷复制 App、复核 receipt 与 ad-hoc 签名、在复制件保留 quarantine，并仅用 `open -n -W -g` 经 LaunchServices 注入隔离 `HOME`；不得直接执行 `Contents/MacOS`、删除 quarantine 或传递 `INVOICE_HUB_DEV_STATE_ROOT`。其固定 shutdown 样本中，SSE 必须在结构化 shutdown 已被接受后结束，避免 WKWebView 的 EventSource 阻止 Uvicorn 正常退出。
 - macOS 发布验证器对已签名 App 执行内嵌 Python、`pip check`、import smoke 或内容扫描时必须同时设置 `PYTHONDONTWRITEBYTECODE=1` 和解释器参数 `-B`；`-I` 会忽略 `PYTHON*` 环境变量，不能只靠前者。普通验证必须可重复执行且不得在 staging App 内新增 `.pyc` 或破坏 codesign seal，artifact-only 通过不能替代该幂等检查。
 
 ## 发行与更新规则
@@ -259,7 +273,10 @@
 - 每个 RC 最多一次完整回归；先运行命中变更面的聚焦验证。Tauri `v0.3` 的决策场景固定为两种启动方式、单实例与错误端口、Host RPC 授权边界、合法/篡改更新、安装前 monitor 停止；修复后只重跑受影响类别。
 - Tauri `src-tauri/` 只承担窗口、托盘、单实例、原生面板、打印、后端生命周期、随机令牌 Host RPC 与 updater。它只绑定 `127.0.0.1:8766`；未知占用必须明确失败，不能换端口或连接旧实例。Host RPC token 只允许由 host 传给其直接启动的 Python backend；backend 必须启动时捕获，并从 descendant 环境清除，绝不得返回网页、Tauri command/event、API 响应或日志，只接受固定 localhost origin 的枚举命令。携带该 token 的 Python loopback 请求必须显式禁用环境/系统代理并直连私有 listener。成功握手后必须先 arm 授权、再启动有界 child liveness watcher；watcher 只能撤销授权，不能在 child 已退出后重新授权。
 - Windows Tauri portable release 的 WebView2 user-data folder 必须由 host 显式派生、预创建并固定在 `%LOCALAPPDATA%\\InvoiceHub\\webview`；不得依赖 Tauri/Wry 按 application ID 推导的隐式 profile 位置，也不得把 browser surface 或 health 成功当作 desktop WebView 通过。
-- 在 recovery/relaunch coordinator 完整实现前，`update_install` 必须消费候选并 fail closed，绝不得下载、停止 monitor、替换或重启。Tauri updater metadata 请求必须设置 5 秒总时限，不能让插件默认的无时限请求占住 Host RPC operation。托盘 Quit 与 macOS 自定义应用菜单/Cmd-Q 只能调用同一个 `app.exit(0)` 请求，再由收到的 Tauri `ExitRequested` 先执行结构化 `keep_monitor` shutdown 并等待 owned child 退出；不得使用会直接绑定原生 `terminate:` 的 predefined Quit。API 错误或超时后必须显式 `kill + wait` 并确认 child 已退出；kill/wait 失败时必须阻止 host 退出，不得把 `Drop` 当作进程退出兜底。外部 AppleScript quit、Force Quit、SIGKILL、注销或断电可能绕过 `ExitRequested`，不得宣称这些路径可被 host 有序拦截。
+- Tauri updater metadata 请求必须设置 5 秒总时限，下载对象也必须继承有界时限。启用 updater 的 profile 只有在严格 owned 握手、tray/surface setup、startup gate 释放和 `BackendHost` 注册为 app state 全部完成后才可激活；development 或 updater-disabled internal-alpha 必须保持 inert。激活时只能从当前 `runtime_dir` 打开平台 marker store，并先执行一次 authenticated startup restore；恢复失败时保留 marker、保持 backend/WebUI 诊断可用、把 updater runtime 固定为失败态并拒绝后续检查/安装，不能为启动 updater 而提前释放 gate。
+- `update_install` 只接受固定 enum 并原子消费一个 300 秒内的 host-owned 完整候选；版本、URL、签名或 artifact ID 均不得由 Web 传入或返回。安装必须采用两阶段提交：先启动一个被 execute/cancel latch 阻塞的私有 worker，再把精确 `{"ok":true}` 响应完整写入并 flush，最后才放行 download+内置签名验证 -> pause owned monitor -> install -> relaunch。响应写失败、worker spawn 失败或 latch 派发丢失必须进入不可重试的 `CommitLost`，且不得下载、写 marker、停止 monitor 或安装；commit reserved/executing 时拒绝并发 check/install 和普通 Quit。候选 identity 必须由 host 对 version/target/download URL/signature 的域分隔 SHA-256 transcript 生成，但不得公开或记录敏感 metadata。
+- monitor recovery 的每个 Rust 请求和响应必须由 backend-private 32-byte ownership secret、fresh 64 位小写十六进制 challenge 和 HMAC-SHA256 transcript 双向绑定；secret 绝不得发送到固定端口、网页、API 或日志。Python 只为三条固定 bridge route 接受空 body 的完整认证头，拒绝篡改、不完整、非空 body 和进程内 replay；普通未认证页面 bridge 调用保持原语义。Rust 必须要求恰好一个响应 proof 并常量时间验证，同时保留 released owned lifecycle lease 在每次 marker/bridge 操作前后的 revalidation。
+- monitor 暂停仍只接受 `running && ready` 的 owned monitor；已有/损坏/跨 scope marker、ownership loss 或任一失败都必须保留恢复义务并 fail closed。Unix marker 最终操作必须相对 opened-directory descriptor 使用 no-follow `openat`/atomic no-clobber `linkat`/`unlinkat`，整段 `load/publish/clear` 由目录 `flock` 串行化并在最终 link/unlink 后同步目录元数据；Windows 只能使用 handle-relative、no-reparse 操作。Windows updater `2.10.1` 的 `Update::install()` 会在 `on_before_exit` 后启动 installer 并直接退出，因此 callback 必须先调用受管 `BackendHost.shutdown_keep_monitor_or_terminate()`，无法确认终止时以非零状态退出且不得启动 installer。macOS 安装返回后必须先终止 backend、标记 relaunch prepared，再调用 `request_restart()`；对应 `ExitRequested` 只允许该已准备重启跳过重复 shutdown。普通托盘/Menu Quit 仍共用 `app.exit(0)` 和结构化 `keep_monitor` shutdown；API 错误或超时后必须显式 `kill + wait` 并确认 child 已退出，失败时阻止 host 退出。外部 AppleScript quit、Force Quit、SIGKILL、注销或断电不属于有序退出承诺。
 - 安装包只放 GitHub Releases；从 `v0.3` 起同仓库 GitHub Pages 提供更新 Feed。不使用 GitHub Packages 或 App Store。Rust/Cargo/pnpm/Tauri 依赖必须锁定，Windows/macOS `doctor` 与 `bootstrap` 只能诊断环境，不得自动安装证书、Xcode 或 Visual Studio。
 
 ## 验收规则

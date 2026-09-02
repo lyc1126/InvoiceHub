@@ -40,6 +40,7 @@ BUILD_MANIFEST_NAME = "invoice-hub-build.json"
 PACKAGE_MANIFEST_NAME = "invoice-hub-package.json"
 RUNTIME_MANIFEST_NAME = "invoice-hub-runtime.json"
 PRODUCT_PACKAGE_ID = "com.invoicehub.macos.arm64.dmg"
+PRODUCT_PACKAGE_TYPE = "dmg"
 RECEIPT_SCHEMA_VERSION = 4
 RECEIPT_VERIFIER = "verify_tauri_alpha.py/v1"
 SOURCE_COPY_ALLOWLIST = (
@@ -474,7 +475,7 @@ def stage(
                 "--architecture",
                 "arm64",
                 "--package-type",
-                "dmg",
+                PRODUCT_PACKAGE_TYPE,
                 "--python-version",
                 runtime_version,
                 "--dependency-lock",

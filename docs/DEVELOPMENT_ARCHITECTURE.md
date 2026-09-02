@@ -4,7 +4,7 @@
 > 更新日期：2026-09-02
 > 公共权威基线：经过审计的单一脱敏根提交；旧私有提交、Tag、二进制和验证材料不在公开图中
 > 公开状态：候选树、保留 Git 对象和托管面已完成一次内容与凭据审计；公开图从脱敏根提交开始，详见 `docs/release/HISTORY_SANITIZATION_EXECUTION.md`
-> 当前开发线：`0.3.0-alpha.2` 已加入 Windows 10/11 x64 无签名 Tauri ZIP 的 clean-commit stage/build/verify/handoff 源码链、strict Windows-only Feed 和 release host marker；尚无 Tag、Release、Pages Feed 或 native Windows smoke。受控 lock、代码级生命周期/Host RPC/updater contracts、隔离 TestClient L6 API runtime，以及 macOS arm64 development/internal-alpha 历史样本仍保留；macOS 配置不是 alpha.2 的构建输入。裸 checkout 仍缺经编译绑定 manifest 并 fail-closed。
+> 当前开发基线：`0.3.0-alpha.2` 的 public-preview 组装、独立 package identity、LaunchServices/quarantine smoke、SSE 关闭修复与 receipt finalization 门禁均已合入公开 `main`：只有组包器内部可验证精确 pending record，发布入口必须验证与实际 DMG SHA-256 绑定的 finalized record。远端同名 Tag 仍指向此前基线，必须在干净 `main` 上经新的明确授权重建。没有 GitHub Release、资产、SignPath 请求或 Feed；最终 macOS 成品必须从 DMG 挂载复制、以隔离 `HOME` 经 LaunchServices 启动并保留 quarantine 验收；internal-alpha 与 L10-E 结果仅作为历史上下文。
 > 校验规则：精确的本地与 GitHub HEAD 以实时 `git rev-parse`、`git ls-remote` 和双向差异为准；发行源码候选不等于双平台成品 RC 或 GitHub 已发布版本
 
 ## 1. 这套文档解决什么问题
@@ -26,6 +26,7 @@ InvoiceHub 不是只有一个 FastAPI 页面。它同时包含发票提取、文
 - [数据结构与算法](architecture/DATA_AND_ALGORITHMS.md)：模型、数据库、投影、算法和公式。
 - [Agent 任务导航](architecture/AGENT_TASK_MAP.md)：按工程任务定位修改点和验收点。
 - [注释与设计原因地图](architecture/COMMENT_RATIONALE_MAP.md)：高价值注释点及其不变量。
+- [旧工作区功能与故障回溯索引](legacy/OLD_WORKSPACE_CHANGELOG_INDEX.md)：脱敏的历史查询入口，不含原始私有记录。
 
 ## 2. 事实来源和状态标记
 
@@ -38,10 +39,11 @@ InvoiceHub 不是只有一个 FastAPI 页面。它同时包含发票提取、文
 | 3 | `README.md`、`IMPLEMENTATION_STATUS.md` 等真值文档 | 运行方式、完成状态和验收口径 |
 | 4 | `CHANGELOG.md` | 设计如何演进、某个保护逻辑为什么出现 |
 | 5 | `docs/BASELINE_FROM_OLD_PROJECT.md` | 旧项目迁移基线，不代表重构版目录和实现 |
+| 6 | `docs/legacy/OLD_WORKSPACE_CHANGELOG_INDEX.md` | 旧工作区功能与故障的脱敏查询路线，不是原始 Changelog 或当前行为真值 |
 
 文中使用四种状态：
 
-- **当前实现**：已存在于当前脱敏源码快照，或明确标注为后续 `codex/tauri2-unified-desktop` 开发候选，并有源码或测试证据。
+- **当前实现**：已存在于当前脱敏源码快照，或明确标注为当前 `codex/tauri2-update-recovery` 开发候选，并有源码或测试证据。
 - **历史原因**：用于解释设计形成过程，不表示旧实现仍然存在。
 - **未启用能力**：保留接口或页面，但当前正式产品明确禁用。
 - **架构债务**：当前可以运行，但结构、重复或测试覆盖仍有维护风险。
@@ -52,11 +54,23 @@ InvoiceHub 不是只有一个 FastAPI 页面。它同时包含发票提取、文
 
 阻断解除后，`v0.3` 从公开后的 `main` 演进。Tauri 2 只提供窗口、托盘、单实例、原生面板、打印、后端生命周期、随机令牌 Host RPC 和 updater，继续复用 Python/FastAPI/Web/monitor 业务核心。它只能绑定 `127.0.0.1:8766`，未知端口占用必须失败；不能自动换端口或接入旧实例。
 
-当前代码边界已实现固定端口的 spawned-child ownership：Host 先读取 bundle manifest 的原始字节并要求 SHA-256 与编译期 `INVOICE_HUB_BUNDLE_MANIFEST_SHA256` 相等。裸源码 checkout 没有该输入，因此以状态 `78` 退出；development assembler 则从 allowlisted core、schema-3 manifest 和显式 venv launcher stage 资源后注入该哈希，release profile 仍需独立的正式发行输入。Host 以新 challenge 要求 backend 回传 HMAC-SHA256，随后复核 child PID、build/package identity、静态首页和 OpenAPI 的精确 HTTP 方法。读取严格的 `startup_surface` 与默认开启的 `allow_print_popups` 偏好后，必须再次发起 fresh challenge/HMAC 与 identity 复核，才 arm 授权并选择 `desktop` 的无 IPC WebView 或 `browser` 的 host-only 固定 origin opener；桌面模式关闭该许可时拒绝新窗口，开启时也只接受精确 `about:blank`，子窗口只能导航到无 query/fragment、受限 job ID 的同端口 `/invoices/print/{job_id}`，不能成为通用 popup。托盘和单实例重开同一 surface，desktop 关闭只隐藏窗口且不停止 monitor。Tray Quit 与 macOS 自定义应用菜单/Cmd-Q 只请求同一个 `app.exit(0)`；应用菜单不使用会直接绑定原生 `terminate:` 的 predefined Quit。Host 收到 `ExitRequested` 后才请求结构化 `keep_monitor` shutdown 并有界等待 owned child，错误或超时后显式 `kill + wait`，无法确认 child 已退出则阻止 host 退出，不能依赖进程 `Drop`。外部 AppleScript quit、Force Quit 或信号可以绕过该事件，不属于有序退出承诺。Host 只把 Host RPC token 传给其直接启动的 Python backend，backend 启动时捕获并从 descendant 环境清除；token 不进入 Web、Tauri command/event、API 响应或日志，携带 token 的 private loopback 请求显式绕过环境代理。Rust dialog 最多 120 秒，Python 等待 125 秒并在四条 picker route 上把 private failure 固定映射为脱敏 503；release-host updater metadata 请求另有 5 秒总时限，不能永久占住 operation mutex。development profile 的 updater 委托明确禁用；它必须显式给出已存在、canonicalize 后与 bundle/core 及完整 macOS `.app` 容器双向不包含的绝对 `INVOICE_HUB_DEV_STATE_ROOT`，`Contents` sibling 同样拒绝，并在启动 Python child 前清除它。release-host `update_install` 也在 recovery/relaunch coordinator 完整实现前故意 fail closed：它只清除候选，不下载、不停 monitor、不安装或重启。L9/P1-Q 已使用隔离 state root 验证 `127.0.0.1:8766` owned backend、health/background ready、首页/静态资源、desktop 默认值，以及 clean-commit 样本上真实 Cmd-Q 的 shutdown POST、stopped state、host/backend/PID/端口清理；打开的 SSE 连接由显式 `kill + wait` 兜底收束，且未触碰真实 Application Support。外部终止仍不属于该结论。该样本没有覆盖原生面板、browser/tray、真实单实例、下载/安装、DMG、签名或任何平台 release smoke。
+应用图标是独立于皮肤的本地展示偏好：Python 只接受随包的 `orange`、`teal`、`violet`，并把选择写入 `runtime/local_state/app_icon_state.json`。在 Tauri mode，私有 Host RPC 必须先把同一图标应用到窗口、任务栏和托盘；只有成功回复后 `AppState` 才持久化，避免活动原生 surface 与下次启动的状态分叉。浏览器 favicon 由同一选择生成，`/backend` 和 `?no_skin=1` 也不依赖皮肤；这不接受任意路径、URL 或上传图标，也不读取或写入 `watch_dir`。
 
-Tauri `setup` 在 `BackendHost::launch` 后也不立即将 child 放入 app state：tray 或选定 surface 的任何初始化失败都会先通过同一 structured keep-monitor shutdown 及必要的 kill+wait 收束 owned child；若仍不能确认 child 已退出，setup 会保持阻塞并重试，child mutex 或 `try_wait` 错误也不能伪装成 graceful exit，绝不返回错误后交给 `Drop`。只有确认清理且全部初始化成功后才会 `app.manage`，因为 setup failure 不经过正常 `ExitRequested`，且 Drop 不构成可靠收尾。
+打印弹窗许可同样不接受网页的临时放宽：`allow_print_popups` 默认开启但只在 Tauri host 启动时严格读取，关闭时拒绝所有 child window，开启时也只接受精确 `about:blank`，并只允许同端口、无 query/fragment、受限 ASCII job id 的 `/invoices/print/{job_id}`。Windows host 将 WebView2 profile 显式固定在 `%LOCALAPPDATA%\\InvoiceHub\\webview`，release 以 GUI subsystem 启动并以 `CREATE_NO_WINDOW` 将 Python stdout/stderr 追加到 runtime 日志；browser surface 或 health 成功不能替代这三项桌面边界的验证。
 
-Windows release host 还必须保持普通桌面应用外观：其 PE 使用 GUI subsystem，Python child 使用 `CREATE_NO_WINDOW`，HTTP 诊断输出只追加到 `%LOCALAPPDATA%\\InvoiceHub\\runtime` 的 server stdout/stderr 文件，不能随双击显示控制台；portable verifier 检查该 PE 字段。
+当前代码边界已实现固定端口的 spawned-child ownership：Host 先读取 bundle manifest 的原始字节并要求 SHA-256 与编译期 `INVOICE_HUB_BUNDLE_MANIFEST_SHA256` 相等。裸源码 checkout 没有该输入，因此以状态 `78` 退出；development assembler 则从 allowlisted core、schema-3 manifest 和显式 venv launcher stage 资源后注入该哈希，release profile 仍需独立的正式发行输入。Host 以新 challenge 要求 backend 回传 HMAC-SHA256，随后复核 child PID、build/package identity、静态首页和 OpenAPI 的精确 HTTP 方法。读取严格的 `startup_surface` 偏好后，必须再次发起 fresh challenge/HMAC 与 identity 复核，才 arm 授权并选择 `desktop` 的无 IPC WebView 或 `browser` 的 host-only 固定 origin opener；托盘和单实例重开同一 surface，desktop 关闭只隐藏窗口且不停止 monitor。Tray Quit 与 macOS 自定义应用菜单/Cmd-Q 只请求同一个 `app.exit(0)`；应用菜单不使用会直接绑定原生 `terminate:` 的 predefined Quit。Host 收到普通 `ExitRequested` 后请求结构化 `keep_monitor` shutdown 并有界等待 owned child，错误或超时后显式 `kill + wait`，无法确认 child 已退出则阻止 host 退出；update commit 期间普通 Quit 同样被阻止，只有 macOS 已准备 update relaunch 可跳过重复关闭。外部 AppleScript quit、Force Quit 或信号可以绕过该事件，不属于有序退出承诺。Host 只把 Host RPC token 传给其直接启动的 Python backend，backend 启动时捕获并从 descendant 环境清除；token 不进入 Web、Tauri command/event、API 响应或日志，携带 token 的 private loopback 请求显式绕过环境代理。Rust dialog 最多 120 秒，Python 等待 125 秒并在四条 picker route 上把 private failure 固定映射为脱敏 503；release-host updater metadata 与下载对象另有 5 秒时限。development profile 的 updater 委托明确禁用；它必须显式给出已存在、canonicalize 后与 bundle/core 及完整 macOS `.app` 容器双向不包含的绝对 `INVOICE_HUB_DEV_STATE_ROOT`，`Contents` sibling 同样拒绝，并在启动 Python child 前清除它。enabled updater 只在 startup gate 释放、`BackendHost` manage 后激活；激活先从 expected runtime dir 恢复 marker，随后才接受检查或安装。L9/P1-Q 已使用隔离 state root 验证 `127.0.0.1:8766` owned backend、health/background ready、首页/静态资源、desktop 默认值，以及 clean-commit 样本上真实 Cmd-Q 的 shutdown POST、stopped state、host/backend/PID/端口清理；打开的 SSE 连接由显式 `kill + wait` 兜底收束，且未触碰真实 Application Support。外部终止仍不属于该结论。该样本没有覆盖原生面板、browser/tray、真实单实例、下载/安装、DMG、签名或任何平台 release smoke。
+
+Tauri `setup` 在 `BackendHost::launch` 后也不立即将 child 放入 app state：tray 或选定 surface 的任何初始化失败都会先通过同一 structured keep-monitor shutdown 及必要的 kill+wait 收束 owned child；若仍不能确认 child 已退出，setup 会保持阻塞并重试，child mutex 或 `try_wait` 错误也不能伪装成 graceful exit，绝不返回错误后交给 `Drop`。只有确认清理且全部初始化成功后才会释放 startup gate 并 `app.manage`；updater activation 必须再晚于 manage。setup failure 不经过正常 `ExitRequested`，且 Drop 不构成可靠收尾。
+
+L10-R/C 建立的 monitor recovery foundation 仍是运行时安全不变量：全部 marker 或 bridge 操作必须携带并前后复核 released owned lifecycle lease（generation、phase、health/owned/process PID、state scope）。它只暂停已 `running && ready` 的 owned monitor，已有/损坏/跨 scope marker、ownership loss 或操作失败都保留恢复义务并 fail closed；Unix marker store 的最终读写/删除固定使用 opened-directory descriptor 和 no-follow `openat`/atomic no-clobber `linkat`/`unlinkat`，遵循目录锁协议的整段 load/publish/clear 串行化已闭合，stale-clear 在锁内重读，publish/clear 在最终 link/unlink 后同步目录元数据，绕过协议的同用户直接文件编辑不在保证内；Windows 已有相对已打开目录句柄、拒绝 reparse point 的 source-level marker store，最小 `x86_64-pc-windows-msvc` 临时 crate 交叉编译已通过，但没有 Windows runtime 证据，完整 Tauri Windows target check 仍因 `ring` 的 `assert.h` 依赖阻塞。
+
+L10-D 把这些 seams 接入运行时而不扩大公开 API。`BackendHost` 私有保存已有 ownership secret；每个 Rust recovery 请求和精确 Python 响应都由 fresh challenge 与 HMAC-SHA256 transcript 双向绑定，Python 拒绝 incomplete/tampered/non-empty/replayed 请求，普通 bridge HTTP 行为不变。Host 保留完整 cloneable `Update`，并从 version/target/download URL/signature 计算不公开的域分隔 artifact identity。`update_install` 先消费 fresh candidate 并启动 latch-blocked worker，只有精确 `{"ok":true}` 写入并 flush 后才放行 Tauri `download` 内置验签 -> recovery pause -> `install` -> platform relaunch；writer/spawn/latch loss 进入 `CommitLost` 且没有下载、marker、monitor 或安装副作用。startup restore 或事务失败保留 marker、保持 backend/WebUI 诊断并阻断后续 updater。Windows 在 updater `on_before_exit` 中确认 managed backend 已终止后才启动 installer；macOS 安装返回后先停 backend、标记 relaunch prepared、再 `request_restart()`。本轮没有运行真实 Feed、monitor、updater、installer、restart 或制品构建，源码接线不等于平台验收。
+
+L10-E 将运行验证收窄为不可安装的 development recovery smoke。ordinary development/internal-alpha 保持 updater-disabled；只有显式 recovery staging 才写固定不可达 HTTPS loopback endpoint、无验签能力 key sentinel 和精确三字段 updater 对象。隔离 runner 使用临时 HOME/state/runtime/watch、关闭自动更新检查并预置同 scope marker，且自身 localhost allowlist 只有 health、monitor status 和 monitor stop；它不调用 update check/install 或 bridge start。macOS arm64 样本已恢复 owned monitor 到 `running && ready`、删除 marker、显式停止 monitor并完成进程/端口/临时目录清理，runner 报告 `update_requests=0`。该证据仍不能扩大为 Feed、候选、下载、验签、安装、restart 或发行验收。
+
+public-preview 的成品 smoke 与 L10-E 保持隔离：它不复用 development state root，而是从 mounted DMG 复制 App、独立验签/receipt、为复制件保留 quarantine，并只经 `open -n -W -g` 的 LaunchServices 路径注入临时 `HOME`。直接执行 `Contents/MacOS` 会在 Tauri 的 AppKit 注册阶段失败，不能当作用户启动或 Gatekeeper 样本。发布 smoke 只允许 health、monitor start/status/stop 和固定 `stop_monitor` shutdown；当 shutdown 已被接受时，SSE generator 必须结束，以免 WKWebView 的 EventSource 让 Uvicorn 无法完成 graceful exit。该 runner 已有聚焦契约，最终干净 Tag 的 DMG 和 Finder/Gatekeeper 交互仍是待验证成品证据。
+
+固定 endpoint/method/origin 本身仍不是 ownership proof；只有上述 L10-D recovery 调用具有请求/响应双向认证。后续增加 endpoint、body 或状态字段时必须同步更新域分隔 transcript、Python replay/空 body 校验和 Rust 常量时间响应 proof 校验，且不得向候选固定端口发送 bearer secret。
 
 源码采用单仓库共存，平台成品采用互斥边界：Windows 或 macOS 的 checkout 都可包含另一平台工程，但 Windows ZIP 与 macOS `.app/DMG/Sparkle ZIP` 的构建输入、依赖锁、运行时和启动器分别受独立白名单与反向平台拒绝门禁保护。共享 `src/`、`web/` 只避免业务分叉，不表示平台壳或 runtime 可以交叉进入成品。
 
@@ -160,7 +174,7 @@ flowchart TB
 │  ├─ targets/                               配置解析、运行目录和档案隔离
 │  ├─ storage/                               原子文件操作与 SQLite 仓库
 │  ├─ monitoring/                            daemon、lock、事件合并和同步
-│  ├─ services/                              AppState、monitor bridge、皮肤与更新服务
+│  ├─ services/                              AppState、monitor bridge、皮肤、图标与更新服务
 │  ├─ api/                                   FastAPI 页面/API/SSE 适配
 │  ├─ platform/                              Windows 原生交互边界
 │  ├─ release/                               双平台清单、组装、验证、SBOM、Feed、源码快照
@@ -197,6 +211,7 @@ flowchart LR
 ```
 
 `server_state.json` 只诊断 localhost。monitor 真值是存活 PID 加 `state_dir/.invoice_monitor.lock`。成本产物必须留在 `watch_dir`；普通汇总必须留在对应档案的 `workspace`。
+`runtime/local_state/app_icon_state.json` 只保存内置应用图标选择；它不是皮肤包、业务配置或发票投影，也不会进入 `watch_dir`。
 
 ## 7. 主要模块如何协作
 
@@ -209,10 +224,10 @@ flowchart LR
 | `bookkeeping` | `VoucherExecutabilityValidator`、映射/迁移/批次仓储 | W8/W9 做账协议与确定性状态 | 浏览器自动化和平台窗口 |
 | `storage` | `atomic_write_json`、`SQLiteRepository` | 原子读写、任务、事件 | 发票主存储 |
 | `monitoring` | `run_monitor`、`MonitorSynchronizer.run_sync` | 持续观察、变化判断、自动重建 | Web 页面生命周期 |
-| `services` | `AppState`、`MonitorBridge`、`SkinService`、`UpdateService` | 用例编排、并发锁、平台协调与受限更新检查 | HTTP 细节 |
+| `services` | `AppState`、`MonitorBridge`、`SkinService`、`AppIconService`、`UpdateService` | 用例编排、并发锁、平台协调与受限更新检查 | HTTP 细节 |
 | `api` | `create_app` | HTTP、错误码、静态文件、SSE | 重复业务算法 |
 | `platform` | `pick_directory`、`open_local_path` | Windows Python 适配；macOS 原生适配在 Swift 壳 | 领域判断 |
-| `release` | `build_core`、三类 manifest、`verify_tauri_windows_portable`、`windows_alpha_metadata`、`provenance`、`update_metadata`、`sbom`、`source_snapshot` | 脱敏确定性包、身份/依赖证明，以及从真实 Windows ZIP/receipt/source archive 派生的 strict Windows-only alpha Feed；完整双平台 Feed 仍由原 finalizer 负责 | 用户业务数据迁移、原地更新或外部平台发布 |
+| `release` | `build_core`、三类 manifest、`provenance`、`update_metadata`、`sbom`、`source_snapshot` | 脱敏确定性包、身份/依赖证明、从真实产物/收据/Tag 派生的更新元数据与对应源码；公开 Feed 在 macOS 用 Tag 派生验证器复验实际成品 | 用户业务数据迁移或外部平台发布 |
 
 ## 8. 端到端主链
 
@@ -260,9 +275,8 @@ BAT/页面/monitor 触发
 | 架构债务 | 路径规范化在 `targets`、`monitoring`、成本和选择合计中有不同语境实现 | 不能仅凭函数同名就机械合并 |
 | 架构债务 | `base_head.html` 存在，但页面仍各自维护 head 和资源版本 | 静态资源变更必须逐模板核对版本参数 |
 | 架构债务 | 当前前端自动化主要是静态契约测试 | UI 改动仍需要真实浏览器/DOM 验收 |
-| 当前实现 | alpha.2 已有 Windows Tauri raw host 和无签名 ZIP 源码组装链 | release manifest 原始 SHA-256 绑定进 host；产品 runtime 在 manifest 前裁剪 `Doc`、顶层 `Scripts` 与五个已知 CPython shell helper，并拒绝任何其它 shell script；自有 core 保持完整内容扫描，受锁 `python/Lib/**` 只使用依赖范围扫描且 GitHub token/私钥仍阻断；`windows_portable` 是 release updater disabled 的唯一例外；所有用户状态位于 `%LOCALAPPDATA%\\InvoiceHub`，其中 desktop WebView2 profile 显式为 `webview`；native picker 直接交给 `tauri-plugin-dialog` 的异步 dispatcher，`monitor_status.json` 读取与 daemon 原子写入共用 TargetProfile 锁，仍无 Windows native 成品或证据 |
-| 当前实现 | Windows-only alpha Feed 与完整双平台 Feed 分开校验 | alpha Feed 只允许一个 Windows ZIP、receipt 和 source identity；macOS 不存在资产时返回 `unsupported`，下载页不执行安装 |
-| 发布阻断 | Windows native 验收与公开 release sequence 尚未完成 | 后续 candidate 已创建隔离桌面窗口并完成 backend handshake，但首次 monitor 启动在 `monitor_status.json` 原子替换时遭遇 Windows `WinError 5`；源码现让 status reader 加入 TargetProfile 锁，仍须从新 clean commit rebuild。WebView2 profile 已显式预创建，picker 也改为由 `tauri-plugin-dialog` 独占异步主线程调度。必须在隔离中文空格路径验证窗口、端口、单实例、picker、monitor、tray 和清理 |
+| 架构债务 | Windows 首版没有内置桌面 WebView 壳 | macOS development `.app` 的单次 L9 smoke 不改变这一事实；`startup_surface=desktop` 仍须在当前 Windows source/portable 路径 fail closed，不能让设置项暗示已实现 |
+| 发布阻断 | Windows 与 macOS 正式脚本已实现但真机/签名证据未齐 | 自动化通过不等于 ZIP/DMG 已放行，必须分别执行平台手册 |
 | 未启用能力 | OCR 页面和 API 保留候选文件入口 | core 包未内置正式本地 OCR，提取接口返回禁用状态 |
 | 当前实现 | SQLite 建有 `settings` 和 `cache` 表 | 当前主要业务消费者集中在 `tasks/events`，不能误称已有数据库主存储 |
 
@@ -274,6 +288,7 @@ BAT/页面/monitor 触发
 - 修改字段、公式、数据库或状态 JSON：同步 `DATA_AND_ALGORITHMS.md`。
 - 修改跨模块影响范围或验收门禁：同步 `AGENT_TASK_MAP.md`。
 - 在复杂代码旁新增注释：先核对 `COMMENT_RATIONALE_MAP.md`，只解释原因和不变量。
+- 回溯旧工作区功能或故障：使用 `docs/legacy/OLD_WORKSPACE_CHANGELOG_INDEX.md` 的脱敏路线；私有原文不得进入公开工作树。
 - 不在文档中写本机业务绝对路径、真实发票信息、运行态快照或本地配置值。
 - 不维护易漂移的固定测试总数；以当前测试收集结果为准。
 - 每次基线切换必须记录分支、commit、验收状态，并更新 `CHANGELOG.md`。
@@ -286,6 +301,7 @@ BAT/页面/monitor 触发
 - [`IMPLEMENTATION_STATUS.md`](../IMPLEMENTATION_STATUS.md)
 - [`MIGRATION_GAP_CHECKLIST.md`](MIGRATION_GAP_CHECKLIST.md)
 - [`BASELINE_FROM_OLD_PROJECT.md`](BASELINE_FROM_OLD_PROJECT.md)
+- [旧工作区功能与故障回溯索引](legacy/OLD_WORKSPACE_CHANGELOG_INDEX.md)
 - [`MONITORING_AND_LOGGING.md`](MONITORING_AND_LOGGING.md)
 - [`MAC_WINDOWS_WORKFLOW.md`](MAC_WINDOWS_WORKFLOW.md)
 - [历史净化执行记录](release/HISTORY_SANITIZATION_EXECUTION.md)

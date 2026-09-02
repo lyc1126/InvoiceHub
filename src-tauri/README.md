@@ -12,16 +12,22 @@ A bare source checkout is intentionally not runnable: `main.rs` requires an
 status 78 before the host attaches to a listener or opens a WebView.
 
 `scripts/dev/tauri_dev_app.py` is the only development assembly entry point.
-It stages an allowlisted shared core, creates a schema-3 `development` manifest
-and an explicit virtual-environment launcher, and binds both the manifest and
-launcher SHA-256 values while building one macOS arm64 `.app`. It requires an
-absolute venv Python; its build action also requires an absolute pnpm
-executable. The development bundle is local and ignored. It does not create a
-DMG, NSIS installer, update archive, release manifest, release signature, or
-Feed input.
+Its ordinary `stage/build` actions stage an allowlisted shared core, create an
+updater-disabled schema-3 `development` manifest and explicit virtual-
+environment launcher, and bind both manifest and launcher SHA-256 values while
+building one macOS arm64 `.app`. Build accepts an absolute pnpm or direct Tauri
+CLI executable. The explicit `stage-recovery/build-recovery` actions differ
+only by writing the exact L10-E non-installing recovery-smoke tuple. Every
+development bundle is local and ignored; none creates a DMG, NSIS installer,
+update archive, release manifest, release signature, or Feed input.
 
-The development manifest resolves resources from `Contents/Resources`, rejects
-a package manifest, and explicitly disables updater delegation.
+The development manifest resolves resources from `Contents/Resources` and
+rejects a package manifest. Ordinary manifests explicitly disable updater
+delegation. An enabled development manifest is valid only when its updater
+object has exactly `enabled`, `endpoint`, and `public_key`, with the endpoint
+fixed to unreachable `https://127.0.0.1:1/invoicehub-recovery-smoke/latest.json`
+and the key fixed to a sentinel that is not a signing key. Arbitrary endpoints,
+keys, or extra fields fail closed.
 `INVOICE_HUB_DEV_STATE_ROOT` is required for a development launch: it must name
 an existing absolute directory. The host canonicalizes it and rejects either
 containment direction between that state root and the bundle/core root. Release
@@ -41,40 +47,97 @@ connections required the explicit kill-and-wait fallback after stopped state
 was written. The first
 launch exposed a tray initialization failure caused by a 16-bit RGBA icon.
 `icons/icon.png` is now 8-bit RGBA and an IHDR-focused test locks that exact
-failure mechanism. The matching multi-resolution `icons/icon.ico` is required
-by Tauri's Windows resource build and is generated from that controlled PNG.
+failure mechanism.
 
 ## Runtime boundary
 
 With a valid manifest, the host rejects an occupied fixed port, spawns its own
 backend, and requires a fresh HMAC-SHA256 ownership challenge plus child PID,
 build/package identity, static-home, and OpenAPI-method checks. It repeats the
-ownership proof after reading `startup_surface` and the strict boolean
-`allow_print_popups`, then creates the zero-IPC desktop WebView or uses the
-fixed-origin host-only browser opener. The shared default for that preference
-is `true`; it is changed in Settings and takes effect for the desktop host on
-the next launch. When enabled, the desktop WebView accepts a new window only
-for exact `about:blank`, and the child can navigate only to the exact local
-`/invoices/print/{job_id}` path with no query/fragment and a bounded ASCII job
-ID. When disabled, every child-window request is denied. The child has no
-additional business or Host RPC capability. The Host RPC token goes only to the
-directly spawned Python backend, which captures it and removes it from
-descendants; it never reaches Web content, Tauri commands or events, API
-responses, or logs.
+ownership proof after reading `startup_surface`, then creates the zero-IPC
+desktop WebView or uses the fixed-origin host-only browser opener. The Host RPC
+token goes only to the directly spawned Python backend, which captures it and
+removes it from descendants; it never reaches Web content, Tauri commands or
+events, API responses, or logs.
 
-The private loopback listener accepts four picker enums and the two updater
-enums `update_check` and `update_install`. A candidate is bounded to 300
-seconds, and updater metadata requests have a five-second total timeout.
-`tauri-plugin-dialog` owns asynchronous main-thread dispatch for its picker;
-`host_rpc.rs` calls that plugin directly and must not wrap it in a second
-`run_on_main_thread` hop. The first Windows candidate returned a redacted
-picker error before the chooser appeared, so this narrow source repair still
-requires a fresh clean ZIP native-picker acceptance sample.
-Until a complete recovery/relaunch coordinator exists, `update_install`
-consumes the candidate and returns unavailable; it does not download, stop the
-monitor, install, or restart. The later release coordinator must preserve the
-order download plus Minisign verification, monitor stop and independent recheck,
-then install/restart, with recovery on every failed path.
+The private loopback listener accepts four picker enums, the two updater
+enums `update_check` and `update_install`, and the exact built-in application
+icon payload `{"command":"set_app_icon","icon":"orange|teal|violet"}`.
+The icon command has no path, URL, upload, or arbitrary image bytes: it loads
+only the three PNG assets compiled into the host. On startup the host reads
+`runtime/local_state/app_icon_state.json` before creating the tray/window; at
+runtime it updates the tray and window before Python persists the new choice.
+If the window update fails, the tray is restored to the previous icon. The
+same selection controls the browser favicon but remains independent from skins
+and all invoice/watch-directory state. A complete host-owned candidate is
+bounded to 300 seconds; updater metadata and the retained download object both
+use a five-second timeout. Updater-disabled profiles remain inert. An enabled
+profile activates only after the owned startup gate is released and
+`BackendHost` is registered, opens the platform marker store under the strict
+backend `runtime_dir`, and completes authenticated startup restore before it
+accepts update operations.
+
+`update_install` accepts no caller metadata. It atomically consumes one fresh
+candidate, reserves the runtime, and starts a private worker behind an
+execute/cancel latch. Only after the exact `{"ok":true}` response is written
+and flushed does that worker run Tauri download with built-in signature
+verification -> owned-monitor pause -> install -> platform relaunch. Response
+write failure, worker spawn failure, or latch loss enters `CommitLost` without
+download, marker, monitor, or installer effects. Startup restore or transaction
+failure leaves the backend/WebUI available for diagnostics and blocks further
+updater work in that process.
+
+## L10-R/C foundation and L10-D runtime wiring
+
+L10-R established the source-level recovery primitive. It captures a released
+owned lifecycle lease containing generation, phase, health/owned/process PIDs,
+and a state scope, and revalidates it around every marker or bridge operation.
+A pause requires a ready owned monitor, will not overwrite an existing marker,
+and preserves the marker on failure; restore clears only after a later owned
+status is both running and ready. L10-C then added the fixed-loopback bridge,
+pure update coordinator, shared lifecycle authority, the Windows
+handle-relative/no-reparse marker store, and Unix whole-operation locking. The
+historical L10-C verification passed 56 Rust checks and 42 Python contracts; it
+did not itself wire Host RPC, updater, startup restore, or a real monitor.
+
+L10-D wires those seams into the owned host runtime. Every recovery request and
+exact response uses a fresh challenge and HMAC-SHA256 under the existing
+backend-private ownership secret; Python rejects incomplete, tampered,
+non-empty, or replayed authenticated requests, while ordinary browser bridge
+calls keep their prior unauthenticated localhost behavior. The host retains the
+cloneable Tauri `Update` and a private domain-separated artifact identity, then
+uses `UpdateCoordinator` for the fixed verified-download -> pause -> install ->
+relaunch order. Windows confirms managed-backend termination in
+`on_before_exit`; macOS stops the backend, marks relaunch prepared, and calls
+`request_restart()`. Normal Quit is blocked while a commit is reserved or
+executing. These are source and contract boundaries only: ordinary development
+and internal-alpha profiles disable updater, and no real Feed, update, restart,
+package, signing, or platform smoke is claimed.
+
+L10-E adds `scripts/dev/tauri_recovery_smoke.py` solely to exercise authenticated
+startup restore. It accepts only the exact recovery App, creates temporary HOME,
+state, runtime, and watch directories, writes `auto_check_updates=false`, seeds
+a scope-bound prior marker, then permits only health, monitor status, and
+monitor stop requests. Authenticated monitor start comes from the host recovery
+transaction itself; the runner cannot request bridge start or updater check/
+install. It verifies App/health/path ownership before cleanup and terminates only
+its spawned process group. The locked offline macOS arm64 sample restored an
+owned monitor to `running && ready`, removed the marker, explicitly stopped the
+monitor, and cleared its process group, fixed port, and temporary directories;
+the runner reported `update_requests=0`. This remains startup-recovery evidence,
+not Feed, candidate, download, signature-validation, install, or restart evidence.
+
+`scripts/dev/tauri_public_preview_smoke.py` is separate from the development
+profiles. It validates a mounted `0.3.0-alpha.2` preview DMG and receipt,
+copies the App, verifies its ad-hoc signature, applies quarantine, and starts
+only through `open -n -W -g` with a temporary `HOME`; it never supplies
+`INVOICE_HUB_DEV_STATE_ROOT`. Direct `Contents/MacOS` execution is not a valid
+Tauri/AppKit user-launch path. The smoke's localhost surface is fixed to
+health, monitor start/status/stop, and the exact `stop_monitor` shutdown body.
+Once that shutdown is accepted, the SSE generator exits so the WebView
+EventSource cannot keep Uvicorn alive. The runner has focused contracts, but
+the final Tag DMG, Finder/Gatekeeper interaction, and public Release evidence
+remain outstanding.
 
 Tray Quit and the custom macOS application-menu Quit item/Cmd-Q both request
 `app.exit(0)`. The menu must not use the predefined native Quit selector,
@@ -93,44 +156,8 @@ retries instead of returning the original surface error to `Drop`; a child
 mutex or `try_wait` error cannot count as a graceful exit. This path does not
 depend on the later `ExitRequested` handler or `Drop`.
 
-The development app disables this updater path. L9/P1-Q did not exercise browser,
-tray clicking, second-instance, native-picker, printing, download, signature validation,
-monitor-stop-for-install, installation, restart, Windows, DMG, Developer ID,
-notarization, Release, or Feed behavior. It is not release evidence.
-
-## Windows portable alpha.2
-
-`scripts/dev/tauri_windows_portable.py` is the separate Windows 10/11 x64
-portable assembly path. It stages a clean exact Git commit, copies only the
-allowlisted shared core and locked Python 3.14.6 runtime, writes a schema-3
-release host manifest, and compiles the raw host with that manifest's exact
-SHA-256. The ZIP contains `InvoiceHub.exe`, the host manifest, the runtime,
-core manifests, SBOM, file-SHA manifest, licenses, receipt, and no user
-configuration, invoices, logs, or runtime state.
-
-The only release-manifest exception is a Windows x86_64 portable identity with
-the exact `windows_portable` marker `{"distribution":"zip","updater_enabled":false}`.
-That marker permits `updater.enabled=false`; every other release host remains
-strict. The release state root is `%LOCALAPPDATA%\\InvoiceHub`. Before the
-owned child starts, the host derives and creates its `webview` child and passes
-that exact path to the desktop `WebviewWindowBuilder` as WebView2 user data.
-The default surface is desktop, close hides the window, and tray Quit follows
-the existing structured keep-monitor shutdown path.
-
-The Windows release host uses the GUI PE subsystem, so opening `InvoiceHub.exe`
-does not show a terminal window. Its Python child receives `CREATE_NO_WINDOW`;
-the host appends backend stdout and stderr to `runtime/server_stdout.log` and
-`runtime/server_stderr.log` under the same user-state root. Debug builds retain
-a console for development diagnostics.
-
-The ZIP is unsigned, has no MSI/NSIS installer, and never replaces its own
-directory. Its Windows-only alpha Feed is check-only: the UI may open the
-GitHub prerelease page, while `update_install` remains unavailable. Rust 1.85
-MSVC, C++ Build Tools/Windows SDK, and Evergreen WebView2 are build/runtime
-prerequisites; the doctor reports missing WebView2 without installing it.
-One statically verified candidate reached owned-backend handshake under
-isolated LocalAppData but failed desktop WebView creation with Windows access
-denied at Tauri's implicit profile location. The explicit `webview` state path
-is therefore source-level repair only, not native Windows build, tray, picker,
-monitor, or publication evidence until a freshly rebuilt isolated ZIP smoke
-has completed.
+The ordinary development app disables this updater path. L9/P1-Q did not
+exercise browser, tray clicking, second-instance, native-picker, printing,
+download, signature validation, monitor-stop-for-install, installation,
+restart, Windows, DMG, Developer ID, notarization, Release, or Feed behavior.
+L10-E does not widen those claims. Neither profile is release evidence.

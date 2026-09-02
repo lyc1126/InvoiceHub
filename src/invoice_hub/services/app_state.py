@@ -56,6 +56,7 @@ from invoice_hub.services.invoice_printing import (
     InvoicePrintService,
     InvoicePrintSource,
 )
+from invoice_hub.services.app_icons import AppIconService
 from invoice_hub.services.skins import SkinService
 from invoice_hub.services.update_service import UpdateService
 from invoice_hub.storage import SQLiteRepository, atomic_write_json, read_csv_rows, read_json_object, write_csv_rows
@@ -2789,6 +2790,11 @@ class AppState:
     def bridge_stop(self) -> dict:
         return self._monitor_bridge().stop()
 
+    @property
+    def server_shutdown_requested(self) -> bool:
+        with self._lock:
+            return self._server_shutdown_requested
+
     def request_server_shutdown(self, behavior: str, remember: bool = False) -> dict:
         normalized = str(behavior or "").strip()
         if normalized not in {"keep_monitor", "stop_monitor"}:
@@ -2942,6 +2948,24 @@ class AppState:
 
     def skin_service(self) -> SkinService:
         return SkinService(self.layout)
+
+    def app_icon_service(self) -> AppIconService:
+        return AppIconService(self.layout)
+
+    def app_icon(self) -> dict:
+        return self.app_icon_service().list_payload()
+
+    def update_app_icon(self, icon_id: str) -> dict:
+        with self._lock:
+            service = self.app_icon_service()
+            normalized_icon_id = service.validate_icon_id(icon_id)
+            if self._tauri_desktop_host_enabled():
+                # The host changes window/taskbar/tray state first. Persisting before that
+                # would make the next launch claim an icon that the active desktop rejected.
+                host_rpc.set_app_icon(normalized_icon_id)
+            result = service.update_app_icon(normalized_icon_id)
+            self.append_event("app_icon.updated", {"icon": normalized_icon_id})
+            return result
 
     def skins(self) -> dict:
         return self.skin_service().list_skins()

@@ -7,8 +7,6 @@ import struct
 import subprocess
 import sys
 import tomllib
-import types
-from contextlib import nullcontext
 from pathlib import Path
 from unittest.mock import patch
 
@@ -43,7 +41,9 @@ def _copy_foundation(tmp_path: Path) -> Path:
         "src/invoice_hub/version.py",
         "src-tauri/Cargo.toml",
         "src-tauri/tauri.conf.json",
-        "src-tauri/tauri.windows.conf.json",
+        "src-tauri/tauri.alpha.conf.json",
+        "src-tauri/tauri.public-preview.conf.json",
+        "src-tauri/tauri.windows-preview.conf.json",
         "package.json",
         "pnpm-lock.yaml",
         "rust-toolchain.toml",
@@ -217,47 +217,12 @@ def test_doctor_rejects_windows_sdk_check_without_program_files_location(tmp_pat
     assert result["detail"] == "ProgramFiles(x86) is unavailable"
 
 
-def test_doctor_detects_system_webview2_runtime_from_standard_edge_update_key() -> None:
-    doctor = _load_doctor_module()
-    opened: list[tuple[str, str]] = []
-    fake_winreg = types.SimpleNamespace(
-        HKEY_CURRENT_USER="current-user",
-        HKEY_LOCAL_MACHINE="local-machine",
-    )
-    standard_key = (
-        rf"SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{doctor.WEBVIEW2_CLIENT_ID}"
-    )
-
-    def open_key(hive: str, key: str):
-        opened.append((hive, key))
-        if hive == fake_winreg.HKEY_LOCAL_MACHINE and key == standard_key:
-            return nullcontext(object())
-        raise OSError("not registered here")
-
-    fake_winreg.OpenKey = open_key
-    fake_winreg.QueryValueEx = lambda _handle, name: ("131.0.2903.86", name)
-
-    with patch.dict(sys.modules, {"winreg": fake_winreg}):
-        result = doctor._webview2_runtime_check()
-
-    assert doctor.WEBVIEW2_CLIENT_ID == "{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
-    assert result == {
-        "status": "ok",
-        "expected": "",
-        "actual": "131.0.2903.86",
-        "detail": "",
-    }
-    assert opened[-1] == (fake_winreg.HKEY_LOCAL_MACHINE, standard_key)
-
-
 def test_tauri_scaffold_is_fixed_to_the_expected_localhost_origin() -> None:
     cargo = tomllib.loads((ROOT / "src-tauri/Cargo.toml").read_text(encoding="utf-8"))
     cargo_config = tomllib.loads((ROOT / ".cargo" / "config.toml").read_text(encoding="utf-8"))
     lock = tomllib.loads((ROOT / "src-tauri/Cargo.lock").read_text(encoding="utf-8"))
     config = json.loads((ROOT / "src-tauri/tauri.conf.json").read_text(encoding="utf-8"))
-    windows_config = json.loads((ROOT / "src-tauri/tauri.windows.conf.json").read_text(encoding="utf-8"))
     icon = (ROOT / "src-tauri/icons/icon.png").read_bytes()
-    windows_icon = (ROOT / "src-tauri/icons/icon.ico").read_bytes()
     source = (ROOT / "src-tauri/src/main.rs").read_text(encoding="utf-8")
     contract = (ROOT / "src-tauri/src/lib.rs").read_text(encoding="utf-8")
     locked_packages = {
@@ -274,17 +239,12 @@ def test_tauri_scaffold_is_fixed_to_the_expected_localhost_origin() -> None:
     assert config["productName"] == PRODUCT_NAME
     assert config["version"] == PRODUCT_VERSION
     assert config["identifier"] == TAURI_BUNDLE_IDENTIFIER
-    assert windows_config["productName"] == PRODUCT_NAME
-    assert windows_config["version"] == PRODUCT_VERSION
-    assert windows_config["identifier"] == TAURI_BUNDLE_IDENTIFIER
     assert config["build"]["devUrl"] == "http://127.0.0.1:8766"
     assert config["bundle"]["active"] is False
-    assert windows_config["bundle"]["active"] is False
     assert config["bundle"]["macOS"]["minimumSystemVersion"] == "13.0"
     assert icon.startswith(b"\x89PNG\r\n\x1a\n")
-    assert struct.unpack(">II", icon[16:24]) == (512, 512)
-    assert icon[24:26] == b"\x08\x06"
-    assert windows_icon[:6] == b"\x00\x00\x01\x00\x07\x00"
+    assert struct.unpack(">II", icon[16:24]) == (1024, 1024)
+    assert icon[24:26] == bytes((8, 6))
     assert "load_bundle_manifest" in source
     assert "std::process::exit(78)" not in source
     assert "fn main() -> ExitCode" in source

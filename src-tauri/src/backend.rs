@@ -25,6 +25,7 @@ use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
 
 use crate::host_rpc::{HostRpcServer, HostRpcServerError};
+use crate::monitor_recovery::{LifecycleAuthority, LifecycleLease, LifecyclePhase, RecoveryError};
 use crate::{FIXED_BACKEND_HOST, FIXED_BACKEND_PORT};
 
 pub const BACKEND_BUNDLE_MANIFEST_FILE: &str = "invoicehub-desktop-host.json";
@@ -33,6 +34,7 @@ pub const OPENAPI_PATH: &str = "/openapi.json";
 pub const PREFERENCES_PATH: &str = "/api/v1/preferences";
 pub const BRIDGE_STATUS_PATH: &str = "/api/v1/bridge/status";
 pub const BRIDGE_STOP_PATH: &str = "/api/v1/bridge/stop";
+pub const BRIDGE_START_PATH: &str = "/api/v1/bridge/start";
 pub const SERVER_SHUTDOWN_PATH: &str = "/api/v1/server/shutdown";
 pub const DESKTOP_HOST_PROOF_PATH: &str = "/api/v1/internal/desktop-host-proof";
 pub const DESKTOP_HOST_CHALLENGE_HEADER: &str = "X-InvoiceHub-Desktop-Host-Challenge";
@@ -41,6 +43,10 @@ pub const DESKTOP_HOST_SECRET_ENV: &str = "INVOICE_HUB_DESKTOP_HOST_SECRET";
 pub const DESKTOP_HOST_MODE_ENV: &str = "INVOICE_HUB_DESKTOP_HOST";
 pub const DESKTOP_UPDATER_ENABLED_ENV: &str = "INVOICE_HUB_DESKTOP_UPDATER_ENABLED";
 pub const DEVELOPMENT_STATE_ROOT_ENV: &str = "INVOICE_HUB_DEV_STATE_ROOT";
+pub const RECOVERY_SMOKE_ENDPOINT: &str =
+    "https://127.0.0.1:1/invoicehub-recovery-smoke/latest.json";
+pub const RECOVERY_SMOKE_PUBLIC_KEY: &str =
+    "SU5WT0lDRUhVQiBSRUNPVkVSWSBTTU9LRSAtIE5PVCBBIFNJR05JTkcgS0VZ";
 const MAX_HTTP_RESPONSE_BYTES: usize = 128 * 1024;
 const HTTP_TIMEOUT: Duration = Duration::from_secs(5);
 const BACKEND_STARTUP_TIMEOUT: Duration = Duration::from_secs(20);
@@ -73,6 +79,7 @@ const REQUIRED_OPENAPI_OPERATIONS: &[(&str, &str)] = &[
     (SERVER_SHUTDOWN_PATH, "post"),
     (BRIDGE_STATUS_PATH, "get"),
     (BRIDGE_STOP_PATH, "post"),
+    (BRIDGE_START_PATH, "post"),
 ];
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -126,12 +133,6 @@ pub enum StartupSurface {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct StartupPreferences {
-    pub startup_surface: StartupSurface,
-    pub allow_print_popups: bool,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HandshakeError {
     BackendNotReady,
     PidMismatch,
@@ -174,6 +175,7 @@ pub enum BackendError {
     GracefulShutdownFailed,
     GracefulShutdownTimedOut,
     BackendTerminationFailed,
+    LifecycleUnavailable,
     Handshake(HandshakeError),
     HostRpc(HostRpcServerError),
 }
@@ -206,6 +208,7 @@ impl fmt::Display for BackendError {
             Self::BackendTerminationFailed => {
                 "InvoiceHub backend could not be terminated before the desktop host exits"
             }
+            Self::LifecycleUnavailable => "InvoiceHub backend lifecycle is no longer owned",
             Self::Handshake(error) => {
                 return write!(formatter, "InvoiceHub backend handshake failed: {error}")
             }
@@ -517,13 +520,11 @@ fn load_bundle_manifest_for_state(
         .and_then(Value::as_object)
         .ok_or(BackendError::BundleManifestInvalid)?;
     let expected_identity = identity_from_json(expected_fields, state_paths, profile)?;
-    let windows_portable_release =
-        windows_portable_release_marker(fields, &expected_identity, profile)?;
     let updater_fields = fields
         .get("updater")
         .and_then(Value::as_object)
         .ok_or(BackendError::BundleManifestInvalid)?;
-    let updater = updater_from_json(updater_fields, profile, windows_portable_release)?;
+    let updater = updater_from_json(updater_fields, profile)?;
     Ok(BackendBundleManifest {
         profile,
         program,
@@ -588,6 +589,12 @@ pub fn probe_backend_with_retry(
         || probe_backend(expected_identity, expected_pid, ownership_secret),
         BACKEND_STARTUP_TIMEOUT,
     )
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct StartupPreferences {
+    pub startup_surface: StartupSurface,
+    pub allow_print_popups: bool,
 }
 
 pub fn load_startup_preferences() -> Result<StartupPreferences, BackendError> {
@@ -665,12 +672,22 @@ pub struct BackendHost {
     child_pid: u32,
     expected_identity: ExpectedBackendIdentity,
     webview_data_directory: PathBuf,
+    ownership_secret: [u8; OWNERSHIP_SECRET_BYTES],
     ownership_verified: Arc<AtomicBool>,
+    lifecycle: Arc<Mutex<BackendLifecycleState>>,
     liveness_shutdown: Arc<AtomicBool>,
     liveness_worker: Mutex<Option<JoinHandle<()>>>,
     startup_surface: StartupSurface,
     allow_print_popups: bool,
-    _host_rpc: HostRpcServer,
+    host_rpc: HostRpcServer,
+}
+
+#[derive(Clone)]
+pub struct BackendLifecycleAuthority {
+    child: Arc<Mutex<Child>>,
+    child_pid: u32,
+    ownership_verified: Arc<AtomicBool>,
+    lifecycle: Arc<Mutex<BackendLifecycleState>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -702,7 +719,66 @@ fn configure_windows_backend_process(
     Ok(())
 }
 
+#[derive(Clone, Debug)]
+struct BackendLifecycleState {
+    generation: u64,
+    phase: LifecyclePhase,
+    health_pid: u32,
+    owned_pid: u32,
+    process_pid: u32,
+    startup_gate_released: bool,
+    state_scope: String,
+}
+
+impl BackendLifecycleState {
+    fn new(child_pid: u32, expected_identity: &ExpectedBackendIdentity) -> Self {
+        Self {
+            generation: 1,
+            phase: LifecyclePhase::StartupGateHeld,
+            health_pid: child_pid,
+            owned_pid: child_pid,
+            process_pid: child_pid,
+            startup_gate_released: false,
+            state_scope: lifecycle_scope_for_identity(expected_identity),
+        }
+    }
+
+    fn lease(&self) -> LifecycleLease {
+        LifecycleLease {
+            generation: self.generation,
+            phase: self.phase,
+            health_pid: self.health_pid,
+            owned_pid: self.owned_pid,
+            process_pid: self.process_pid,
+            startup_gate_released: self.startup_gate_released,
+            state_scope: self.state_scope.clone(),
+        }
+    }
+
+    fn invalidate(&mut self, phase: LifecyclePhase) {
+        self.generation = self.generation.wrapping_add(1);
+        if self.generation == 0 {
+            self.generation = 1;
+        }
+        self.phase = phase;
+        self.startup_gate_released = false;
+    }
+}
+
 impl BackendHost {
+    pub fn runtime_dir(&self) -> &Path {
+        &self.expected_identity.runtime_dir
+    }
+
+    pub fn lifecycle_authority(&self) -> BackendLifecycleAuthority {
+        BackendLifecycleAuthority {
+            child: Arc::clone(&self.child),
+            child_pid: self.child_pid,
+            ownership_verified: Arc::clone(&self.ownership_verified),
+            lifecycle: Arc::clone(&self.lifecycle),
+        }
+    }
+
     pub fn launch(
         manifest: BackendBundleManifest,
         app_handle: tauri::AppHandle<tauri::Wry>,
@@ -735,6 +811,7 @@ impl BackendHost {
             DESKTOP_UPDATER_ENABLED_ENV,
             if manifest.updater.enabled() { "1" } else { "0" },
         );
+        // The GUI host keeps backend diagnostics in runtime files instead of inheriting a console.
         #[cfg(windows)]
         configure_windows_backend_process(&mut command, &manifest.expected_identity.runtime_dir)?;
         let child = command
@@ -774,11 +851,16 @@ impl BackendHost {
         }
         let startup_surface = startup_preferences.startup_surface;
         let liveness_shutdown = Arc::new(AtomicBool::new(false));
+        let lifecycle = Arc::new(Mutex::new(BackendLifecycleState::new(
+            child_pid,
+            &manifest.expected_identity,
+        )));
         // Arm before the watcher starts so an already-exited child cannot re-enable Host RPC.
         ownership_verified.store(true, Ordering::Release);
         let liveness_worker = spawn_backend_liveness_watcher(
             Arc::clone(&child),
             Arc::clone(&ownership_verified),
+            Arc::clone(&lifecycle),
             Arc::clone(&liveness_shutdown),
         );
         Ok(Self {
@@ -786,12 +868,14 @@ impl BackendHost {
             child_pid,
             expected_identity: manifest.expected_identity,
             webview_data_directory,
+            ownership_secret,
             ownership_verified,
+            lifecycle,
             liveness_shutdown,
             liveness_worker: Mutex::new(Some(liveness_worker)),
             startup_surface,
             allow_print_popups: startup_preferences.allow_print_popups,
-            _host_rpc: host_rpc,
+            host_rpc,
         })
     }
 
@@ -803,13 +887,61 @@ impl BackendHost {
             Err(HandshakeError::BackendNotReady)
         };
         if result.is_err() {
-            self.ownership_verified.store(false, Ordering::Release);
+            self.revoke_lifecycle(LifecyclePhase::Invalid);
         }
         result
     }
 
     pub fn owns_backend(&self) -> bool {
         self.ownership_verified.load(Ordering::Acquire)
+    }
+
+    pub fn allow_print_popups(&self) -> bool {
+        self.allow_print_popups
+    }
+
+    pub fn webview_data_directory(&self) -> &Path {
+        &self.webview_data_directory
+    }
+
+    pub fn release_startup_gate(&self) -> Result<(), BackendError> {
+        if !self.owns_backend() || current_child_pid(&self.child)? != self.child_pid {
+            self.revoke_lifecycle(LifecyclePhase::Invalid);
+            return Err(BackendError::LifecycleUnavailable);
+        }
+        let mut lifecycle = self
+            .lifecycle
+            .lock()
+            .map_err(|_| BackendError::LifecycleUnavailable)?;
+        if lifecycle.phase != LifecyclePhase::StartupGateHeld
+            || lifecycle.startup_gate_released
+            || lifecycle.health_pid != self.child_pid
+            || lifecycle.owned_pid != self.child_pid
+            || lifecycle.process_pid != self.child_pid
+        {
+            return Err(BackendError::LifecycleUnavailable);
+        }
+        lifecycle.phase = LifecyclePhase::OwnedRunning;
+        lifecycle.startup_gate_released = true;
+        Ok(())
+    }
+
+    pub fn activate_updater_runtime(&self) -> Result<bool, BackendError> {
+        self.host_rpc
+            .activate_updater_runtime(
+                &self.expected_identity.runtime_dir,
+                self.ownership_secret,
+                self.lifecycle_authority(),
+            )
+            .map_err(BackendError::HostRpc)
+    }
+
+    pub fn updater_blocks_normal_quit(&self) -> bool {
+        self.host_rpc.updater_blocks_normal_quit()
+    }
+
+    pub fn update_relaunch_prepared(&self) -> bool {
+        self.host_rpc.update_relaunch_prepared()
     }
 
     pub fn shutdown_keep_monitor(&self) -> Result<(), BackendError> {
@@ -819,7 +951,7 @@ impl BackendHost {
 
         // The desktop host is about to exit. Revoke private Host RPC before asking the
         // child to perform its structured shutdown and release its PID state.
-        self.ownership_verified.store(false, Ordering::Release);
+        self.revoke_lifecycle(LifecyclePhase::Terminating);
         let response = local_post_json(
             SERVER_SHUTDOWN_PATH,
             br#"{"shutdown_behavior":"keep_monitor","remember":false}"#,
@@ -863,14 +995,6 @@ impl BackendHost {
         self.startup_surface
     }
 
-    pub fn allow_print_popups(&self) -> bool {
-        self.allow_print_popups
-    }
-
-    pub fn webview_data_directory(&self) -> &Path {
-        &self.webview_data_directory
-    }
-
     fn stop_liveness_worker(&self) {
         self.liveness_shutdown.store(true, Ordering::Release);
         let mut worker = match self.liveness_worker.lock() {
@@ -883,7 +1007,7 @@ impl BackendHost {
     }
 
     fn terminate_backend(&self) -> Result<(), BackendError> {
-        self.ownership_verified.store(false, Ordering::Release);
+        self.revoke_lifecycle(LifecyclePhase::Terminating);
         self.stop_liveness_worker();
         let mut child = match self.child.lock() {
             Ok(child) => child,
@@ -900,6 +1024,70 @@ impl BackendHost {
             .map(|_| ())
             .map_err(|_| BackendError::BackendTerminationFailed)
     }
+
+    fn revoke_lifecycle(&self, phase: LifecyclePhase) {
+        self.ownership_verified.store(false, Ordering::Release);
+        if let Ok(mut lifecycle) = self.lifecycle.lock() {
+            lifecycle.invalidate(phase);
+        }
+    }
+}
+
+impl LifecycleAuthority for BackendLifecycleAuthority {
+    fn capture_released_lease(&self) -> Result<LifecycleLease, RecoveryError> {
+        if !self.ownership_verified.load(Ordering::Acquire) {
+            return Err(RecoveryError::OwnershipLost);
+        }
+        let process_pid =
+            current_child_pid(&self.child).map_err(|_| RecoveryError::OwnershipLost)?;
+        let lifecycle = self
+            .lifecycle
+            .lock()
+            .map_err(|_| RecoveryError::OwnershipLost)?;
+        let lease = lifecycle.lease();
+        if !lease.startup_gate_released {
+            return Err(RecoveryError::StartupGateHeld);
+        }
+        if process_pid != self.child_pid
+            || lease.health_pid != self.child_pid
+            || lease.owned_pid != self.child_pid
+            || lease.process_pid != process_pid
+            || !lease.is_recovery_eligible()
+        {
+            return Err(RecoveryError::LeaseInvalid);
+        }
+        Ok(lease)
+    }
+
+    fn revalidate_lease(&self, lease: &LifecycleLease) -> Result<(), RecoveryError> {
+        if !self.ownership_verified.load(Ordering::Acquire) {
+            return Err(RecoveryError::OwnershipLost);
+        }
+        let process_pid =
+            current_child_pid(&self.child).map_err(|_| RecoveryError::OwnershipLost)?;
+        let lifecycle = self
+            .lifecycle
+            .lock()
+            .map_err(|_| RecoveryError::OwnershipLost)?;
+        if lifecycle.lease() != *lease
+            || process_pid != self.child_pid
+            || lease.process_pid != process_pid
+            || !lease.is_recovery_eligible()
+        {
+            return Err(RecoveryError::OwnershipLost);
+        }
+        Ok(())
+    }
+}
+
+impl LifecycleAuthority for BackendHost {
+    fn capture_released_lease(&self) -> Result<LifecycleLease, RecoveryError> {
+        self.lifecycle_authority().capture_released_lease()
+    }
+
+    fn revalidate_lease(&self, lease: &LifecycleLease) -> Result<(), RecoveryError> {
+        self.lifecycle_authority().revalidate_lease(lease)
+    }
 }
 
 impl Drop for BackendHost {
@@ -911,17 +1099,54 @@ impl Drop for BackendHost {
 fn spawn_backend_liveness_watcher(
     child: Arc<Mutex<Child>>,
     ownership_verified: Arc<AtomicBool>,
+    lifecycle: Arc<Mutex<BackendLifecycleState>>,
     shutdown: Arc<AtomicBool>,
 ) -> JoinHandle<()> {
     thread::spawn(move || {
         while !shutdown.load(Ordering::Acquire) {
             if !child_is_running(&child) {
                 ownership_verified.store(false, Ordering::Release);
+                if let Ok(mut lifecycle) = lifecycle.lock() {
+                    lifecycle.invalidate(LifecyclePhase::Invalid);
+                }
                 return;
             }
             thread::sleep(BACKEND_LIVENESS_POLL_INTERVAL);
         }
     })
+}
+
+fn current_child_pid(child: &Mutex<Child>) -> Result<u32, BackendError> {
+    let mut child = child
+        .lock()
+        .map_err(|_| BackendError::LifecycleUnavailable)?;
+    match child.try_wait() {
+        Ok(None) => Ok(child.id()),
+        Ok(Some(_)) | Err(_) => Err(BackendError::LifecycleUnavailable),
+    }
+}
+
+fn lifecycle_scope_for_identity(expected_identity: &ExpectedBackendIdentity) -> String {
+    let mut digest = Sha256::new();
+    digest.update(b"invoicehub-monitor-recovery-scope-v1\0");
+    digest.update(expected_identity.package_id.as_bytes());
+    digest.update([0]);
+    digest.update(
+        expected_identity
+            .config_path
+            .as_os_str()
+            .to_string_lossy()
+            .as_bytes(),
+    );
+    digest.update([0]);
+    digest.update(
+        expected_identity
+            .runtime_dir
+            .as_os_str()
+            .to_string_lossy()
+            .as_bytes(),
+    );
+    hex_encode(&digest.finalize())
 }
 
 fn child_is_running(child: &Mutex<Child>) -> bool {
@@ -1183,60 +1408,21 @@ fn identity_from_json(
     })
 }
 
-fn windows_portable_release_marker(
-    fields: &Map<String, Value>,
-    identity: &ExpectedBackendIdentity,
-    profile: BundleProfile,
-) -> Result<bool, BackendError> {
-    let marker = fields.get("windows_portable");
-    if profile != BundleProfile::Release {
-        return if marker.is_none() {
-            Ok(false)
-        } else {
-            Err(BackendError::BundleManifestInvalid)
-        };
-    }
-    let Some(marker) = marker else {
-        return Ok(false);
-    };
-    let marker = marker
-        .as_object()
-        .ok_or(BackendError::BundleManifestInvalid)?;
-    let marker_valid = marker.len() == 2
-        && marker.get("distribution").and_then(Value::as_str) == Some("zip")
-        && marker.get("updater_enabled").and_then(Value::as_bool) == Some(false)
-        && identity.platform == "windows"
-        && identity.architecture == "x86_64"
-        && identity.package_type == "portable";
-    if !marker_valid {
-        return Err(BackendError::BundleManifestInvalid);
-    }
-    Ok(true)
-}
-
 fn updater_from_json(
     fields: &Map<String, Value>,
     profile: BundleProfile,
-    windows_portable_release: bool,
 ) -> Result<UpdaterBundleConfig, BackendError> {
     let enabled =
         required_bool(fields, "enabled").map_err(|_| BackendError::BundleManifestInvalid)?;
     if !enabled {
         if !matches!(
             profile,
-            BundleProfile::Development | BundleProfile::InternalAlpha
+            BundleProfile::Development | BundleProfile::InternalAlpha | BundleProfile::Release
         ) || fields.len() != 1
             || fields.contains_key("endpoint")
             || fields.contains_key("public_key")
         {
-            if !(profile == BundleProfile::Release
-                && windows_portable_release
-                && fields.len() == 1
-                && !fields.contains_key("endpoint")
-                && !fields.contains_key("public_key"))
-            {
-                return Err(BackendError::BundleManifestInvalid);
-            }
+            return Err(BackendError::BundleManifestInvalid);
         }
         return Ok(UpdaterBundleConfig {
             enabled: false,
@@ -1246,8 +1432,9 @@ fn updater_from_json(
     }
     if !matches!(
         profile,
-        BundleProfile::InternalAlpha | BundleProfile::Release
-    ) {
+        BundleProfile::Development | BundleProfile::InternalAlpha | BundleProfile::Release
+    ) || fields.len() != 3
+    {
         return Err(BackendError::BundleManifestInvalid);
     }
     let endpoint =
@@ -1259,6 +1446,14 @@ fn updater_from_json(
         || endpoint.contains('#')
         || endpoint.chars().any(char::is_control)
         || public_key.chars().any(char::is_control)
+    {
+        return Err(BackendError::BundleManifestInvalid);
+    }
+    // The development assembler's recovery smoke only exercises startup restore.
+    // Locking both values here prevents a dirty development manifest from turning
+    // that cross-layer test profile into an arbitrary Feed or install authority.
+    if profile == BundleProfile::Development
+        && (endpoint != RECOVERY_SMOKE_ENDPOINT || public_key != RECOVERY_SMOKE_PUBLIC_KEY)
     {
         return Err(BackendError::BundleManifestInvalid);
     }
@@ -1555,8 +1750,9 @@ fn thread_sleep_until(deadline: Instant) {
 #[cfg(test)]
 mod tests {
     use std::fs;
-    use std::path::{Path, PathBuf};
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::path::Path;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::sync::{Arc, Mutex};
 
     use serde_json::{Map, Value};
     use sha2::{Digest, Sha256};
@@ -1567,9 +1763,50 @@ mod tests {
         generate_ownership_secret, identity_from_json, is_keep_monitor_shutdown_ack,
         ownership_response_for_test, ownership_response_matches, retry_probe,
         revalidate_backend_after_preferences, state_paths_for_bundle_profile, updater_from_json,
-        windows_portable_release_marker, BackendError, BackendHealth, BundleProfile,
-        DesktopStatePaths, DesktopStatePlatform, ExpectedBackendIdentity, HandshakeError,
+        BackendError, BackendHealth, BackendLifecycleAuthority, BackendLifecycleState,
+        BundleProfile, DesktopStatePaths, DesktopStatePlatform, HandshakeError, LifecycleAuthority,
+        LifecyclePhase, RecoveryError, RECOVERY_SMOKE_ENDPOINT, RECOVERY_SMOKE_PUBLIC_KEY,
     };
+
+    #[cfg(unix)]
+    struct TestAuthority {
+        authority: BackendLifecycleAuthority,
+    }
+
+    #[cfg(unix)]
+    impl Drop for TestAuthority {
+        fn drop(&mut self) {
+            if let Ok(mut child) = self.authority.child.lock() {
+                let _ = child.kill();
+                let _ = child.wait();
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    fn test_authority() -> TestAuthority {
+        let child = std::process::Command::new("sleep")
+            .arg("60")
+            .spawn()
+            .expect("spawn a non-network test child");
+        let child_pid = child.id();
+        TestAuthority {
+            authority: BackendLifecycleAuthority {
+                child: Arc::new(Mutex::new(child)),
+                child_pid,
+                ownership_verified: Arc::new(AtomicBool::new(true)),
+                lifecycle: Arc::new(Mutex::new(BackendLifecycleState {
+                    generation: 7,
+                    phase: LifecyclePhase::OwnedRunning,
+                    health_pid: child_pid,
+                    owned_pid: child_pid,
+                    process_pid: child_pid,
+                    startup_gate_released: true,
+                    state_scope: "a".repeat(64),
+                })),
+            },
+        }
+    }
 
     fn health() -> BackendHealth {
         BackendHealth {
@@ -1591,6 +1828,74 @@ mod tests {
             config_path: "/config".into(),
             runtime_dir: "/runtime".into(),
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn lifecycle_authority_accepts_an_owned_released_lease() {
+        let fixture = test_authority();
+
+        let lease = fixture
+            .authority
+            .capture_released_lease()
+            .expect("owned released lease");
+
+        assert_eq!(lease.phase, LifecyclePhase::OwnedRunning);
+        fixture
+            .authority
+            .revalidate_lease(&lease)
+            .expect("unchanged lease remains valid");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn lifecycle_authority_preserves_startup_gate_and_fails_closed_on_ownership_loss() {
+        let fixture = test_authority();
+        {
+            let mut lifecycle = fixture.authority.lifecycle.lock().expect("lifecycle lock");
+            lifecycle.phase = LifecyclePhase::StartupGateHeld;
+            lifecycle.startup_gate_released = false;
+        }
+        assert_eq!(
+            fixture.authority.capture_released_lease(),
+            Err(RecoveryError::StartupGateHeld)
+        );
+
+        fixture
+            .authority
+            .ownership_verified
+            .store(false, Ordering::Release);
+        assert_eq!(
+            fixture.authority.capture_released_lease(),
+            Err(RecoveryError::OwnershipLost)
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn lifecycle_authority_fails_closed_on_child_pid_mismatch_and_clone_shares_handles() {
+        let mut fixture = test_authority();
+        let clone = fixture.authority.clone();
+        let lease = fixture
+            .authority
+            .capture_released_lease()
+            .expect("owned released lease");
+
+        fixture.authority.child_pid += 1;
+        assert_eq!(
+            fixture.authority.capture_released_lease(),
+            Err(RecoveryError::LeaseInvalid)
+        );
+        assert_eq!(
+            fixture.authority.revalidate_lease(&lease),
+            Err(RecoveryError::OwnershipLost)
+        );
+
+        clone.ownership_verified.store(false, Ordering::Release);
+        assert_eq!(
+            fixture.authority.capture_released_lease(),
+            Err(RecoveryError::OwnershipLost)
+        );
     }
 
     #[test]
@@ -1676,49 +1981,44 @@ mod tests {
 
     #[test]
     fn desktop_state_paths_are_derived_from_platform_user_roots() {
-        let windows_local_app_data = if cfg!(target_os = "windows") {
-            PathBuf::from(r"C:\\users\\example\\local-app-data")
-        } else {
-            PathBuf::from("/users/example/local-app-data")
-        };
         let windows = desktop_state_paths_for(
             DesktopStatePlatform::Windows,
-            Some(&windows_local_app_data),
+            Some(Path::new("/users/example/local-app-data")),
             None,
         )
         .expect("Windows state paths");
-        assert_eq!(windows.root, windows_local_app_data.join("InvoiceHub"));
+        assert_eq!(
+            windows.root,
+            Path::new("/users/example/local-app-data/InvoiceHub")
+        );
         assert_eq!(
             windows.config_path,
-            windows_local_app_data.join("InvoiceHub/config/app.local.json")
+            Path::new("/users/example/local-app-data/InvoiceHub/config/app.local.json")
         );
         assert_eq!(
             windows.runtime_dir,
-            windows_local_app_data.join("InvoiceHub/runtime")
-        );
-        assert_eq!(
-            windows.webview_data_directory(),
-            windows_local_app_data.join("InvoiceHub/webview")
+            Path::new("/users/example/local-app-data/InvoiceHub/runtime")
         );
 
-        let macos_home = if cfg!(target_os = "windows") {
-            PathBuf::from(r"C:\\Users\\example")
-        } else {
-            PathBuf::from("/Users/example")
-        };
-        let macos = desktop_state_paths_for(DesktopStatePlatform::Macos, None, Some(&macos_home))
-            .expect("macOS state paths");
+        let macos = desktop_state_paths_for(
+            DesktopStatePlatform::Macos,
+            None,
+            Some(Path::new("/Users/example")),
+        )
+        .expect("macOS state paths");
         assert_eq!(
             macos.root,
-            macos_home.join("Library/Application Support/InvoiceHub")
+            Path::new("/Users/example/Library/Application Support/InvoiceHub")
         );
         assert_eq!(
             macos.config_path,
-            macos_home.join("Library/Application Support/InvoiceHub/config/app.local.json")
+            Path::new(
+                "/Users/example/Library/Application Support/InvoiceHub/config/app.local.json"
+            )
         );
         assert_eq!(
             macos.runtime_dir,
-            macos_home.join("Library/Application Support/InvoiceHub/runtime")
+            Path::new("/Users/example/Library/Application Support/InvoiceHub/runtime")
         );
         assert!(matches!(
             desktop_state_paths_for(
@@ -1891,7 +2191,7 @@ mod tests {
             ),
             (
                 "product_version".to_owned(),
-                Value::String("0.3.0-alpha.1".to_owned()),
+                Value::String("0.3.0-alpha.2".to_owned()),
             ),
             (
                 "package_id".to_owned(),
@@ -1924,50 +2224,69 @@ mod tests {
     }
 
     #[test]
-    fn windows_portable_marker_is_the_only_release_updater_disabled_exception() {
-        let portable_identity = ExpectedBackendIdentity {
-            bundle_profile: BundleProfile::Release,
-            build_id: "a".repeat(64),
-            api_contract_version: "contract".to_owned(),
-            bookkeeping_protocol_version: "protocol".to_owned(),
-            capabilities: vec!["capability".to_owned()],
-            product_version: "0.3.0-alpha.2".to_owned(),
-            package_id: "com.invoicehub.windows.x86_64.portable".to_owned(),
-            platform: "windows".to_owned(),
-            architecture: "x86_64".to_owned(),
-            package_type: "portable".to_owned(),
-            config_path: "/config".into(),
-            runtime_dir: "/runtime".into(),
-        };
-        let fields = Map::from_iter([(
-            "windows_portable".to_owned(),
-            serde_json::json!({"distribution": "zip", "updater_enabled": false}),
-        )]);
-        let marker =
-            windows_portable_release_marker(&fields, &portable_identity, BundleProfile::Release)
-                .expect("valid Windows portable marker");
-        let updater = updater_from_json(
-            &Map::from_iter([("enabled".to_owned(), Value::Bool(false))]),
-            BundleProfile::Release,
-            marker,
-        )
-        .expect("release portable updater remains explicitly disabled");
+    fn development_updater_accepts_only_the_non_installing_recovery_smoke_tuple() {
+        let fields = Map::from_iter([
+            ("enabled".to_owned(), Value::Bool(true)),
+            (
+                "endpoint".to_owned(),
+                Value::String(RECOVERY_SMOKE_ENDPOINT.to_owned()),
+            ),
+            (
+                "public_key".to_owned(),
+                Value::String(RECOVERY_SMOKE_PUBLIC_KEY.to_owned()),
+            ),
+        ]);
+
+        let updater = updater_from_json(&fields, BundleProfile::Development)
+            .expect("exact recovery-smoke updater tuple");
+        assert!(updater.enabled());
+        assert_eq!(updater.endpoint(), Some(RECOVERY_SMOKE_ENDPOINT));
+        assert_eq!(updater.public_key(), Some(RECOVERY_SMOKE_PUBLIC_KEY));
+
+        for (field, value) in [
+            (
+                "endpoint",
+                Value::String("https://example.invalid/latest.json".to_owned()),
+            ),
+            (
+                "public_key",
+                Value::String("install-capable-key".to_owned()),
+            ),
+        ] {
+            let mut changed = fields.clone();
+            changed.insert(field.to_owned(), value);
+            assert!(matches!(
+                updater_from_json(&changed, BundleProfile::Development),
+                Err(BackendError::BundleManifestInvalid)
+            ));
+        }
+
+        let mut extra = fields;
+        extra.insert("channel".to_owned(), Value::String("alpha".to_owned()));
+        assert!(matches!(
+            updater_from_json(&extra, BundleProfile::Development),
+            Err(BackendError::BundleManifestInvalid)
+        ));
+    }
+
+    #[test]
+    fn release_profile_accepts_only_the_exact_disabled_updater_object() {
+        let disabled = Map::from_iter([("enabled".to_owned(), Value::Bool(false))]);
+        let updater = updater_from_json(&disabled, BundleProfile::Release)
+            .expect("release preview must be able to disable updater delegation");
         assert!(!updater.enabled());
 
-        let mut wrong_platform = portable_identity.clone();
-        wrong_platform.platform = "macos".to_owned();
-        assert!(matches!(
-            windows_portable_release_marker(&fields, &wrong_platform, BundleProfile::Release),
-            Err(BackendError::BundleManifestInvalid)
-        ));
-        assert!(matches!(
-            updater_from_json(
-                &Map::from_iter([("enabled".to_owned(), Value::Bool(false))]),
-                BundleProfile::Release,
-                false,
-            ),
-            Err(BackendError::BundleManifestInvalid)
-        ));
+        for (name, value) in [
+            ("endpoint", Value::String("https://example.invalid/latest.json".to_owned())),
+            ("public_key", Value::String("unexpected-key".to_owned())),
+        ] {
+            let mut extra = disabled.clone();
+            extra.insert(name.to_owned(), value);
+            assert!(matches!(
+                updater_from_json(&extra, BundleProfile::Release),
+                Err(BackendError::BundleManifestInvalid)
+            ));
+        }
     }
 
     #[test]

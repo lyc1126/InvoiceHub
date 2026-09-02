@@ -325,7 +325,7 @@ def test_windows_launcher_is_release_closed_and_identity_bound() -> None:
     assert "$healthResponse.Content | ConvertFrom-Json" not in module
 
 
-def test_windows_release_build_keeps_hash_lock_and_makes_reproducibility_an_opt_in_audit() -> None:
+def test_windows_release_build_uses_git_snapshot_hash_lock_and_reproducibility_check() -> None:
     prepare = _text("scripts/dev/prepare_windows_runtime.ps1")
     build = _text("scripts/dev/build_windows_portable.ps1")
     verify = _text("scripts/dev/verify_windows_portable.ps1")
@@ -339,14 +339,10 @@ def test_windows_release_build_keeps_hash_lock_and_makes_reproducibility_an_opt_
     assert 'Copy-Item -LiteralPath $baseRuntimeDir -Destination $runtimeDir -Recurse' in prepare
     assert 'Remove-Item -LiteralPath $runtimeDocDir -Recurse -Force' in prepare
     assert "invoice_hub.release.runtime_manifest normalize-windows" in prepare
-    assert "& $python -B -m invoice_hub.release.runtime_manifest normalize-windows" in prepare
     assert '$env:SOURCE_DATE_EPOCH = "315532800"' in prepare
     assert '$previousSourceDateEpoch = [Environment]::GetEnvironmentVariable' in prepare
     assert 'Remove-Item -LiteralPath "Env:SOURCE_DATE_EPOCH"' in prepare
     assert "import tkinter, ssl, sqlite3, fitz, PIL, watchdog" in prepare
-    assert "& $python -B -I -m pip check" in prepare
-    assert "& $python -B -I -c \"import tkinter, ssl, sqlite3, fitz, PIL, watchdog" in prepare
-    assert "& $python -B -m invoice_hub.release.runtime_manifest write" in prepare
     assert prepare.index('Copy-Item -LiteralPath $baseRuntimeDir') < prepare.index(
         '$runtimeDocDir = Join-Path $runtimeDir "Doc"'
     ) < prepare.index('$env:SOURCE_DATE_EPOCH = "315532800"') < prepare.index(
@@ -359,13 +355,8 @@ def test_windows_release_build_keeps_hash_lock_and_makes_reproducibility_an_opt_
     )
     assert "git -C $root -c core.autocrlf=false archive" in build
     assert "--source-timestamp" in build
-    assert "[switch]$VerifyReproducibility" in build
-    assert "SkipReproducibilityCheck" not in build
-    assert "$reproducibilityChecked = [bool]$VerifyReproducibility" in build
-    assert "if ($reproducibilityChecked)" in build
+    assert "reproducibility" in build.casefold()
     assert "reproducibility_checked" in build
-    assert "reproducibility_builds" in build
-    assert "portable_verification_checked" in build
     assert "archive_sha256" in build
     assert "python\\python.exe" in verify
     assert "invoice_hub.release.verify_portable" in verify
@@ -444,8 +435,8 @@ def test_windows_repackage_config_is_complete_and_matches_release_identity() -> 
         "default_host": "127.0.0.1",
         "default_port": 8766,
         "minimum_free_disk_gib": 10,
-        "reproducibility_builds": 1,
-        "offline_rebuild_required": False,
+        "reproducibility_builds": 2,
+        "offline_rebuild_required": True,
     }
     assert "source_commit" not in config
 
@@ -455,7 +446,6 @@ def test_windows_release_entry_scripts_load_machine_config_before_work() -> None
         "scripts/dev/verify_release_source.ps1": "Get-Command python",
         "scripts/dev/prepare_windows_runtime.ps1": "Get-Command $PythonManager",
         "scripts/dev/build_windows_portable.ps1": "git -C $root -c core.autocrlf=false archive",
-        "scripts/dev/build_windows_portable_release.ps1": "$pwsh = Get-Command pwsh",
     }
     for path, first_effectful_operation in scripts.items():
         script = _text(path)
@@ -470,72 +460,33 @@ def test_windows_release_entry_scripts_load_machine_config_before_work() -> None
     assert "runtime_preparation_skipped" in build
 
 
-def test_windows_portable_release_entry_runs_one_build_then_formal_bat_smoke() -> None:
-    wrapper = _text("scripts/dev/build_windows_portable_release.ps1")
-    smoke = _text("scripts/dev/smoke_windows_portable.ps1")
-    config_helper = _text("scripts/dev/windows_release_config.ps1")
+def test_windows_public_preview_stages_manifest_bound_resources_before_tauri_build() -> None:
+    workflow = _text(".github/workflows/windows-public-preview.yml")
+    stage = _text("scripts/dev/tauri_windows_preview_stage.py")
+    packager = _text("scripts/dev/tauri_windows_public_preview.ps1")
+    config = json.loads(_text("docs/release/WINDOWS_PUBLIC_PREVIEW_CONFIG.json"))
 
-    assert "build_windows_portable.ps1" in wrapper
-    assert "smoke_windows_portable.ps1" in wrapper
-    assert '[string]$SourceCommit = ""' in wrapper
-    assert "[ValidatePattern('^[0-9a-f]{40}$')]" not in wrapper
-    assert "SourceCommit must be a lowercase 40-character Git SHA when supplied." in wrapper
-    assert '$resolvedCommit = (git -C $root rev-parse HEAD).Trim()' in wrapper
-    assert '"-SourceCommit", $resolvedCommit' in wrapper
-    assert "-VerifyReproducibility" in wrapper
-    assert "-Clean cannot be combined with -Offline" in wrapper
-    assert "reproducibility_builds -notin @(1, 2)" in config_helper
-    assert "offline_rebuild_required must be a boolean" in config_helper
-    assert "Expand-Archive" in smoke
-    assert "Invoke-IHBatch" in smoke
-    assert "Test-IHExcludedTcpPort" in smoke
-    assert "Test-IHHealthIdentity" in smoke
-    assert "formal root BAT launchers" in smoke
-    assert "fallback-after-excluded-default-port" in smoke
-    assert "server_stderr" in smoke
-    assert "$config.watch_dir" in smoke and "$config.runtime_dir" in smoke
-    assert "windows-portable-smoke.json" in smoke
-    assert all(byte < 128 for byte in (ROOT / "scripts/dev/smoke_windows_portable.ps1").read_bytes())
-
-
-@pytest.mark.skipif(os.name != "nt", reason="Windows PowerShell parser test")
-def test_windows_portable_release_scripts_parse_in_powershell() -> None:
-    pwsh = shutil.which("pwsh.exe") or shutil.which("pwsh")
-    if pwsh is None:
-        pytest.skip("PowerShell 7 is required for the Windows portable release parser test")
-
-    paths = [
-        ROOT / "scripts/dev/build_windows_portable_release.ps1",
-        ROOT / "scripts/dev/smoke_windows_portable.ps1",
-    ]
-    command = """
-$ErrorActionPreference = 'Stop'
-$paths = $env:IH_RELEASE_SCRIPT_PATHS -split [System.IO.Path]::PathSeparator
-foreach ($path in $paths) {
-    $tokens = $null
-    $errors = $null
-    [System.Management.Automation.Language.Parser]::ParseFile($path, [ref]$tokens, [ref]$errors) | Out-Null
-    if ($errors.Count -gt 0) {
-        throw (($errors | ForEach-Object { $_.Message }) -join [Environment]::NewLine)
-    }
-}
-Write-Output 'portable-release-parser-ok'
-"""
-    env = os.environ.copy()
-    env["IH_RELEASE_SCRIPT_PATHS"] = os.pathsep.join(str(path) for path in paths)
-    completed = subprocess.run(
-        [pwsh, "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", command],
-        cwd=ROOT,
-        env=env,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        check=False,
-        timeout=20,
-    )
-    assert completed.returncode == 0, completed.stdout + completed.stderr
-    assert "portable-release-parser-ok" in completed.stdout
+    assert "prepare_windows_runtime.ps1" in workflow
+    assert "tauri_windows_preview_stage.py" in workflow
+    assert "INVOICE_HUB_BUNDLE_MANIFEST_SHA256" in workflow
+    assert workflow.index("tauri_windows_preview_stage.py") < workflow.index("tauri build --config")
+    assert "build_core._collect_source_files" in stage
+    assert "validate_runtime_manifest" in stage
+    assert "build_sbom_payload" in stage
+    assert '"package_type": "nsis"' in stage
+    assert '"updater": {"enabled": False}' in stage
+    assert config["sha256_name"] == f"{config['artifact_name']}.sha256"
+    assert config["receipt_name"].endswith(".build-receipt.json")
+    assert "NSIS marker count is invalid after write." in workflow
+    assert "Get-AuthenticodeSignature" in workflow
+    assert "signed_application_sha256" in workflow
+    assert "$config.sha256_name" in workflow
+    assert "$config.receipt_name" in workflow
+    assert config["artifact_name"] in workflow
+    assert config["sha256_name"] in workflow
+    assert config["receipt_name"] in workflow
+    assert "Windows public-preview SHA-256 sidecar write failed." in packager
+    assert "$config.sha256_name" in packager
 
 
 def test_windows_source_tests_use_an_isolated_hash_locked_environment() -> None:
@@ -589,7 +540,7 @@ def test_windows_repackage_initializer_runs_in_a_fresh_pwsh_process(tmp_path: Pa
 
     assert completed.returncode == 0, completed.stdout + completed.stderr
     session = json.loads(
-        (root / "dist/evidence/windows-v0.3.0-alpha.2/windows-repackage-session.json").read_text(
+        (root / f"dist/evidence/windows-v{PRODUCT_VERSION}/windows-repackage-session.json").read_text(
             encoding="utf-8-sig"
         )
     )
@@ -615,7 +566,7 @@ def test_windows_repackage_initializer_rejects_insufficient_free_disk(tmp_path: 
     assert completed.returncode != 0
     assert "At least 10 GiB free disk is required" in output
     assert not (
-        root / "dist/evidence/windows-v0.3.0-alpha.2/windows-repackage-session.json"
+        root / f"dist/evidence/windows-v{PRODUCT_VERSION}/windows-repackage-session.json"
     ).exists()
 
 

@@ -3,9 +3,11 @@
 > 公共权威基线：经过审计的单一脱敏根提交；旧私有历史和发布资产不属于公开图。
 > 当前发行边界：候选树、Git 对象和托管面验证已通过，仓库已公开；旧私有历史、Tag 和资产仍不得公开或上传。Tauri 2 `v0.3` 才替换平台壳并新增 Host RPC/updater 行为。
 > 校验规则：精确的当前本地与 GitHub HEAD 以实时 Git 引用和双向差异为准。
-> 状态说明：OCR 服务类接口与 Windows desktop surface 属于“未启用能力”；当前尚未创建公开 Tag、Release 或 Feed。Tauri 开发分支已有代码级 host 生命周期、Host RPC 和 update-install API，且 L6 已运行隔离 TestClient runtime contract。schema-3 development assembly 已构建且隔离烟测一个 macOS arm64 `.app`；裸 checkout 仍无 manifest 而 fail-closed，development updater 禁用，真实 updater 与平台 release smoke 尚未进行。
+> 状态说明：OCR 服务类接口与 Windows desktop surface 属于“未启用能力”；`0.3.0-alpha.2` public-preview 的 macOS package identity、LaunchServices 启动、SSE 关闭修复与 receipt finalization 门禁均已进入 `main`，只有默认 verifier 接受与 DMG SHA-256 绑定的 finalized record。远端同名 Tag 仍指向此前基线，必须在最终干净 `main` 上经新的明确授权重建，不能用当前 Tag 公开构建。没有公开 Release 或 Feed；Tauri 开发分支已有代码级 host 生命周期、Host RPC 和 update-install API，且 L6 已运行隔离 TestClient runtime contract。schema-3 development assembly 已构建且隔离烟测一个 macOS arm64 `.app`；裸 checkout 仍无 manifest 而 fail-closed，development updater 禁用，真实 updater 与平台 release smoke 尚未进行。
 
 Tauri L9/P1-Q 只验证一次 development-profile 组装、启动和真实 Cmd-Q 退出流：host 用编译绑定的 manifest/launcher 启动 owned child，child 固定监听 `127.0.0.1:8766`，health/background ready 后加载首页和静态资源。`INVOICE_HUB_DEV_STATE_ROOT` 只对 development host 可用，必须显式、绝对、已存在、canonicalize 后与 bundle/core 和完整 `.app` 容器双向不包含，`Contents` sibling 同样拒绝，且不传给 Python child。clean-commit 样本的前台 Cmd-Q 经自定义菜单触发 `app.exit(0)` 与 `ExitRequested`，随后 shutdown POST 200、`server_state=stopped`、monitor 未运行、host/backend/PID/8766 清理完成；打开的 SSE 连接由既定 `kill + wait` 兜底。外部 AppleScript quit、tray 点击等不是该样本；该流也未调用真实 Feed/安装、原生 picker、browser、单实例或打印，不能推断为任何发布接口已验收。
+
+L10-R/C 定义的 lease、marker、fixed-loopback bridge 和 pure coordinator 已由 L10-D 接入 Host RPC/updater/startup restore，但不增加新的浏览器公开接口：`POST /api/v1/update/install {}` 仍只委托固定 enum。Host 在 startup gate 释放并 manage 后激活 updater、先恢复 runtime marker；install 成功响应 flush 后才放行私有 download+verify -> pause -> install -> relaunch。现有 development/internal-alpha updater-disabled，且尚无真实 Feed、monitor、安装或平台 smoke。
 
 ## 1. 从页面到真值的完整链路
 
@@ -38,7 +40,7 @@ flowchart LR
 | `GET /skins` | `skins.html` + `page-skins.js` | skins 列表、导入、替换、启用、重置 | 上传体必须是原始 ZIP；不执行包内代码 | 皮肤 API 与前端契约 |
 | `GET /backend` | `backend.html` 内联脚本 | health、settings、bridge/status | 不注入皮肤，不进入普通首要导航 | API/前端契约 |
 | `GET /invoices/{invoice_key}` | `detail.html` + `page-detail.js` | invoice detail、manual-fields、open-file、open-location | `invoice_key` 是当前汇总位置键，不是长期主键 | 详情与成本拆分 API 测试 |
-| `GET /invoices/print/{job_id}` | `invoice_print.html` 内联打印脚本 | print job、逐页 PNG | 不注入活动皮肤；全部图片完成 `load + decode` 和两次渲染帧后调用 `window.print()`；票面跟随实际页框；私有 no-store；macOS/Tauri 子窗口仅允许该同端口、无 query/fragment 的受控路径 | 打印服务/前端契约、Rust popup policy、真实浏览器分页与原生策略测试 |
+| `GET /invoices/print/{job_id}` | `invoice_print.html` 内联打印脚本 | print job、逐页 PNG | 不注入活动皮肤；全部图片完成 `load + decode` 和两次渲染帧后调用 `window.print()`；票面跟随实际页框；私有 no-store；macOS 子窗口只允许该同端口受控路径 | 打印服务/前端契约、真实浏览器分页与 macOS 策略测试 |
 | `GET /favicon.ico` | 静态响应 | 无业务数据 | `include_in_schema=false`，但仍属于 FastAPI 路由契约 | API 静态契约 |
 
 所有普通页面由 `_template()` 做有限占位替换，不是 Jinja2 模板引擎。活动皮肤由服务端在 `</head>` 前注入；`/backend` 和带 `?no_skin=1` 的请求跳过注入。
@@ -51,13 +53,15 @@ flowchart LR
 |---|---|---|---|
 | `GET /api/v1/health` | `health` | 运行状态、路径/PID、build/API/协议/能力，以及 `product_version/package_id/platform/architecture/package_type` 与 package manifest 状态 | 双平台启动器、设置页、macOS 严格握手；当前健康可先于后台同步完成 |
 | `GET /api/v1/about` | `about` | 纯本地返回产品、package、build、公开链接和最近更新状态 | 设置“关于”；绝不触发网络 I/O |
-| `POST /api/v1/about/links/{link_key}` | `open_about_link` | JSON 只允许空对象；只接受 `github` / `changelog` 两个固定键并交给系统默认浏览器 | 同源写请求；未知键或非空 body `400`，系统壳失败 `503`；不接受 URL |
 | `POST /api/v1/update/check` | `check_for_updates` | JSON 只允许布尔 `force`；返回 `idle/checking/up_to_date/available/offline/invalid/unsupported` 与候选 artifact | 同源写请求；线程池执行；URL/主机不可由客户端覆盖 |
-| `POST /api/v1/update/install` | `install_update` | 只接受空 JSON 对象 `{}`；只消费本进程已批准且与 allowlisted Feed 最新版本完全一致的 host candidate | Tauri 配置时要求精确 host origin；当前 host 清除候选后 fail closed，直到 recovery/relaunch coordinator 完整实现；版本/URL/路径/签名一律拒绝；Host RPC 失败固定 `503 Update installation unavailable`，不得泄露 token 或候选元数据 |
+| `POST /api/v1/update/install` | `install_update` | 只接受空 JSON 对象 `{}`；只消费本进程已批准且与 allowlisted Feed 最新版本完全一致的 host candidate | Tauri 配置时要求精确 host origin；host 原子消费 300 秒内完整候选，先 flush `{"ok":true}` 再放行私有 update commit；版本/URL/路径/签名/artifact ID 一律拒绝且不返回；Host RPC/commit 准备失败固定 `503 Update installation unavailable`，不得泄露私有元数据 |
 | `GET /api/v1/settings` | `settings` | 主机端口、活动 TargetProfile、普通/成本产物、最近目录、偏好、bridge、诊断路径 | 首页、设置页、backend |
 | `PUT /api/v1/settings` | `update_settings` | `{watch_dir}`；有效目录才切换，停止旧 monitor，写配置并触发后台同步 | 首页、设置页；业务失败通常返回 `ok=false` 而非 HTTP 4xx |
-| `GET /api/v1/preferences` | `preferences` | 成本显示、路径显示、单据策略、OCR 候选目录、关闭方式、`startup_surface`、`auto_check_updates`、默认 `true` 的 `allow_print_popups` 及 `desktop_available` | costs/documents/OCR/settings 与桌面壳 |
+| `GET /api/v1/preferences` | `preferences` | 成本显示、路径显示、单据策略、OCR 候选目录、关闭方式、`startup_surface`、`auto_check_updates`、默认 `true` 的 `allow_print_popups` 及 `desktop_available` | costs/documents/OCR/settings 与 Tauri host |
 | `PUT /api/v1/preferences` | `save_preferences` | 允许字段的部分更新，包括严格布尔 `allow_print_popups` | 强制同源写；非法值 `400`；Windows desktop 返回 `422`；写 `runtime/local_state/preferences.json`；桌面壳于下次启动读取打印许可 |
+| `GET /api/v1/app-icon` | `app_icon` | 当前/默认内置图标及预览、favicon URL | 设置中心、皮肤页和服务端页面 head；坏运行态回退暖橙 |
+| `PUT /api/v1/app-icon` | `update_app_icon` | 仅接受精确 `{"icon":"orange|teal|violet"}` | 强制同源写；非法/额外字段 `400`；Tauri private Host RPC 失败固定脱敏 `503 App icon update unavailable` |
+| `POST /api/v1/about/links/{link_key}` | `open_about_link` | 只接受空 JSON 对象，按固定 `github` / `changelog` 键通过系统壳打开已登记 HTTPS 链接 | 强制同源写；未知键 `400`，系统壳失败固定 `503`；客户端不能提供任意 URL |
 | `GET /api/v1/diagnostics/summary` | `diagnostic_summary` | 配置、产物、运行态、bridge、事件和日志摘要 | 设置页诊断 |
 | `GET /api/v1/diagnostics/config-health` | `config_health` | 路径槽位、目录和配置健康项 | 设置页诊断 |
 | `POST /api/v1/diagnostics/support-package` | `export_support_package` | 支持包路径、大小和清单 | 设置页；不含源发票或投影正文 |
@@ -147,16 +151,14 @@ identity 检查确认 child 仍被拥有，才 arm 授权或创建 surface。未
 
 在非 Tauri mode，它们保留既有同源写入检查。Tauri host 只将 token 传给其直接启动的
 Python backend；backend 启动时捕获 token 并从 descendant 环境清除。该 Python client 的 picker 面只将四种固定 picker enum
-发送到随机 loopback Host RPC listener，更新面独立地只允许 `update_check` / `update_install` 两个固定 enum；token 不会经过页面、
-Tauri command/event、API 响应或日志；Rust dialog 最多等待 120 秒，Python 以 125 秒预算保留响应余量。`tauri-plugin-dialog`
-自身负责异步主线程调度，host 必须直接调用插件 picker，不能再包一层 `run_on_main_thread`；此前 native candidate 在 chooser
-显示前得到脱敏 `503`，修复后的源码契约不替代新的 clean ZIP 原生窗口验收。
+发送到随机 loopback Host RPC listener，更新面独立地只允许 `update_check` / `update_install` 两个固定 enum，应用图标面只允许精确 `set_app_icon` 加一个内置 id；token 不会经过页面、
+Tauri command/event、API 响应或日志；Rust dialog 最多等待 120 秒，Python 以 125 秒预算保留响应余量。
 Host RPC 失败统一变为不含 token、URL 或 secret 的 `503 Native picker unavailable`；非
 Tauri 的 Tk 行为不变。授权先在 handshake 后 arm，backend child 退出后由 100 ms 有界
 Rust liveness watcher 撤销，watcher 不能重新授权已退出 child。握手完成后 host 才读取
 `GET /api/v1/preferences` 的严格 `{ok, preferences.startup_surface,
-preferences.allow_print_popups, allowed.desktop_available}` 形状并重新证明 ownership：desktop 创建空 IPC WebView，browser
-只由 host-only opener 打开固定 localhost origin。Tauri 只在启动时读取打印许可：关闭时拒绝所有 child window，开启时也仅接受精确 `about:blank`，且 child 仅可导航至受限本地打印 job 路径；托盘和第二实例重开同一 surface，desktop
+allowed.desktop_available}` 形状并重新证明 ownership：desktop 创建空 IPC WebView，browser
+只由 host-only opener 打开固定 localhost origin；托盘和第二实例重开同一 surface，desktop
 close 只隐藏窗口且不会调用 monitor stop。当前这条流程只做 source/contract verification，
 尚未打开真实 native picker、浏览器、托盘或窗口。
 
@@ -167,14 +169,44 @@ surface 的任一可失败初始化失败时，host 必须在返回原 setup err
 才可以 `app.manage` backend 与 `startup_surface`。setup error 不经过正常 `ExitRequested`，因此
 不得依赖 exit handler 或 `Drop` 承担这一路径的清理。
 
-Windows `release` host 是 GUI PE，不得在双击时显示 inherited console。它在启动 owned Python backend 前创建 runtime 目录、以 `CREATE_NO_WINDOW` 阻止子进程分配控制台，并把 stdout/stderr 追加到 `%LOCALAPPDATA%\\InvoiceHub\\runtime\\server_stdout.log` 与 `server_stderr.log`；debug host 保留控制台供开发排障。portable verifier 同时要求 PE subsystem 为 Windows GUI，避免构建配置回退。
-
 macOS 应用菜单的 Quit 是自定义普通菜单项，显式绑定 `CmdOrCtrl+Q`；它与托盘 Quit
 只调用同一个 `app.exit(0)` 请求。不得使用会绑定 Cocoa `terminate:` 的 predefined
 Quit，因为该路径和外部 AppleScript quit 都可能绕过 Tauri `ExitRequested`。Host 收到
 `ExitRequested` 后，才调用结构化 `keep_monitor` shutdown；失败或超时后显式
 `kill + wait` owned child，无法确认退出则 `prevent_exit`。Force Quit、SIGKILL、注销和
 断电不属于这一有序退出协议。
+
+### 3.4.2 Tauri L10-D authenticated recovery/update runtime
+
+L10-D 复用 L10-R/C 的 lease、marker、fixed-loopback bridge 和 pure coordinator，不新增浏览器
+公开 API 或 Host RPC 命令：
+
+- `BackendHost` 私有保留启动 Python 使用的 32-byte ownership secret。每个 recovery 请求使用
+  fresh 64 字符小写十六进制 challenge，并对 domain/method/path/challenge/空 body SHA-256 做
+  HMAC-SHA256；Python 要求完整认证头、`Content-Length: 0`、无 transfer-encoding，并用 128 项
+  进程内有界集合拒绝 replay。响应 proof 再绑定相同 method/path/challenge、HTTP status 和精确 body
+  SHA-256；Rust 要求恰好一个 proof 并常量时间验证。普通未认证 bridge 页面调用保持原行为。
+- Updater-disabled profile 的 runtime 固定 inert。Enabled profile 只有在 setup surface 成功、startup
+  gate 释放、`BackendHost` 已 manage 后才从 `expected_identity.runtime_dir` 打开平台 marker store，
+  并先调用 authenticated `restore_owned_monitor`。恢复只有 `running && ready` 才清 marker；失败保留
+  marker、backend/WebUI 与诊断，同时把 updater 固定为 failed。
+- `update_check` 保留完整 cloneable `Update`，内部 artifact ID 由
+  version/target/download URL/signature 的域分隔 SHA-256 transcript 产生；Web 只接收版本。
+  `update_install` 原子消费 fresh candidate 并 reserve runtime，启动 execute/cancel latch 阻塞的私有
+  worker；精确 `{"ok":true}` 写入并 flush 后才发送 execute。writer/spawn/latch loss 进入
+  `CommitLost`，worker 不运行下载、marker、monitor 或 installer；reserved/executing 时拒绝并发操作
+  与普通 Quit。
+- 私有 worker 调用锁定 Tauri `Update::download` 完成内置签名验证，再由 `UpdateCoordinator` 执行
+  pause -> `Update::install` -> relaunch；pause/install/relaunch 失败保留 primary 与 restore attempt。
+  Windows 的 updater `on_before_exit` 先调用 managed backend 的 structured shutdown/terminate，无法
+  确认终止则非零退出且不启动 installer。macOS 安装返回后先停 backend、标记 relaunch prepared，
+  再 `request_restart()`；对应 `ExitRequested` 才跳过重复 shutdown。
+- marker store 继续遵守 Unix descriptor-pinned/no-follow/flock/directory-sync 与 Windows
+  handle-relative/no-reparse 边界。最小 Windows store 交叉编译是历史 source 证据；完整 Tauri Windows
+  target 与真实 Windows runtime 仍未验证。
+
+上述接线只证明源码顺序与 contract。现有 development/internal-alpha updater-disabled；没有运行
+产品进程、真实 Feed、monitor、下载、安装、重启、制品、签名或发布。
 
 ### 3.5 业务资料夹与做账
 
@@ -218,11 +250,17 @@ Quit，因为该路径和外部 AppleScript quit 都可能绕过 Tauri `ExitRequ
 | `POST /api/v1/skins/reset` | `reset_skin` | 恢复无皮肤 | 默认可恢复入口 |
 | `GET /api/v1/skins/{skin_id}/files/{file_path:path}` | `skin_file` | CSS/字体/图片内容，正确 media type | 路径必须停留在皮肤根内 |
 
+### 3.6.1 应用图标
+
+应用图标不是皮肤资源或任意文件上传面。`GET /api/v1/app-icon` 返回唯一当前内置 id、默认 id 和三套固定静态 URL；`PUT /api/v1/app-icon` 只接受恰好一个字符串字段 `icon`，其值只能是 `orange`、`teal` 或 `violet`。服务只读写 `runtime/local_state/app_icon_state.json`，状态缺失、损坏或未知时回退暖橙；它不读取或写入 `watch_dir`、发票投影、SQLite 发票主数据或皮肤 ZIP。
+
+非 Tauri mode 在同源校验后直接持久化选择并让当前页 favicon 刷新。Tauri mode 额外把同一内置 id 交给私有 Host RPC：Rust 必须先更新当前窗口、任务栏和托盘，再返回精确 `{"ok":true}`；Python 只在该响应成功后写状态和事件。Host RPC payload 不能带路径、URL、字节或额外字段，失败不向页面泄露 listener/token/本地错误细节，固定映射为 `503 App icon update unavailable`。`/backend`、打印模板和 `?no_skin=1` 保持当前 favicon，因为图标选择独立于皮肤；当前结论只覆盖源码/契约，不代表 Windows 原生 surface 或安装包已运行验收。
+
 ### 3.7 Monitor bridge、OCR、事件、任务与关闭
 
 | 方法与路径 | AppState 入口 | 当前语义 | 消费者/错误 |
 |---|---|---|---|
-| `GET /api/v1/bridge/status` | `bridge_status` | PID + lock 真值，读取 `monitor_status.json` 时参与 TargetProfile 事务，返回 `running/ready/observer_active`、路径和最近状态 | 首页、设置页、backend |
+| `GET /api/v1/bridge/status` | `bridge_status` | PID + lock 真值，返回 `running/ready/observer_active`、路径和最近状态 | 首页、设置页、backend |
 | `POST /api/v1/bridge/health-check` | `bridge_health_check` | bridge 结构化诊断 | 首页 |
 | `POST /api/v1/bridge/rebuild` | `bridge_rebuild` | 同步重建普通汇总和成本分析，记录 task/event | 首页、成本、设置 |
 | `POST /api/v1/bridge/start` | `bridge_start` | 启动独立 daemon，等待 `ready` | 首页、设置；启动不就绪返回 `ok=false` |
@@ -242,7 +280,7 @@ Quit，因为该路径和外部 AppleScript quit 都可能绕过 Tauri `ExitRequ
 | `POST /api/v1/ocr/local-smoke` | 路由常量响应 | 始终 `ok=false`，说明 core 未内置 OCR | 未启用能力 |
 | `GET /api/v1/consistency-report` | `consistency_report` | `only_mismatch` 查询；同票多格式字段对照 | 一致性页 |
 | `GET /api/v1/tasks/{task_id}` | `get_task` | SQLite task 状态与 detail | 不存在 `404` |
-| `GET /api/v1/events/stream` | `event_stream` | SSE；`after` 优先于 `Last-Event-ID`，无游标从最新事件后监听 | `common.js`；15 秒空闲心跳注释 |
+| `GET /api/v1/events/stream` | `event_stream` | SSE；`after` 优先于 `Last-Event-ID`，无游标从最新事件后监听；一旦结构化 shutdown 已被接受，生成器结束，不继续维持 WebView 的长连接 | `common.js`；15 秒空闲心跳注释；Uvicorn graceful shutdown |
 | `POST /api/v1/server/shutdown` | `request_server_shutdown` | `{shutdown_behavior,remember}`；返回 `ok`、`scheduled/idempotent` 和确认后的行为，再延迟结束 WebUI | `remember` 非布尔或行为非法 `400`，关闭失败 `500`；macOS 原生停止固定 `keep_monitor + remember=false` |
 
 health 的当前 API 契约是 `2026-08-02-release-update-v1`，做账协议是 `w9-ledger-review-v1`。构建清单与 health 都必须包含完整能力集合；除既有预览、打印、分类、合计、monitor 与关闭能力外，`release.package-identity.v1`、`settings.startup-surface.v1` 和 `updates.metadata-check.v1` 也是 macOS 严格握手必需能力。
@@ -469,9 +507,7 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    Click["用户点击打印"] --> Permission{"打印弹窗许可开启？"}
-    Permission -->|否| Settings["提示到设置页开启"]
-    Permission -->|是| Popup["同步打开 about:blank"]
+    Click["用户点击打印"] --> Popup["同步打开 about:blank"]
     Popup --> Request["POST print-jobs\ninvoice_key + source_path"]
     Request --> Validate["复核位置身份 + 同票家族"]
     Validate --> Choose["选当前目录 PDF\nOFD/XML 可回退同票 PDF"]
@@ -554,54 +590,38 @@ sequenceDiagram
 
 ### 6.11 Windows 自包含包构建
 
-本流程适用于公开来源的 Windows x64 便携候选。默认链只做一次组装、一次静态验包和一次正式 BAT 烟测；每个候选仍须以自己的 ZIP SHA、依赖锁、source commit、core build ID 和运行证据绑定，不能复用退休预公开包。
+本流程适用于新的 Windows RC 构建。每个公开候选必须以其自身的包 SHA、依赖锁、source commit、core build ID 和环境建立证据；文档或治理设置不能替代这些证据，也不授权复用退休预公开包。
 
 ```mermaid
 flowchart LR
-    Commit["精确 clean RC_SHA"] --> Archive["Git archive 白名单快照"]
-    Lock["Windows x64 哈希锁"] --> Runtime["Python 3.14.6 runtime"]
-    Runtime --> RuntimeManifest["pip/import 检查 + runtime manifest"]
-    Archive --> Assemble["一次 ZIP 组装"]
+    Config["机器配置 JSON"] --> Init["remote tip = HEAD = 独立 RC_SHA"]
+    Init --> Commit["clean RC_SHA"]
+    Config --> TestEnv["隔离 Python 3.14.6 + 两份锁 + 当前 RC .pth"]
+    TestEnv --> Tests["release gate + full pytest/compileall/JS"]
+    Tests --> Archive["Git archive 白名单快照"]
+    Lock["Windows x64 哈希锁"] --> Runtime["只读 base-python + 离线 wheelhouse"]
+    Runtime --> ProductRuntime["复制产品 runtime + 删除 Doc"]
+    ProductRuntime --> Install["固定时间安装产品锁"]
+    Install --> Normalize["删除 Scripts + 规范 RECORD"]
+    Normalize --> RuntimeManifest["pip/import 检查 + runtime manifest + tree SHA"]
+    Archive --> Assemble["确定性组装"]
     RuntimeManifest --> Assemble
-    Assemble --> Meta["build/package manifest + SBOM + files SHA + ZIP SHA"]
-    Meta --> Verify["静态 + 包内 Python 验包"]
-    Verify --> Smoke["中文空格路径\n正式根 BAT: / + health + stop"]
-    Smoke --> Evidence["windows-portable-smoke.json"]
-    Verify -. "可选审计" .-> Repro["第二次 ZIP SHA 比对"]
-    Repro -. "可选审计" .-> Offline["断网 runtime 重建"]
+    Assemble --> Meta["build/package manifest + SBOM + files SHA"]
+    Meta --> Zip1["ZIP build A"]
+    Meta --> Zip2["ZIP build B"]
+    Zip1 --> Equal{"SHA-256 相同?"}
+    Zip2 --> Equal
+    Equal -->|是| Verify["静态 + 包内 Python 验包"]
+    Equal -->|否| Stop["阻断发布"]
+    Verify --> Offline["断网 wheelhouse 重装 + 再次双组装"]
+    Offline --> Parity{"联网/离线 SHA 相同?"}
+    Parity -->|是| Machine["正式 BAT/PS7/PS5.1/Tk/monitor 真机验收"]
+    Parity -->|否| Stop
 ```
 
-机器配置固定版本、Python、架构、包名、锁、staging 和证据目录，但故意不保存会自引用的 `RC_SHA`。默认入口启动时读取当前 clean `HEAD`，自动化仍可显式传入 40 位 SHA；构建器会再次拒绝不同 HEAD 或 tracked 修改。产品 runtime 每次从 `base-python` 复制、删除产品 `Doc`，以哈希锁固定时间安装依赖、删除不使用的顶层 `Scripts` 并规范 RECORD，精确裁剪 `__pycache__/.pyc/.pyo` 与五个 CPython 标准库 shell helper、拒绝任何其它 runtime script，再以 `-B` 执行 `pip check`、import smoke 和 runtime manifest；Tauri staging 会在 host 编译前拒绝残留 bytecode。验包器继续拒绝 `python/Doc`、`python/Scripts`、macOS 内容、本机配置、业务数据、运行态、缓存和项目测试；合法 wheel 自带的 `python/Lib/site-packages/**/tests/**` 仍计入所有清单和哈希。烟测只调用正式根 BAT，不触发浏览器、原生选择器、monitor 或 stop-all；`Get-IHHealth` 和 `Test-IHHealthIdentity` 同时确认首页、health、PID、路径和 build/package identity。若默认端口被 Windows TCP 排除范围覆盖，先记录默认启动的输出和 `server_stderr.log`，再用包内无业务路径的相邻端口配置继续；不能把这种 fallback 写成默认配置原样通过。
-
-`-VerifyReproducibility`、`-Offline`、`initialize_windows_repackage.ps1` 和 `prepare_windows_test_environment.ps1` 是可选审计工具：它们保留远端 tip 绑定、隔离源码测试、双 ZIP 比对和离线重建能力，但不再阻塞普通便携包交付。它们也不能替代浏览器、原生选择器、monitor 与失败矩阵的独立 Windows 验收。
+机器配置固定版本、Python、架构、包名、锁、staging、证据目录和两次/离线策略，但故意不保存会自引用的 `RC_SHA`；初始化器要求发布协调方单独交付的 40 位 SHA 与远端发布分支 tip、detached HEAD 相同。原生命令的输出必须先完整捕获并立即保存 `$LASTEXITCODE`，通过后才允许使用 `Select-Object -First 1` 等可能提前终止上游的处理；不得用预设退出码制造假通过，完整消费的 `Tee-Object` 实时日志不受此限制。源码测试环境独立安装产品锁和 test-tools 锁，只在自身 site-packages 用受边界校验的 `.pth` 绑定当前 RC `src`，确保 monitor/API 子进程仍导入同一源码；成品 runtime 不携带 pytest 或该绑定。产品 runtime 每次从保留官方 `Doc` 的只读 `base-python` 重建，只删除产品 `Doc`；哈希锁安装期间强制固定 `SOURCE_DATE_EPOCH` 并恢复调用者环境，随后删除内嵌 staging 路径的顶层 `Scripts`、结构化规范对应 RECORD，再执行 `pip check`、import smoke 和 runtime manifest。验包器必须反向拒绝任何大小写变体的 `python/Doc` 与 `python/Scripts`；`tests` 只允许出现在 `python/Lib/site-packages/**/tests/**`，项目源码、web、脚本、基础 runtime 和其它位置仍 fail closed。获准的依赖测试继续执行依赖范围的秘密与绝对路径扫描，并进入 runtime tree、逐文件 manifest、SBOM/依赖锁身份和 ZIP SHA；不得裁剪 wheel、改写其 RECORD、按包名硬编码例外或从哈希排除。Task 4 还必须保存 ZIP 成员与 wheel 锁 SHA 的来源闭环。构建收据追加机器配置 SHA 与 online/offline 模式。构建器不读取本机 `config/app.local.json`、未跟踪文件、真实业务数据或运行态。包内脱敏默认配置固定指向相对 `./发票文件` 与 `./运行状态`；Windows 运行时、依赖锁、package/build identity 和 SBOM 必须互相闭环。自动化、联网/离线同哈希和静态验包仍不能替代真实 Windows BAT、Tk、浏览器、monitor 与失败矩阵。
 
 Windows 的精确 commit 源码快照必须在 `.gitattributes` 以 `text=auto` 固定自动识别的普通文本为 LF、保持二进制 `-text` 的前提下，以 `git -c core.autocrlf=false archive` 导出。发布契约必须先以 `core.autocrlf=true` 做全新 checkout 并要求无 tracked changes、二进制 blob/checkout 字节相同，再以 true/false 的实际 archive 复算 Core Build ID 并要求二进制字节与身份都一致；构建主机的 Git 配置不得改变发行身份或工作树清洁度。该隔离 checkout 契约必须同时兼容完整源仓库和 GitHub Actions 的浅源仓库；临时 fetch 应显式接受已知浅边界，不能通过要求 CI 拉取完整历史来掩盖测试夹具依赖。
-
-### 6.11.1 Windows Tauri portable alpha.2 组装与交接
-
-这条链与根 BAT 的 Python portable 包独立。`tauri_windows_portable.py stage` 从当前
-clean exact commit 用 `git -c core.autocrlf=false archive` 获取快照，只复制 allowlisted
-`src/invoice_hub`、`web`、结构性 runner/facts、Python 项目元数据和 Windows 3.14.6 lock；它
-不携带配置、发票、日志、runtime、测试或 macOS 内容。stage 生成 build/package/runtime
-manifest、SBOM 和 schema-3 `invoicehub-desktop-host.json`，后者的原始 SHA-256 在 raw
-`InvoiceHub.exe` 编译时作为 `INVOICE_HUB_BUNDLE_MANIFEST_SHA256` 注入。
-
-`build` 只执行 `pnpm exec tauri build --config src-tauri/tauri.windows.conf.json --no-bundle`，
-把 raw x64 PE 放入 ZIP 后生成逐文件 SHA、ZIP SHA 和 receipt。验包器从 ZIP 内容重新核对
-PE、manifest、runtime、SBOM、allowlist 与 receipt；自有 core 继续接受完整秘密/本机路径扫描，
-受锁 `python/Lib/**` 只按 dependency scope 接受上游 provenance/password-shaped 示例且仍拒绝
-GitHub token/私钥；它只接受
-`windows_portable={distribution:"zip",updater_enabled:false}` 和 `updater={enabled:false}`。
-`handoff` 必须重新确认 release tag 与 source commit 相同，才能输出
-`dist/handoff/v0.3.0-alpha.2/` 的 ZIP、SHA、receipt、SBOM、源码归档及 SHA、`latest.json`
-和 Mac 上传说明。此流程不签名、不创建 MSI/NSIS、不替换现有目录，也不写入用户状态。
-
-release host 在启动 backend 前从 Windows user-state root 派生并创建
-`%LOCALAPPDATA%\\InvoiceHub\\webview`，desktop `WebviewWindowBuilder` 明确使用该目录作为
-WebView2 user-data folder；它与配置和 backend runtime 同属 `%LOCALAPPDATA%\\InvoiceHub`，
-不让 Tauri 以 application ID 隐式选择另一个可写位置。该路径不是 ZIP 内容，也不参与
-source/core identity。一次有效 candidate 的 backend handshake 后出现过隐式 profile access
-denied，故这一显式边界必须与新 clean ZIP 的真实窗口验收一起复核。
 
 ### 6.12 macOS 壳启动、所有权与严格握手
 
@@ -659,13 +679,42 @@ sequenceDiagram
         API->>API: 仅版本完全一致时授予内存 approval
         UI->>API: `POST /api/v1/update/install` `{}`
         API->>Platform: `update_install`（不转发版本、URL、路径或签名）
-        Platform-->>API: 当前清除候选并返回 unavailable（不下载/不停止/不安装）
+        Platform->>Platform: 原子消费 fresh candidate；spawn latch-blocked worker
+        Platform-->>API: 写入并 flush `{"ok":true}`
+        API-->>UI: accepted；不宣称安装完成
+        Platform->>Platform: release latch；Tauri download + 内置签名验证
+        Platform->>Monitor: authenticated pause；marker 后确认 stopped
+        Platform->>Platform: install；Windows callback / macOS relaunch protocol
     end
 ```
 
-`v0.3` 起，自动检查只在有效发行 package manifest 且 `auto_check_updates=true` 时延迟执行；失败不会阻塞 localhost、扫描或汇总，也不会覆盖上次有效 ETag/feed/result。当前 alpha Feed 尚未发布时，固定 URL 的 HTTP 404 表示远端已响应但 `latest.json` 不存在，返回不持久化 `unsupported/UPDATE_FEED_UNAVAILABLE`，不能伪装成网络离线，也不能缓存而阻止将来重试。alpha.2 允许一个显式 `scope=windows-only` Feed：它必须只含 `windows-x86_64-portable` ZIP、receipt、source archive 和一致的 source/core identity；完整双平台 Feed/Appcast validator 不接受这个窄 schema。Windows 请求可显示该 ZIP，macOS 缺少资产时返回 `unsupported`。设置“前往下载”只打开 `release_notes_url` 的 GitHub prerelease 页面，不能下载、替换目录、停止 monitor 或授权安装。官网当前只显示本地“暂未提供”提示；GitHub 和更新日志只能由 `POST /api/v1/about/links/{link_key}` 的固定键交给系统壳，不能把页面 URL 变成原生打开器。Tauri host 只将随机 Host RPC token 传给其直接启动的 Python backend，backend 启动时捕获并从 descendant 环境清除；token 不得进入网页、Tauri command/event、API 响应或日志，携带 token 的 private loopback transport 必须显式禁用环境代理。更新命令面只有 `update_check/update_install`，backend ownership 使用新 challenge 的 HMAC-SHA256，而不是发送 bearer proof 给端口监听者。网页不得获知 token，也不能把安装或原生能力变成任意 URL、路径或命令代理。`latest.json` 与平台更新元数据由同一工具从真实产物、收据、源码归档与固定 release Tag commit 的受控树生成，并通过版本、URL、长度、签名、source commit、tree SHA、文件数和 core build 一致性校验后才可上线。同一进程具备 Tauri host marker 与 private RPC 时，API、设置页和后台 timer 的 `check_for_updates` 调用都属于 strict delegated-install preflight；只有非 Tauri/非 host 检查不获取 `_host_update_lock` 并保留 `UpdateService.check` 的 cache/ETag/nonblocking-busy 语义。host 检查锁竞争时立即返回不持久化 busy 结果，不访问 metadata/candidate 且不清除既有 approval；install 锁竞争立即以脱敏 `HostRpcError` 失败，不消费 approval 或发送第二次 private RPC。host approval 必须在该 session 取得显式携带 `Cache-Control: no-cache`、不带 ETag 的 fresh allowed Feed `200` body 并重新验证，缓存、`304`、离线和错误不授予 approval。Host updater metadata builder 固定 5 秒总时限；listener loop 主动清除到期 candidate。当前 host 的 install 路径再清除候选并 fail closed，直到 recovery/relaunch coordinator 能在任何失败后恢复既有 monitor/进程状态。未来 coordinator 才可按下载+Minisign、monitor stop/recheck、安装/restart 顺序实施。
+`v0.3` 起，自动检查只在有效发行 package manifest 且 `auto_check_updates=true` 时延迟执行；失败不会阻塞 localhost、扫描或汇总，也不会覆盖上次有效 ETag/feed/result。Tauri host 只将随机 Host RPC token 传给其直接启动的 Python backend，backend 启动时捕获并从 descendant 环境清除；token 不得进入网页、Tauri command/event、API 响应或日志，携带 token 的 private loopback transport 必须显式禁用环境代理。更新命令面只有 `update_check/update_install`；网页不得获知 token、ownership secret、URL、签名或内部 artifact ID，也不能把原生能力变成任意 URL、路径或命令代理。`latest.json` 与平台更新元数据由同一工具从真实产物、收据、源码归档与固定 release Tag commit 的受控树生成，并通过版本、URL、长度、签名、source commit、tree SHA、文件数和 core build 一致性校验后才可上线。同一进程具备 Tauri host marker 与 private RPC 时，API、设置页和后台 timer 的 `check_for_updates` 调用都属于 strict delegated-install preflight；只有非 Tauri/非 host 检查不获取 `_host_update_lock` 并保留 `UpdateService.check` 的 cache/ETag/nonblocking-busy 语义。host 检查锁竞争时立即返回不持久化 busy 结果，不访问 metadata/candidate 且不清除既有 approval；install 锁竞争立即以脱敏 `HostRpcError` 失败，不消费 approval 或发送第二次 private RPC。host approval 必须在该 session 取得显式携带 `Cache-Control: no-cache`、不带 ETag 的 fresh allowed Feed `200` body并重新验证，缓存、`304`、离线和错误不授予 approval。Host updater metadata 与下载对象固定 5 秒时限；listener loop 主动清除到期 candidate。成功 HTTP install 只代表私有 commit 已被安全放行，不代表下载、安装或实体升级成功；Tauri 不向 Web 暴露用户取消、installer 或 restart 的最终结果。
+
+L10-D 改变的是 host 内部 install 分支，不改变公开 body 或返回形状。双向 HMAC recovery、startup restore、
+response-before-commit、CommitLost、coordinator restore 和平台退出都已接线；每个 marker/bridge 操作仍前后复核
+同一 released lease，且仅 ready owned monitor 可暂停、later `running && ready` 才可清 marker。普通 localhost
+bridge 并未因此获得跨客户端认证。ordinary development 与 internal-alpha 制品不会走该分支。
+
+L10-E 只为 startup restore 建立一个 compile-bound development recovery-smoke：manifest 只能使用固定不可达的
+`https://127.0.0.1:1/invoicehub-recovery-smoke/latest.json`、无验签能力 key sentinel 和精确三字段 updater 对象；
+普通 stage/build 仍写 `enabled=false`。runner 在临时 HOME/state/runtime/watch 中预写
+`auto_check_updates=false` 和同 scope marker，自身 HTTP allowlist 只有 `GET /api/v1/health`、
+`GET /api/v1/bridge/status`、`POST /api/v1/bridge/stop`；authenticated `/bridge/start` 只能由 host recovery
+内部调用。它不调用公开 update check/install，也不能验证签名或获得 candidate。macOS arm64 隔离样本已观察
+owned monitor `running && ready`、marker 删除、显式 stop 和进程/端口/临时目录清理，runner 报告
+`update_requests=0`；不得把该 profile 当作真实 Feed、更新成功或发行 smoke 证据。
 
 hosted check 的 lock-contended 分支在 busy 结果后直接返回，不能落入统一的 `updates.checked` 事件写入；这使响应不依赖 SQLite，其他检查与成功路径仍记录事件。
+
+`v0.3.0-alpha.2` public-preview 不新增业务 API、Feed 或 updater 契约。macOS public-preview
+使用 `profile=release`，但 release profile 仅接受精确 `{"enabled": false}`，因此不会登记
+endpoint、公钥或更新权限。receipt 的 pending 形式只允许组包器的首轮内部验证；公开验证默认只接受
+包含精确 verifier ID、`ok/product_version/dmg_sha256` 输出且与实际 DMG 绑定的 finalized record。最终 DMG smoke 必须先独立复核 App/DMG/receipt，再挂载并复制 App，
+为复制件写入 quarantine，以 `open -n -W -g` 经 LaunchServices 启动且只注入隔离 `HOME`；直接执行
+`Contents/MacOS` 或传递 development state override 都不构成用户启动样本。smoke 只允许 health、
+monitor start/status/stop 与固定 `stop_monitor` shutdown，后者会使 SSE 生成器结束，以免 EventSource
+阻止 Uvicorn 退出。Windows workflow 只允许 GitHub-hosted runner 从精确 Tag 手动触发，只上传
+Actions artifact；发布到 GitHub Release 仍须单独授权。
 
 ## 7. 接口变更检查表
 

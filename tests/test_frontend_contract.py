@@ -124,7 +124,7 @@ def test_cost_page_keeps_required_controls() -> None:
     assert "锁定" in js
     assert "解锁" in js
     assert "common.js?v=20260729-main-macos-sync" in html
-    assert "app.css?v=20260902-print-popup-permission" in html
+    assert "app.css?v=20260902-app-icons-print-popups-v1" in html
     assert "page-costs.js?v=20260726-invoice-taxonomy" in html
     for token in (
         "发票大类",
@@ -331,10 +331,10 @@ def test_main_pages_keep_user_visible_controls() -> None:
     assert "过去保存" in index
     assert 'class="inline-panel path-inline" hidden' not in index
     assert 'id="watchDirDraft" class="watch-dir-draft" hidden' in index
-    assert "app.css?v=20260902-print-popup-permission" in index
+    assert "app.css?v=20260902-app-icons-print-popups-v1" in index
     assert "settings-actions.css?v=20260720-shutdown-monitor-choice" in index
     assert "common.js?v=20260729-main-macos-sync" in index
-    assert "page-index.js?v=20260902-print-popup-permission" in index
+    assert "page-index.js?v=20260902-app-icons-print-popups-v1" in index
     assert 'select name="invoice_type"' in index
     assert 'select name="business_type"' in index
     assert 'select name="classification_status"' in index
@@ -539,7 +539,7 @@ def test_main_pages_keep_user_visible_controls() -> None:
     assert "类型识别状态" in page_detail
     assert "类型识别说明" in page_detail
     assert "common.js?v=20260729-main-macos-sync" in detail
-    assert "app.css?v=20260902-print-popup-permission" in detail
+    assert "app.css?v=20260902-app-icons-print-popups-v1" in detail
     assert ".panel__head .detail-file-actions" in css
     assert ".detail-grid" in css
     assert ".detail-grid .stat-card strong { min-width: 0; overflow-wrap: anywhere; word-break: break-word; }" in css
@@ -756,8 +756,8 @@ def test_selected_invoice_summary_frontend_contract() -> None:
 
     for template_name in ("backend.html", "base_head.html", "consistency.html", "costs.html", "detail.html", "documents.html", "index.html", "ocr.html", "settings.html", "skins.html"):
         template = (ROOT / "web" / "templates" / template_name).read_text(encoding="utf-8")
-        assert "app.css?v=20260902-print-popup-permission" in template
-    assert "page-index.js?v=20260902-print-popup-permission" in index
+        assert "app.css?v=20260902-app-icons-print-popups-v1" in template
+    assert "page-index.js?v=20260902-app-icons-print-popups-v1" in index
 
 
 def test_consistency_page_is_user_facing_not_raw_json() -> None:
@@ -820,7 +820,7 @@ def test_documents_page_contract() -> None:
     assert ">是</button>" in html
     assert ">否</button>" in html
     assert ">打开该文件</button>" in html
-    assert "app.css?v=20260902-print-popup-permission" in html
+    assert "app.css?v=20260902-app-icons-print-popups-v1" in html
     assert "common.js?v=20260729-main-macos-sync" in html
     assert "page-documents.js?v=20260729-main-macos-sync" in html
     assert "loadDocumentPreferences" in js
@@ -921,7 +921,7 @@ def test_bookkeeping_page_static_contract() -> None:
     assert 'body data-page="bookkeeping"' in html
     assert "{{BASE_HEAD}}" in html
     assert "{{BOOTSTRAP_JSON}}" in html
-    assert "app.css?v=20260902-print-popup-permission" in base_head
+    assert "app.css?v=20260902-app-icons-print-popups-v1" in base_head
     assert "page-bookkeeping.js?v=20260711-w9-ledger-review-v3" in html
     assert 'id="voucherBlockers"' in html
     assert "item.can_approve === true" in js
@@ -1124,26 +1124,18 @@ def test_settings_page_contract() -> None:
     assert 'class="settings-edit-card settings-defaults-card"' in html
     assert 'href="/skins"' in html
     assert 'href="/backend"' in html
-    assert "app.css?v=20260902-print-popup-permission" in html
+    assert "app.css?v=20260902-app-icons-print-popups-v1" in html
     assert "settings-actions.css?v=20260720-shutdown-monitor-choice" in html
     assert "common.js?v=20260729-main-macos-sync" in html
-    assert "page-settings.js?v=20260902-print-popup-permission" in html
+    assert "page-settings.js?v=20260902-app-icons-print-popups-v1" in html
     assert "settingsPrintPopupTitle" in html
-    assert 'id="settingsAllowPrintPopups" type="checkbox"' in html
     assert 'id="settingsAllowPrintPopups" type="checkbox" checked' in html
     assert "发票打印弹窗许可" in html
     assert "allow_print_popups" in js
     assert "settings-preference-toggle" in css
     assert "/api/v1/settings/rename-invoice-files" in api_app
-    assert '@app.post("/api/v1/about/links/{link_key}")' in api_app
     assert '@app.get("/settings", response_class=HTMLResponse)' in api_app
     assert 'render_page(request, "settings.html"' in api_app
-    about_links = re.search(r'<div class="settings-action-row about-links">(?P<body>.*?)</div>', html, re.S)
-    assert about_links is not None
-    assert 'type="button">官方网站</button>' in about_links.group("body")
-    assert 'type="button">GitHub</button>' in about_links.group("body")
-    assert 'type="button">更新日志</button>' in about_links.group("body")
-    assert "target=" not in about_links.group("body")
 
     for endpoint in (
         "/api/v1/health",
@@ -1159,16 +1151,8 @@ def test_settings_page_contract() -> None:
         "/api/v1/diagnostics/config-health",
         "/api/v1/diagnostics/support-package",
         "/api/v1/server/shutdown",
-        "/api/v1/about/links/",
     ):
         assert endpoint in js
-    for about_token in (
-        "openAboutLink",
-        "官方网站暂未提供；可通过 GitHub 和更新日志了解项目动态。",
-        'openAboutLink("github", refs.github)',
-        'openAboutLink("changelog", refs.changelog)',
-    ):
-        assert about_token in js
     assert "Promise.allSettled" in js
     assert "app.connectEvents(settingsRefs.eventState" in js
     assert "refreshOnFirstOpen: false" in js
@@ -1381,6 +1365,7 @@ def test_settings_page_contract() -> None:
     assert "diagnostic_summary" in app_state
     assert "PREFERENCE_SYSTEM_SHUTDOWN_BEHAVIORS" in app_state
     assert "request_server_shutdown" in app_state
+    assert "server_shutdown_requested" in app_state
     assert "finalize_server_shutdown" in app_state
     assert "config_health" in app_state
     assert "export_support_package" in app_state
@@ -1397,6 +1382,7 @@ def test_settings_page_contract() -> None:
     assert "/api/v1/diagnostics/support-package" in api_app
     assert "/api/v1/server/shutdown" in api_app
     assert "shutdown_scheduler" in api_app
+    assert "if state.server_shutdown_requested:" in api_app
 
 
 def test_skin_page_contract_and_common_skin_loader() -> None:
@@ -1421,9 +1407,9 @@ def test_skin_page_contract_and_common_skin_loader() -> None:
     assert "disabled>替换" in html
     assert "skinList" in html
     assert 'role="radiogroup"' in html
-    assert "app.css?v=20260902-print-popup-permission" in html
+    assert "app.css?v=20260902-app-icons-print-popups-v1" in html
     assert "common.js?v=20260729-main-macos-sync" in html
-    assert "page-skins.js?v=20260717-settings-macos-sync" in html
+    assert "page-skins.js?v=20260902-app-icons-print-popups-v1" in html
     assert '@app.get("/skins", response_class=HTMLResponse)' in api_app
     assert 'render_page(request, "skins.html"' in api_app
     assert "activeSkinStylesheet" in api_app
@@ -1650,11 +1636,11 @@ def test_home_invoice_list_centers_content_and_uses_one_status_badge() -> None:
         html = template_path.read_text(encoding="utf-8")
         if "app.css?v=" not in html:
             continue
-        assert "app.css?v=20260902-print-popup-permission" in html
+        assert "app.css?v=20260902-app-icons-print-popups-v1" in html
         assert "app.css?v=20260727-invoice-list-status-layout" not in html
         assert "app.css?v=20260726-invoice-taxonomy" not in html
     index = (templates_dir / "index.html").read_text(encoding="utf-8")
-    assert "page-index.js?v=20260902-print-popup-permission" in index
+    assert "page-index.js?v=20260902-app-icons-print-popups-v1" in index
 
 
 def test_ink_pulse_body_page_entry_never_creates_fixed_modal_containing_block() -> None:

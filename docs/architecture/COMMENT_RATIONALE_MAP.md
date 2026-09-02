@@ -3,7 +3,7 @@
 > 本轮状态：只登记注释债，不批量修改生产源码。
 > 公共权威基线：单一脱敏根提交；旧私有提交、Tag、包和验证材料不在公开图中。
 > 当前边界：`v0.3` Tauri 已有 Host RPC/updater 的专门边界说明，但不能借机重写共享业务核心。
-> 原则：注释解释“为什么必须这样做”和“破坏后会发生什么”，不复述 Python/JavaScript/PowerShell 语法。
+> 原则：注释解释“为什么必须这样做”和“破坏后会发生什么”，不复述 Python/JavaScript/PowerShell 语法；跨功能交接还必须说明上游、下游与顺序。
 
 ## 1. 为什么先做地图而不是批量加注释
 
@@ -25,6 +25,7 @@
 - 安全边界，例如为什么 ZIP 必须先完整校验再写盘。
 - 失败保护和恢复语义，例如两阶段重命名如何回滚。
 - 看似可以简化但实际不能简化的分支，例如关闭时不能直接删除 PID 文件。
+- 跨功能的交接点，例如页面事件为何必须等投影落盘后才发送，或 host 为何必须在后端握手后才开放原生能力。
 
 不应当注释：
 
@@ -34,6 +35,8 @@
 - 易漂移的行数、测试总数、当前样本数量或本机路径。
 - 用 TODO 代替明确任务和验收条件。
 - 对每个字段逐行生成相同句式的“保存某某值”。
+
+跨功能衔接注释应紧贴交接或保护分支，至少交代四项中的必要内容：上游输入或状态、下游消费者、顺序或不变量、以及顺序被打破或动作失败的后果。它不要求把每个函数调用串成流水账；能从函数名和类型直接得出的部分应留给代码本身。
 
 ## 3. 注释优先级
 
@@ -55,6 +58,8 @@
 | `rename_invoice_files` 第二阶段 | 全部临时名再提交为最终名，失败时需要同时回滚已提交与未提交项 | 结果必须区分文件已改名但投影重建失败 | 同上；真实目录验收另行执行 |
 | `_migrate_renamed_manual_overrides` | 手改状态用源路径作身份，文件改名必须迁移 key | 不丢三项手改，不把旧 invoice_key 当长期身份 | 手改迁移/重建测试 |
 | `request_server_shutdown` | stop-monitor 模式必须先停止并复核，失败时保留 WebUI | 响应前不终止服务；monitor 仍 running 时不调度退出 | shutdown API 两种行为测试 |
+| `AppState.server_shutdown_requested` 与 `api/app.py::event_stream` | WKWebView 的 EventSource 可在 shutdown 响应写回后继续持有 SSE；若 generator 不主动结束，Uvicorn graceful shutdown 会一直等待浏览器连接 | 仅在结构化 shutdown 已被成功接受后关闭 SSE；失败会重置 shutdown 标记，普通 EventSource、事件游标与 heartbeat 语义不变 | shutdown 后 SSE EOF API contract、public-preview smoke contract |
+| `tauri_public_preview.py::build` 与 `verify_tauri_public_preview.py::_verify_receipt_verification` | 首次验包需要读取尚未写入 verifier 输出的 receipt；若把这一中间态当作公开验收成功，损坏或未完成的 receipt 可被误作发布证据 | pending record 仅可由组包器首轮显式接受；随后写入 exact verifier JSON 并绑定实际 DMG SHA-256，默认 verifier 必须再次通过，字段扩展、篡改或不完整一律拒绝 | macOS public-preview receipt finalizer、builder stdout/stderr/timeout contracts |
 | `finalize_server_shutdown` | 正式启动器 PID 可能不是 Uvicorn `os.getpid()`，且关闭期间可能启动新实例 | 仅当 PID 文件内容仍等于请求快照时删除 | shutdown finalize 测试 |
 | `AppState._scan_business_dossier/business_dossier/open_business_dossier` | 公司资料夹是导航边界，不是新的扫描根；完整递归和每链接重复扫描会拖住页面，即使前端超时服务端仍会继续工作 | 单次 `os.scandir` 有目录项/时间上限、跳过符号链接；迭代途中 `OSError` 保留已累计项并以 `unreadable_entries` 标为下界；只打开业务资料夹或当前 watch_dir 内路径，open 同步路径经线程池 | business dossier API/有界扫描/iterator-OSError/线程池与首页刷新容错测试 |
 | `AppState.bookkeeping_*` 与 bookkeeping repository | 做账状态写入跨进程且必须绑定当前资源 revision | 只经严格仓储/写锁/CAS；坏 schema 保留原文件并 fail closed | 全部 bookkeeping 状态/API 测试 |
@@ -97,14 +102,14 @@
 | `file_signature/detect_source_changes` | 周期扫描要轻量，事件只是提示，最终以路径+mtime_ns+size 确认 | 无变化不重解析；增删改集合明确 | monitor rebuild/periodic 测试 |
 | `sync_excel_manual_edits` | Excel 可能被占用，且只允许三字段成为覆盖 | 不可读时 GUARD_BLOCK；不接受其它列手改 | schema/手改同步测试 |
 | `MonitorSynchronizer.run_sync` 决策矩阵 | 缺产物、schema 旧、源变化、手改和 force 的处理不同 | schema-only 可只刷新；无变化只 heartbeat；全重建后保存 processed | monitoring 同步与 schema 测试 |
-| `MonitorState.sync_write_lock`、`read_status`、`MonitorSynchronizer.run_sync` 与 `AppState.bridge_rebuild` | daemon、startup child、bridge 状态轮询与手动重建可同时命中同一 TargetProfile；Windows 读者还可能短暂拒绝 `os.replace()` 所需的 delete-sharing | 以 TargetProfile `state_dir` 为键取得可重入线程锁和 OS 文件锁，覆盖整段读取、决策、投影、monitor 状态写入和状态读取；不同 profile 不互相串行 | monitor overlap、状态读写锁与手动重建相邻测试 |
+| `MonitorState.sync_write_lock`、`MonitorSynchronizer.run_sync` 与 `AppState.bridge_rebuild` | daemon、startup child 与手动重建可同时命中同一 TargetProfile，单进程 `AppState._lock` 不能保护跨进程投影写入且会阻塞 API | 以 TargetProfile `state_dir` 为键取得可重入线程锁和 OS 文件锁，覆盖整段读取、决策、投影与 monitor 状态写入；不同 profile 不互相串行 | monitor overlap 与手动重建相邻测试 |
 | `AppState._retire_background_process_async/_wait_for_background_sync_result` | 切换目录或新的 startup sync 不能让旧子进程无限扫描/写入；等待它退出也不能卡住请求入口 | superseded worker 独立有界 terminate/join；等待结果有总 deadline；仍未退出只记录 `server.background_worker_retire_timeout` 诊断，不覆盖活动 TargetProfile 真值 | startup child EOF、超时、retire 测试 |
 | `daemon.run_monitor` 两次 startup_sync | 第一轮扫描与 Watchdog ready 之间存在漏事件窗口 | observer/兜底初始化后必须再补漏，再写 ready=true | bridge ready 和新文件事件测试 |
 | daemon 的 `queue.Queue` 合并 | Watchdog 会产生连续 create/modify/move 事件 | 取得首事件后 1 秒归并，最终仍走签名判断 | daemon event 测试 |
 | `MonitorBridge.status/_wait_for_ready/start` | 仅见 PID/lock 不能向用户报告启动成功 | lock PID、status PID、running、ready 必须一致 | bridge start/stop 测试 |
 | `MonitorBridge.stop` | stop flag 是协作停止，超时才强制杀进程 | 停止后清 flag/stale lock 并返回真实复核状态 | bridge 生命周期测试 |
 
-## 8. P0：皮肤、单据与文件安全
+## 8. P0：皮肤、应用图标、单据与文件安全
 
 | 文件与符号 | 应说明的原因 | 不能破坏的不变量 | 守护测试 |
 |---|---|---|---|
@@ -112,6 +117,9 @@
 | `validate_skin_zip` | 解压即写盘会造成 zip slip 或放入可执行内容 | 先完整校验路径、类型、大小、重复、symlink、加密，再写 runtime | 皮肤导入/拒绝测试 |
 | `_validate_css` | CSS 可通过 import/url 加载远程或可执行内容 | 只允许包内存在的相对静态资源 | CSS 安全测试 |
 | `SkinService.import_skin` | 导入替换应以临时目录完成，内置皮肤只读 | imported 仅在 runtime；同 id 内置不覆盖 | 导入、替换、存储隔离测试 |
+| `AppState.update_app_icon` 与 `src-tauri/src/app_icon.rs::apply` | 用户选择的 runtime 状态不能先于可见原生 surface；否则窗口/托盘失败后，下次启动会错误声称已切换 | 只接受内置 id；Tauri host 先更新 tray/window，window 失败时恢复先前 tray，Python 仅在 `{"ok":true}` 后写 `runtime/local_state/app_icon_state.json` | `tests/test_app_icon.py`、`tests/test_tauri_host_rpc.py`、Rust Host RPC/lifecycle contract |
+| `BackendHost::allow_print_popups` 与 `main.rs::on_new_window` | 默认拒绝新窗口会误报批量打印失败，放宽到普通 popup 又会让本地 WebView 变成通用多窗口容器 | 许可只在启动时读取；关闭时全部拒绝，开启后只允许 exact `about:blank -> /invoices/print/{job_id}`，且 job id、origin、query/fragment 都受限 | 打印前端/API 与 Tauri lifecycle contract |
+| `BackendBundleManifest::webview_data_directory` 与 `configure_windows_backend_process` | 按 application ID 推导 profile 或继承控制台会让 Windows desktop 行为随环境漂移且暴露无用终端 | 显式预创建 `%LOCALAPPDATA%\\InvoiceHub\\webview`；GUI host 的 backend child 使用 `CREATE_NO_WINDOW`，stdout/stderr 只进入 runtime 诊断日志 | Tauri lifecycle/Windows release static contract；Windows 原生验收仍待执行 |
 | `ink-pulse/skin.css::ink-pulse-page-in` | Chromium 可在 transform 动画终止帧为 `none` 时仍保留 identity matrix，让 `body` 成为 fixed containing block | `body` 入场 keyframes 只允许 opacity，不得使用 transform/filter/perspective/will-change 等可建立 containing block 的属性 | Ink Pulse CSS 完整 keyframes 属性契约；滚动后真实浏览器验收 |
 | `documents.py::_ensure_detail_rows` | 插行会打乱模板合并区域和 footer 样式 | 先移动后续合并区域，再插行并复制模板行样式 | 超模板行数导出测试 |
 | `documents.py::rmb_uppercase` | “零”的跨四位组规则非直觉，普通数字格式化不能替代 | HALF_UP 到分；万/亿跨组零正确 | RMB 零位测试 |
@@ -129,29 +137,23 @@
 | `InvoiceHub.Windows.psm1::Ensure-IHDirectory/Ensure-IHFileSlot` | runtime 目标可能被同名文件/目录占位 | 冲突先隔离且后缀不覆盖，父目录存在后再写日志/PID/state | 冲突路径、正式启动测试 |
 | `Get-IHOwnedServer/Wait-IHReady` 及启动判重 | stale state/PID、同命令不同 root/config 和外部端口占用不能冒充本服务 | 首页、端口、PID、Python、模块、root、config、package/build identity 全部匹配 | 连点/并发/stale/占端口验收 |
 | `Open-IHBrowser` | 系统壳成功派发已是本次打开成功；注册表只用于壳失败后备 | 同一 URL 最多派发一次，不因前台判断重复打开 | 正式默认浏览器验收 |
-| `release/build_core.py` 的 Git snapshot/allowlist | 仓库含本机配置、运行态、发票和开发资产，工作树还可能有未跟踪文件 | 精确 clean commit + 明确白名单；本机 config 永远跳过；默认单次 ZIP 仍有完整清单和 hash，双 ZIP SHA 比对只在显式审计时执行 | release/source snapshot、ZIP 清单检查 |
+| `release/build_core.py` 的 Git snapshot/allowlist | 仓库含本机配置、运行态、发票和开发资产，工作树还可能有未跟踪文件 | 精确 clean commit + 明确白名单；本机 config 永远跳过；两次 ZIP SHA 相同 | release/source snapshot、ZIP 清单检查 |
 | `release/verify_portable.py::_verify_windows_member` | 单仓库中的 `scripts/docs/requirements` 同时存在开发和另一平台内容，Python 完整 runtime 也携带非产品文档与机器绑定 launcher；只有顶层 allowlist 会允许这些文件伪装进已重写内容清单 | Windows ZIP 只接受精确文件/子树；macOS 路径、Swift/bundle、Mac 锁、Unix Python runtime 和大小写变体的 `python/Doc`、`python/Scripts` 先于内容清单校验 fail closed | release 反向注入参数化测试、Windows 成品验包 |
 | `release/verify_portable.py::_verify_archive_structure` 的 `tests` 作用域 | 哈希锁定的上游 wheel 可以合法携带测试资料；全局按路径段拒绝会阻断未被裁剪的真实依赖，但全局放开又会让项目测试和基础 runtime 测试混入成品 | 仅大小写不敏感地允许 `python/Lib/site-packages/**/tests/**`；其它 `tests` 及全局禁用成员仍拒绝，获准文件继续执行依赖内容扫描并进入 runtime tree、逐文件 manifest、SBOM/锁身份和 ZIP SHA；不得按包名硬编码、裁剪 wheel/改 RECORD 或排除哈希 | 完整 ZIP 正向依赖测试、项目/基础 runtime/缓存/秘密反向注入、Task 4 wheel 来源证据和成品验包 |
 | `WINDOWS_REPACKAGE_CONFIG.json` / `windows_release_config.ps1` | 版本、Python、包名、锁和证据目录散落在脚本/手册会让 Agent 拼出不同构建；把当前 commit 写入同一提交又会形成自引用 | 固定参数进入可哈希 JSON，并在任何 effectful 构建步骤前与 `version.py` 和派生路径核对；RC_SHA 始终由交接消息单独提供 | Windows release contract、source snapshot、构建收据与真机初始化 |
-| `smoke_windows_portable.ps1` | 静态 ZIP 与 Python import 不能证明用户实际双击入口可在 Windows 路径、PowerShell 选择和端口保留条件下工作；把业务路径写进烟测配置又会把真实数据带回证据 | 总在临时中文空格路径调用根 BAT，只记录 package identity 和脱敏运行日志；默认端口被排除时先留下原始失败证据，fallback 仅使用包内相对空目录且不能冒充默认配置通过 | Windows release contract、真实 Windows x64 BAT smoke JSON |
 | `initialize_windows_repackage.ps1` / `verify_release_source.ps1` 的原生命令输出 | `Select-Object -First 1` 会提前终止 native 上游；全新严格模式进程可能因此没有当前作用域的 `$LASTEXITCODE`，预设为零又会掩盖真实失败 | 先完整捕获输出并立即保存退出码，检查成功后再取第一行；实时日志只使用完整消费上游的管道 | 全新 `pwsh -NoProfile` 成功/缺失远端引用动态回归、Windows release contract |
 | `test_windows_release_contract.py` 的初始化器动态夹具 | pytest 临时目录可能位于小容量系统卷；直接读取该卷余量会让“fresh PowerShell 身份/receipt”测试在真实 RC 磁盘充足时仍偶发触发生产 10 GiB 门禁 | 只在测试子进程内覆盖文件系统余量：固定 20 GiB 验证成功与 receipt，低于配置阈值 1 字节验证 fail closed；生产配置和初始化器不增加测试开关、不降低阈值 | fresh `pwsh -NoProfile` 成功、缺远端、低磁盘三条动态回归；Windows release source gate |
 | `prepare_windows_test_environment.ps1` | 源码门禁需要精确 3.14.6 和 pytest，测试子进程又可能覆盖父进程 `PYTHONPATH`；把测试依赖或源码绑定装入正式 runtime 会破坏 runtime tree 与成品最小依赖 | 独立 test Python/wheelhouse 同时安装 Windows runtime 锁与 test-tools 锁，并在其自身 site-packages 写受边界校验的 `.pth` 绑定当前 RC `src`；正式 runtime 只安装产品锁且不携带 `.pth` | Windows release contract、测试环境收据、monitor/API 子进程导入、Windows 真机完整回归 |
 | `prepare_windows_runtime.ps1` 的产品 `Doc` 裁剪 | Python Manager x64 完整 runtime 没有 no-doc 变体，官方 SSL 文档含私钥示例，会被成品严格扫描正确阻断；放宽 scanner 会扩大真正凭据泄漏风险 | 保留只读 `base-python/Doc`；每次复制后只删除产品 `python/Doc`，并在依赖安装、smoke 和 runtime manifest 前完成 | Windows release contract、真实 runtime 双重建、portable 反向注入与 SHA parity |
-| `prepare_windows_runtime.ps1` / `runtime_manifest.normalize_windows_runtime` | pip 26.1.2 vendored distlib 会把安装时刻和当前 staging 绝对解释器路径写进 console launcher；CPython 3.14.6 还带有五个产品不会调用的标准库 shell helper，二者都会违反 ZIP 的无脚本边界 | 安装期间强制 `SOURCE_DATE_EPOCH=315532800` 并在 `finally` 恢复；随后删除产品不使用的顶层 `Scripts` 并以 CSV 规则删除对应 RECORD 行，精确裁剪五个 CPython helper，未知 `.bat/.cmd/.ps1/.psm1` 一律拒绝，再生成 runtime manifest；不得从 tree/ZIP hash 排除这些差异 | 环境恢复/顺序契约、规范化幂等与未知脚本拒绝测试、不同目录真实 runtime 连续重建、在线/离线 ZIP parity |
+| `prepare_windows_runtime.ps1` / `runtime_manifest.normalize_windows_runtime` | pip 26.1.2 vendored distlib 会把安装时刻和当前 staging 绝对解释器路径写进 console launcher；RECORD 哈希随 EXE 漂移，复用同一 runtime 的双组装无法发现 | 安装期间强制 `SOURCE_DATE_EPOCH=315532800` 并在 `finally` 恢复；随后删除产品不使用的顶层 `Scripts`，用 CSV 规则删除对应 RECORD 行，再生成 runtime manifest；不得从 tree/ZIP hash 排除这些差异 | 环境恢复/顺序契约、规范化幂等测试、不同目录真实 runtime 连续重建、在线/离线 ZIP parity |
 | `scripts/dev/run_tests.ps1::Invoke-IHPythonCheck` | PowerShell 的 `$LASTEXITCODE` 会被下一个外部命令覆盖，延迟统一检查会把 pytest 红灯伪装成整体通过 | 每个 pytest/compileall 命令返回后立即 fail closed；后续检查不能掩盖失败 | Windows source runner 静态契约、GitHub Windows CI |
 | `.gitattributes` / `build_windows_portable.ps1` 的源码归档 | `git archive` 会应用主机 Git 的文本转换；Windows `core.autocrlf=true` 可在相同 commit 下改变普通文本字节，而 Core Build ID 按字节计算；反过来用 `* text` 固定换行又会把既有 PNG/WebP/字体 blob 强制归类为文本并污染 checkout | 只用 `text=auto eol=lf` 固定自动识别的普通文本，二进制保持 `-text`，BAT/PS1 继续 CRLF；Windows archive 显式使用 `core.autocrlf=false`，不得以调整构建主机配置或强制全部文件为文本取代 fix-forward | 临时 Git 仓库保留历史二进制 blob，以 autocrlf=true 全新 checkout 验证 clean tree 和二进制字节，再以 true/false 实际 archive 验证二进制字节与 Core Build ID 均相同 |
 | Windows handoff 文档中的 lock SHA | 已有 Windows 工作树可在属性变化后继续保留 CRLF 物理字节；从该工作树计算并固化 SHA 会让全新 LF RC 的 receipt 被错误阻断 | 期望 SHA 只取精确 RC 的 LF Git blob、禁用 autocrlf 的 archive 或全新 LF checkout；true/false fresh checkout 与 archive 必须都得到和 blob 相同的两份 lock，三份 handoff 文档引用同一固定 SHA，旧 CRLF SHA 必须消失 | Windows release lock checkout/archive 动态契约、Task 2 receipt 审计、三份 handoff 文档契约 |
 | 发布契约中的隔离 Git checkout | GitHub `actions/checkout` 默认提供浅仓库；临时仓库从该源 fetch `HEAD` 时若不允许更新浅边界，会在真正校验换行与 archive 前因没有 `FETCH_HEAD` 停止，本地完整仓库则无法暴露该缺陷 | 保持 CI 浅历史；测试临时 fetch 显式使用 `--update-shallow` 继承已知边界，并在 `--depth 1 --no-local` 源仓库中动态回归，不以全局 `fetch-depth: 0` 掩盖夹具假设 | Windows release lock checkout/archive 契约、Windows/macOS GitHub Actions |
 | `scripts/dev/generate_synthetic_release_fixture.py::main` | Windows CI 捕获 stdout 时子进程可能使用不能编码中文路径的本地代码页 | 机器可读 JSON stdout 必须保持 ASCII-safe；解析后还原 Unicode，磁盘上的 XML/OFD/README/manifest 仍为 UTF-8 | 强制 `PYTHONIOENCODING=ascii` 的中文路径发布回归 |
-| `release/content_scan.py::scan_release_text/scan_release_tree` 与 `verify_tauri_windows_portable.py::_scan_member` | 第三方 wheel/Framework 与锁定 CPython 标准库可能保留上游 runner 路径或 password-shaped 示例，按自有源码策略扫描会稳定误报；完全跳过又会放过高置信凭据 | 自有源码/core 拒绝凭据赋值与具体用户路径；仅哈希锁定依赖前缀及 Windows `python/Lib/**` 允许 provenance/password-shaped 示例，GitHub token/私钥仍阻断 | release、source snapshot、Mac/Windows 发布契约与成品验包 |
+| `release/content_scan.py::scan_release_text/scan_release_tree` | 第三方 wheel 和 Framework 可能保留上游 runner 构建路径，按自有源码策略扫描会稳定误报；完全跳过又会放过高置信凭据 | 自有源码/core 拒绝凭据赋值与具体用户路径；仅哈希锁定依赖前缀允许 provenance 路径，GitHub token/私钥仍阻断 | release、source snapshot、Mac/Windows 发布契约与成品验包 |
 | `_packaged_default_config` | 发布包必须可重建空目录且不能泄露本机业务路径 | 相对 `./发票文件`、`./运行状态`，recent 为空，OCR 禁用 | release 测试、真实包验收 |
 | `settings_migration.import_settings` | 覆盖安装会混淆旧进程/缓存与新代码，整目录复制可能带入业务数据；迁移时重写有效显式启动方式会违背偏好可恢复性 | 新目录安装；只导入配置/偏好白名单；备份目标；保留有效导入的 `desktop` 或 `browser`，Windows portable 对新 desktop 选择的拒绝由运行时策略处理 | settings migration 单测与双合成包演练 |
-| `src-tauri/src/backend.rs::windows_portable_release_marker` | 仅凭 `profile=release` 放开 `updater.enabled=false` 会让完整 release host 静默失去安装防护 | 只有 Windows/x86_64/portable 身份且精确 `windows_portable={distribution:"zip",updater_enabled:false}` 的 alpha ZIP 可禁用 updater；其它 release manifest 保持字段集合和 updater 严格验证 | Rust lifecycle contract、Tauri ZIP manifest verifier |
-| `DesktopStatePaths::webview_data_directory` 与 `main.rs::create_desktop_window` | Tauri/Wry 默认按 application ID 选择 WebView2 user-data folder；一次有效 portable candidate 在 backend handshake 后于该隐式位置返回 Windows access denied，且默认位置不能证明仍受 ZIP 的 user-state boundary 管辖 | Windows release host 只能把 WebView2 profile 放在其已经派生、预创建的 `%LOCALAPPDATA%\\InvoiceHub\\webview`；该目录不进入 ZIP，不传播给 backend 子进程，也不能以 browser surface 或 health 成功替代 desktop window 验收 | Rust state-path/lifecycle contracts、clean ZIP isolated LocalAppData desktop smoke |
-| `host_rpc.rs::select_path` | `tauri-plugin-dialog` 已负责将异步 picker 调度到 Tauri 主线程；再次以 `run_on_main_thread` 包裹会在插件收到请求前制造额外拒绝点，并把可诊断问题收敛成脱敏 `503` | host 直接调用插件的 file/folder picker，仍以 120 秒 receive timeout 保护私有 RPC；只移除重复调度，不放宽 origin/token/enum/timeout/error 边界，必须以 fresh ZIP 的真实 chooser 验收 | Host RPC picker-dispatch source contract、clean ZIP native picker smoke |
-| `release/windows_alpha_metadata.py` 与 `UpdateService._evaluate_feed` | 为尚无 macOS 资产的 alpha 复用完整双平台 Feed 会诱导伪造 Appcast/DMG；无条件放宽则会削弱完整发行最终校验 | 只有显式 `scope=windows-only` 进入单 ZIP/receipt/source-core parity schema，正常 Feed 继续走双平台 validator；macOS 返回 `unsupported`，页面只跳转 prerelease，不执行安装 | Windows alpha metadata、UpdateService/API/前端契约 |
-| `scripts/dev/tauri_windows_portable.py::create_handoff` | build receipt 只能说明本地组装，无法证明 later upload 的 source/tag/Feed 仍指向同一 ZIP | handoff 在复制文件前重验 ZIP/receipt，再要求 exact tag equals source commit；仅写本地交接目录和上传说明，不执行 tag、Release、Pages 或 monitor 操作 | Tauri Windows portable handoff gate、source snapshot and receipt contracts |
 
 ## 9.1 P0：macOS 进程、桥接与构建握手
 
@@ -177,7 +179,6 @@
 | `invoice_printing.py` 的短期 job | 打印票面数据同样敏感且可能很大，用户选择又可能在重建后指向不同文件 | 复核 `invoice_key + source_path` 和 watch_dir；TTL/数量/页面/像素/缓存上限；不写 SQLite 或投影 | print 服务与 API 测试 |
 | `WebPopupConfigurationPolicy.installRestrictedPrintBridge/createWebViewWith` | WebKit 把新窗口的内部状态交给 delegate 回调提供的 `WKWebViewConfiguration`；另造配置会破坏该生命周期，直接继承又会泄露主窗口 bridge | 必须复用 callback 提供的 configuration，只替换其 user-content controller，并且仅注册 `invoiceHubMacPrint` | Swift popup configuration / origin / print policy 测试 |
 | `WebPopupPolicy/WebPrintPolicy` 与 `WebView` 打印子窗口 | WebKit child window 默认会继承配置级消息能力，普通 popup 不能成为原生能力逃逸路径 | 仅 trusted main frame 的 exact about:blank；只允许同端口、无 query/fragment 的同一登记 print job 路径（可重载），子窗口只注册 print handler | Swift popup/origin/print policy 测试 |
-| `main.rs::create_desktop_window/on_new_window` 与 `BackendHost::allow_print_popups` | Tauri 默认拒绝网页新窗口会导致受控批量打印被误报为浏览器拦截；直接允许 popup 又会把本地 WebView 变成通用多窗口容器 | `allow_print_popups` 默认开启但只在 host 启动时严格读取；关闭时所有 child window 拒绝，开启时也只接受 exact `about:blank`，child 只能进入同端口、无 query/fragment、受限 ASCII job ID 的 `/invoices/print/{job_id}`，并且不获得新业务或 Host RPC 能力 | Rust lifecycle popup-policy、Python API/前端静态契约；原生打印另行验收 |
 | `PrintPopupRegistry/PrintPopupQuarantine/windowWillClose` | AppKit/WebKit 没有在关闭窗口后可安全释放整张 WKWebView 对象图的完成回调；在 close callback 或猜测的定时回合释放会触发 teardown 崩溃 | 关闭时先撤销消息接收并从 active registry 移除，再把 window、WebView 与 handler 强引用到进程生命周期 quarantine；SwiftUI 重建也不得手动清 delegate/config 或提前释放它们 | Swift popup quarantine 与 close-during-print 测试；2026-07-31 真实开发 `.app` 的系统面板取消和子窗口关闭无新增 IPS |
 
 ## 10. P1：兼容与跨层契约
@@ -198,26 +199,28 @@
 | `AppState._summary_rows` | `mtime_ns+size` 只做进程内 CSV 读取缓存，不是源发票变化真值 | API 列表/后台同步测试 |
 | `platform/windows.py::run_native_dialog` | 子进程 cwd 必须是项目根，避免 config 目录破坏模块导入 | picker mock + Windows 真机 |
 | `release/build_manifest.py::deterministic_build_id/load_build_manifest` | 构建身份必须覆盖实际共享输入，字段缺失不能伪装成兼容包 | 排除本机缓存；无效清单返回 manifest_present=false；capabilities 不丢失 | build manifest 测试 |
-| `release/package_manifest.py` 与 `runtime_manifest.py` | 仅 core build 相同不能证明平台包、Python 或依赖相同；可写 runtime 上的普通 import probe 还会在树中生成不应交付的 bytecode | package ID/平台/架构/类型/source/lock/core 闭环；runtime tree SHA 与 import probe 对应，规范化清除 `__pycache__/.pyc/.pyo`，所有 probe 用 `-B` 防止验证重新污染树 | identity/dependency/release/Mac/Windows contract |
+| `release/package_manifest.py` 与 `runtime_manifest.py` | 仅 core build 相同不能证明平台包、Python 或依赖相同 | package ID/平台/架构/类型/source/lock/core 闭环；runtime tree SHA 与 import probe 对应 | identity/dependency/release/Mac/Windows contract |
 | 退休包的 embedded `source_commit` 与公开历史净化 | 重写公开 ref 会生成不同 commit SHA；若仍把退休包挂到新 Tag，会让 Release 表示的源码与包内身份不一致 | 退休包只留在私有备份；公开二进制必须从新版本重新构建，并在获授权的 all-ref 验证后发布 | 历史净化执行记录、release identity/provenance tests |
 | `UpdateService.fetch_update_feed/check` | 更新检查发生在本地业务进程内，任意 URL、DNS/代理卡死、慢重定向正文、实例检查锁排队或坏缓存都可能扩大攻击面或阻塞使用；调用方 wall deadline 与操作系统何时调度 daemon worker 是两个独立时序，短预算测试不能把后者误作前者的前置条件 | 固定 HTTPS 白名单和重定向复核；3s/5s/256KB；总时限覆盖 DNS/代理、headers、redirect 和逐块 read，redirect body 直接关闭；不可取消 transport 至多保留一个 worker；deadline 测试先测调用方返回耗时，再独立等待 worker/gate 收尾；实例锁 nonblocking，忙碌调用只返回非持久化 offline，不覆写 checking/cache；失败保留最后有效 ETag/feed 且不享受成功 TTL | update service host/timeout/cache/error/worker-gate/并发 service-check 测试 |
-| `UpdateService.check` 的固定 Feed `404` 分支 | HTTP 404 证明固定远端已响应但 `latest.json` 不存在；把它显示为“无法连接”会误导用户，把它写入缓存又会让以后发布 Feed 后的客户端继续使用过期缺失状态 | 返回非持久化 `unsupported/UPDATE_FEED_UNAVAILABLE`，保留下次用户检查的网络机会；其它 DNS、连接和超时错误继续遵循 `UPDATE_OFFLINE` | update service/API 404、state 和无 cache 回归 |
-| `AppState.open_about_link` 与 `platform.windows.open_external_url` | Tauri WebView 禁用普通 JavaScript 新窗口链接，而把页面给出的 URL 转交系统壳会把“打开 GitHub/更新日志”扩张为本机任意 URL 代理 | 浏览器只提交空对象与固定 `github` / `changelog` 键；服务端选择编译的 HTTPS 地址并拒绝凭据 URL，官网不进入该 API；系统壳失败以脱敏 `503` 返回 | About API 固定键/跨来源/非空 body/失败回归与设置页静态契约 |
 | `parsers._is_synthetic_release_fixture` | Windows/macOS 发布主机可共同使用的 PDF fixture 需要内置 Latin 字体，但泛化英文标签会把普通业务 PDF 误投影为发票 | 只有固定双 synthetic marker 同时存在时才启用其英文别名；普通英文 invoice-like 文本必须留空 | synthetic fixture 与 ordinary-English negative release tests |
 | `update_metadata.generate_release_metadata` | 手工构造的 provenance 或分别调用格式化/写盘函数会绕过发行前身份门禁 | 唯一公开生成入口先 finalizer 再格式化/写盘；私有 helper 不是授权机制，公开权限由受保护的 Release/Pages 凭据控制 | update metadata orchestration/parity 测试 |
 | `source_snapshot.inspect_tagged_source_tree` / `release/provenance.py::_verify_sparkle_embedded_core` | 归档 manifest 可以自称任意 tag，checkout 工作树也可能有未跟踪内容，ZIP 同名条目或盘符路径会让“读取到的 core”与用户预期不一致 | 公开 Feed 只能接受固定 Tag commit `git archive` 重建后与归档在 commit/tree SHA/文件数/core build 全部相等；Sparkle ZIP 必须无重复、加密、链接和不安全路径 | source snapshot 与 release provenance 回归 |
 | `scripts/dev/tauri_version_sync.py::synchronize` | Tauri 的 Cargo、JSON 和 npm 都有版本字段，手动并行维护会让 shell、installer 和 Feed 获得不同产品身份 | `version.py` 是唯一产品版本来源；`--check` 发现任一派生字段漂移必须失败，`--write` 是唯一写派生字段入口 | `tests/test_tauri_foundation.py` 的同步/单点 drift 回归 |
-| `scripts/dev/tauri_doctor.py::evaluate` / `tauri_bootstrap.py` | 开发机缺少 Rust、pnpm、证书或平台 SDK 时，自动安装会改变开发机信任和签名状态，且会把环境偶然性伪装为项目准备完成；rustup 与 Corepack shim 甚至可能在普通 `--version` 探测时下载缺失工具，而两者也会按子进程 cwd 选择 toolchain/package manager。Windows 的系统级 Evergreen Runtime 通常位于 Edge Update `{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}` 的 `WOW6432Node` 视图，并可能使用四段版本，错误 client ID 或三段正则会产生 false negative | 默认只报告版本、锁、固定 origin 和 SDK；全部 probe 与版本同步从请求的项目根启动，Rust/Cargo probe 强制 `RUSTUP_AUTO_INSTALL=0`，pnpm probe 强制 `COREPACK_ENABLE_NETWORK=0`，WebView2 同时检查用户/系统与 `WOW6432Node` 标准 client key 并接受三段或四段版本，`--require-ready` 缺 Rust/Cargo/Cargo.lock 或 WebView2 必须非零，只有显式 `--install-js` 能消费已有 pnpm lock | Tauri doctor fail-closed、WebView2 standard-key/four-part-version、root cwd、rustup 与 Corepack 环境传递回归；受控工具链到位后才运行 Rust 聚焦测试 |
+| `scripts/dev/tauri_doctor.py::evaluate` / `tauri_bootstrap.py` | 开发机缺少 Rust、pnpm、证书或平台 SDK 时，自动安装会改变开发机信任和签名状态，且会把环境偶然性伪装为项目准备完成；rustup 与 Corepack shim 甚至可能在普通 `--version` 探测时下载缺失工具，而两者也会按子进程 cwd 选择 toolchain/package manager | 默认只报告版本、锁、固定 origin 和 SDK；全部 probe 与版本同步从请求的项目根启动，Rust/Cargo probe 强制 `RUSTUP_AUTO_INSTALL=0`，pnpm probe 强制 `COREPACK_ENABLE_NETWORK=0`，`--require-ready` 缺 Rust/Cargo/Cargo.lock 必须非零，只有显式 `--install-js` 能消费已有 pnpm lock | Tauri doctor fail-closed、root cwd、rustup 与 Corepack 环境传递回归；受控工具链到位后才运行 Rust 聚焦测试 |
 | `tauri_doctor.py::_find_executable/_windows_sdk_check` | 普通 Visual Studio/Build Tools 会把 `vswhere.exe` 安装到固定 Installer 目录而非 PATH；`vswhere -latest` 的零退出也可能只是没有匹配实例，或匹配实例没有 C++ workload；没有 `ProgramFiles(x86)` 时把 SDK 路径相对化会把调用目录误作系统 SDK | Windows 只在固定 Installer 路径或 PATH 找到 `vswhere` 后，要求 `Microsoft.VisualStudio.Component.VC.Tools.x86.x64`、非空安装目录、`ProgramFiles(x86)` 和实际 Windows Kits Include 版本目录；否则 `--require-ready` 必须继续失败 | Tauri foundation 的 bundled-vswhere、MSVC/SDK 和缺 Program Files 诊断回归；Windows 真机仍需验证真实 toolchain |
 | `tauri-doctor.ps1` / `tauri-bootstrap.ps1` | PowerShell 找不到外部 `python` 时不会可靠设置新的 `$LASTEXITCODE`，直接转发或退出旧值会把未运行的诊断误报成功 | 先解析 `py`，再解析 `python`；两者均缺失显式 `exit 2`，外部命令后空的退出码也归一为失败 | Tauri foundation PowerShell fail-closed 静态契约；Windows 真机验证包装器 |
 | `.cargo/config.toml` | 直接 Tauri crate 的声明 MSRV 不会自动限制 Cargo 默认选择较新的传递依赖，首次解析已选择 Rust 1.88 依赖而违背项目的 Rust 1.85 约束 | 保持 `incompatible-rust-versions = "fallback"` 并提交审查过的 lock；不得手工篡改传递依赖或因刷新 lock 随意升级工具链 | Tauri foundation lock contract、受控 `cargo check --locked` |
-| `src-tauri/src/main.rs` checkout guard、`BackendHost::launch`、`startup_surface` 与退出收束 | 精确 crate/lock 不能把源码 checkout 变成可连接的 host；child 若在 watcher 启动前退出，错误的 arm 顺序会让 watcher 先撤销后又被 host 重新授权；在 handshake 前读取或宽松解释偏好会让未知 localhost 选择窗口/浏览器行为，preference 请求期间 child 可能退出或端口被替换，且 setup 中 tray/window/browser 初始化失败会发生在正常 `ExitRequested` handler 可收束 child 之前；child mutex/`try_wait` 失败不能伪装为 graceful exit；Tauri 最终以 `process::exit` 结束且 host state 间存在 AppHandle 引用环，不能依赖 `Drop` 清理 fixed-port child；macOS predefined Quit 绑定原生 `terminate:`，可绕过 `ExitRequested` | manifest 缺失以状态 `78` 在插件、端口和 WebView 前停止；首次 handshake 后读取偏好，再用 fresh challenge/HMAC 和 identity 复核才 arm，随后才启动 100 ms liveness watcher，watcher 只能撤销授权；setup 保持 child 为局部值，失败先 structured keep-monitor shutdown，错误/超时再 kill+wait，若退出尚不可确认则 setup 保持阻塞并重试，strict child confirmation 把 mutex/`try_wait` error 转入 forced kill+wait，全部 surface 初始化成功才 app.manage；托盘/第二实例只能重开同一 surface，desktop close 不停止 monitor；托盘和自定义应用菜单/Cmd-Q 共用 `app.exit(0)` 且禁止 predefined Quit，收到的 `ExitRequested` 统一先 structured keep-monitor shutdown，错误或超时显式 kill+wait，无法确认退出则 prevent exit；外部终止不属于有序拦截承诺；不得换端口、接入未知实例或伪造桌面能力 | `test_tauri_foundation.py`、`test_tauri_lifecycle_contract.py` 静态 guard/order/menu/exit/setup-cleanup-confirmation 回归、隔离 `cargo check --locked --offline --bin invoicehub-desktop` 与一次 clean-commit 自定义菜单/Cmd-Q smoke |
-| Windows release `main.rs` subsystem 与 `backend.rs::configure_windows_backend_process` | 控制台 PE 会在用户双击时显示 inherited FastAPI HTTP 输出，且代码页解码会把 UTF-8 诊断变成乱码；仅改 host 子系统后，console Python child 仍可能另开窗口或丢失唯一诊断。 | release host 必须使用 Windows GUI subsystem；owned child 必须 `CREATE_NO_WINDOW`，并将 stdout/stderr 追加到同一 `%LOCALAPPDATA%\\InvoiceHub\\runtime` 的 server 日志。debug 构建保留控制台；portable verifier 必须拒绝 subsystem 不是 `2` 的 EXE。 | `test_tauri_lifecycle_contract.py`、`test_tauri_windows_portable.py`、clean ZIP 的 PE/header、无控制台和 runtime-log smoke |
+| `src-tauri/src/main.rs` checkout guard、`BackendHost::launch`、`startup_surface` 与退出收束 | 精确 crate/lock 不能把源码 checkout 变成可连接的 host；child/watch/handshake/setup 任一步漂移都可能授权未知服务；Tauri/AppHandle 引用环使 `Drop` 不能承担退出；predefined Quit 可绕过 `ExitRequested`；更新重启若重复关闭已停止 backend 会把正确 relaunch 当普通失败，而普通 Quit 若穿过 active commit 又会中断不可逆事务 | manifest 缺失状态 `78`；fresh HMAC/identity 后 arm watcher；surface 失败先 structured shutdown/kill+wait，全部成功才 release gate/manage，updater activation 再晚于 manage。普通 ExitRequested 在 commit reserved/executing 时 prevent，其他普通退出 structured keep-monitor；只有 `relaunch_prepared` 跳过重复 shutdown。禁止 predefined Quit，外部终止不作承诺 | lifecycle 静态 guard/order/menu/setup/update-exit contracts、locked binary check 与既有 Cmd-Q smoke |
+| `src-tauri/src/monitor_recovery.rs` | updater/relaunch 期间若只凭 PID/路径停止 monitor，child exit、路径替换或 stale marker 会触碰外部 monitor，失败后也可能丢失原运行义务 | 每个 marker/bridge 操作前后复核 released lease；只暂停 ready monitor，已有/损坏/跨 scope marker 不覆盖。Store 固定从 strict identity `runtime_dir` 打开；Unix descriptor/no-follow/flock/directory-sync 与 Windows handle-relative/no-reparse 不变量不变。startup restore 只有 later `running && ready` 才清 marker，失败保留 marker、WebUI/backend 诊断和 updater failed 状态 | recovery contract 加 startup activation/order lifecycle contract；L10-E macOS arm64 marker/runtime 样本已通过，Windows 与真实更新事务仍待验收 |
+| `src-tauri/src/monitor_bridge.rs` 与 `api/app.py::_monitor_recovery_response` | 固定 endpoint 不是 ownership proof；把 bearer secret 发给候选端口、只验请求不验响应、允许 body/replay 或宽松解析都会让错误进程伪造恢复结果 | 固定 enum/loopback/空 body/有界超时；backend-private secret 不发送，fresh challenge 对 request domain+method+path+empty-body hash 做 HMAC，response 再绑定 exact status/body hash；Python 拒绝 incomplete/tampered/non-empty/replayed 请求，Rust 拒绝 missing/duplicate/tampered proof 并常量时间验证。普通 bridge 调用保持原语义 | Rust bridge 10 项与 Python auth valid/tamper/replay/body contracts；L10-E 已调用隔离 owned monitor 的 authenticated start/status 与普通 stop，未调用真实更新事务 |
+| `src-tauri/src/update_coordinator.rs` | 将未验签 bytes 交给 installer，或吞掉 pause/install/relaunch 的恢复错误，会把不可逆动作放在证据边界外并留下停机状态 | `VerifiedUpdate` 只能由 Tauri `Update::download` 内置验签后的 promotion 产生；严格 download+verify -> pause -> install -> relaunch，并同时保留 primary/restore。Coordinator 仍纯 trait，Host adapter 才持有真实 `Update`/bridge/platform relaunch | coordinator unit/contract 与 Host RPC wiring static contract；真实 updater/install/relaunch 仍待授权 |
+| `src-tauri/src/backend.rs::BackendLifecycleAuthority` | 为 recovery seam 复制 child/ownership/lifecycle 状态会让 lease 与 host 真值漂移，clone 也可能只复制句柄而漏掉代次验证 | authority 只 clone `BackendHost` 已有 `Arc` 和 child PID；capture/revalidate 继续检查 generation、phase、startup gate、health/owned/process PID 和 state scope | backend lifecycle unit tests、`test_tauri_lifecycle_contract.py` |
 | `backend.rs::load_bundle_manifest/compiled_bundle_manifest_hash_matches` | 只检查 manifest 是否存在会让源码 checkout、替换过的 bundle manifest 或错误 bundle root 获得同一 host 启动路径 | 必须对原始 manifest bytes 做 SHA-256，并与只在 staged-manifest 签名 host 编译时注入的 `INVOICE_HUB_BUNDLE_MANIFEST_SHA256` 完全相等；缺值、缺文件或任一字节差异均在连接/窗口前 exit `78` | lifecycle Rust manifest-hash contract 与 locked offline desktop check |
 | `tauri_dev_app.py`、development schema-3 manifest 与 `INVOICE_HUB_DEV_STATE_ROOT` | 裸 checkout 不应因为测试方便而读取用户 Application Support 或可连接任意 localhost；把工作站路径写入 manifest 又会让同一构建在另一用户下失真，state root 落入 bundle、macOS `.app/Contents` sibling 或包住 bundle 又会污染资源 | development assembler 只 stage allowlisted core、绝对 venv launcher 及其 SHA，host 只接受显式、已存在、绝对、canonicalize 后与 bundle/core 和完整 `.app` 容器双向不包含的 development state root，且在启动 Python child 前清除；release/缺失/相对路径 fail closed | L8-S `.app/Contents` sibling path/child-environment contracts 与一次隔离 L9 smoke |
+| `backend.rs::updater_from_json`、`tauri.dev.conf.json`、`tauri_dev_app.py` recovery 变体与 `tauri_recovery_smoke.py` | 为验证 startup restore 而打开通用 development updater 会把任意 Feed/key 误带进脏工作树，也可能让 runner 自己触发 check/install 后把恢复样本误写成更新证据；插件配置缺省为 `null` 又会在 runtime manifest 覆盖前退出 | ordinary development/internal-alpha 始终 disabled；development enabled 只接受固定不可达 HTTPS loopback endpoint、无验签能力 sentinel 和精确三字段对象。overlay 空 `pubkey` 只提供可反序列化对象，不含 endpoint/权限；hash-bound manifest 和 Rust parser 再提供精确 sentinel。runner 预写 `auto_check_updates=false`，只允许 health/status/stop，按 plist/manifest/health/path 身份确认后才 stop，并仅清理自己创建的进程组 | Rust exact-tuple/extra-field test、development staging/plugin-placeholder tests、recovery runner plist/allowlist/path/identity contracts，以及 L10-E macOS arm64 startup-recovery 样本；真实 Feed/download/install/restart 不在样本内 |
 | `platform/host_rpc.py::_send` | 默认 `urllib` opener 会读取 `HTTP_PROXY/http_proxy`；即便 Host RPC URL 已被校验为 loopback，bearer token 仍可能被交给环境代理 | 为每个 private Host RPC 请求创建 `ProxyHandler({})` 的 opener，强制直连已验证的 private loopback listener；保留固定 enum、origin、超时与脱敏错误，不把 token 带入任何代理或日志 | `test_tauri_host_rpc.py` direct no-proxy transport contract |
-| `src-tauri/icons/icon.png` / `icon.ico` | Tauri 的编译期 context 可以接受 PNG，但 macOS tray 在实际初始化时要求可用的 8-bit RGBA 数据；Windows raw host 即使关闭 bundle 也需要可用的 ICO resource。16-bit RGBA 和缺失 ICO 分别只会在原生启动或 Windows 编译时暴露 | PNG 保持 8-bit RGBA，并从该受控源生成多分辨率 ICO；foundation 回归同时锁定 PNG IHDR 和 ICO header，避免把资源异常误归因为生命周期或端口错误 | Tauri foundation icon contract、Windows raw-host build 与 L9 development app smoke |
-| `host_rpc.rs::HostUpdater` 与 `AppState.check_for_updates/install_update` | 把 hosted-Tauri 的公开检查当作普通 cache 检查，会绕过 installation preflight 并使之后的 install 没有同一 session 的 fresh evidence；反过来让非 host 检查排队在 host 生命周期后，会把无关检查变成等待。插件 updater/reqwest 默认没有总时限，挂起请求会永久占住 operation mutex 和连接槽。没有 recovery/relaunch coordinator 时，下载后停 monitor 再安装会在失败时留下业务停机 | 同一进程具备 Tauri marker 与 private RPC 时，API、设置和 timer 共享的 `check_for_updates` 都非阻塞获取 `_host_update_lock` 并使用 strict fresh-body/candidate preflight；只有非 host 检查保留 `UpdateService.check` 的 cache/ETag/nonblocking-busy 语义。检查锁竞争立即从公开只读 `busy_result()` 返回，且不重置 approval 或触碰 metadata/candidate；install 锁竞争立即抛脱敏 `HostRpcError`，不消费 approval 或发第二次 RPC。Host updater metadata builder 固定 5 秒总时限。当前成功取得锁后也只清除 candidate 并 fail closed；HTTP install 只接 `{}`，外部错误固定脱敏 503。完整 coordinator 才可实现下载+Minisign、stop/recheck、install/restart 及失败恢复 | lifecycle Rust timeout/fail-closed candidate contract、Host RPC Python cache/strict-path/concurrency tests、isolated FastAPI TestClient empty-body/redaction contract |
+| `src-tauri/icons/icon.png` | Tauri 的编译期 context 可以接受 PNG，但 macOS tray 在实际初始化时要求可用的 8-bit RGBA 数据；16-bit RGBA 只在首个真实 app launch 暴露问题 | 图标保持 8-bit RGBA，并用 IHDR 回归锁定位深/颜色类型，避免把 tray 初始化异常误归因为生命周期或端口错误 | Tauri icon IHDR contract 与 L9 development app smoke |
+| `host_rpc.rs::HostUpdater` 与 `AppState.check_for_updates/install_update` | 普通 cache 检查不能授权安装；无时限网络、caller metadata、响应前副作用、并发 commit 或平台退出差异都会造成越权、悬挂或半更新 | Hosted API 保持 strict fresh-200/version approval 和非阻塞锁；HTTP install 只接 `{}`/脱敏 503。Host metadata/download 5 秒，完整 `Update` 和域分隔 artifact ID 不公开。Enabled runtime 只在 gate release/manage 后 startup restore；install 原子 consume/reserve，spawn latch worker，flush exact success 后 execute。writer/spawn/latch loss `CommitLost` 无副作用；coordinator 执行 verified download -> pause -> install -> relaunch，Windows callback 与 macOS prepared restart 分开；active commit 拒绝并发与普通 Quit | Host RPC deferred commit/disabled/concurrency/artifact tests、lifecycle/static/API contracts；真实 Feed/update 仍待平台验证 |
 | `AppState.check_for_updates` 的 hosted lock-contended 分支 | 只读 busy 结果若仍穿过统一的 `append_event`，会等待 SQLite 写入，破坏“立即/非持久化”并使锁竞争成为可被存储压力放大的路径 | 竞争分支在 `busy_result()` 后直接返回，不调用 metadata/candidate、不清 approval、也不写 `updates.checked`；成功与非竞争检查保持既有事件语义 | Host RPC Python blocked-append-event 并发样本 |
 | `platform/host_rpc.py` 的 picker 预算与 `api/app.py` 的四条 picker route | Rust dialog 可以合法等待 120 秒，较短 Python timeout 会在原生面板仍有效时伪造失败；未经映射的 private channel 错误会使外部响应语义漂移或泄露连接细节 | Python 等待 125 秒，保留 5 秒响应余量且不无限等待；四条 route 只将 `HostRpcError` 固定映射为脱敏 503，未配置 Tauri 时仍走既有 Tk | `test_tauri_host_rpc.py` timeout/route 静态契约与 FastAPI picker runtime contract |
 | `release/provenance.py::_verify_macos_distribution_artifacts` / `verify_macos_release.sh` / `verify_sparkle_update.swift` | macOS 收据可记录构建期结果，却无法证明发布时的 DMG、ZIP 或 Ed25519 sidecar 尚未被替换；checkout 工作树脚本也不是 Tag 版本发行物的信任根 | finalizer 只接受 schema 4、`developer-id-notarized`、`com.invoicehub.release` 与 v4 verifier，从已解析固定 Tag 取验证器并用 `--artifact-only --expect-notarized` 验证实际 DMG/ZIP；已签名 App 的 `SUPublicEDKey` 必须匹配后才验 ZIP 原始字节，内部收据与布尔值仅审计 | release provenance、metadata CLI、macOS release contract；真实 Developer ID/公证/DMG/Sparkle 成品验收 |
@@ -253,13 +256,20 @@
 # the hashed status format. New writes always collapse aliases to the SHA1 key.
 ```
 
+跨功能流程可以这样写：
+
+```python
+# 先提交成本投影，再发送 `costs.updated`：页面收到事件后会立即重读该文件。
+# 若先发事件，页面可能读到半写入状态并将其显示为同步成功。
+```
+
 不要把 `Why/Invariant/Compatibility` 模板机械复制到每处。能用更清楚的函数名、数据模型或拆分消除困惑时，优先改结构；注释只保留无法从局部代码推出的原因。
 
 ## 13. 后续逐点补注释流程
 
 1. 在本页找到被修改符号和优先级。
 2. 回看对应测试与 `CHANGELOG.md` 历史，确认原因有证据。
-3. 在最靠近保护分支的位置写简短注释；不要在文件头重复整篇架构文档。
+3. 先确认上游输入、下游消费者、顺序/不变量和失败后果；在最靠近交接或保护分支的位置写简短注释，不要在文件头重复整篇架构文档。
 4. 若代码行为已改变，先更新本页的原因和不变量，再写源码注释。
 5. 跑表中守护测试及任务导航要求的相邻回归。
 6. 在 CHANGELOG 说明补了哪个设计原因、验证了什么，而不是只写“增加注释”。
@@ -269,6 +279,8 @@
 - 删除这条注释后，熟悉语言但不了解业务的人会误删哪个保护？
 - 注释描述的是当前代码和测试能证明的事实吗？
 - 它是否解释了为什么，而不是逐字翻译代码？
+- 跨功能流程中，开发者能否从注释立刻识别输入来自哪里、结果由谁消费，以及为何不能改写当前顺序？
+- 交接失败、乱序或绕过校验时，注释是否说明会破坏的状态、用户可见结果或安全边界？
 - 是否包含会很快漂移的数字、路径、分支状态或样本规模？
 - 行为变化时，关联测试会失败并提醒更新注释吗？
 - 它是否意外承诺了未启用能力，例如正式 OCR、云部署或 SQLite 发票主存储？

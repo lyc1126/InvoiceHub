@@ -20,6 +20,7 @@ use tauri_plugin_opener::OpenerExt;
 use invoicehub_desktop::backend::{
     default_bundle_root, load_bundle_manifest, BackendHost, BackendShutdownOutcome, StartupSurface,
 };
+use invoicehub_desktop::app_icon::{self, AppIconId};
 
 const MAIN_WINDOW_LABEL: &str = "main";
 const PRINT_POPUP_INITIAL_URL: &str = "about:blank";
@@ -81,6 +82,13 @@ fn build_application_menu(app: &tauri::AppHandle<tauri::Wry>) -> tauri::Result<M
 
 fn prepare_backend_exit(app: &tauri::AppHandle<tauri::Wry>) -> bool {
     if let Some(backend) = app.try_state::<BackendHost>() {
+        if backend.update_relaunch_prepared() {
+            return true;
+        }
+        if backend.updater_blocks_normal_quit() {
+            eprintln!("InvoiceHub desktop host exit was blocked while an update commit is active");
+            return false;
+        }
         match backend.shutdown_keep_monitor_or_terminate() {
             Ok(BackendShutdownOutcome::Graceful) => {}
             Ok(BackendShutdownOutcome::Forced) => {
@@ -113,7 +121,7 @@ fn complete_setup_failure_cleanup(backend: &BackendHost) {
     }
 }
 
-fn install_tray(app: &tauri::App<tauri::Wry>) -> Result<(), Box<dyn Error>> {
+fn install_tray(app: &tauri::App<tauri::Wry>, icon_id: AppIconId) -> Result<(), Box<dyn Error>> {
     let open_item = MenuItem::with_id(app, TRAY_OPEN_ID, "Open InvoiceHub", true, None::<&str>)?;
     let quit_item = MenuItem::with_id(app, TRAY_QUIT_ID, "Quit InvoiceHub", true, None::<&str>)?;
     let menu = Menu::with_items(app, &[&open_item, &quit_item])?;
@@ -127,10 +135,9 @@ fn install_tray(app: &tauri::App<tauri::Wry>) -> Result<(), Box<dyn Error>> {
                 quit_from_tray(app);
             }
         });
-    if let Some(icon) = app.default_window_icon() {
-        tray = tray.icon(icon.clone());
-    }
-    tray.build(app)?;
+    tray = tray.icon(app_icon::image_for(icon_id)?);
+    let tray = tray.build(app)?;
+    app.manage(tray);
     Ok(())
 }
 
@@ -191,11 +198,13 @@ fn main() -> ExitCode {
         .setup(move |app| -> Result<(), Box<dyn Error>> {
             let backend = BackendHost::launch(manifest, app.handle().clone())?;
             let startup_surface = backend.startup_surface();
+            let app_icon_id = app_icon::load_selected(backend.runtime_dir());
             let setup_result = (|| -> Result<(), Box<dyn Error>> {
-                install_tray(app)?;
+                install_tray(app, app_icon_id)?;
                 match startup_surface {
                     StartupSurface::Desktop => create_desktop_window(
                         app,
+                        app_icon_id,
                         backend.webview_data_directory(),
                         backend.allow_print_popups(),
                     )?,
@@ -207,8 +216,25 @@ fn main() -> ExitCode {
                 complete_setup_failure_cleanup(&backend);
                 return Err(error);
             }
+            if let Err(error) = backend.release_startup_gate() {
+                complete_setup_failure_cleanup(&backend);
+                return Err(Box::new(error));
+            }
             app.manage(backend);
             app.manage(startup_surface);
+            if let Some(backend) = app.try_state::<BackendHost>() {
+                match backend.activate_updater_runtime() {
+                    Ok(true) => {
+                        eprintln!("InvoiceHub updater recovery runtime activated");
+                    }
+                    Ok(false) => {}
+                    Err(error) => {
+                        eprintln!(
+                            "InvoiceHub updater runtime is unavailable; the backend remains available for diagnostics: {error}"
+                        );
+                    }
+                }
+            }
             Ok(())
         })
         .build(tauri::generate_context!())
@@ -231,6 +257,7 @@ fn main() -> ExitCode {
 
 fn create_desktop_window(
     app: &tauri::App<tauri::Wry>,
+    icon_id: AppIconId,
     webview_data_directory: &Path,
     allow_print_popups: bool,
 ) -> Result<(), Box<dyn Error>> {
@@ -242,10 +269,12 @@ fn create_desktop_window(
         tauri::WebviewUrl::External(backend_url),
     )
     .title("InvoiceHub")
+    .icon(app_icon::image_for(icon_id)?)?
     .inner_size(1280.0, 860.0)
     .min_inner_size(1024.0, 640.0)
     .data_directory(webview_data_directory.to_path_buf())
     .on_new_window(move |url, features| {
+        // A child starts blank and can reach only a validated local print job, never a general popup.
         if !allow_print_popups || !is_print_popup_initial_url(url.as_str()) {
             return tauri::webview::NewWindowResponse::Deny;
         }

@@ -9,6 +9,7 @@ from urllib.parse import unquote
 ROOT = Path(__file__).resolve().parents[1]
 FILE_MAP = ROOT / "docs" / "architecture" / "FILE_MAP.md"
 ARCHITECTURE_ENTRY = ROOT / "docs" / "DEVELOPMENT_ARCHITECTURE.md"
+LEGACY_CHANGELOG_INDEX = ROOT / "docs" / "legacy" / "OLD_WORKSPACE_CHANGELOG_INDEX.md"
 ARCHITECTURE_APPENDICES = (
     ROOT / "docs" / "architecture" / "PLATFORM_ARCHITECTURE.md",
     ROOT / "docs" / "architecture" / "FILE_MAP.md",
@@ -87,31 +88,29 @@ TAURI_FOUNDATION_FILES = tuple(
         "scripts/dev/tauri-bootstrap.sh",
         "scripts/dev/tauri-doctor.ps1",
         "scripts/dev/tauri-bootstrap.ps1",
-        "scripts/dev/tauri-windows-portable.ps1",
-        "scripts/dev/tauri_windows_portable.py",
+        "scripts/dev/tauri_dev_app.py",
+        "scripts/dev/tauri_recovery_smoke.py",
         "src-tauri/Cargo.toml",
         "src-tauri/Cargo.lock",
         "src-tauri/build.rs",
         "src-tauri/tauri.conf.json",
-        "src-tauri/tauri.windows.conf.json",
         "src-tauri/capabilities/no-webview-ipc.json",
         "src-tauri/src/lib.rs",
         "src-tauri/src/backend.rs",
         "src-tauri/src/host_rpc.rs",
+        "src-tauri/src/monitor_recovery.rs",
         "src-tauri/src/main.rs",
         "src-tauri/tests/lifecycle_contract.rs",
+        "src-tauri/tests/monitor_recovery_contract.rs",
         "src-tauri/boot/index.html",
         "src-tauri/icons/icon.png",
-        "src-tauri/icons/icon.ico",
         "src-tauri/README.md",
         "src/invoice_hub/platform/host_rpc.py",
         "tests/test_tauri_foundation.py",
+        "tests/test_tauri_dev_app.py",
         "tests/test_tauri_host_rpc.py",
         "tests/test_tauri_lifecycle_contract.py",
-        "tests/test_tauri_windows_portable.py",
-        "tests/test_windows_alpha_metadata.py",
-        "src/invoice_hub/release/verify_tauri_windows_portable.py",
-        "src/invoice_hub/release/windows_alpha_metadata.py",
+        "tests/test_tauri_recovery_smoke.py",
     )
 )
 CURRENT_FACT_DOCS = (
@@ -120,6 +119,7 @@ CURRENT_FACT_DOCS = (
     ROOT / "README.md",
     ROOT / "IMPLEMENTATION_STATUS.md",
     ROOT / "docs" / "MIGRATION_GAP_CHECKLIST.md",
+    LEGACY_CHANGELOG_INDEX,
     ROOT / "CLAUDE.md",
     ROOT / "docs" / "GIT_BRANCH_WORKTREE_FORK_GUIDE.md",
     ROOT / "docs" / "MAC_WINDOWS_WORKFLOW.md",
@@ -146,7 +146,10 @@ NEW_GOVERNED_FILES = {
     path.relative_to(ROOT).as_posix() for path in PUBLIC_RELEASE_FILES
 } | {
     path.relative_to(ROOT).as_posix() for path in TAURI_FOUNDATION_FILES
-} | {"tests/test_development_documentation.py"}
+} | {
+    LEGACY_CHANGELOG_INDEX.relative_to(ROOT).as_posix(),
+    "tests/test_development_documentation.py",
+}
 
 MARKDOWN_LINK_RE = re.compile(r"!?\[[^\]]*\]\((?P<target><[^>]+>|[^\s)]+)")
 ABSOLUTE_PATH_RE = re.compile(
@@ -330,16 +333,72 @@ def test_architecture_mermaid_and_markdown_fences_are_balanced() -> None:
     assert mermaid_blocks >= 3
 
 
+def test_changelog_language_and_cross_feature_comment_governance_are_documented() -> None:
+    agents = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
+    changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+    task_map = (ROOT / "docs" / "architecture" / "AGENT_TASK_MAP.md").read_text(
+        encoding="utf-8"
+    )
+    rationale_map = (
+        ROOT / "docs" / "architecture" / "COMMENT_RATIONALE_MAP.md"
+    ).read_text(encoding="utf-8")
+
+    assert changelog.startswith("# 变更日志\n\n## 未发布\n")
+    assert "## 公开基线" in changelog
+    assert "## 兼容范围" in changelog
+    for legacy_heading in (
+        "# Changelog",
+        "## Unreleased",
+        "## Public Baseline",
+        "## Compatibility Scope",
+    ):
+        assert legacy_heading not in changelog
+
+    assert "新增/修订记录一律使用中文" in agents
+    assert "上游输入或状态来自哪里、下游哪个功能/消费者会使用它" in agents
+    assert "复杂原因及跨功能衔接注释 -> COMMENT_RATIONALE" in task_map
+    assert "上游输入或状态、下游消费者、顺序或不变量" in rationale_map
+
+
+def test_legacy_changelog_lookup_is_sanitized_and_discoverable() -> None:
+    agents = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
+    entry = ARCHITECTURE_ENTRY.read_text(encoding="utf-8")
+    file_map = FILE_MAP.read_text(encoding="utf-8")
+    task_map = (ROOT / "docs" / "architecture" / "AGENT_TASK_MAP.md").read_text(
+        encoding="utf-8"
+    )
+    migration = (ROOT / "docs" / "MIGRATION_GAP_CHECKLIST.md").read_text(
+        encoding="utf-8"
+    )
+    sanitation = HISTORY_SANITIZATION_EXECUTION.read_text(encoding="utf-8")
+    index = LEGACY_CHANGELOG_INDEX.read_text(encoding="utf-8")
+
+    relative_index = "docs/legacy/OLD_WORKSPACE_CHANGELOG_INDEX.md"
+    for text in (agents, entry, file_map, task_map):
+        assert relative_index in text
+    assert "不是旧工作区原始 `CHANGELOG.md` 的副本" in index
+    assert "不得将其" in index
+    assert "软链接、绝对路径或局部摘录" in index
+    assert "Sanitized Legacy Lookup" in sanitation
+    assert "脱敏回溯索引" in migration
+    assert not ABSOLUTE_PATH_RE.search(index)
+    assert not HISTORICAL_GIT_OBJECT_RE.search(index)
+
+
 def test_current_baselines_and_non_drifting_facts_are_explicit() -> None:
     entry = ARCHITECTURE_ENTRY.read_text(encoding="utf-8")
     status = (ROOT / "IMPLEMENTATION_STATUS.md").read_text(encoding="utf-8")
     flows = (ROOT / "docs" / "architecture" / "INTERFACES_AND_FLOWS.md").read_text(
         encoding="utf-8"
     )
+    version_source = (ROOT / "src" / "invoice_hub" / "version.py").read_text(encoding="utf-8")
+    version_match = re.search(r'^PRODUCT_VERSION = "([^"]+)"$', version_source, re.MULTILINE)
+    assert version_match is not None
+    product_version = version_match.group(1)
     for text in (entry, status):
         assert "main" in text
         assert "脱敏" in text
-        assert "0.3.0-alpha.2" in text
+        assert product_version in text
     assert "候选树、Git 对象和托管面验证已通过" in flows
     assert "验证通过前，仓库不得公开" not in flows
 
@@ -354,6 +413,10 @@ def test_current_baselines_and_non_drifting_facts_are_explicit() -> None:
         "描述该未合并实现",
         "2026-08-02-preview-session-resilience",
         "当前开发分支：`codex/preview-session-resilience`",
+        "receipt finalization 门禁尚在修复分支",
+        "receipt finalization 门禁尚待合并",
+        "receipt finalization 门禁仍须合并",
+        "receipt finalization 门禁也已在当前候选树实现",
     )
     stale: list[str] = []
     for path in CURRENT_FACT_DOCS:
@@ -390,17 +453,92 @@ def test_host_rpc_docs_describe_the_direct_backend_token_handoff() -> None:
         assert "`update_check` / `update_install` 两个固定 enum" in text
 
 
-def test_current_tauri_docs_keep_install_fail_closed_until_recovery_exists() -> None:
+def test_current_tauri_docs_describe_authenticated_response_then_private_commit() -> None:
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     file_map = FILE_MAP.read_text(encoding="utf-8")
     task_map = (ROOT / "docs" / "architecture" / "AGENT_TASK_MAP.md").read_text(
         encoding="utf-8"
     )
+    update_system = (ROOT / "docs" / "release" / "UPDATE_SYSTEM.md").read_text(
+        encoding="utf-8"
+    )
+    tauri_readme = (ROOT / "src-tauri" / "README.md").read_text(encoding="utf-8")
 
-    assert "install 请求只清除候选并返回不可用" in readme
-    assert "Current install consumes the candidate and fails closed" in file_map
-    assert "当前 install 只清除候选并 fail closed" in task_map
-    assert "随后才按下载+Minisign 验签" not in readme
+    assert "L10-D 已把这些边界接入 Host RPC/updater/startup restore" in readme
+    assert "fresh challenge and HMAC-SHA256" in file_map
+    assert "response flush 后私有 commit" in task_map
+    assert '精确 `{"ok":true}` 完整写入并 flush 后' in update_system
+    assert "L10-D wires those seams into the owned host runtime" in tauri_readme
+    assert "CommitLost" in readme
+
+    current_docs = (readme, file_map, task_map, update_system, tauri_readme)
+    stale_claims = (
+        "install 请求只清除候选并返回不可用",
+        "Current install consumes the candidate and fails closed",
+        "当前 install 只清除候选并 fail closed",
+        "Until a complete recovery/relaunch coordinator exists",
+    )
+    for text in current_docs:
+        for stale_claim in stale_claims:
+            assert stale_claim not in text
+
+
+def test_l10_e_docs_keep_the_recovery_smoke_non_installing_and_isolated() -> None:
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    status = (ROOT / "IMPLEMENTATION_STATUS.md").read_text(encoding="utf-8")
+    migration = (ROOT / "docs/MIGRATION_GAP_CHECKLIST.md").read_text(encoding="utf-8")
+    flows = (ROOT / "docs/architecture/INTERFACES_AND_FLOWS.md").read_text(
+        encoding="utf-8"
+    )
+    file_map = FILE_MAP.read_text(encoding="utf-8")
+    plan = (ROOT / "docs/release/TAURI2_EXECUTION_PLAN.md").read_text(encoding="utf-8")
+    update_system = (ROOT / "docs/release/UPDATE_SYSTEM.md").read_text(
+        encoding="utf-8"
+    )
+    tauri_readme = (ROOT / "src-tauri/README.md").read_text(encoding="utf-8")
+
+    for text in (readme, status, flows, update_system, tauri_readme):
+        assert "L10-E" in text
+        assert "internal-alpha" in text
+    assert "https://127.0.0.1:1/invoicehub-recovery-smoke/latest.json" in update_system
+    assert "auto_check_updates=false" in flows
+    assert "GET /api/v1/health" in flows
+    assert "GET /api/v1/bridge/status" in flows
+    assert "POST /api/v1/bridge/stop" in flows
+    assert "不调用 update check/install" in file_map
+    assert "scripts/dev/tauri_recovery_smoke.py" in file_map
+    assert "- [x] L10-E non-installing recovery smoke" in migration
+    assert "marker_removed=true" in plan
+    assert "monitor_stopped=true" in plan
+    assert "update_requests=0" in readme
+    for stale_claim in (
+        "L10-E recovery-smoke 变体尚待实际运行",
+        "L10-E runtime 结果尚待",
+        "当前平台样本尚未执行",
+        "has not yet run",
+        "Planned on 2026-08-24. No build or runtime sample has run yet.",
+    ):
+        assert stale_claim not in "\n".join((readme, status, flows, plan, update_system, tauri_readme))
+
+
+def test_icon_and_print_popup_docs_keep_windows_host_boundaries() -> None:
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    status = (ROOT / "IMPLEMENTATION_STATUS.md").read_text(encoding="utf-8")
+    migration = (ROOT / "docs/MIGRATION_GAP_CHECKLIST.md").read_text(encoding="utf-8")
+    platform = (ROOT / "docs/architecture/PLATFORM_ARCHITECTURE.md").read_text(
+        encoding="utf-8"
+    )
+    plan = (ROOT / "docs/release/TAURI2_EXECUTION_PLAN.md").read_text(encoding="utf-8")
+
+    for text in (readme, status, migration, platform, plan):
+        assert "allow_print_popups" in text
+        assert "app_icon_state.json" in text
+    for text in (readme, status, migration, platform):
+        assert "WebView2" in text
+        assert "CREATE_NO_WINDOW" in text
+    assert "P1-IW: icon selection and print-popup Windows host compatibility" in plan
+    assert "about:blank -> /invoices/print/{job_id}" in plan
+    assert "No Windows native surface" in plan
 
 
 def test_current_tauri_docs_require_bounded_update_checks_and_confirmed_exit_cleanup() -> None:
