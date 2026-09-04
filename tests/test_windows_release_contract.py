@@ -295,6 +295,100 @@ def test_get_ih_health_decodes_utf8_chinese_space_paths_in_ps7_and_ps51() -> Non
         server_thread.join(timeout=5)
 
 
+@pytest.mark.skipif(os.name != "nt", reason="Windows PowerShell integration test")
+def test_health_backed_identity_accepts_partial_cim_but_not_complete_mismatch() -> None:
+    pwsh = shutil.which("pwsh.exe") or shutil.which("pwsh")
+    powershell = shutil.which("powershell.exe") or shutil.which("powershell")
+    if pwsh is None or powershell is None:
+        pytest.skip("PowerShell 7 and Windows PowerShell 5.1 are required")
+
+    command = r"""
+$ErrorActionPreference = 'Stop'
+Import-Module -Force -DisableNameChecking -Name $env:IH_MODULE
+$module = Get-Module InvoiceHub.Windows
+& $module {
+    $process = Get-Process -Id $PID
+    $expectedPython = [string]$process.Path
+    if ([string]::IsNullOrWhiteSpace($expectedPython)) { throw 'Current PowerShell process has no readable executable path.' }
+    $configPath = 'C:\invoicehub-test\config.json'
+    $runtimeDir = 'C:\invoicehub-test\runtime'
+    $build = [pscustomobject]@{ build_id = 'development'; api_contract_version = 'test-api' }
+    $package = [pscustomobject]@{ package_id = 'development'; product_version = 'test-version' }
+    $health = [pscustomobject]@{ ok = $true; pid = $PID; config_path = $configPath; runtime_dir = $runtimeDir; build_id = 'development'; api_contract_version = 'test-api'; package_id = 'development'; product_version = 'test-version'; platform = 'windows'; architecture = 'x86_64' }
+
+    function Get-IHProcessMetadata { param([int]$ProcessId) [pscustomobject]@{ ExecutablePath = $expectedPython; CommandLine = '' } }
+    $partial = Test-IHHealthBackedProcessIdentity -ProcessId $PID -Python @($expectedPython) -ConfigPath $configPath -RuntimeDir $runtimeDir -BuildManifest $build -PackageManifest $package -Development -Health $health
+
+    function Get-IHProcessMetadata { param([int]$ProcessId) [pscustomobject]@{ ExecutablePath = $expectedPython; CommandLine = 'not-the-invoicehub-command' } }
+    $completeMismatch = Test-IHHealthBackedProcessIdentity -ProcessId $PID -Python @($expectedPython) -ConfigPath $configPath -RuntimeDir $runtimeDir -BuildManifest $build -PackageManifest $package -Development -Health $health
+
+    if (-not $partial) { throw 'Partial CIM metadata did not use the health-backed fallback.' }
+    if ($completeMismatch) { throw 'Complete mismatched CIM metadata was incorrectly accepted.' }
+    Write-Output 'partial-cim-fallback-ok'
+}
+"""
+    env = os.environ.copy()
+    env["IH_MODULE"] = str(ROOT / "scripts/windows/InvoiceHub.Windows.psm1")
+    for executable in (pwsh, powershell):
+        completed = subprocess.run(
+            [executable, "-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command],
+            env=env,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+            timeout=20,
+        )
+        assert completed.returncode == 0, completed.stdout + completed.stderr
+        assert "partial-cim-fallback-ok" in completed.stdout
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows PowerShell integration test")
+def test_declared_venv_base_is_an_identity_candidate_without_execute_access(tmp_path: Path) -> None:
+    pwsh = shutil.which("pwsh.exe") or shutil.which("pwsh")
+    powershell = shutil.which("powershell.exe") or shutil.which("powershell")
+    if pwsh is None or powershell is None:
+        pytest.skip("PowerShell 7 and Windows PowerShell 5.1 are required")
+
+    venv_dir = tmp_path / ".venv"
+    venv_dir.mkdir()
+    declared_base = r"C:\invoicehub-test\restricted-base\python.exe"
+    (venv_dir / "pyvenv.cfg").write_text(
+        f"home = C:\\invoicehub-test\\restricted-base\nexecutable = {declared_base}\n",
+        encoding="utf-8",
+    )
+    command = "\n".join(
+        (
+            "Import-Module -Force -DisableNameChecking -Name $env:IH_MODULE",
+            "$declared = @(Get-IHVenvDeclaredPython -Root $env:IH_VENV_ROOT)",
+            "if ($declared.Count -ne 1 -or $declared[0] -cne $env:IH_DECLARED_BASE) { throw 'Declared venv base was not retained as an identity candidate.' }",
+            "Write-Output 'declared-venv-identity-ok'",
+        )
+    )
+    env = os.environ.copy()
+    env.update(
+        {
+            "IH_MODULE": str(ROOT / "scripts/windows/InvoiceHub.Windows.psm1"),
+            "IH_VENV_ROOT": str(tmp_path),
+            "IH_DECLARED_BASE": declared_base,
+        }
+    )
+    for executable in (pwsh, powershell):
+        completed = subprocess.run(
+            [executable, "-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command],
+            env=env,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+            timeout=20,
+        )
+        assert completed.returncode == 0, completed.stdout + completed.stderr
+        assert "declared-venv-identity-ok" in completed.stdout
+
+
 def test_windows_launcher_is_release_closed_and_identity_bound() -> None:
     module = _text("scripts/windows/InvoiceHub.Windows.psm1")
     start = _text("scripts/windows/run_start_localhost.ps1")
@@ -309,12 +403,27 @@ def test_windows_launcher_is_release_closed_and_identity_bound() -> None:
     assert "source_commit" in module
     assert "function Test-IHHealthBackedProcessIdentity" in module
     assert "function Test-IHLaunchedProcessIdentity" in module
+    assert "function Test-IHProcessMetadataHasFullIdentity" in module
     assert "function Test-IHVerifiedProcessIdentity" in module
     assert "Test-IHHealthIdentity" in module
     assert "if ($null -eq $Health) { return $false }" in module
+    assert "if (-not $Development -and ($Health.build_manifest_valid -ne $true -or $Health.package_manifest_valid -ne $true)) { return $false }" in module
+    assert "IdentityPython = [string[]]$identityPython" in module
+    assert "base_executable" in module
+    assert "function Test-IHPythonExecutable" in module
+    assert "function Get-IHVenvDeclaredPython" in module
+    assert "function Get-IHVenvBasePython" in module
+    assert 'invoice-hub-python-probe-ok' in module
+    assert "RedirectStandardOutput = $true" in module
+    assert "RedirectStandardError = $true" in module
+    assert "$stdout.Trim().Equals($probeMarker" in module
+    assert "foreach ($declaredPython in @(Get-IHVenvDeclaredPython -Root $Root))" in module
     assert "Test-IHVerifiedProcessIdentity" in start
     assert "Test-IHLaunchedProcessIdentity" in start
     assert "Test-IHVerifiedProcessIdentity" in stop
+    assert "cim_metadata=$cimState" in start
+    assert "health_backed_process_identity=$healthBackedProcessIdentity" in start
+    assert "status=already-ready" in start
 
     smoke = _text("scripts/dev/smoke_windows_portable.ps1")
     assert "Start-Process -FilePath $commandProcessor" in smoke
@@ -639,12 +748,25 @@ def test_windows_package_uses_default_not_local_config() -> None:
     assert "Copy-Item" in common
 
 
-def test_windows_source_checkout_requires_explicit_development_mode() -> None:
+def test_windows_source_checkout_defaults_to_development_without_weakening_release_mode() -> None:
+    module = _text("scripts/windows/InvoiceHub.Windows.psm1")
     readme = _text("README.md")
     workflow = _text("docs/MAC_WINDOWS_WORKFLOW.md")
 
-    assert ".\\启动一站式发票汇总系统.bat -Development" in readme
-    assert ".\\启动一站式发票汇总系统.bat -Development" in workflow
+    assert "function Test-IHSourceCheckout" in module
+    assert 'Join-Path $Root ".git"' in module
+    assert 'Join-Path $Root "src\\invoice_hub\\api\\main.py"' in module
+    assert '"invoice-hub-build.json", "invoice-hub-package.json", "python\\python.exe"' in module
+    assert "if (-not $launchDevelopment -and (Test-IHSourceCheckout -Root $Root))" in module
+    assert "Development = [bool]$launchDevelopment" in module
+    assert "Test-IHPythonExecutable -Path $venvPython" in module
+    assert "$venvBasePython = Get-IHVenvBasePython -Root $Root" in module
+    assert "Do not turn a broken source venv into an arbitrary system-Python launch." in module
+    assert "$verifiedPid = [int]$health.pid" in _text("scripts/windows/run_start_localhost.ps1")
+    assert "-Development:$context.Development" in _text("scripts/windows/run_start_localhost.ps1")
+    assert "-Development:$context.Development" in _text("scripts/windows/run_stop_localhost.ps1")
+    assert ".\\启动一站式发票汇总系统.bat" in readme
+    assert ".\\启动一站式发票汇总系统.bat" in workflow
 
 
 def test_windows_settings_import_is_whitelist_only() -> None:

@@ -1225,6 +1225,42 @@ body[data-page="skins"] .skin-card:first-child .skin-card__preview {
   }
 }
 
+.sync-progress {
+  --sync-progress-accent: #2f9d83;
+  --sync-progress-success: #3c9650;
+  --sync-progress-danger: #c7544d;
+  --sync-progress-track: linear-gradient(180deg, #fff9dd, #efdfaa);
+  --sync-progress-label-surface: #fff8db;
+  --sync-progress-label-text: #28684f;
+}
+
+.sync-progress__track {
+  border: 2px solid #b19157;
+  background: var(--sync-progress-track);
+  box-shadow: var(--island-inner-shadow), inset 0 2px 0 rgba(255, 255, 255, 0.76);
+}
+
+.sync-progress__fill {
+  background: linear-gradient(90deg, #2f9d83, #70cba8);
+  box-shadow: inset 0 2px 0 rgba(255, 255, 255, 0.28);
+}
+
+.sync-progress__percent {
+  border-color: rgba(86, 122, 72, 0.42);
+  border-radius: 999px;
+  box-shadow: inset 0 -2px 0 rgba(91, 67, 35, 0.08);
+}
+
+.sync-progress__check {
+  border-color: #3c9650;
+  background: #fff8db;
+  box-shadow: 0 3px 0 rgba(56, 109, 66, 0.16);
+}
+
+.sync-progress__check::after {
+  border-color: #3c9650;
+}
+
 @media (max-width: 980px) {
   .topbar {
     gap: 14px;

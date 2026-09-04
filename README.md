@@ -12,7 +12,7 @@ English project name: `InvoiceHub`.
 
 本项目采用 monorepo：无论在 Windows 还是 macOS 执行 `git clone`，源码目录都会同时包含共享的 `src/`、`web/`、Windows 入口 `scripts/windows/` 和 macOS 壳 `macos/InvoiceHubMac/`。看到另一平台源码不代表最终包体混合，也不应在 Windows checkout 中手工删除 `macos/`。
 
-- Windows 源码开发只通过根 BAT 的 `-Development` 模式调用当前 checkout；正式发布只运行 Windows 构建脚本，产出 `windows-x64-portable.zip`。验包器使用精确路径白名单，并拒绝 macOS 壳、Swift/bundle、Mac 依赖锁和 Unix Python runtime。
+- Windows 源码 checkout 通过根 BAT 启动时，会在 `.git`、`src/invoice_hub/api/main.py` 存在且没有任何正式包标记的前提下自动使用开发模式；`-Development` 仍可显式传入。若 `.venv\Scripts\python.exe` 文件存在但无法启动，源码入口只会使用同一 `.venv\pyvenv.cfg` 声明且可执行的基础解释器，绝不因此改用任意系统 Python。带 build/package manifest 或内置 `python\python.exe` 的目录始终按便携包路径处理，绝不回退到系统 Python。源码 health 以 `development` 身份完成握手，正式包仍要求有效 manifest。正式发布只运行 Windows 构建脚本，产出 `windows-x64-portable.zip`。验包器使用精确路径白名单，并拒绝 macOS 壳、Swift/bundle、Mac 依赖锁和 Unix Python runtime。
 - 当前 Tauri macOS development `.app` 由 `scripts/dev/tauri_dev_app.py` 组装：普通 `stage/build` 只复制允许的共享 core、使用显式 venv launcher 和 updater-disabled schema-3 development manifest，并只构建 arm64 `.app`；显式 `stage-recovery/build-recovery` 仅生成 L10-E 固定、不可安装的 startup-recovery smoke 变体。`scripts/dev/tauri_alpha_release.py` 是隔离的 internal-alpha assembly：从 clean Git snapshot 组装锁定 Python 3.14.6 arm64 runtime、schema-4 receipt 和独立 verifier，目标仅为本地 ad-hoc `.app/.dmg` 评审；它不启用 updater、Feed、Release、Developer ID 或公证。旧的 `macos/InvoiceHubMac/` SwiftUI/WKWebView 工程仍是平台参考实现。所有 macOS 成品验包都扫描整个 `Resources`，拒绝 Windows BAT/PowerShell、Windows 锁与 `.exe/.dll/.pyd/.msi/.msix`。
 - 2026-08-19 的 internal-alpha arm64 `.app/.dmg` 已由独立 verifier 复核通过，并以临时 HOME/state root 完成一次固定端口 `ready` 启动烟测；这只证明内部评审包的布局、身份和启动边界，不改变其非公开、未签名/未公证和 updater-disabled 属性。
 - 2026-08-24 的 L10-E recovery-smoke 以锁定工具链离线构建并在临时 HOME/state/watch 中完成一次 macOS arm64 启动恢复：owned monitor 达到 `running && ready`，marker 删除、显式 stop 与进程/端口/临时目录清理均通过，且 runner 报告 `update_requests=0`。该专用 profile 使用不可达 endpoint 和无验签能力 sentinel，只证明 authenticated startup restore，不证明 Feed、下载、验签、安装或重启。
@@ -25,10 +25,14 @@ English project name: `InvoiceHub`.
 Windows 开发环境：
 
 ```powershell
-py -3 -m venv .venv
+py -3.14 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -e .[dev]
-.\启动一站式发票汇总系统.bat -Development
+.\启动一站式发票汇总系统.bat
 ```
+
+若 Windows 报出 `.venv` 的 launcher 找不到其基础解释器，根 BAT 会以隐藏哨兵探测识别该故障，并自动尝试 `.venv\pyvenv.cfg` 中同一环境声明的基础解释器；该路径不存在或不可执行时仍应重新创建 `.venv`，不会退回到任意系统 Python。
+
+已运行的本项目服务会优先以完整 `Win32_Process` 身份复用；若 Windows 会话只能取得缺少执行路径或命令行字段的 CIM 记录，仍必须同时通过解释器路径及 health 的 PID、配置、运行目录、build/package 精确绑定才会复用。`.venv\pyvenv.cfg` 已声明但当前会话无法执行的基础解释器仅用于识别已运行的本项目服务，不用于未验证的新启动。其它占用 `8766` 的进程不会被接管；失败详情见 `runtime/startup_preflight.log`。
 
 默认地址：
 
@@ -41,6 +45,8 @@ http://127.0.0.1:8766/
 首页“选择文件夹”只负责调用系统原生选择器并把结果放入输入框，页面会显示“待保存目录”，输入框会滚到路径末尾便于确认目录名；确认无误后点击“保存目录”才会切换当前活动发票目录，并把该路径加入最近保存的文件夹记录。目录按钮下方会用分割线展示“当前使用”和“过去保存”的路径选项，点击历史路径只会填入待保存草稿，不会直接切换活动目录；过去保存路径右上角的 `-` 可从记忆中删除该路径，路径较多时会在该区域内纵向滚动。路径卡保持固定宽度，长路径不撑宽、不换行，鼠标覆盖或键盘聚焦时会在卡片内部横向滚动查看完整路径。项目根目录内的发票目录会按相对路径写入 `config/app.local.json`，包外目录才保存为绝对路径。
 
 首页发票列表会按源文件扩展名显示 `PDF/OFD/XML` 浅色格式徽标，销售方列固定宽度并单行省略，便于把发票号、票种、金额等参数前移展示。列表所有表头、文字、金额、排序控件、按钮、徽标和勾选框均水平/垂直居中；发票大类不再显示“大类：”前缀，增值税专用发票和普通发票使用不同的高对比度徽标，空大类仍显示 `--`。分类徽标与识别状态徽标固定在同一主行，下方业务类型文案继续显示“业务：具体类型”并缩小 30%。每行状态只显示一枚徽标：分类缺失、未知或冲突优先显示对应类型错误，其次显示普通“识别失败”或“重复发票”，没有显式异常时显示“已识别”；完整类型识别说明保留在徽标的悬停标题和无障碍标签中。开票时间列旁边提供上下三角排序按钮，可在正序和倒序之间切换，排序只调整当前筛选后的可见列表。列表右侧可逐张勾选发票，标题区会实时显示勾选发票的价税合计金额和张数，并提供“一键全选”和“清除勾选”按钮；两个按钮位于合计块左侧，勾选合计保持标题区最右侧。批量全选只作用于当前筛选后的可见列表，筛选或刷新后只保留当前可见列表中的勾选金额。发票详情页的核心字段区域提供“打开文件”和“打开文件所在位置”两个动作，分别用于打开源发票本体和打开其所在文件夹；右侧将“手工修订”和“本票成本明细”作为同级面板上下展示，不再内嵌详情页一致性板块。本票成本明细按当前发票自己的成本明细行汇总同项目数量、除税总计和价税合计，并在项目下列出同项目同规格的数量、算术平均单价和加权平均单价；每个项目按真实内容高度排布，外层成本区负责有界纵向滚动，不会再把项目压扁并裁掉规格表。
+
+首页“关键字”筛选只匹配销售方、发票号码和源文件名，与输入框提示和可见列表字段保持一致；购买方、金额、分类或内部识别说明不会再隐式扩大结果集，其他维度继续使用各自的明确筛选项。
 
 “勾选价税合计金额”整块是语义化按钮，无勾选时禁用；有勾选时点击可打开“已勾选发票合计详情”，hover/active 不改变合计块颜色，键盘焦点仍有可见焦点环，不另设“查看合计”按钮。合计详情在桌面端保持三张醒目金额卡、项目与税率标题、项目统计和真实规格表格；该共享基础样式必须位于顶层，因此 macOS WKWebView 与 Windows 浏览器使用相同的信息层级。2026-07-30 曾因设置页窄屏媒体查询遗漏结束大括号而将这些桌面规则错误包入 `@media`；前端契约现解析规则层级，防止选择器文本仍存在却只在窄屏生效。合计先按同票家族去重：优先当前发票号码，其次文件名中的 20 位号码，仍无法识别时按源文件路径区分；票头与文件名取得的同一号码视为同一张票。弹窗顶部三项金额分别只累计票头 `除税价 / 税金 / 开票金额` 的合法值，同一家族同字段出现多个不同合法金额时该字段不计入并提示冲突。明细只读当前 `watch_dir/成本发票明细.csv`，不会触发重建或重新解析；按发票号匹配，手改号码无结果时回退源文件，按 `内部项目名称 + 明细税率` 拆分项目块，再按 `规格型号 + 单位` 汇总。税率 `0.13` 与 `13%` 统一显示为 `13%`，缺失税率明确显示“税率未识别”；规格数量与四项均价继续沿用详情页公式，不改变成本 CSV/XLSX/JSON 或 `/api/v1/cost-analysis` 契约。合计请求的同步文件读取与聚合在服务线程池中执行，弹窗生成期间 localhost 的 health 和其它请求仍可继续响应。内置 Ink Pulse `1.3.0` 的 `body` 入场动画全程只做 opacity 淡入，不在任何动画帧设置 transform；因此页面已滚动时打开勾选合计或设置关闭等固定弹窗，顶部操作仍保持在视口内可达；在不超过 `420px` 的窄屏上，合计项目内三项金额卡改为单列，长金额不再被三列窄卡逐字拆行，规格表横向滚动和弹窗内部纵向滚动保持不变。
 
@@ -67,6 +73,8 @@ L10-D 已把这些边界接入 Host RPC/updater/startup restore：`BackendHost` 
 固定 endpoint/method/origin 本身仍不是 ownership proof；L10-D 只把 host 的 recovery 调用升级为双向认证，普通页面 bridge 请求保持既有未认证 localhost 语义。任何后续新增 recovery endpoint、body 或响应字段都必须同步扩展域分隔 transcript、严格空 body/重放保护和 Rust 常量时间响应校验，不得退化成向候选固定端口发送 bearer secret。
 
 目录检查会递归统计当前目录下的 PDF/OFD/XML 发票源文件；如果目录能读取但只包含 `.zip/.rar/.7z` 压缩包、成本产物或其它文件，页面会显示 warning，并提示先解压或改选解压后的发票文件夹。点击“重新汇总”后若结果为 0 条，页面会直接显示这个原因，而不是只显示笼统完成。
+
+首页使用当前活动档案的真实重建进度：组件只在手动或后台同步进行中显示，并随目录扫描、普通汇总、成本解析和已处理文件确认推进。它位于汇总控制旁，服务启动后的后台首轮同步也会在子进程启动阶段保持轮询，避免页面因最早读到空闲快照而漏掉后续进度；读取快照不会触发第二次重建。成本分析页位于“成本分析”标题右侧的组件则只反映本页 `GET /api/v1/cost-analysis` 的读取、成本数据整理和首个视图初始化，不读取或映射首页的全局重建百分比；“重新汇总”完成后才开始这一次本地读取反馈。两种完成态都会从右向左收束为绿色圆形勾选并自动退场；桌面宽度保持标题单行和协调间距，窄屏才让组件换行，首页纵向工具栏内仍固定为 30px 高。Tauri 桌面壳加载的是同一 localhost 页面，因此显示行为与浏览器一致；这不替代原生窗口或安装包验收。
 
 macOS 未签名开发 `.app` 重建后，系统可能因应用代码身份变化重新要求“下载”等受保护目录的访问权限。若 localhost 严格握手成功，但页面出现 `Load failed` 或 health 的 `background_status=failed`，应在用户明确允许后通过首页原生 `NSOpenPanel` 重新选择并保存当前目录，再确认 `background_status=ready`、手动重新汇总成功且源文件预览可打开；仅有 `health.ok=true` 不能证明业务目录已经获权。
 

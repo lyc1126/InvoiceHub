@@ -66,7 +66,7 @@
 | `requirements/test-tools-py314.lock` | CI 测试工具哈希锁。 | CI bootstrap 使用，不进入成品。 |
 | `docker-compose.yml` | 开发/Mac 验证用测试容器。 | 调用 `scripts/dev/run_docker_tests.sh` 对应的 pytest 环境；不是 Windows 正式依赖。 |
 | `config/app.local.json`（ignored 本机文件） | localhost 本机配置结构；不存在时由 `targets.load_config` 或 Windows 首启生成。 | 可能含真实路径，不纳入 Git、对应源码或成品；core 构建另写脱敏 `config/app.default.json`。 |
-| `启动一站式发票汇总系统.bat` | 根目录正式启动入口。 | 转发到 `scripts/windows/启动localhost汇总页.bat`；修改后必须做正式 BAT 验收。 |
+| `启动一站式发票汇总系统.bat` | 根目录 Windows 启动入口。 | 转发到 `scripts/windows/启动localhost汇总页.bat`；共享启动上下文只会为无正式包标记的源码 checkout 自动选择开发模式，修改后必须做正式 BAT 验收。 |
 | `停止一站式发票汇总系统.bat` | 只停止 localhost 的固定入口。 | 转发到 `scripts/windows/停止localhost服务.bat`；不得停止 monitor。 |
 | `停止一站式发票汇总系统并停止监控.bat` | 先停 monitor 再停 localhost。 | 转发到 stop-all BAT；语义不能被设置页偏好改变。 |
 | `导入旧版设置.bat` | Windows 新目录安装后的显式设置迁移入口。 | 转发到白名单迁移 PS1；不复制业务文件和运行态。 |
@@ -138,11 +138,11 @@
 | `scripts/tools/jierui_probe_template.py` | 捷锐模板探测辅助入口。 | 只生成或核对结构性事实，不写真实凭证状态。 |
 | `scripts/tools/jierui_voucher_import.py` | 随包 runner 包装。 | 转发到 `invoice_hub.runners.jierui_voucher_import`，要求显式 batch manifest。 |
 | `scripts/windows/run_monitor_status.ps1` | monitor 状态 CLI 包装。 | 解析 Python，调用 `invoice_hub.monitoring.control status`。 |
-| `scripts/windows/run_start_localhost.ps1` | localhost 正式启动器。 | 读配置、准备 runtime、启动 uvicorn、探测首页、写 PID/state/log 与 PowerShell version/edition/home 诊断并拉起浏览器。 |
+| `scripts/windows/run_start_localhost.ps1` | localhost 启动器。 | 复用共享源码/便携包模式判定，读配置、准备 runtime、启动 uvicorn、探测首页、写 PID/state/log 与 PowerShell version/edition/home 诊断并拉起浏览器；身份拒绝会留下不含外部命令行的字段级诊断。 |
 | `scripts/windows/run_start_monitor.ps1` | monitor 启动包装。 | 调用 `monitoring.control start`，成功由 ready 握手决定。 |
 | `scripts/windows/run_stop_localhost.ps1` | localhost 停止实现。 | 处理 PID、仓库进程和 `server_state.json`；不调用 monitor stop。 |
 | `scripts/windows/run_stop_monitor.ps1` | monitor 停止包装。 | 调用 `monitoring.control stop`，支持超时参数。 |
-| `scripts/windows/InvoiceHub.Windows.psm1` | 正式 Windows 公共启动/停止真值与浏览器派发。 | 严格识别包、Python、PID、模块、root/config/port；health 从原始响应流按 UTF-8 解码后再比较中文路径身份；负责槽位冲突隔离。 |
+| `scripts/windows/InvoiceHub.Windows.psm1` | Windows 公共启动/停止真值与浏览器派发。 | 只为 `.git +` 源码入口且无正式包标记的目录自动选择开发 Python；其余路径严格识别包、Python、PID、模块、root/config/port。health 从原始响应流按 UTF-8 解码后再比较中文路径身份；完整 CIM 命令行优先，CIM 不可读或字段不完整时才可用解释器路径与 health 的受限身份回退，无法执行的 venv 声明基础解释器只加入既有服务身份候选；负责槽位冲突隔离。 |
 | `scripts/windows/import_previous_settings.ps1` | 旧包到新包的白名单迁移包装。 | 调用 `release.settings_migration`；拒绝同根目录。 |
 | `scripts/windows/创建根目录快捷方式.ps1` | 生成本机 `.lnk`。 | 目标是根启动 BAT；生成物 ignored。 |
 | `scripts/windows/启动localhost汇总页.bat` | PowerShell 7 优先、5.1 后备的启动 BAT。 | 先验证 Program Files PS7，再解析 PATH/App Execution Alias；保留强制 5.1，调用 `run_start_localhost.ps1`。 |
@@ -188,7 +188,7 @@
 | `src/invoice_hub/__init__.py` | 包说明和 `__version__`。 | 被包导入和发布元数据使用；版本策略变化时同步发布文档。 |
 | `src/invoice_hub/version.py` | 产品/包版本、API 契约、通道、链接、白名单和 package ID 单一真值。 | Python、Swift 脚本、manifest、About、Feed 与测试必须一致。 |
 | `src/invoice_hub/api/__init__.py` | 惰性导出 `create_app`。 | 保持外部工厂入口，同时避免执行 `api.main` 前抢先实例化默认 AppState。 |
-| `src/invoice_hub/api/app.py` | FastAPI 应用、页面路由、API、错误码、静态资源、SSE，以及三条 monitor recovery route 的可选 authenticated response wrapper。 | 上游是浏览器；下游是 `AppState`、皮肤文件和模板。普通 bridge 调用保持原语义；只有带完整 recovery 认证头、空 body 且 challenge 未重放的 host 请求才执行 HMAC 校验并签名精确响应。四条 Tauri picker route 与 update install 继续把 private failure 映射为固定脱敏 503，install 只接受 `{}`。 |
+| `src/invoice_hub/api/app.py` | FastAPI 应用、页面路由、API、错误码、静态资源、SSE，以及三条 monitor recovery route 的可选 authenticated response wrapper。 | 上游是浏览器；下游是 `AppState`、皮肤文件和模板。`GET /api/v1/bridge/progress` 只返回当前活动档案的受限同步快照，供首页及复用 localhost 的首页 WebView 轮询，不触发重建；成本页标题进度只消费自身的 `GET /api/v1/cost-analysis` 生命周期。普通 bridge 调用保持原语义；只有带完整 recovery 认证头、空 body 且 challenge 未重放的 host 请求才执行 HMAC 校验并签名精确响应。四条 Tauri picker route 与 update install 继续把 private failure 映射为固定脱敏 503，install 只接受 `{}`。 |
 | `src/invoice_hub/api/main.py` | 参数化 uvicorn CLI 入口。 | 读取 root/config/host/port 后通过模块应用只构造一个 AppState；正式 BAT 当前直接启动 uvicorn app。 |
 
 ## 6. 领域模型
@@ -226,9 +226,9 @@
 | 文件 | 职责与入口 | 关系与修改影响 |
 |---|---|---|
 | `src/invoice_hub/projections/__init__.py` | 导出普通汇总与成本服务。 | monitoring 和外部调用的稳定入口。 |
-| `src/invoice_hub/projections/summary.py` | `build_summary`、重复标记、CSV/XLSX schema 和写表。 | 消费 extraction；写入 profile workspace；monitor/AppState 调用。 |
-| `src/invoice_hub/projections/cost_analysis.py` | PDF 坐标表格、XML/OFD 明细、校验、均价、参考价和工作簿生成。 | 成本算法核心；`costs.py`、documents 和选择/详情成本拆分使用。 |
-| `src/invoice_hub/projections/costs.py` | `CostProjectionService`，状态兼容、快照、参考状态保存与同步统计。 | AppState、monitoring 调用；输出 `/api/v1/cost-analysis` 契约。 |
+| `src/invoice_hub/projections/summary.py` | `build_summary`、重复标记、CSV/XLSX schema 和写表。 | 消费 extraction；写入 profile workspace；monitor/AppState 调用。可选进度回调按实际提取文件推进，不能改变汇总结果。 |
+| `src/invoice_hub/projections/cost_analysis.py` | PDF 坐标表格、XML/OFD 明细、校验、均价、参考价和工作簿生成。 | 成本算法核心；`costs.py`、documents 和选择/详情成本拆分使用。可选进度回调按同票家族推进，避免多格式同票把用户可见工作量重复计算。 |
+| `src/invoice_hub/projections/costs.py` | `CostProjectionService`，状态兼容、快照、参考状态保存与同步统计。 | AppState、monitoring 调用；输出 `/api/v1/cost-analysis` 契约，并向底层成本解析透传同步进度回调。 |
 | `src/invoice_hub/projections/documents.py` | 入库/出库预览、人民币大写、模板扩行和原子导出。 | AppState documents 用例调用；复用票头和成本明细解析。 |
 | `src/invoice_hub/projections/document_templates/电子入库单模板.xlsx` | 入库单版式真值。 | `write_inbound_workbook` 读取；版式变化需跑单据渲染/单元格测试。 |
 | `src/invoice_hub/projections/document_templates/电子出库单模板.xlsx` | 出库单版式真值。 | `write_outbound_workbook` 读取；版式变化需跑单据测试。 |
@@ -260,15 +260,15 @@
 | `src/invoice_hub/monitoring/control.py` | status/start/stop/notify CLI。 | Windows monitor PS1 调用；构造 MonitorBridge。 |
 | `src/invoice_hub/monitoring/daemon.py` | 独立进程、Watchdog、1 秒事件合并、周期同步和 ready 生命周期。 | 由 MonitorBridge 启动；写 lock/status/events/log。 |
 | `src/invoice_hub/monitoring/polling_observer.py` | 无第三方 watchdog 的有界轮询 observer。 | macOS 正式锁使用；保持 daemon observer 接口和事件合并语义。 |
-| `src/invoice_hub/monitoring/state.py` | PID 真值、lock、文件签名、processed、Excel 手改和通知。 | daemon/synchronizer/bridge 共用；状态文件位于 target profile。 |
-| `src/invoice_hub/monitoring/sync.py` | 重建决策矩阵、schema-only 刷新和普通/成本同步编排。 | daemon 和 AppState 后台启动同步调用。 |
+| `src/invoice_hub/monitoring/state.py` | PID 真值、lock、文件签名、processed、Excel 手改、通知和 `SyncProgress` 原子快照。 | daemon/synchronizer/bridge 共用；状态文件位于 target profile。`sync_progress.json` 仅作可失败的用户提示，不能替代 PID/lock 或投影真值。 |
+| `src/invoice_hub/monitoring/sync.py` | 重建决策矩阵、schema-only 刷新和普通/成本同步编排。 | daemon 和 AppState 后台启动同步调用；在 profile 写锁内发布扫描、普通汇总、成本和确认阶段的单调进度。 |
 
 ## 12. 服务层
 
 | 文件 | 职责与入口 | 关系与修改影响 |
 |---|---|---|
 | `src/invoice_hub/services/__init__.py` | 导出 `AppState`、过期选择、预览和打印异常及 `create_state`。 | API 应用工厂依赖。 |
-| `src/invoice_hub/services/app_state.py` | 当前统一用例门面：设置、诊断、发票、预览/打印、成本、单据、monitor、皮肤、应用图标、OCR 占位、更新 metadata/host approval 和关闭。 | 上接 API，下接几乎全部子系统；`update_app_icon` 在 Tauri mode 先要求 private host 成功更新原生 surface，才写 runtime 状态和事件；`_host_update_lock` 串行化 allowlisted Feed gate、host candidate 和一次性 install approval，改动必须按用例做相邻回归。 |
+| `src/invoice_hub/services/app_state.py` | 当前统一用例门面：设置、诊断、发票、预览/打印、成本、单据、monitor、皮肤、应用图标、OCR 占位、更新 metadata/host approval 和关闭。 | 上接 API，下接几乎全部子系统；`bridge_progress` 对当前档案窄化 `sync_progress.json`，后台 child 尚未写入时只暴露受限启动状态以保持页面轮询；手动 `bridge_rebuild` 也写同一快照。`update_app_icon` 在 Tauri mode 先要求 private host 成功更新原生 surface，才写 runtime 状态和事件；`_host_update_lock` 串行化 allowlisted Feed gate、host candidate 和一次性 install approval，改动必须按用例做相邻回归。 |
 | `src/invoice_hub/services/app_state.py` 的 business dossier 用例 | 解析当前公司资料夹、一次有界扫描快捷入口/统计并限制打开路径。 | `/api/v1/business-dossier*` 和首页消费；不得改变 `watch_dir` 扫描语义；截断统计必须明确为下界。 |
 | `src/invoice_hub/services/document_rendering.py` | MuPDF 文档打开和安全分页 PNG 渲染的共享适配。 | preview/print 共用；缺依赖、加密、空文档、页尺寸和渲染失败保持结构化错误。 |
 | `src/invoice_hub/services/file_preview.py` | 短期源文件预览 job、闲置续租、页面/文本缓存、SVG/XML/图片安全边界。 | 保留已选源文件顺序；15 分钟闲置 TTL、页数、像素、作业数和缓存上限防止内存滥用。 |
@@ -339,15 +339,15 @@
 | 文件 | 主要覆盖 | 关联生产模块 |
 |---|---|---|
 | `tests/fixtures/sample_invoice.xml` | 最小结构化发票样本。 | extraction、summary、cost XML 链路。 |
-| `tests/test_api_contract.py` | API 字段、设置、关闭、诊断、SSE、皮肤、成本、选择合计、重命名，以及 monitor recovery HMAC request/response/replay/empty-body contracts。 | `api/app.py`、`AppState`、skins、costs、summary。 |
+| `tests/test_api_contract.py` | API 字段、设置、关闭、诊断、SSE、皮肤、成本、选择合计、重命名、当前档案同步进度，以及 monitor recovery HMAC request/response/replay/empty-body contracts。 | `api/app.py`、`AppState`、skins、costs、summary。 |
 | `tests/test_file_preview.py` | 预览 job、来源复核、分页、文本、容量与安全边界。 | file_preview、document_rendering、AppState、API。 |
 | `tests/test_file_preview_frontend_contract.py` | 首页预览 DOM、交互和静态资源契约。 | index.html、page-index.js、app.css。 |
 | `tests/test_documents.py` | 单据状态、预览、人民币大写、模板扩行、导出和路径限制。 | documents、AppState documents API。 |
-| `tests/test_frontend_contract.py` | 模板、JS、CSS、资源版本、表格、SSE、设置和皮肤静态契约。 | `web/**` 与 API 字段名称。 |
+| `tests/test_frontend_contract.py` | 模板、JS、CSS、资源版本、表格、SSE、设置、皮肤，以及首页全局同步进度与成本页本地快照读取进度的分离静态契约。 | `web/**` 与 API 字段名称。 |
 | `tests/test_invoice_printing.py` | 同票 PDF 选择、打印 job、分页、过期和容量边界。 | invoice_printing、document_rendering、AppState、API。 |
 | `tests/test_invoice_print_frontend_contract.py` | 首页批量打印和受控打印页的前端契约。 | index.html、invoice_print.html、page-index.js。 |
 | `tests/test_invoice_classification.py` | 两维分类、上下文证据、PDF/OFD、表头和候选校验。 | classification、parsers、cost analysis、summary。 |
-| `tests/test_monitoring.py` | PID、坏状态恢复、同步、lock、bridge 和文件事件。 | monitoring、targets、storage。 |
+| `tests/test_monitoring.py` | PID、坏状态恢复、同步、lock、bridge、文件事件和单调同步进度快照。 | monitoring、targets、storage。 |
 | `tests/test_paths.py` | TargetProfile、成本路径和冲突隔离。 | targets、skins。 |
 | `tests/test_release.py` | core ZIP 排除规则和脱敏配置。 | release/build_core。 |
 | `tests/test_build_manifest.py` | build ID、清单字段、能力、脚本 PID CAS 和 macOS 静态契约。 | release/build_manifest、macOS 脚本和生命周期。 |
@@ -389,11 +389,11 @@
 
 | 文件 | 职责与入口 | 关系与修改影响 |
 |---|---|---|
-| `web/static/css/app.css` | 全站布局、表格、状态、应用图标选择控件、响应式和无皮肤默认样式。 | 所有普通模板引用；修改需更新模板 `?v=` 和前端契约。 |
+| `web/static/css/app.css` | 全站布局、表格、状态、应用图标选择控件、可复用的紧凑进度视觉组件、响应式和无皮肤默认样式。 | 所有普通模板引用；首页全局同步与成本页本地快照读取共用视觉组件，但不共用数据源。进度填充只使用 transform，并提供成功/失败、减少动态效果和窄屏全宽状态。修改需更新模板 `?v=` 和前端契约。 |
 | `web/static/css/settings-actions.css` | 首页/设置页操作、确认对话框和通知样式。 | `index.html`、`settings.html` 引用；版本参数需同步。 |
 | `web/static/js/common.js` | API 包装、转义、表格 TSV、皮肤、SSE 和导航过渡。 | 所有页面 JS 依赖；SSE 页面通过 `connectEvents` 复用重连语义。 |
-| `web/static/js/page-index.js` | 首页目录草稿、发票列表、筛选、预览续租/自动恢复、批量打印、勾选合计和 monitor 操作。 | 消费 settings/invoices/preview/keep-alive/print/selection/bridge API；弹窗关闭必须停止续租。 |
-| `web/static/js/page-costs.js` | 成本标签、表格、行级加价和状态保存。 | 消费 preferences/cost-analysis/bridge API；对应成本工作簿 sheet。 |
+| `web/static/js/page-index.js` | 首页目录草稿、发票列表、筛选、预览续租/自动恢复、批量打印、勾选合计、monitor 操作和同步进度轮询。 | 消费 settings/invoices/preview/keep-alive/print/selection/bridge API；手动重建、后台启动和运行中同步读取同一当前档案快照，终态或离页后停止轮询；弹窗关闭必须停止续租。 |
+| `web/static/js/page-costs.js` | 成本标签、表格、行级加价、状态保存和成本快照读取进度。 | 消费 preferences/cost-analysis/bridge API；标题进度只覆盖 `GET /api/v1/cost-analysis` 的读取、整理与首个视图初始化，不轮询首页的 `bridge/progress`。成本页“重新汇总”仍调用 bridge，完成后读取当前成本快照，对应成本工作簿 sheet。 |
 | `web/static/js/page-detail.js` | 发票详情、成本拆分、手改和打开文件。 | 消费 invoice detail/manual/open API。 |
 | `web/static/js/page-documents.js` | 入出库标签、目录草稿、预览、导出策略和打开操作。 | 消费 documents/preferences API，并监听汇总事件。 |
 | `web/static/js/page-ocr.js` | OCR 候选目录和禁用服务状态。 | 消费 preferences/ocr API；当前不执行正式 OCR。 |
@@ -437,9 +437,9 @@
 | 文件 | 页面/消费者 | 主要关系 |
 |---|---|---|
 | `web/templates/base_head.html` | 当前未作为所有页面的运行时 include。 | 保存公共 CSS 片段，但真实模板仍独立维护版本参数。 |
-| `web/templates/index.html` | `/` 首页。 | 引用 common、page-index、两份 CSS；真实表格和勾选合计 DOM。 |
+| `web/templates/index.html` | `/` 首页。 | 引用 common、page-index、两份 CSS；真实表格、勾选合计 DOM 和“停止监控”后的共享药丸同步进度条。 |
 | `web/templates/invoice_print.html` | `/invoices/print/{job_id}`。 | no-store 的受控打印页，只消费已创建 print job 的分页 URL。 |
-| `web/templates/costs.html` | `/costs`。 | 引用 page-costs；标签与成本工作簿 sheet 对应。 |
+| `web/templates/costs.html` | `/costs`。 | 引用 page-costs；标题右侧的成本快照读取进度，以及与成本工作簿 sheet 对应的互斥标签。 |
 | `web/templates/detail.html` | `/invoices/{invoice_key}`。 | bootstrap 注入 invoiceKey，page-detail 拉取数据。 |
 | `web/templates/documents.html` | `/documents`。 | page-documents 管理入库/出库预览和目录草稿。 |
 | `web/templates/ocr.html` | `/ocr`。 | 展示当前 OCR 未内置状态和候选文件入口。 |

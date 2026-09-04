@@ -5,7 +5,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-Import-Module (Join-Path $PSScriptRoot "InvoiceHub.Windows.psm1") -Force
+Import-Module (Join-Path $PSScriptRoot "InvoiceHub.Windows.psm1") -Force -DisableNameChecking
 $root = Get-IHRoot -ScriptDirectory $PSScriptRoot
 $mutex = New-Object System.Threading.Mutex($false, (Get-IHMutexName -Root $root))
 $hasMutex = $false
@@ -18,8 +18,18 @@ try {
     $health = Get-IHHealth -Url $context.Config.Url -TimeoutSeconds 1
     if ($null -ne $health) {
         $healthPid = [int]$health.pid
-        if ((Test-IHVerifiedProcessIdentity -ProcessId $healthPid -Python $context.Python -Root $root -ConfigPath $context.ConfigPath -RuntimeDir $context.Config.RuntimeDir -BuildManifest $context.Build -PackageManifest $context.Package -Health $health) -and
-            (Test-IHHealthIdentity -Health $health -ProcessId $healthPid -ConfigPath $context.ConfigPath -RuntimeDir $context.Config.RuntimeDir -BuildManifest $context.Build -PackageManifest $context.Package)) {
+        $verifiedProcessIdentity = Test-IHVerifiedProcessIdentity -ProcessId $healthPid -Python $context.IdentityPython -Root $root -ConfigPath $context.ConfigPath -RuntimeDir $context.Config.RuntimeDir -BuildManifest $context.Build -PackageManifest $context.Package -Development:$context.Development -Health $health
+        $healthIdentity = Test-IHHealthIdentity -Health $health -ProcessId $healthPid -ConfigPath $context.ConfigPath -RuntimeDir $context.Config.RuntimeDir -BuildManifest $context.Build -PackageManifest $context.Package -Development:$context.Development
+        if ($verifiedProcessIdentity -and $healthIdentity) {
+            @(
+                "status=already-ready",
+                "target_url=$($context.Config.Url)",
+                "powershell_version=$($PSVersionTable.PSVersion.ToString())",
+                "powershell_edition=$([string]$PSVersionTable.PSEdition)",
+                "health_pid=$healthPid",
+                "process_identity=True",
+                "health_identity=True"
+            ) | Set-Content -LiteralPath $context.PreflightLog -Encoding UTF8
             Set-Content -LiteralPath $context.PidFile -Encoding ASCII -Value ([string]$healthPid)
             Write-Host "InvoiceHub localhost is already ready: $($context.Config.Url)"
             if (-not $NoBrowser) {
@@ -27,6 +37,33 @@ try {
             }
             exit 0
         }
+
+        # Keep a field-level failure record without saving another process's command line.
+        # It lets Explorer-launched sessions distinguish unavailable/partial CIM from a real mismatch.
+        $metadata = Get-IHProcessMetadata -ProcessId $healthPid
+        $cimState = "unavailable"
+        if ($null -ne $metadata) {
+            $cimState = "partial"
+            if (Test-IHProcessMetadataHasFullIdentity -Metadata $metadata) { $cimState = "complete" }
+        }
+        $processPathAvailable = $false
+        try {
+            $healthProcess = Get-IHProcess -ProcessId $healthPid
+            $processPathAvailable = $null -ne $healthProcess -and -not [string]::IsNullOrWhiteSpace([string]$healthProcess.Path)
+        } catch {}
+        $strictProcessIdentity = Test-IHProcessIdentity -ProcessId $healthPid -Python $context.IdentityPython -Root $root -ConfigPath $context.ConfigPath
+        $healthBackedProcessIdentity = Test-IHHealthBackedProcessIdentity -ProcessId $healthPid -Python $context.IdentityPython -ConfigPath $context.ConfigPath -RuntimeDir $context.Config.RuntimeDir -BuildManifest $context.Build -PackageManifest $context.Package -Development:$context.Development -Health $health
+        @(
+            "status=identity-mismatch",
+            "powershell_version=$($PSVersionTable.PSVersion.ToString())",
+            "powershell_edition=$([string]$PSVersionTable.PSEdition)",
+            "health_pid=$healthPid",
+            "cim_metadata=$cimState",
+            "process_path_available=$processPathAvailable",
+            "strict_process_identity=$strictProcessIdentity",
+            "health_backed_process_identity=$healthBackedProcessIdentity",
+            "health_identity=$healthIdentity"
+        ) | Set-Content -LiteralPath $context.PreflightLog -Encoding UTF8
         throw "The configured port serves a process that does not match this package identity. Refusing to reuse it."
     }
     if (Test-IHTcpPort -HostName $context.Config.Host -Port $context.Config.Port) {
@@ -34,7 +71,7 @@ try {
     }
     if (-not [string]::IsNullOrWhiteSpace($pidSnapshot)) {
         $oldProcess = Get-IHProcess -ProcessId ([int]$pidSnapshot)
-        if ($null -ne $oldProcess -and (Test-IHProcessIdentity -ProcessId ([int]$pidSnapshot) -Python $context.Python -Root $root -ConfigPath $context.ConfigPath)) {
+        if ($null -ne $oldProcess -and (Test-IHProcessIdentity -ProcessId ([int]$pidSnapshot) -Python $context.IdentityPython -Root $root -ConfigPath $context.ConfigPath)) {
             throw "A matching InvoiceHub process exists but its health endpoint is unavailable. Stop it or inspect the logs before retrying."
         }
         Remove-IHPidSnapshot -PidFile $context.PidFile -Snapshot $pidSnapshot
@@ -69,22 +106,24 @@ try {
         "build_id=$($context.Build.build_id)"
     ) | Set-Content -LiteralPath $context.PreflightLog -Encoding UTF8
 
-    Set-IHProcessEnvironment -Root $root -ConfigPath $context.ConfigPath -Development:$Development
+    Set-IHProcessEnvironment -Root $root -ConfigPath $context.ConfigPath -Development:$context.Development
     $arguments = '-m invoice_hub.api.main --root "{0}" --config "{1}"' -f $root, $context.ConfigPath
     $process = Start-Process -FilePath $context.Python -ArgumentList $arguments -WorkingDirectory $root -WindowStyle Hidden -RedirectStandardOutput $context.StdoutLog -RedirectStandardError $context.StderrLog -PassThru
     Set-Content -LiteralPath $context.PidFile -Encoding ASCII -Value ([string]$process.Id)
 
     $deadline = (Get-Date).AddSeconds(20)
     $verified = $false
+    $verifiedPid = 0
     while ((Get-Date) -lt $deadline) {
-        if ($process.HasExited) { break }
         $health = Get-IHHealth -Url $context.Config.Url -TimeoutSeconds 1
         if ($null -ne $health -and
-            (Test-IHVerifiedProcessIdentity -ProcessId $process.Id -Python $context.Python -Root $root -ConfigPath $context.ConfigPath -RuntimeDir $context.Config.RuntimeDir -BuildManifest $context.Build -PackageManifest $context.Package -Health $health) -and
-            (Test-IHHealthIdentity -Health $health -ProcessId $process.Id -ConfigPath $context.ConfigPath -RuntimeDir $context.Config.RuntimeDir -BuildManifest $context.Build -PackageManifest $context.Package)) {
+            (Test-IHVerifiedProcessIdentity -ProcessId ([int]$health.pid) -Python $context.IdentityPython -Root $root -ConfigPath $context.ConfigPath -RuntimeDir $context.Config.RuntimeDir -BuildManifest $context.Build -PackageManifest $context.Package -Development:$context.Development -Health $health) -and
+            (Test-IHHealthIdentity -Health $health -ProcessId ([int]$health.pid) -ConfigPath $context.ConfigPath -RuntimeDir $context.Config.RuntimeDir -BuildManifest $context.Build -PackageManifest $context.Package -Development:$context.Development)) {
             $verified = $true
+            $verifiedPid = [int]$health.pid
             break
         }
+        if ($process.HasExited) { break }
         Start-Sleep -Milliseconds 100
     }
     if (-not $verified) {
@@ -95,9 +134,10 @@ try {
         throw "InvoiceHub failed the identity/health startup handshake. Check $($context.StderrLog) and $($context.StdoutLog)."
     }
 
+    Set-Content -LiteralPath $context.PidFile -Encoding ASCII -Value ([string]$verifiedPid)
     $state = @{
         status = "ready"
-        pid = $process.Id
+        pid = $verifiedPid
         host = $context.Config.Host
         port = $context.Config.Port
         url = $context.Config.Url

@@ -1759,7 +1759,11 @@ def test_cost_analysis_schema_refresh_waits_for_profile_lock_without_blocking_he
     assert (watch / "成本发票汇总.xlsx").exists()
 
 
-def test_bridge_rebuild_and_events(tmp_path: Path) -> None:
+def test_bridge_rebuild_and_events(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(
+        "invoice_hub.services.app_state.AppState.run_background_diagnostics",
+        lambda self, trigger="startup_sync": None,
+    )
     watch = tmp_path / "发票文件"
     watch.mkdir()
     (watch / "sample.xml").write_text((Path(__file__).parent / "fixtures" / "sample_invoice.xml").read_text(encoding="utf-8"), encoding="utf-8")
@@ -1771,6 +1775,78 @@ def test_bridge_rebuild_and_events(tmp_path: Path) -> None:
     assert client.get("/api/v1/invoices").json()["count"] == 1
     task = client.get(f"/api/v1/tasks/{result['task_id']}").json()
     assert task["status"] == "success"
+    progress = client.get("/api/v1/bridge/progress").json()
+    assert progress["trigger"] == "manual_rebuild"
+    assert progress["status"] == "success"
+    assert progress["percent"] == 100
+
+
+def test_bridge_progress_api_filters_to_active_profile_and_safe_fields(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(
+        "invoice_hub.services.app_state.AppState.run_background_diagnostics",
+        lambda self, trigger="startup_sync": None,
+    )
+    app = create_app(tmp_path)
+    state = app.state.invoice_hub
+    client = TestClient(app)
+
+    idle = client.get("/api/v1/bridge/progress").json()
+    assert idle["status"] == "idle"
+    assert idle["target_id"] == state.active_profile.id
+    assert idle["percent"] == 0
+    assert idle["background_sync_status"] == "initializing"
+
+    with state._lock:
+        state._background_status = "running"
+
+    monitor_state = MonitorState(state.active_profile, state.layout.db_path)
+    monitor_state.write_sync_progress(
+        {
+            "version": 99,
+            "operation_id": "operation-1",
+            "task_id": "task-1",
+            "target_id": state.active_profile.id,
+            "trigger": "manual_rebuild",
+            "status": "running",
+            "phase": "cost",
+            "message": "正在解析成本发票",
+            "percent": 101,
+            "processed_count": 9,
+            "total_count": 3,
+            "started_at": "2026-09-03T00:00:00Z",
+            "updated_at": "2026-09-03T00:00:01Z",
+            "error": "internal diagnostics must not be returned",
+        }
+    )
+
+    payload = client.get("/api/v1/bridge/progress").json()
+    assert payload["status"] == "running"
+    assert payload["percent"] == 100
+    assert payload["processed_count"] == 3
+    assert payload["total_count"] == 3
+    assert payload["message"] == "正在解析成本发票"
+    assert payload["background_sync_status"] == "running"
+    assert "error" not in payload
+    assert set(payload) == {
+        "version",
+        "operation_id",
+        "task_id",
+        "target_id",
+        "trigger",
+        "status",
+        "phase",
+        "message",
+        "percent",
+        "processed_count",
+        "total_count",
+        "started_at",
+        "updated_at",
+        "finished_at",
+        "background_sync_status",
+    }
+
+    monitor_state.write_sync_progress({"target_id": "another-profile", "status": "running", "percent": 50})
+    assert client.get("/api/v1/bridge/progress").json()["status"] == "idle"
 
 
 def test_bridge_rebuild_reports_empty_archive_only_directory(tmp_path: Path) -> None:
@@ -1836,6 +1912,43 @@ def test_bridge_rebuild_builds_xml_cost_analysis_details(tmp_path: Path) -> None
     assert cost["sync"]["parsed_invoice_count"] == 1
     assert cost["sync"]["review_count"] == 0
     assert cost["sync"]["sync_state"] == "fresh"
+
+
+def test_invoice_keyword_filter_matches_only_advertised_fields(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr("invoice_hub.services.app_state.AppState.run_background_diagnostics", lambda self, trigger="startup_sync": None)
+    app = create_app(tmp_path)
+    state = app.state.invoice_hub
+    watch = Path(state.active_profile.watch_dir)
+    watch.mkdir(exist_ok=True)
+    sources = [
+        watch / "seller-match.xml",
+        watch / "invoice-number-match.xml",
+        watch / "keyword-file-match.xml",
+        watch / "buyer-only-match.xml",
+        watch / "classification-only-match.xml",
+    ]
+    for source in sources:
+        source.write_text("<invoice />", encoding="utf-8")
+
+    rows = [
+        _summary_invoice_row(source, invoice_number=f"1000000000000000000{index}")
+        for index, source in enumerate(sources, start=1)
+    ]
+    rows[0]["销售方"] = "目标关键字销售方"
+    rows[1]["发票号码"] = "目标关键字发票号"
+    rows[2]["文件名"] = "目标关键字文件.xml"
+    rows[3]["购买方"] = "目标关键字购买方"
+    rows[4]["类型识别说明"] = "目标关键字仅在识别说明"
+    write_csv_rows(Path(state.active_profile.workspace_dir) / "发票汇总.csv", SUMMARY_HEADERS, rows)
+
+    response = TestClient(app).get("/api/v1/invoices", params={"keyword": "目标关键字"})
+
+    assert response.status_code == 200
+    assert {item["source_file"] for item in response.json()["items"]} == {
+        "seller-match.xml",
+        "invoice-number-match.xml",
+        "目标关键字文件.xml",
+    }
 
 
 def test_server_startup_background_sync_builds_invoice_summary(tmp_path: Path) -> None:

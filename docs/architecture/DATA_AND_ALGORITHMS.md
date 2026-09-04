@@ -37,7 +37,7 @@ flowchart TD
 | 用户业务状态 | `成本开票状态.json` | 不能仅从源票恢复 | 保存已开数量、行级加价和已开金额快照；工作簿仅作兼容兜底 |
 | 做账业务状态 | 公司资料夹 `凭证/` 下的配置、目录、映射、状态、批次和日志 | 否，必须保护 | 严格 schema、跨进程写锁、revision/CAS；异常时保留原文件并停止写入 |
 | 可重建投影 | 普通 CSV/XLSX、成本明细 CSV、成本汇总 XLSX | 是 | 缺失、源变化或 schema 过期时重建 |
-| 运行状态 | PID、lock、processed、monitor/server status、日志、偏好 | 部分可恢复 | 多个文件各有用途，不能把诊断快照当唯一进程真值 |
+| 运行状态 | PID、lock、processed、monitor/server status、sync progress、日志、偏好 | 部分可恢复 | 多个文件各有用途，不能把诊断快照当唯一进程真值 |
 | SQLite | task/event；预留 settings/cache 仓储 | 可按用途恢复 | 不存发票主数据 |
 
 “源发票是事实”不等于自动识别永远正确。人工校正是显式覆盖层，不改源文件；下次重建先重新提取，再把覆盖层应用到投影。
@@ -117,9 +117,12 @@ CSV 使用 UTF-8 BOM 方便 Excel/WPS；XLSX 的活动 sheet 为“发票汇总�
 | `monitor_status.json` | `state_dir` | ready、observer、最近同步/事件/心跳；是诊断快照 |
 | `processed_files.json` | `state_dir` | 源路径到 `mtime_ns/size` 和上次票头摘要的映射 |
 | `manual_overrides.json` | `state_dir` | 路径身份到三项允许手改字段的映射 |
+| `sync_progress.json` | `state_dir` | 当前同步的原子用户提示快照：operation/task/target、阶段、消息、单调百分比、实际处理数与时间；不是 monitor 存活或投影真值 |
 | `.invoice_stop` | `workspace_dir` | daemon 协作停止标志 |
 | `文件变化监控日志.txt` | `workspace_dir` | STARTUP/EVENT/PERIODIC/MANUAL/NOTIFY 业务动作 |
 | `bridge_stdout.log/stderr.log` | `state_dir` | daemon 子进程标准输出诊断 |
+
+`sync_progress.json` 只代表当前档案的一次同步体验：扫描和已处理确认按实际支持文件回调，普通汇总按实际提取文件回调，成本阶段按同票家族解析回调。整体百分比只能前进；缺少文件时可直接推进到对应阶段末尾。写入使用原子替换，使页面读取不需要占用 profile 投影写锁；因此进度 JSON 损坏或写失败不得阻止源发票、CSV/XLSX 或成本三件套的真实处理。
 
 ### 4.4 项目级运行态
 

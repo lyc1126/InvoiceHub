@@ -4,7 +4,7 @@
   <title>成本分析</title>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <link rel="stylesheet" href="/static/css/app.css?v=20260902-app-icons-print-popups-v1">
+  <link rel="stylesheet" href="/static/css/app.css?v=20260903-sync-progress-motion-v4">
 </head>
 <body data-page="costs">
   <header class="topbar">
@@ -25,7 +25,17 @@
   <main class="shell">
     <section class="page-head">
       <div class="page-title">
-        <h2>成本分析</h2>
+        <div class="page-title__heading">
+          <h2>成本分析</h2>
+          <div id="costLoadProgress" class="sync-progress sync-progress--title sync-progress--idle" title="正在读取成本汇总数据" hidden>
+            <div id="costLoadProgressTrack" class="sync-progress__track" role="progressbar" aria-label="成本汇总读取进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-valuetext="正在读取成本汇总数据">
+              <span id="costLoadProgressFill" class="sync-progress__fill" aria-hidden="true"></span>
+              <strong id="costLoadProgressPercent" class="sync-progress__percent">0%</strong>
+            </div>
+            <span class="sync-progress__check" aria-hidden="true"></span>
+            <span id="costLoadProgressDetail" class="sync-progress__detail" aria-live="polite" aria-atomic="true">正在读取成本汇总数据</span>
+          </div>
+        </div>
         <p id="costPath" class="path-inline">正在读取当前发票目录...</p>
       </div>
       <div class="page-head__actions">
@@ -129,6 +139,6 @@
     </section>
   </main>
   <script src="/static/js/common.js?v=20260729-main-macos-sync"></script>
-  <script src="/static/js/page-costs.js?v=20260726-invoice-taxonomy"></script>
+  <script src="/static/js/page-costs.js?v=20260904-cost-load-progress-v1"></script>
 </body>
 </html>

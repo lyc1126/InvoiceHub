@@ -1549,6 +1549,46 @@ body[data-page="settings"] .settings-diagnostic-summary {
   to { opacity: 1; transform: translateY(0) scale(1) rotate(0); }
 }
 
+.sync-progress {
+  --sync-progress-accent: var(--ink-cyan);
+  --sync-progress-success: var(--ink-green);
+  --sync-progress-danger: var(--ink-red);
+  --sync-progress-track: #252836;
+  --sync-progress-label-surface: #10111a;
+  --sync-progress-label-text: var(--ink-lime);
+}
+
+.sync-progress__track {
+  border: 2px solid #05060a;
+  border-radius: 8px 13px 9px 12px;
+  background: #252836;
+  box-shadow: 3px 3px 0 #05060a, inset 0 -3px 0 rgba(0, 0, 0, 0.26);
+}
+
+.sync-progress__fill {
+  background: linear-gradient(90deg, var(--ink-cyan), var(--ink-lime));
+  box-shadow: inset 0 2px 0 rgba(255, 255, 255, 0.22);
+}
+
+.sync-progress__percent {
+  border-color: #05060a;
+  border-radius: 5px 8px 6px 7px;
+  background: #10111a;
+  color: var(--ink-lime);
+  font-family: var(--ink-font-display);
+  letter-spacing: 0.03em;
+}
+
+.sync-progress__check {
+  border-color: var(--ink-green);
+  background: #10111a;
+  box-shadow: 3px 3px 0 #05060a;
+}
+
+.sync-progress__check::after {
+  border-color: var(--ink-green);
+}
+
 @media (max-width: 860px) {
   .topbar {
     padding-inline: 18px;

@@ -8,7 +8,7 @@ from invoice_hub.projections.costs import CostProjectionService
 from invoice_hub.projections.summary import build_summary, summary_schema_needs_refresh
 from invoice_hub.storage import SQLiteRepository
 
-from .state import MonitorState
+from .state import MonitorState, SyncProgress
 
 
 class MonitorSynchronizer:
@@ -39,17 +39,25 @@ class MonitorSynchronizer:
         *,
         emit_events: bool = True,
         notify: bool = True,
+        task_id: str = "",
     ) -> dict[str, Any]:
         # The daemon, startup child, and manual rebuild can target the same profile.
         # Keep the whole read/modify/write decision under one profile-scoped OS lock.
         with self.state.sync_write_lock():
-            return self._run_sync_locked(
-                trigger,
-                force=force,
-                event_paths=event_paths,
-                emit_events=emit_events,
-                notify=notify,
-            )
+            progress = self.state.new_sync_progress(trigger, task_id=task_id)
+            progress.start()
+            try:
+                return self._run_sync_locked(
+                    trigger,
+                    force=force,
+                    event_paths=event_paths,
+                    emit_events=emit_events,
+                    notify=notify,
+                    progress=progress,
+                )
+            except Exception as exc:
+                progress.fail(str(exc))
+                raise
 
     def _run_sync_locked(
         self,
@@ -59,14 +67,26 @@ class MonitorSynchronizer:
         *,
         emit_events: bool,
         notify: bool,
+        progress: SyncProgress,
     ) -> dict[str, Any]:
         def emit(event_type: str, payload: dict | None = None, error: dict | None = None) -> None:
             if emit_events:
                 self.append_event(event_type, payload=payload, error=error)
 
         self.state.update_status(status="syncing", last_trigger=trigger, last_event_paths=event_paths or [])
+        progress.report("preparing", "正在检查已保存的手工修订", percent=0)
         manual_changed = self.state.sync_excel_manual_edits()
-        changes = self.state.detect_source_changes()
+        progress.report("scanning", "正在扫描发票文件", percent=0)
+        changes = self.state.detect_source_changes(
+            progress=lambda completed, total: progress.report_fraction(
+                "scanning",
+                "正在扫描发票文件",
+                completed,
+                total,
+                0,
+                8,
+            ),
+        )
         summary_missing = not self.state.summary_csv.exists() or not self.state.summary_xlsx.exists()
         summary_schema_stale = (not summary_missing) and summary_schema_needs_refresh(
             self.state.summary_csv,
@@ -88,6 +108,7 @@ class MonitorSynchronizer:
         if not should_rebuild:
             payload = {"trigger": trigger, **counts, "manual_changed": manual_changed, "rebuilt": False}
             self.state.update_status(status="idle", last_checked_at=utc_now_text(), last_trigger=trigger)
+            progress.complete("当前发票目录已是最新")
             emit("monitor.heartbeat", payload)
             return {"ok": True, **payload}
 
@@ -105,6 +126,7 @@ class MonitorSynchronizer:
         if schema_only_refresh:
             self.state.log_event("COST_SCHEMA_REFRESH", f"trigger={trigger}")
             try:
+                progress.report("cost_schema", "正在更新成本分析表", percent=8)
                 refreshed = cost.refresh_schema_from_current_detail()
                 payload = {
                     "trigger": trigger,
@@ -115,6 +137,7 @@ class MonitorSynchronizer:
                     "target_id": self.state.profile.id,
                 }
                 self.state.update_status(status="idle", last_sync_at=utc_now_text(), last_trigger=trigger, last_error="")
+                progress.complete("成本分析表已更新")
                 emit("cost_analysis.updated", {"target_id": self.state.profile.id, "schema_refreshed": refreshed})
                 emit("monitor.sync_completed", payload)
                 return {"ok": True, **payload}
@@ -122,6 +145,7 @@ class MonitorSynchronizer:
                 self.state.log_event("COST_SCHEMA_REFRESH_FAILED", str(exc), level="ERROR")
                 error = {"message": str(exc), "trigger": trigger}
                 self.state.update_status(status="failed", last_error=str(exc), last_trigger=trigger)
+                progress.fail(str(exc))
                 emit("monitor.sync_failed", error=error)
                 return {"ok": False, "error": str(exc), "trigger": trigger}
 
@@ -136,10 +160,43 @@ class MonitorSynchronizer:
         }.get(trigger, "SYNC")
         self.state.log_event(action, f"added={counts['added']} updated={counts['updated']} deleted={counts['deleted']} force={force}")
         try:
-            summary = build_summary(self.state.watch_dir, self.state.workspace_dir)
+            progress.report("summary", "正在生成普通汇总", percent=8)
+            summary = build_summary(
+                self.state.watch_dir,
+                self.state.workspace_dir,
+                progress=lambda completed, total: progress.report_fraction(
+                    "summary",
+                    "正在生成普通汇总",
+                    completed,
+                    total,
+                    8,
+                    52,
+                ),
+            )
+            progress.report("summary", "正在应用已保存的手工修订", percent=52)
             applied = self.state.apply_manual_overrides_to_summary()
-            cost_result = cost.rebuild()
-            processed = self.state.rebuild_processed_from_summary()
+            progress.report("cost", "正在生成成本分析", percent=52)
+            cost_result = cost.rebuild(
+                progress=lambda completed, total: progress.report_fraction(
+                    "cost",
+                    "正在解析成本发票",
+                    completed,
+                    total,
+                    52,
+                    92,
+                ),
+            )
+            progress.report("finalizing", "正在确认已处理文件", percent=92)
+            processed = self.state.rebuild_processed_from_summary(
+                progress=lambda completed, total: progress.report_fraction(
+                    "finalizing",
+                    "正在确认已处理文件",
+                    completed,
+                    total,
+                    92,
+                    99,
+                ),
+            )
             self.state.save_processed(processed)
             payload = {
                 "trigger": trigger,
@@ -154,6 +211,7 @@ class MonitorSynchronizer:
                 "target_id": self.state.profile.id,
             }
             self.state.update_status(status="idle", last_sync_at=utc_now_text(), last_trigger=trigger, last_error="")
+            progress.complete(f"汇总已完成，共 {summary.get('count', 0)} 条发票")
             emit("invoice.changed", payload)
             emit("cost_analysis.updated", {"target_id": self.state.profile.id, **counts})
             emit("monitor.sync_completed", payload)
@@ -166,5 +224,6 @@ class MonitorSynchronizer:
             self.state.log_event("SYNC_FAILED", str(exc), level="ERROR")
             error = {"message": str(exc), "trigger": trigger}
             self.state.update_status(status="failed", last_error=str(exc), last_trigger=trigger)
+            progress.fail(str(exc))
             emit("monitor.sync_failed", error=error)
             return {"ok": False, "error": str(exc), "trigger": trigger}

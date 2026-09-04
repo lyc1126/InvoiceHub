@@ -64,7 +64,7 @@ flowchart TD
 |---|---|
 | 首先阅读 | 数据算法第 8、9 节；接口流程第 3.3、6.6 节；`AGENTS.md` 成本规则 |
 | 首要入口 | `projections/cost_analysis.py::parse_cost_rows_from_words`、`_cost_validation`、`_select_cost_analysis`、`project_spec_summary`、`_invoice_reference_summary`；`projections/costs.py::CostProjectionService`；`AppState.cost_snapshot/save_cost_reference_status` |
-| 必须联动 | `cost_analysis.py` 与 `costs.py` 的重复公式/兼容键；`domain/models.py`、成本 CSV/XLSX 五 sheet、状态 JSON、cost API、page-costs、单据入库来源 |
+| 必须联动 | `cost_analysis.py` 与 `costs.py` 的重复公式/兼容键；`domain/models.py`、成本 CSV/XLSX 五 sheet、状态 JSON、cost API、page-costs、单据入库来源。成本页标题进度只对应 `GET /api/v1/cost-analysis` 的本地读取与视图初始化，不能复用首页 `bridge/progress` 的重建百分比 |
 | 产物与消费者 | `watch_dir/成本发票明细.csv`、`成本发票汇总.xlsx`、`成本开票状态.json`、详情/选择成本拆分、单据 |
 | 最低自动化 | 完整 `tests/test_summary_and_costs.py`，成本相关 `tests/test_invoice_classification.py` 和 `tests/test_api_contract.py`；页面字段变化再跑 `test_frontend_contract.py` |
 | 真实验收 | 页面四标签互斥、TSV 复制、行级加价草稿/保存/刷新、实际工作簿五 sheet；真实业务版式检查校验差异 |
@@ -89,10 +89,10 @@ flowchart TD
 | 首先阅读 | 接口流程第 6.1 至 6.5 节；数据算法第 6、13 节；`docs/MONITORING_AND_LOGGING.md` |
 | 首要入口 | `monitoring/daemon.py::run_monitor`、`monitoring/sync.py::MonitorSynchronizer.run_sync`、`monitoring/state.py::MonitorState`、`services/monitor_bridge.py::MonitorBridge`、`AppState.run_background_diagnostics` |
 | 必须联动 | bridge API、SSE 事件、首页/设置/成本/单据刷新、Windows monitor PS1/BAT、SQLite events |
-| 产物与消费者 | lock、stop flag、processed、manual overrides、monitor status、业务日志、bridge stdout/stderr |
-| 最低自动化 | 完整 `tests/test_monitoring.py`，启动后台同步和 bridge API 测试；事件变化再跑 SSE API 与前端契约 |
-| 真实验收 | daemon start/ready、启动后立即放文件、事件 1 秒合并、60 秒兜底、停止 localhost 后 monitor 仍在、stop-all 退出 |
-| 高风险提醒 | PID+lock 才是运行真值；ready 必须在第二次补漏后；周期无变化不能全量解析；正式入口不能退回 FastAPI 内线程 |
+| 产物与消费者 | lock、stop flag、processed、manual overrides、monitor status、`sync_progress.json`、业务日志、bridge stdout/stderr；进度快照供首页读取，成本页只在本地读取成本快照时显示自己的阶段反馈 |
+| 最低自动化 | 完整 `tests/test_monitoring.py`（含单调同步进度），启动后台同步、`bridge/progress` API 测试；事件或页面变化再跑 SSE 与前端契约 |
+| 真实验收 | daemon start/ready、启动后立即放文件、启动后台与手动重建的真实进度、事件 1 秒合并、60 秒兜底、停止 localhost 后 monitor 仍在、stop-all 退出 |
+| 高风险提醒 | PID+lock 才是运行真值；进度 JSON 仅诊断且页面读取不能等待长期投影锁；ready 必须在第二次补漏后；周期无变化不能全量解析；正式入口不能退回 FastAPI 内线程 |
 
 ## 8. 设置、偏好、诊断与 WebUI 关闭
 
@@ -115,8 +115,8 @@ flowchart TD
 | 必须联动 | 后端字段/错误、页面文案、空/错误/处理中状态、资源 `?v=`、所有引用同一 CSS/JS 的模板和前端契约 |
 | 产物与消费者 | 浏览器 DOM、真实 table/TSV、SSE 状态、当前活动皮肤与基础无皮肤样式 |
 | 最低自动化 | `tests/test_frontend_contract.py` + 相关 API 契约；JS 运行时可用时对改动文件做语法检查 |
-| 真实验收 | 当前 localhost 必须实际送达新 `?v=` 与文件；桌面/390px、当前皮肤/`?no_skin=1`、关键交互、控制台和滚动链 |
-| 高风险提醒 | 未保存目录草稿不能被刷新覆盖；普通禁用态不能显示等待光标；SSE 必须同时处理断线和重连；表格不能改成 div 卡片；共享桌面基础 CSS 不得因缺失大括号被包入移动端 `@media`，契约必须检查规则作用域而非只查选择器文本；详情成本区的固定高度 Grid 必须让隐式项目行按 `max-content` 排布并由外层滚动，不能把带 `overflow:hidden` 的项目卡压扁后裁掉规格表 |
+| 真实验收 | 当前 localhost 必须实际送达新 `?v=` 与文件；首页全局同步进度及成本页本地快照读取进度、桌面/375px、当前皮肤/`?no_skin=1`、关键交互、控制台和滚动链 |
+| 高风险提醒 | 未保存目录草稿不能被刷新覆盖；普通禁用态不能显示等待光标；SSE 必须同时处理断线和重连；后台 child 尚未发布快照时只有首页需要继续轮询全局进度，成本页不得把它映射为成本读取；表格不能改成 div 卡片；关键词筛选范围必须与页面文案一致，不能悄然匹配用户在列表中无从辨识的字段；共享桌面基础 CSS 不得因缺失大括号被包入移动端 `@media`，契约必须检查规则作用域而非只查选择器文本；详情成本区的固定高度 Grid 必须让隐式项目行按 `max-content` 排布并由外层滚动，不能把带 `overflow:hidden` 的项目卡压扁后裁掉规格表 |
 
 ## 10. 入库单与出库单
 
@@ -172,9 +172,9 @@ flowchart TD
 |---|---|
 | 首先阅读 | 接口流程第 6.1、6.10 节；AGENTS Windows 与验收规则；`docs/MAC_WINDOWS_WORKFLOW.md` |
 | 首要入口 | 根四个 BAT、`scripts/windows/InvoiceHub.Windows.psm1`、启动/停止/monitor/设置迁移 PS1、`platform/windows.py`、`native_dialogs.py` |
-| 必须联动 | config/targets 路径、API 入口、package/build/runtime manifest、server PID/state/log、MonitorBridge、浏览器派发、Windows 锁和 portable 验包 |
+| 必须联动 | config/targets 路径、源码/便携包模式判定、源码 `.venv` launcher 与其 `pyvenv.cfg` 受限基础解释器回退、API 入口、package/build/runtime manifest、server PID/state/log、MonitorBridge、浏览器派发、Windows 锁和 portable 验包 |
 | 产物与消费者 | 用户双击入口、`.lnk`、localhost/monitor 进程、runtime 诊断文件、系统壳/选择器 |
-| 最低自动化 | paths/monitoring/API/release/update/settings-migration/Windows contract 与 `compileall`；PowerShell parser、UTF-8 BOM、固定路径/PATH PS7 选择、强制 PS5.1、无 charset UTF-8 health 中文路径、CIM 不可读时的 health-backed PID 身份回退，以及隔离 portable 正式 BAT 启停动态回归 |
+| 最低自动化 | paths/monitoring/API/release/update/settings-migration/Windows contract 与 `compileall`；PowerShell parser、UTF-8 BOM、源码 checkout 自动开发模式、以隐藏哨兵/捕获输出识别失效 venv launcher 且只可使用同一 `pyvenv.cfg` 基础解释器、无法执行的声明基础解释器仅作既有服务身份候选、正式包不回退的契约、固定路径/PATH PS7 选择、强制 PS5.1、无 charset UTF-8 health 中文路径、CIM 不可读或返回缺失执行路径/命令行的部分记录时的 health-backed PID 身份回退，以及隔离 portable 正式 BAT 启停动态回归 |
 | 真实验收 | 正式根 BAT 启动、首页与 health、连续/并发启动、stale state、外部占端口、只停 WebUI、stop-all、根快捷方式、浏览器拉起、原生选择器 |
 | 高风险提醒 | 含非 ASCII 且可能由 PS 5.1 执行的发布 PS1 必须 UTF-8 BOM；固定 Program Files 路径不存在不代表没有 PS7，必须继续解析 PATH/App Execution Alias；PS5.1 不得直接信任无 charset JSON 的 `.Content`，必须按原始 UTF-8 字节解码后继续严格身份检查；自动化 Python 测试不能替代成品 BAT；系统壳派发成功后不要重复开 URL |
 

@@ -107,6 +107,96 @@ function Get-IHJsonObject {
     }
 }
 
+function Test-IHPythonExecutable {
+    param([Parameter(Mandatory = $true)][string]$Path)
+    if (-not [System.IO.File]::Exists($Path)) { return $false }
+    $probeMarker = "invoice-hub-python-probe-ok"
+    $probeProcess = $null
+    try {
+        # A broken venv launcher can write directly to cmd.exe or return zero without
+        # starting Python. Capture both streams and require a marker before its fallback.
+        $probeInfo = New-Object System.Diagnostics.ProcessStartInfo
+        $probeInfo.FileName = [System.IO.Path]::GetFullPath($Path)
+        $probeInfo.Arguments = '-c "import sys; print(''invoice-hub-python-probe-ok'')"'
+        $probeInfo.UseShellExecute = $false
+        $probeInfo.CreateNoWindow = $true
+        $probeInfo.RedirectStandardOutput = $true
+        $probeInfo.RedirectStandardError = $true
+        $probeProcess = New-Object System.Diagnostics.Process
+        $probeProcess.StartInfo = $probeInfo
+        if (-not $probeProcess.Start()) { return $false }
+        $stdoutTask = $probeProcess.StandardOutput.ReadToEndAsync()
+        $stderrTask = $probeProcess.StandardError.ReadToEndAsync()
+        if (-not $probeProcess.WaitForExit(5000)) { return $false }
+        $stdout = $stdoutTask.GetAwaiter().GetResult()
+        $stderr = $stderrTask.GetAwaiter().GetResult()
+        $probeSucceeded = $probeProcess.ExitCode -eq 0 -and
+            $stdout.Trim().Equals($probeMarker, [System.StringComparison]::Ordinal) -and
+            [string]::IsNullOrWhiteSpace($stderr)
+        return $probeSucceeded
+    } catch {
+        return $false
+    } finally {
+        if ($null -ne $probeProcess) {
+            try {
+                if (-not $probeProcess.HasExited) {
+                    $probeProcess.Kill()
+                    $probeProcess.WaitForExit()
+                }
+            } catch {}
+            $probeProcess.Dispose()
+        }
+    }
+}
+
+function Get-IHVenvDeclaredPython {
+    param([Parameter(Mandatory = $true)][string]$Root)
+    $venvConfig = Join-Path $Root ".venv\pyvenv.cfg"
+    if (-not [System.IO.File]::Exists($venvConfig)) { return @() }
+
+    try {
+        $executable = ""
+        $home = ""
+        foreach ($line in Get-Content -LiteralPath $venvConfig -Encoding UTF8) {
+            if ($line -match '^\s*executable\s*=\s*(.+?)\s*$') {
+                $executable = $Matches[1].Trim()
+            } elseif ($line -match '^\s*home\s*=\s*(.+?)\s*$') {
+                $home = $Matches[1].Trim()
+            }
+        }
+
+        $candidates = @()
+        if (-not [string]::IsNullOrWhiteSpace($executable)) { $candidates += $executable }
+        if (-not [string]::IsNullOrWhiteSpace($home)) { $candidates += (Join-Path $home "python.exe") }
+        $resolved = New-Object System.Collections.Generic.List[string]
+        $seen = New-Object System.Collections.Generic.HashSet[string] ([System.StringComparer]::OrdinalIgnoreCase)
+        foreach ($candidate in $candidates) {
+            if (-not [System.IO.Path]::IsPathRooted($candidate)) { continue }
+            try {
+                $fullCandidate = [System.IO.Path]::GetFullPath($candidate)
+                if ($seen.Add($fullCandidate)) {
+                    $resolved.Add($fullCandidate)
+                }
+            } catch {
+                continue
+            }
+        }
+        return $resolved.ToArray()
+    } catch {
+        return @()
+    }
+}
+
+function Get-IHVenvBasePython {
+    param([Parameter(Mandatory = $true)][string]$Root)
+    foreach ($candidate in @(Get-IHVenvDeclaredPython -Root $Root)) {
+        if (Test-IHPythonExecutable -Path $candidate) {
+            return $candidate
+        }
+    }
+    return ""
+}
+
 function Resolve-IHPython {
     param(
         [Parameter(Mandatory = $true)][string]$Root,
@@ -119,16 +209,27 @@ function Resolve-IHPython {
         }
         return [System.IO.Path]::GetFullPath($portablePython)
     }
+    $venvPython = Join-Path $Root ".venv\Scripts\python.exe"
+    if (Test-IHPythonExecutable -Path $venvPython) {
+        return [System.IO.Path]::GetFullPath($venvPython)
+    }
+
+    # Do not turn a broken source venv into an arbitrary system-Python launch.
+    # Its own pyvenv.cfg is the only fallback allowed before normal dev discovery.
+    $venvBasePython = Get-IHVenvBasePython -Root $Root
+    if (-not [string]::IsNullOrWhiteSpace($venvBasePython)) {
+        return $venvBasePython
+    }
+
     $candidates = @(
-        (Join-Path $Root ".venv\Scripts\python.exe"),
         $portablePython,
         (Join-Path $Root "python\Scripts\python.exe")
     )
     foreach ($candidate in $candidates) {
-        if ([System.IO.File]::Exists($candidate)) { return [System.IO.Path]::GetFullPath($candidate) }
+        if (Test-IHPythonExecutable -Path $candidate) { return [System.IO.Path]::GetFullPath($candidate) }
     }
     $pythonCommand = Get-Command python -ErrorAction SilentlyContinue
-    if ($null -ne $pythonCommand -and -not [string]::IsNullOrWhiteSpace([string]$pythonCommand.Source)) {
+    if ($null -ne $pythonCommand -and -not [string]::IsNullOrWhiteSpace([string]$pythonCommand.Source) -and (Test-IHPythonExecutable -Path ([string]$pythonCommand.Source))) {
         return [System.IO.Path]::GetFullPath([string]$pythonCommand.Source)
     }
     try {
@@ -136,10 +237,25 @@ function Resolve-IHPython {
     } catch {
         $resolved = $null
     }
-    if (-not [string]::IsNullOrWhiteSpace([string]$resolved)) {
+    if (-not [string]::IsNullOrWhiteSpace([string]$resolved) -and (Test-IHPythonExecutable -Path ([string]$resolved))) {
         return [System.IO.Path]::GetFullPath([string]$resolved)
     }
     throw "No development Python was found. Create .venv or install Python."
+}
+
+function Test-IHSourceCheckout {
+    param([Parameter(Mandatory = $true)][string]$Root)
+    $gitMetadata = Join-Path $Root ".git"
+    $sourceEntrypoint = Join-Path $Root "src\invoice_hub\api\main.py"
+    if (-not (Test-Path -LiteralPath $gitMetadata) -or -not [System.IO.File]::Exists($sourceEntrypoint)) {
+        return $false
+    }
+
+    # A damaged portable package must never turn into a system-Python source launch.
+    foreach ($releaseMarker in @("invoice-hub-build.json", "invoice-hub-package.json", "python\python.exe")) {
+        if ([System.IO.File]::Exists((Join-Path $Root $releaseMarker))) { return $false }
+    }
+    return $true
 }
 
 function Set-IHProcessEnvironment {
@@ -233,10 +349,17 @@ function Get-IHProcessMetadata {
     }
 }
 
+function Test-IHProcessMetadataHasFullIdentity {
+    param([AllowNull()]$Metadata)
+    if ($null -eq $Metadata) { return $false }
+    return -not [string]::IsNullOrWhiteSpace([string]$Metadata.ExecutablePath) -and
+        -not [string]::IsNullOrWhiteSpace([string]$Metadata.CommandLine)
+}
+
 function Test-IHProcessIdentity {
     param(
         [Parameter(Mandatory = $true)][int]$ProcessId,
-        [Parameter(Mandatory = $true)][string]$Python,
+        [Parameter(Mandatory = $true)][string[]]$Python,
         [Parameter(Mandatory = $true)][string]$Root,
         [Parameter(Mandatory = $true)][string]$ConfigPath
     )
@@ -244,65 +367,78 @@ function Test-IHProcessIdentity {
     if ($null -eq $process) { return $false }
     $actualExecutable = [string]$process.ExecutablePath
     if ([string]::IsNullOrWhiteSpace($actualExecutable)) { return $false }
-    try {
-        if (-not [System.IO.Path]::GetFullPath($actualExecutable).Equals(
-            [System.IO.Path]::GetFullPath($Python),
-            [System.StringComparison]::OrdinalIgnoreCase
-        )) { return $false }
-    } catch {
-        return $false
-    }
-    $escapedPython = [regex]::Escape([System.IO.Path]::GetFullPath($Python))
     $escapedRoot = [regex]::Escape([System.IO.Path]::GetFullPath($Root))
     $escapedConfig = [regex]::Escape([System.IO.Path]::GetFullPath($ConfigPath))
-    $pattern = '^"?' + $escapedPython + '"?\s+-m\s+invoice_hub\.api\.main\s+--root\s+"' + $escapedRoot + '"\s+--config\s+"' + $escapedConfig + '"\s*$'
-    return [regex]::IsMatch([string]$process.CommandLine, $pattern, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+    foreach ($expectedPython in $Python) {
+        try {
+            if (-not [System.IO.Path]::GetFullPath($actualExecutable).Equals(
+                [System.IO.Path]::GetFullPath($expectedPython),
+                [System.StringComparison]::OrdinalIgnoreCase
+            )) { continue }
+            $escapedPython = [regex]::Escape([System.IO.Path]::GetFullPath($expectedPython))
+            $pattern = '^"?' + $escapedPython + '"?\s+-m\s+invoice_hub\.api\.main\s+--root\s+"' + $escapedRoot + '"\s+--config\s+"' + $escapedConfig + '"\s*$'
+            if ([regex]::IsMatch([string]$process.CommandLine, $pattern, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)) { return $true }
+        } catch {
+            continue
+        }
+    }
+    return $false
 }
 
 function Test-IHHealthBackedProcessIdentity {
     param(
         [Parameter(Mandatory = $true)][int]$ProcessId,
-        [Parameter(Mandatory = $true)][string]$Python,
+        [Parameter(Mandatory = $true)][string[]]$Python,
         [Parameter(Mandatory = $true)][string]$ConfigPath,
         [Parameter(Mandatory = $true)][string]$RuntimeDir,
         [Parameter(Mandatory = $true)]$BuildManifest,
         [Parameter(Mandatory = $true)]$PackageManifest,
+        [switch]$Development,
         [AllowNull()]$Health
     )
-    # CIM command-line metadata is the normal proof. If Windows denies that metadata,
-    # require both the expected executable and health's exact PID/config/package binding.
-    if ($null -ne (Get-IHProcessMetadata -ProcessId $ProcessId)) { return $false }
+    # CIM is the normal proof. A returned record with either required field redacted is
+    # not usable proof, so retain the same bounded health-backed fallback as a CIM denial.
+    $metadata = Get-IHProcessMetadata -ProcessId $ProcessId
+    if (Test-IHProcessMetadataHasFullIdentity -Metadata $metadata) { return $false }
     if ($null -eq $Health) { return $false }
     $process = Get-IHProcess -ProcessId $ProcessId
     if ($null -eq $process) { return $false }
-    try {
-        $actualExecutable = [string]$process.Path
-        if ([string]::IsNullOrWhiteSpace($actualExecutable)) { return $false }
-        if (-not [System.IO.Path]::GetFullPath($actualExecutable).Equals(
-            [System.IO.Path]::GetFullPath($Python),
-            [System.StringComparison]::OrdinalIgnoreCase
-        )) { return $false }
-    } catch {
-        return $false
+    $matchesPython = $false
+    foreach ($expectedPython in $Python) {
+        try {
+            $actualExecutable = [string]$process.Path
+            if ([string]::IsNullOrWhiteSpace($actualExecutable)) { continue }
+            if ([System.IO.Path]::GetFullPath($actualExecutable).Equals(
+                [System.IO.Path]::GetFullPath($expectedPython),
+                [System.StringComparison]::OrdinalIgnoreCase
+            )) {
+                $matchesPython = $true
+                break
+            }
+        } catch {
+            continue
+        }
     }
-    return Test-IHHealthIdentity -Health $Health -ProcessId $ProcessId -ConfigPath $ConfigPath -RuntimeDir $RuntimeDir -BuildManifest $BuildManifest -PackageManifest $PackageManifest
+    if (-not $matchesPython) { return $false }
+    return Test-IHHealthIdentity -Health $Health -ProcessId $ProcessId -ConfigPath $ConfigPath -RuntimeDir $RuntimeDir -BuildManifest $BuildManifest -PackageManifest $PackageManifest -Development:$Development
 }
 
 function Test-IHVerifiedProcessIdentity {
     param(
         [Parameter(Mandatory = $true)][int]$ProcessId,
-        [Parameter(Mandatory = $true)][string]$Python,
+        [Parameter(Mandatory = $true)][string[]]$Python,
         [Parameter(Mandatory = $true)][string]$Root,
         [Parameter(Mandatory = $true)][string]$ConfigPath,
         [Parameter(Mandatory = $true)][string]$RuntimeDir,
         [Parameter(Mandatory = $true)]$BuildManifest,
         [Parameter(Mandatory = $true)]$PackageManifest,
+        [switch]$Development,
         [AllowNull()]$Health
     )
     if (Test-IHProcessIdentity -ProcessId $ProcessId -Python $Python -Root $Root -ConfigPath $ConfigPath) {
         return $true
     }
-    return Test-IHHealthBackedProcessIdentity -ProcessId $ProcessId -Python $Python -ConfigPath $ConfigPath -RuntimeDir $RuntimeDir -BuildManifest $BuildManifest -PackageManifest $PackageManifest -Health $Health
+    return Test-IHHealthBackedProcessIdentity -ProcessId $ProcessId -Python $Python -ConfigPath $ConfigPath -RuntimeDir $RuntimeDir -BuildManifest $BuildManifest -PackageManifest $PackageManifest -Development:$Development -Health $Health
 }
 
 function Test-IHLaunchedProcessIdentity {
@@ -385,7 +521,8 @@ function Test-IHHealthIdentity {
         [Parameter(Mandatory = $true)][string]$ConfigPath,
         [Parameter(Mandatory = $true)][string]$RuntimeDir,
         [Parameter(Mandatory = $true)]$BuildManifest,
-        [Parameter(Mandatory = $true)]$PackageManifest
+        [Parameter(Mandatory = $true)]$PackageManifest,
+        [switch]$Development
     )
     if ($null -eq $Health -or $Health.ok -ne $true) { return $false }
     if ([int]$Health.pid -ne $ProcessId) { return $false }
@@ -408,7 +545,9 @@ function Test-IHHealthIdentity {
     if ([string]$Health.package_id -ne [string]$PackageManifest.package_id) { return $false }
     if ([string]$Health.product_version -ne [string]$PackageManifest.product_version) { return $false }
     if ([string]$Health.platform -ne "windows" -or [string]$Health.architecture -ne "x86_64") { return $false }
-    if ($Health.build_manifest_valid -ne $true -or $Health.package_manifest_valid -ne $true) { return $false }
+    # Source health deliberately has no release manifests; its development identity is
+    # already bound above. Portable launches must still require both valid manifests.
+    if (-not $Development -and ($Health.build_manifest_valid -ne $true -or $Health.package_manifest_valid -ne $true)) { return $false }
     return $true
 }
 
@@ -444,6 +583,10 @@ function Get-IHLaunchContext {
         [string]$ConfigPath = "",
         [switch]$Development
     )
+    $launchDevelopment = [bool]$Development
+    if (-not $launchDevelopment -and (Test-IHSourceCheckout -Root $Root)) {
+        $launchDevelopment = $true
+    }
     $resolvedConfig = Initialize-IHConfig -Root $Root -ConfigPath $ConfigPath
     $config = Get-IHConfig -Root $Root -ConfigPath $resolvedConfig
     Ensure-IHDirectory -Path $config.RuntimeDir
@@ -456,12 +599,25 @@ function Get-IHLaunchContext {
         (Join-Path $config.RuntimeDir "startup_preflight.log")
     )
     foreach ($slot in $slots) { Ensure-IHFileSlot -Path $slot }
-    $python = Resolve-IHPython -Root $Root -Development:$Development
-    if ($Development) {
+    $python = Resolve-IHPython -Root $Root -Development:$launchDevelopment
+    $identityPython = @([System.IO.Path]::GetFullPath($python))
+    if ($launchDevelopment) {
+        # A restricted caller may not be allowed to probe a venv base executable that
+        # already hosts localhost. This identity candidate is never selected to launch.
+        foreach ($declaredPython in @(Get-IHVenvDeclaredPython -Root $Root)) {
+            if ($identityPython -notcontains $declaredPython) { $identityPython += $declaredPython }
+        }
         Set-IHProcessEnvironment -Root $Root -ConfigPath $resolvedConfig -Development
-        $identityJson = & $python -c "import json; from invoice_hub.release.build_manifest import API_CONTRACT_VERSION; from invoice_hub.version import PRODUCT_VERSION; print(json.dumps({'build_id':'development','api_contract_version':API_CONTRACT_VERSION,'package_id':'development','product_version':PRODUCT_VERSION}))"
+        $identityJson = & $python -c "import json, sys; from invoice_hub.release.build_manifest import API_CONTRACT_VERSION; from invoice_hub.version import PRODUCT_VERSION; print(json.dumps({'build_id':'development','api_contract_version':API_CONTRACT_VERSION,'package_id':'development','product_version':PRODUCT_VERSION,'base_executable':getattr(sys,'_base_executable','')}))"
         if ($LASTEXITCODE -ne 0) { throw "Cannot read development identity from the source tree." }
         $identity = $identityJson | ConvertFrom-Json
+        $basePython = [string]$identity.base_executable
+        if (-not [string]::IsNullOrWhiteSpace($basePython) -and [System.IO.Path]::IsPathRooted($basePython)) {
+            try {
+                $resolvedBasePython = [System.IO.Path]::GetFullPath($basePython)
+                if ($identityPython -notcontains $resolvedBasePython) { $identityPython += $resolvedBasePython }
+            } catch {}
+        }
         $build = [pscustomobject]@{
             build_id = [string]$identity.build_id
             api_contract_version = [string]$identity.api_contract_version
@@ -494,6 +650,7 @@ function Get-IHLaunchContext {
         ConfigPath = [System.IO.Path]::GetFullPath($resolvedConfig)
         Config = $config
         Python = $python
+        IdentityPython = [string[]]$identityPython
         Build = $build
         Package = $package
         PidFile = Join-Path $config.RuntimeDir "server.pid"
@@ -502,7 +659,7 @@ function Get-IHLaunchContext {
         StderrLog = Join-Path $config.RuntimeDir "server_stderr.log"
         BrowserLog = Join-Path $config.RuntimeDir "browser_launch.log"
         PreflightLog = Join-Path $config.RuntimeDir "startup_preflight.log"
-        Development = [bool]$Development
+        Development = [bool]$launchDevelopment
     }
 }
 
@@ -525,7 +682,7 @@ function Invoke-IHPythonModule {
         [Parameter(Mandatory = $true)][string[]]$Arguments,
         [switch]$Development
     )
-    Set-IHProcessEnvironment -Root $Context.Root -ConfigPath $Context.ConfigPath -Development:$Development
+    Set-IHProcessEnvironment -Root $Context.Root -ConfigPath $Context.ConfigPath -Development:$Context.Development
     & $Context.Python @Arguments
     return $LASTEXITCODE
 }
@@ -541,6 +698,7 @@ Export-ModuleMember -Function @(
     "Get-IHProcess",
     "Get-IHProcessMetadata",
     "Get-IHRoot",
+    "Get-IHVenvDeclaredPython",
     "Initialize-IHConfig",
     "Invoke-IHPythonModule",
     "Move-IHConflict",
@@ -552,6 +710,7 @@ Export-ModuleMember -Function @(
     "Test-IHHealthIdentity",
     "Test-IHHealthBackedProcessIdentity",
     "Test-IHLaunchedProcessIdentity",
+    "Test-IHProcessMetadataHasFullIdentity",
     "Test-IHProcessIdentity",
     "Test-IHVerifiedProcessIdentity",
     "Test-IHTcpPort"

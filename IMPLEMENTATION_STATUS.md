@@ -1,6 +1,6 @@
 # IMPLEMENTATION_STATUS
 
-更新时间：2026-09-02
+更新时间：2026-09-04
 
 ## 公开基线
 
@@ -19,9 +19,13 @@
 
 - PDF/OFD/XML 票头与成本明细提取、金额合法性保护、两维分类、同票纠偏、普通汇总与成本投影。
 - 独立 monitor、后台 startup sync、文件事件合并、周期兜底、手改三字段保护和可诊断日志。
+- 每个活动 `TargetProfile` 的原子同步进度快照与 `GET /api/v1/bridge/progress`；首页和复用 localhost 的首页 WebView 只在同步进行中显示真实重建进度/百分比，读取快照不触发重建。成本分析页标题右侧则只显示自身 `GET /api/v1/cost-analysis` 的读取、整理和首个视图初始化阶段，不搬运全局重建快照；两种成功态均以绿色圆形勾选反馈并自动退场。成本页桌面保持标题单行、窄屏才换行；首页纵向工具栏仍保持 30px 组件高度。
 - FastAPI 页面/API、目录草稿、监控控制、结构化关闭、源文件预览、批量打印、皮肤安全边界和真实表格/TSV 复制。
+- 首页关键词查询严格限定为销售方、发票号码和源文件名；购买方、金额、分类和内部识别说明不再产生用户无法从列表辨识的隐式命中。
 - 三套内置应用图标（暖橙、青碧、罗兰紫）的设置/皮肤页选择、浏览器 favicon 同步和 Tauri 私有 Host RPC；选择独立于皮肤，只保存到 `runtime/local_state/app_icon_state.json`。
-- Windows portable 正式 BAT 保留 `Win32_Process` 命令行的严格身份校验；受限会话拒绝 CIM 元数据时，只接受解释器路径与 health 的 PID、配置、运行目录、build/package 全部一致的回退。新启动的 `Start-Process` 子进程只在本轮失败清理中使用其句柄，持久 PID 的 stop 仍经过身份复核；这不构成 Tauri 原生界面或安装包验收。
+- Windows portable 正式 BAT 保留 `Win32_Process` 命令行的严格身份校验；受限会话拒绝 CIM 元数据，或只返回缺失 `ExecutablePath`/`CommandLine` 的不完整记录时，只接受解释器路径与 health 的 PID、配置、运行目录、build/package 全部一致的回退。源码 `.venv\pyvenv.cfg` 已声明但当前会话无法执行的基础解释器只可作为既有 localhost 服务的身份候选，不能变成新的未验证启动解释器。完整 CIM 记录下的实际不匹配仍拒绝；初始复用失败会写入无外部命令行内容的字段级 `startup_preflight.log`，成功复用会刷新为当前结果。新启动的 `Start-Process` 子进程只在本轮失败清理中使用其句柄，持久 PID 的 stop 仍经过身份复核；这不构成 Tauri 原生界面或安装包验收。
+- 源码 checkout 的根 BAT 现可自动进入开发模式：只有 `.git` 和源码 API 入口同时存在、且 build/package manifest 与内置 Python 均不存在时才允许；启动、停止和 monitor 包装复用同一判定。源码 `.venv` launcher 文件存在但无法启动时，只可使用该 `.venv\pyvenv.cfg` 声明且实际可执行的基础解释器；残缺或正式便携包继续 fail closed，不会回退到系统 Python。
+- 源码 launcher 探测使用隐藏 Python 哨兵并捕获 stdout/stderr，不再只凭退出码把会向用户控制台报错的损坏 venv launcher 误判为可用；受限基础解释器回退与正式包拒绝边界保持不变。
 - 做账 W8/W9 的本地文件真值、状态迁移预览、服务端执行校验、批次 manifest 与只读 dry-run 边界。
 - macOS SwiftUI/WKWebView 壳保留为现有平台参考；它不改变共享业务逻辑，也不构成未来 Tauri 发布证据。
 

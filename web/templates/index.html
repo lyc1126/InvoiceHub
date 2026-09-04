@@ -4,7 +4,7 @@
   <title>发票汇总</title>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <link rel="stylesheet" href="/static/css/app.css?v=20260902-app-icons-print-popups-v1">
+  <link rel="stylesheet" href="/static/css/app.css?v=20260903-sync-progress-motion-v4">
   <link rel="stylesheet" href="/static/css/settings-actions.css?v=20260720-shutdown-monitor-choice">
 </head>
 <body data-page="index">
@@ -79,6 +79,14 @@
           <button id="rebuildBtn" class="btn btn--primary" type="button">重新汇总</button>
           <button id="startBtn" class="btn btn--secondary" type="button">启动监控</button>
           <button id="stopBtn" class="btn btn--ghost" type="button">停止监控</button>
+          <div id="syncProgress" class="sync-progress sync-progress--idle" title="等待汇总" hidden>
+            <div id="syncProgressTrack" class="sync-progress__track" role="progressbar" aria-label="汇总进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-valuetext="等待汇总">
+              <span id="syncProgressFill" class="sync-progress__fill" aria-hidden="true"></span>
+              <strong id="syncProgressPercent" class="sync-progress__percent">0%</strong>
+            </div>
+            <span class="sync-progress__check" aria-hidden="true"></span>
+            <span id="syncProgressDetail" class="sync-progress__detail" aria-live="polite" aria-atomic="true">等待汇总</span>
+          </div>
         </div>
       </article>
 
@@ -420,6 +428,6 @@
     </section>
   </div>
   <script src="/static/js/common.js?v=20260729-main-macos-sync"></script>
-  <script src="/static/js/page-index.js?v=20260902-app-icons-print-popups-v1"></script>
+  <script src="/static/js/page-index.js?v=20260903-sync-progress-motion-v4"></script>
 </body>
 </html>

@@ -128,7 +128,7 @@ hosted check 的 host-lock 竞争直接返回 busy，不调用 `append_event` �
 
 历史净化完成前没有任何公开平台；首个公开安装平台由 `v0.3` 的 RC 证据决定。
 
-1. 根目录 BAT 是用户第一入口，转发到 `scripts/windows`。
+1. 根目录 BAT 是用户第一入口，转发到 `scripts/windows`。共享启动上下文只在 `.git`、`src/invoice_hub/api/main.py` 都存在且 build/package manifest、内置 Python 都缺失时自动选择源码开发模式；任何正式包标记都继续走便携包的 fail-closed 路径。
 2. PowerShell 7 优先，5.1 后备；BAT 先验证固定 Program Files PS7，再从 `PATH`/Microsoft Store App Execution Alias 解析并验证 `pwsh.exe`，也可用 `INVOICE_HUB_FORCE_PS51=1` 强制 5.1 做兼容验收。共享模块准备运行态、验证三类 manifest/内置 Python、探测端口/PID、启动 Uvicorn 并派发浏览器；health 从原始响应流按 UTF-8 解码，避免 PS5.1 在无 charset JSON 上损坏中文路径后再执行严格身份比较。
 3. Web 页面通过 `/api/v1` 执行业务动作；Python/Tk 只提供原生选择器适配，不承载业务逻辑。
 4. monitor 由独立 Python daemon 运行；仅停止 localhost 的 BAT 不得停止 monitor，stop-all 才能同时停止。

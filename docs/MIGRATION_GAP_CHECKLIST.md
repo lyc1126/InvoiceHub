@@ -1,6 +1,6 @@
 # 迁移与公开缺口清单
 
-更新时间：2026-09-02
+更新时间：2026-09-04
 
 ## 公开历史净化
 
@@ -20,6 +20,10 @@
 - [x] `v1 localhost`、单活动 `TargetProfile`、文件真值与 SQLite 运行态边界。
 - [x] PDF/OFD/XML 提取、金额防污染、两维分类、同票纠偏、普通汇总与成本投影。
 - [x] 独立 monitor、后台 startup sync、事件合并、周期兜底、手改保护与诊断日志。
+- [x] Windows 源码根 BAT 自动开发模式，以及 `.venv` launcher 失效时只读取同一 `pyvenv.cfg` 已声明基础解释器的受限回退；正式便携包不改用系统 Python。
+- [x] venv launcher 可执行性以隐藏 Python 哨兵和已捕获的 stdout/stderr 判定，避免 launcher 的直接控制台错误或异常零退出掩盖上述受限回退。
+- [x] Windows 端口复用在 `Win32_Process` 完全不可读或仅返回缺失执行路径/命令行的部分记录时，继续要求解释器路径及 health PID、配置、运行目录、build/package 的完整绑定；当前会话无法执行的 `.venv\pyvenv.cfg` 基础解释器仅作既有服务身份候选，完整 CIM 记录下的真实不匹配仍 fail closed，并将字段级失败证据写入 runtime 诊断日志。
+- [x] 按 `TargetProfile` 原子发布真实同步进度快照；首页通过同一 localhost 接口显示扫描、普通汇总、成本解析和确认阶段的百分比，Tauri 仅复用该 Web UI。成本分析页标题进度改为自身 `GET /api/v1/cost-analysis` 的读取、整理和首个视图初始化阶段，不再把全局重建快照当作成本页读取进度。
 - [x] 目录草稿、SSE 断线恢复、真实表格/TSV、预览、批量打印、皮肤安全边界和结构化关闭。
 - [x] 做账 W8/W9 的严格本地状态、预览/apply、服务端执行校验、批次 manifest 和 dry-run 边界。
 - [x] 现有 macOS SwiftUI/WKWebView 壳仅作为共享后端与原生桥接的参考实现。

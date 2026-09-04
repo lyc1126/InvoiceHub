@@ -1931,17 +1931,14 @@ class AppState:
         date_to = str(filters.get("date_to") or "").strip()
 
         def matches(item: dict) -> bool:
+            # The homepage advertises only these fields. Searching buyer or internal
+            # classification data would show rows users cannot explain from the table.
             haystack = " ".join(
                 str(item.get(key) or "")
                 for key in (
                     "source_file",
                     "invoice_number",
                     "seller",
-                    "buyer",
-                    "amount",
-                    "invoice_type",
-                    "business_type",
-                    "classification_issue",
                 )
             ).casefold()
             if keyword and keyword not in haystack:
@@ -2723,6 +2720,69 @@ class AppState:
     def bridge_status(self) -> dict:
         return self._monitor_bridge().status()
 
+    def bridge_progress(self) -> dict:
+        with self._lock:
+            profile = self._active_profile.model_copy(deep=True)
+            background_status = self._background_status
+        raw = MonitorState(profile, self.layout.db_path, sync_interval_seconds=60).read_sync_progress()
+        # The parent marks startup work as running before its spawned child has a
+        # chance to publish a file snapshot. Exposing this bounded state keeps the
+        # shared Web UI polling until real per-profile progress becomes available.
+        if background_status not in {"initializing", "running", "ready", "failed"}:
+            background_status = "initializing"
+        idle = {
+            "version": 1,
+            "operation_id": "",
+            "task_id": "",
+            "target_id": profile.id,
+            "trigger": "",
+            "status": "idle",
+            "phase": "idle",
+            "message": "等待汇总",
+            "percent": 0,
+            "processed_count": 0,
+            "total_count": 0,
+            "started_at": "",
+            "updated_at": "",
+            "finished_at": "",
+            "background_sync_status": background_status,
+        }
+        if not isinstance(raw, dict) or str(raw.get("target_id") or "") != profile.id:
+            return idle
+
+        def text(value: object, limit: int = 160) -> str:
+            return str(value or "").strip()[:limit]
+
+        def count(value: object, maximum: int | None = None) -> int:
+            try:
+                normalized = max(0, int(value or 0))
+            except (TypeError, ValueError):
+                return 0
+            return min(normalized, maximum) if maximum is not None else normalized
+
+        total_count = count(raw.get("total_count"))
+        processed_count = count(raw.get("processed_count"), total_count if total_count else None)
+        status = text(raw.get("status"), 24)
+        if status not in {"running", "success", "failed"}:
+            return idle
+        return {
+            "version": 1,
+            "operation_id": text(raw.get("operation_id"), 64),
+            "task_id": text(raw.get("task_id"), 64),
+            "target_id": profile.id,
+            "trigger": text(raw.get("trigger"), 48),
+            "status": status,
+            "phase": text(raw.get("phase"), 48),
+            "message": text(raw.get("message")),
+            "percent": count(raw.get("percent"), 100),
+            "processed_count": processed_count,
+            "total_count": total_count,
+            "started_at": text(raw.get("started_at"), 64),
+            "updated_at": text(raw.get("updated_at"), 64),
+            "finished_at": text(raw.get("finished_at"), 64),
+            "background_sync_status": background_status,
+        }
+
     def bridge_health_check(self) -> dict:
         return self._monitor_bridge().health_check()
 
@@ -2752,23 +2812,68 @@ class AppState:
             profile_identity = _background_profile_identity(profile)
             reference_markup_rate = str(self.config.reference_markup_rate)
         self.repo.create_task(task_id, "bridge.rebuild", "running", {"watch_dir": profile.watch_dir})
+        progress = None
         try:
             monitor_state = MonitorState(profile, self.layout.db_path, sync_interval_seconds=60)
-            cost_service = CostProjectionService(
-                Path(profile.watch_dir),
-                Path(profile.workspace_dir),
-                profile.id,
-                reference_markup_rate=reference_markup_rate,
-            )
+            progress = monitor_state.new_sync_progress("manual_rebuild", task_id=task_id)
             with monitor_state.sync_write_lock():
-                summary = build_summary(Path(profile.watch_dir), Path(profile.workspace_dir))
-                manual_applied = monitor_state.apply_manual_overrides_to_summary()
-                cost_result = cost_service.rebuild()
-                monitor_state.save_processed(monitor_state.rebuild_processed_from_summary())
-                monitor_state.update_status(status="idle", last_sync_at=utc_now_text(), last_trigger="manual_rebuild", last_error="")
-                monitor_state.log_event("MANUAL_REBUILD", f"summary_count={summary.get('count', 0)} cost_detail_count={cost_result.get('detail_count', 0)}")
+                progress.start("正在准备重新汇总")
+                try:
+                    cost_service = CostProjectionService(
+                        Path(profile.watch_dir),
+                        Path(profile.workspace_dir),
+                        profile.id,
+                        reference_markup_rate=reference_markup_rate,
+                    )
+                    progress.report("summary", "正在生成普通汇总", percent=0)
+                    summary = build_summary(
+                        Path(profile.watch_dir),
+                        Path(profile.workspace_dir),
+                        progress=lambda completed, total: progress.report_fraction(
+                            "summary",
+                            "正在生成普通汇总",
+                            completed,
+                            total,
+                            0,
+                            52,
+                        ),
+                    )
+                    progress.report("summary", "正在应用已保存的手工修订", percent=52)
+                    manual_applied = monitor_state.apply_manual_overrides_to_summary()
+                    progress.report("cost", "正在生成成本分析", percent=52)
+                    cost_result = cost_service.rebuild(
+                        progress=lambda completed, total: progress.report_fraction(
+                            "cost",
+                            "正在解析成本发票",
+                            completed,
+                            total,
+                            52,
+                            92,
+                        ),
+                    )
+                    progress.report("finalizing", "正在确认已处理文件", percent=92)
+                    monitor_state.save_processed(
+                        monitor_state.rebuild_processed_from_summary(
+                            progress=lambda completed, total: progress.report_fraction(
+                                "finalizing",
+                                "正在确认已处理文件",
+                                completed,
+                                total,
+                                92,
+                                99,
+                            ),
+                        )
+                    )
+                    monitor_state.update_status(status="idle", last_sync_at=utc_now_text(), last_trigger="manual_rebuild", last_error="")
+                    monitor_state.log_event("MANUAL_REBUILD", f"summary_count={summary.get('count', 0)} cost_detail_count={cost_result.get('detail_count', 0)}")
+                    message = self._rebuild_message(summary, cost_result, profile)
+                    # Publish the terminal state before releasing the profile lock.
+                    # A waiting sync must not be overwritten by this older task.
+                    progress.complete(message)
+                except Exception as exc:
+                    progress.fail(str(exc))
+                    raise
             detail = {"summary": summary, "cost_analysis": cost_result, "manual_applied": manual_applied}
-            message = self._rebuild_message(summary, cost_result, profile)
             self.repo.update_task(task_id, "success", detail, completed=True)
             with self._lock:
                 applies_to_active_profile = profile_identity == _background_profile_identity(self._active_profile)

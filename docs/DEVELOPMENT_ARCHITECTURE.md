@@ -1,7 +1,7 @@
 # InvoiceHub 开发架构与工程导航
 
 > 文档状态：当前开发实现的权威架构入口
-> 更新日期：2026-09-02
+> 更新日期：2026-09-04
 > 公共权威基线：经过审计的单一脱敏根提交；旧私有提交、Tag、二进制和验证材料不在公开图中
 > 公开状态：候选树、保留 Git 对象和托管面已完成一次内容与凭据审计；公开图从脱敏根提交开始，详见 `docs/release/HISTORY_SANITIZATION_EXECUTION.md`
 > 当前开发基线：`0.3.0-alpha.2` 的 public-preview 组装、独立 package identity、LaunchServices/quarantine smoke、SSE 关闭修复与 receipt finalization 门禁均已合入公开 `main`：只有组包器内部可验证精确 pending record，发布入口必须验证与实际 DMG SHA-256 绑定的 finalized record。远端同名 Tag 仍指向此前基线，必须在干净 `main` 上经新的明确授权重建。没有 GitHub Release、资产、SignPath 请求或 Feed；最终 macOS 成品必须从 DMG 挂载复制、以隔离 `HOME` 经 LaunchServices 启动并保留 quarantine 验收；internal-alpha 与 L10-E 结果仅作为历史上下文。
@@ -97,6 +97,9 @@ public-preview 的成品 smoke 与 L10-E 保持隔离：它不复用 development
 
 - `/` 和 `/api/v1/health` 应尽快可用。
 - 首轮普通汇总、成本同步和诊断在后台自动执行。
+- 每个 `TargetProfile` 的同步会把真实扫描/投影阶段发布为原子进度快照；首页和复用 localhost 的首页 WebView 读取该快照，读取本身不得触发第二次重建。成本页标题进度只描述自身 `GET /api/v1/cost-analysis` 的快照读取和首个视图初始化，不把全局重建百分比搬到成本页面。
+- Windows 根 BAT 在可确认的源码 checkout 中自动使用开发模式；若源码 `.venv` launcher 文件存在但不可执行，只能使用同一 `pyvenv.cfg` 已声明且可执行的基础解释器。存在任一便携包标记时仍严格按正式包身份启动，不会回退到系统 Python。端口复用优先要求完整 CIM 命令行证明；CIM 调用被拒绝或返回缺失执行路径/命令行的记录时，仍必须通过解释器路径和 health PID、配置、运行目录、build/package 的完整绑定；当前会话无法执行的 `pyvenv.cfg` 基础解释器只作既有服务身份候选，任何完整元数据下的不匹配继续拒绝。
+- venv 可执行性探测必须以隐藏子进程中的 Python 哨兵和已捕获的 stdout/stderr 判定，不能只相信 launcher 的退出码或把它的底层错误转交给用户控制台。
 - monitor 是独立 daemon，不是 FastAPI 内线程。
 - monitor 启动成功必须代表首次同步、观察器或周期兜底、补漏同步都已初始化并写入 `ready=true`。
 
@@ -104,7 +107,7 @@ public-preview 的成品 smoke 与 L10-E 保持隔离：它不复用 development
 
 - `watch_dir`：源发票及成本三件套。
 - `workspace`：普通汇总和业务监控日志。
-- `state_dir`：lock、processed、manual overrides、monitor status。
+- `state_dir`：lock、processed、manual overrides、monitor status、sync progress。
 - `runtime`：localhost PID、SQLite、服务日志、偏好和皮肤。
 - 每个活动目录通过 SHA1 派生的 `target_id` 获得独立档案。
 
@@ -197,7 +200,7 @@ flowchart LR
     Runtime["runtime"]
     Profile["targets/{target_id}"]
     Workspace["workspace<br/>发票汇总.csv/xlsx<br/>文件变化监控日志.txt"]
-    State["state<br/>lock / processed / overrides / status"]
+    State["state<br/>lock / processed / overrides / status / progress"]
     Local["localappdata<br/>monitor 子进程环境"]
     Global["server.pid / server_state.json<br/>invoice_hub.db / 服务日志"]
 
@@ -210,7 +213,7 @@ flowchart LR
     Runtime --> Global
 ```
 
-`server_state.json` 只诊断 localhost。monitor 真值是存活 PID 加 `state_dir/.invoice_monitor.lock`。成本产物必须留在 `watch_dir`；普通汇总必须留在对应档案的 `workspace`。
+`server_state.json` 只诊断 localhost。monitor 真值是存活 PID 加 `state_dir/.invoice_monitor.lock`。成本产物必须留在 `watch_dir`；普通汇总必须留在对应档案的 `workspace`。`state_dir/sync_progress.json` 是面向页面的单次同步诊断快照，不是 PID/lock、发票事实或投影真值；同步写入用原子替换，进度读不等待长期投影锁，且快照写入失败不能使真实重建失败。
 `runtime/local_state/app_icon_state.json` 只保存内置应用图标选择；它不是皮肤包、业务配置或发票投影，也不会进入 `watch_dir`。
 
 ## 7. 主要模块如何协作

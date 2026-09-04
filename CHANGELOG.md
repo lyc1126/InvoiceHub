@@ -2,6 +2,20 @@
 
 ## 未发布
 
+- 2026-09-04 成本页读取进度语义修正：成本分析标题右侧的紧凑进度不再轮询首页使用的 `GET /api/v1/bridge/progress` 全局重建快照，而是围绕本页 `GET /api/v1/cost-analysis` 的实际生命周期推进“读取成本汇总数据 / 整理成本明细 / 初始化成本视图”。这些阶段只表示本地快照读取和首个表格初始化，不伪装成后端文件重建百分比；手动“重新汇总”仍调用既有 bridge 重建，完成后才显示新的成本快照读取进度。成功后继续以绿色圆形勾选收束并退场，失败态保留可诊断反馈；首页全局同步进度及其 `TargetProfile` 快照语义不变。
+
+- 2026-09-04 Windows 启动身份兼容：受限会话若能返回 `Win32_Process` 对象却把 `ExecutablePath` 或 `CommandLine` 字段留空，启动器现在将其与 CIM 调用被拒绝同等视为“元数据不可读”，再以存活解释器路径和 health 中同 PID、配置、运行目录、build/package 的完整精确绑定复核；CIM 两字段完整时的实际不匹配仍拒绝复用。若当前会话不能执行 `.venv\pyvenv.cfg` 已声明、但正在承载 localhost 的基础解释器，该路径只加入既有服务的身份候选，绝不被当作未验证的启动解释器。初始端口复用被拒绝时会将 PowerShell、CIM 完整性、解释器路径可读性与三项身份结果写入 `runtime/startup_preflight.log`，不记录外部进程命令行内容；成功复用会覆写为当前 `already-ready` 身份结果，避免遗留旧失败状态。
+
+- 2026-09-04 Windows 源码启动修复：根目录启动入口在可确认的源码 checkout 中会自动进入开发模式，不再因按便携包模式查找不存在的 `python\python.exe` 而无法双击启动。判定同时要求 `.git`、`src/invoice_hub/api/main.py`，并拒绝任何带 build/package manifest 或内置 `python\python.exe` 的目录；因此残缺或正式便携包仍不会回退到系统 Python。源码 health 的 `development` 身份允许缺少正式 manifest，便携包仍要求两份 manifest 有效；Python 3.14 venv 若把实际服务派生到 `_base_executable`，启动器会在 health 的严格 PID/路径/config/runtime/identity 绑定通过后记录该服务 PID。若 `.venv\Scripts\python.exe` 文件存在但其 launcher 无法启动，源码入口只读取同一 `.venv\pyvenv.cfg` 中声明且可执行的基础解释器，不会因此改用任意系统 Python；基础解释器也不可用时保留明确失败。启动、停止和 monitor 包装统一使用已判定的模式，显式 `-Development` 仍兼容。
+
+- 2026-09-04 Windows 源码 venv launcher 兼容：解释器可执行性不再只信任进程退出码。启动器以隐藏子进程捕获标准输出/错误并要求 Python 回传固定哨兵；因此损坏 launcher 即使向 `cmd.exe` 直接写错或异常返回零，也会安静地进入同一 `pyvenv.cfg` 声明基础解释器的受限回退，而不会把坏 launcher 当作可用解释器。
+
+- 2026-09-03 汇总进度动效与皮肤化：首页和成本分析页继续读取同一 `GET /api/v1/bridge/progress` 真实快照，但进度组件不再常驻。手动或后台汇总开始时才以紧凑状态条出现；成本页移至“成本分析”标题右侧，标题区会保留可用宽度与单行标题，窄屏才让进度组件换行，首页保留在汇总控制区，首页纵向工具栏内仍固定为 30px 高。成功达到 `100%` 后，填充条会从右向左收束为绿色圆形勾选，再自动淡出；失败态保留短暂的红色可诊断反馈。基础样式与 Animal Island、Ink Pulse 两套内置皮肤均使用独立 token，且 `prefers-reduced-motion` 下取消过渡，不改变同步接口、投影、SSE 或成本数据语义。
+
+- 2026-09-03 汇总进度可视化：每个活动 `TargetProfile` 现在在 `state_dir/sync_progress.json` 原子发布真实同步快照，`GET /api/v1/bridge/progress` 只读取当前档案的受限字段。普通目录扫描、普通汇总、成本发票解析和已处理文件确认分别按实际文件/同票家族工作量推进；首页与成本分析页在各自“重新汇总”操作区显示同一长条药丸进度与百分比，后台 startup child 尚未写入快照时也会继续显示“正在启动后台汇总”并轮询。手动重建会在释放档案写锁前发布成功或失败终态，避免前一任务的完成快照覆盖紧接着开始的新同步。Tauri 复用同一 localhost Web 页面，未新增或改写桌面业务核心；本项尚未作为 Windows 原生窗口、正式 BAT 或打包产物验收结论。
+
+- 2026-09-03 Windows desktop 首页关键词筛选范围修复：排查实际 `GET /api/v1/invoices` 响应后确认 Tauri 与浏览器共用同一后端，问题来自关键词同时匹配购买方、金额、分类和内部识别说明，而页面只承诺销售方、发票号、文件名。现已将服务端范围收紧为这三项，并加入允许字段与购买方/识别说明拒绝字段的 API 回归；尚未重打或安装 Windows portable 包。
+
 - 2026-09-02 Windows Tauri 桌面编译兼容：内置应用图标改由锁定的 PNG 解码器转换为 Tauri 原生 surface 所需的 8-bit RGBA，避免依赖未启用的可选 `Image::from_bytes` API；Windows recovery marker 的唯一 `HANDLE` owner 明确只可 `Send` 转移、不可 `Clone/Sync`，确保跨线程持有仍只在一次 `Drop` 中关闭。临时 marker 保留属性读取权限，目标 rename 改用 `NtSetInformationFile` 保持已验证的目录句柄，因为 Win32 `SetFileInformationByHandle` 会以 `ERROR_INVALID_PARAMETER` 拒绝 non-null `RootDirectory`。Windows runtime contract 已覆盖相对根拒绝、publish/load/exact clear 与 no-clobber；同时修正 lifecycle 集成测试越过私有 parser、以及 Windows 上把 Unix 路径传给 `Path::is_absolute()` 的基线测试错误。锁定 Rust 全套测试、desktop check、Python/前端/发布聚焦契约和 `compileall` 已通过；这仍不表述为原生窗口、托盘、打印、updater 或安装器运行验收。
 
 - 2026-09-02 Windows portable 启停身份兼容：正式启动器仍优先以 `Win32_Process` 的 Python、模块、root 和 config 命令行作严格进程证明；只有系统拒绝读取该 CIM 元数据时，才允许以存活 PID 的解释器路径加 health 中同一 PID、配置、runtime、build/package 身份的完整绑定作为受限回退。新启动的直接子进程只使用自己的短生命周期句柄做失败清理，持久 PID 的停止路径仍先验证身份。该项覆盖便携包正式 BAT 的兼容边界，不把它表述为 Tauri 窗口、任务栏、托盘或打印弹窗的原生验收。

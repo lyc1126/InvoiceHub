@@ -30,8 +30,8 @@ flowchart LR
 
 | 路由 | 模板与脚本 | 主要数据接口 | SSE / 特殊规则 | 主要测试 |
 |---|---|---|---|---|
-| `GET /` | `index.html` + `page-index.js` | settings、invoices、selection-summary、bridge、目录选择/保存 | 监听公共事件；保留未保存目录草稿 | `test_api_contract.py`、`test_frontend_contract.py` |
-| `GET /costs` | `costs.html` + `page-costs.js` | preferences、cost-analysis、reference-status、bridge/rebuild、open-summary | 自动事件合并刷新；四个互斥真实表格视图 | 成本 API、成本前端契约 |
+| `GET /` | `index.html` + `page-index.js` | settings、invoices、selection-summary、bridge、bridge/progress、目录选择/保存 | 监听公共事件；保留未保存目录草稿；同步中轮询当前档案进度 | `test_api_contract.py`、`test_frontend_contract.py` |
+| `GET /costs` | `costs.html` + `page-costs.js` | preferences、cost-analysis、reference-status、bridge/rebuild、open-summary | 自动事件合并刷新；四个互斥真实表格视图；标题进度只描述成本快照读取与首个视图初始化，不映射全局重建快照 | 成本 API、成本前端契约 |
 | `GET /documents` | `documents.html` + `page-documents.js` | documents/state、preview、defaults、export/status/open、出库目录接口 | 只在相关汇总事件后刷新；目录草稿不被覆盖 | `test_documents.py`、前端契约 |
 | `GET /bookkeeping` | `bookkeeping.html` + `page-bookkeeping.js` | setup、profile、catalog、voucher、mapping、migration、batch | 服务端 blockers 是执行真值；W8/W9 页面不开放真实 Safari apply | 做账 API/状态/映射/导出测试 |
 | `GET /ocr` | `ocr.html` + `page-ocr.js` | preferences、ocr/service-status、选择器、候选列表、extract-text | core 中只提供禁用态和候选文件浏览 | API/前端静态契约 |
@@ -74,7 +74,7 @@ flowchart LR
 
 | 方法与路径 | AppState 入口 | 主要请求/返回 | 消费者与错误 |
 |---|---|---|---|
-| `GET /api/v1/invoices` | `list_invoices` | 查询筛选；返回 `items/stats/snapshot/target_id/watch_dir` | 首页；读取普通汇总并应用手改覆盖 |
+| `GET /api/v1/invoices` | `list_invoices` | 查询筛选；`keyword` 仅匹配销售方、发票号码和源文件名；返回 `items/stats/snapshot/target_id/watch_dir` | 首页；读取普通汇总并应用手改覆盖 |
 | `POST /api/v1/invoices/selection-summary` | `invoice_selection_summary` | `{items:[{invoice_key,source_path}]}`；返回去重张数、三项金额和成本拆分 | 首页弹窗；JSON/字段错误 `400`，过期选择 `409` |
 | `POST /api/v1/invoices/preview-jobs` | `prepare_invoice_preview` | `{items:[{invoice_key,source_path}]}`；返回短期 job、按所选顺序的文件元数据和页面/text URL | 首页预览；选择过期 `409`，渲染/来源问题返回结构化 `4xx/503`，响应 no-store |
 | `POST /api/v1/invoices/preview-jobs/{job_id}/keep-alive` | `keep_invoice_preview_alive` | 轻量刷新预览 job 的 15 分钟闲置截止时间；返回 `job_id/expires_at/idle_timeout_seconds` | 只在预览弹窗打开期间调用；已过期 `410`、后端重启后未知 job `404`，响应 no-store |
@@ -106,6 +106,8 @@ preview 和 print 都以短期内存 job 输出，不能把 PNG、XML 文本或�
 | `POST /api/v1/cost-analysis/open-summary` | `open_cost_summary` | 打开当前 `watch_dir/成本发票汇总.xlsx` | 成本页；缺失时返回结构化失败 |
 
 `cost_snapshot` 的 schema 自愈和 `reference-status` 的状态/工作簿写入都使用所捕获 `TargetProfile` 的 monitor 写锁。完成前若活动 profile 改变，只保留旧 profile 自己的落盘结果，不清当前缓存且不发送当前 profile 的事件；这两条文件 I/O 路径不能在事件循环中等待锁。
+
+成本页标题右侧的紧凑进度不是新的后端进度接口，也不读取 `bridge/progress`。它只围绕本次 `GET /api/v1/cost-analysis` 的真实本地生命周期显示“读取成本汇总数据 / 整理成本明细 / 初始化成本视图”；这些百分比是请求与首个表格初始化的阶段标记，不表示文件扫描或重建工作量。自动 SSE 刷新保持安静，手动刷新、保存、首次进入和重建完成后的快照读取才显示该反馈；成功态从右向左收束为绿色圆形勾选，失败态保留短暂可诊断提示。
 
 ### 3.4 单据
 
@@ -261,6 +263,7 @@ L10-D 复用 L10-R/C 的 lease、marker、fixed-loopback bridge 和 pure coordin
 | 方法与路径 | AppState 入口 | 当前语义 | 消费者/错误 |
 |---|---|---|---|
 | `GET /api/v1/bridge/status` | `bridge_status` | PID + lock 真值，返回 `running/ready/observer_active`、路径和最近状态 | 首页、设置页、backend |
+| `GET /api/v1/bridge/progress` | `bridge_progress` | 当前 `TargetProfile` 的原子同步快照和受限 `background_sync_status`；只读，不触发同步 | 首页和复用 localhost 的首页 WebView；无快照或档案不匹配返回 idle |
 | `POST /api/v1/bridge/health-check` | `bridge_health_check` | bridge 结构化诊断 | 首页 |
 | `POST /api/v1/bridge/rebuild` | `bridge_rebuild` | 同步重建普通汇总和成本分析，记录 task/event | 首页、成本、设置 |
 | `POST /api/v1/bridge/start` | `bridge_start` | 启动独立 daemon，等待 `ready` | 首页、设置；启动不就绪返回 `ok=false` |
@@ -282,6 +285,8 @@ L10-D 复用 L10-R/C 的 lease、marker、fixed-loopback bridge 和 pure coordin
 | `GET /api/v1/tasks/{task_id}` | `get_task` | SQLite task 状态与 detail | 不存在 `404` |
 | `GET /api/v1/events/stream` | `event_stream` | SSE；`after` 优先于 `Last-Event-ID`，无游标从最新事件后监听；一旦结构化 shutdown 已被接受，生成器结束，不继续维持 WebView 的长连接 | `common.js`；15 秒空闲心跳注释；Uvicorn graceful shutdown |
 | `POST /api/v1/server/shutdown` | `request_server_shutdown` | `{shutdown_behavior,remember}`；返回 `ok`、`scheduled/idempotent` 和确认后的行为，再延迟结束 WebUI | `remember` 非布尔或行为非法 `400`，关闭失败 `500`；macOS 原生停止固定 `keep_monitor + remember=false` |
+
+进度响应只保留 `operation_id/task_id/target_id/trigger/status/phase/message/percent/processed_count/total_count` 与时间字段，不返回内部错误或路径。`status` 是 `idle/running/success/failed`，文件扫描、普通汇总、成本解析和确认阶段的百分比由真实回调驱动且不倒退。后台 startup worker 已在父进程标为 `running`、但 child 尚未写入快照时，受限 `background_sync_status=running` 只让首页继续轮询并显示“正在启动后台汇总”；它不是新的 monitor 生存真值。首页只在本页已经显示过的运行阶段呈现终态：成功快照到 `100%` 后从右向左收束为绿色圆形勾选并自动隐藏，避免首次进入页面时把持久化的旧成功快照误播成刚完成的同步。成本页的本地快照读取动效见 3.3，不消费这个接口。
 
 health 的当前 API 契约是 `2026-08-02-release-update-v1`，做账协议是 `w9-ledger-review-v1`。构建清单与 health 都必须包含完整能力集合；除既有预览、打印、分类、合计、monitor 与关闭能力外，`release.package-identity.v1`、`settings.startup-surface.v1` 和 `updates.metadata-check.v1` 也是 macOS 严格握手必需能力。
 
@@ -349,9 +354,11 @@ sequenceDiagram
     end
 ```
 
-`/` 返回 200 不表示后台投影已完成；`health.background_status` 和事件用于区分 `initializing/running/ready/failed`。正式 BAT 不能只把 `%ProgramFiles%\PowerShell\7\pwsh.exe` 当成 PS7 真值：固定路径不可用时继续通过 `where.exe pwsh.exe` 解析 `PATH`/Microsoft Store App Execution Alias，并验证主版本为 7；`INVOICE_HUB_FORCE_PS51=1` 仍直接选择 5.1。当前启动脚本实现以首页 200 为就绪探测，随后 `Get-IHHealth` 必须从原始响应流按 UTF-8 解码再解析 JSON，因为 PS5.1 会在 `application/json` 无 charset 时错误解释 `.Content`；中文空格路径还原后仍执行完整 PID、配置、runtime、build/package 身份校验。`Win32_Process` 的命令行信息仍是持久 PID 的首选证明；仅当 CIM 拒绝读取该元数据时，启动复用和正式 stop 才能以同 PID 的解释器路径加 health 中精确 config/runtime/build/package 绑定回退，缺失或任一不一致一律拒绝。新启动的直接子进程句柄只用于该启动回合的失败清理。长期启动真值约束仍要求同时关注端口、PID 和 stale state，修改启动链时必须按 `AGENTS.md` 做相邻回归。
+`/` 返回 200 不表示后台投影已完成；`health.background_status` 和事件用于区分 `initializing/running/ready/failed`，首页通过 `bridge/progress` 的原子快照显示真实同步进度。成本页不轮询该快照，而是在自己读取 `GET /api/v1/cost-analysis` 并初始化首个表格时显示本地阶段反馈。正式 BAT 不能只把 `%ProgramFiles%\PowerShell\7\pwsh.exe` 当成 PS7 真值：固定路径不可用时继续通过 `where.exe pwsh.exe` 解析 `PATH`/Microsoft Store App Execution Alias，并验证主版本为 7；`INVOICE_HUB_FORCE_PS51=1` 仍直接选择 5.1。共享启动上下文只在 `.git`、`src/invoice_hub/api/main.py` 同时存在且 build/package manifest、内置 `python\python.exe` 都不存在时，才把根 BAT 的无参调用归为源码开发模式；任一正式包标记都会保留便携包的 fail-closed 身份检查。源码 `.venv` launcher 文件存在但实际无法启动时，只允许读取同一 `.venv\pyvenv.cfg` 声明且已验证可执行的基础解释器，不得改用任意系统 Python；同一声明路径在受限会话无法执行时只可用于识别已运行服务，不能成为新的启动解释器。源码 health 以 `development` 的 build/package 身份完成绑定，但可按定义缺少正式 manifest；便携包仍要求两份 manifest 有效。当前启动脚本实现以首页 200 为就绪探测，随后 `Get-IHHealth` 必须从原始响应流按 UTF-8 解码再解析 JSON，因为 PS5.1 会在 `application/json` 无 charset 时错误解释 `.Content`；中文空格路径还原后仍执行完整 PID、配置、runtime、build/package 身份校验。`Win32_Process` 的命令行信息仍是持久 PID 的首选证明；CIM 调用被拒绝或返回缺失执行路径/命令行的记录时，启动复用和正式 stop 才能以同 PID 的解释器路径加 health 中精确 config/runtime/build/package 绑定回退，完整 CIM 记录下的任一不一致一律拒绝。新启动的直接子进程句柄只用于该启动回合的失败清理。长期启动真值约束仍要求同时关注端口、PID 和 stale state，修改启动链时必须按 `AGENTS.md` 做相邻回归。
 
-startup child、monitor daemon 与手动 `bridge/rebuild` 对同一 TargetProfile 都共用 `state_dir/.invoice_sync.lock` 的 profile 范围 OS 写锁，锁覆盖读取、决策、投影和 monitor 状态的完整写入段。子进程运行时显式关闭普通 sync SSE 与桌面通知；父进程只在 generation 和完整 profile 身份仍匹配时，才重建当前缓存、补发 `invoice.changed/cost_analysis.updated/monitor.sync_*` 与 `server.background_ready/failed`。身份不匹配时不改当前缓存或状态，只写含 captured/active target 的 `server.background_stale`。被替代的子进程和等待结果都有有界终止/等待；无法按时退出仅产生 `server.background_worker_retire_timeout` 诊断，不能把旧结果复活为当前目录状态。
+venv launcher 的可执行性探测必须在隐藏子进程中捕获 stdout/stderr 并要求固定 Python 哨兵，不能只以退出码判定。哨兵失败时，源码模式只读取同一 `.venv\pyvenv.cfg` 声明并实际可执行的基础解释器；正式便携包不会触发此回退。
+
+startup child、monitor daemon 与手动 `bridge/rebuild` 对同一 TargetProfile 都共用 `state_dir/.invoice_sync.lock` 的 profile 范围 OS 写锁，锁覆盖读取、决策、投影和 monitor 状态的完整写入段。同步在锁内以原子替换发布 `sync_progress.json`，但页面读取不拿该长期锁；因此长时间 PDF/OFD/XML 解析期间仍可显示扫描、summary、cost、finalizing/complete 的单调百分比。子进程运行时显式关闭普通 sync SSE 与桌面通知；父进程只在 generation 和完整 profile 身份仍匹配时，才重建当前缓存、补发 `invoice.changed/cost_analysis.updated/monitor.sync_*` 与 `server.background_ready/failed`。身份不匹配时不改当前缓存或状态，只写含 captured/active target 的 `server.background_stale`。被替代的子进程和等待结果都有有界终止/等待；无法按时退出仅产生 `server.background_worker_retire_timeout` 诊断，不能把旧结果复活为当前目录状态。
 
 `python -m invoice_hub.api.main` 会先经包级 `api.__init__`。该导出必须保持惰性，CLI 解析 root/config 并写入启动环境后才导入模块级 FastAPI app；否则 `app.py` 的默认实例与 CLI 再次调用工厂会各自产生 AppState 和后台 startup sync。
 

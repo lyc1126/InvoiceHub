@@ -71,6 +71,41 @@ def test_monitor_sync_rebuilds_outputs_and_processed_state(tmp_path: Path) -> No
     assert len(read_csv_rows(Path(profile.workspace_dir) / "发票汇总.csv")) == 1
 
 
+def test_monitor_sync_publishes_monotonic_progress_snapshot(tmp_path: Path, monkeypatch) -> None:
+    config = load_config(tmp_path)
+    watch = tmp_path / "发票文件"
+    watch.mkdir(exist_ok=True)
+    (watch / "sample.xml").write_text(_sample_xml(), encoding="utf-8")
+    profile = target_profile_for(config)
+    state = MonitorState(profile, tmp_path / "runtime" / "invoice_hub.db")
+    snapshots: list[dict] = []
+    original_write = state.write_sync_progress
+
+    def capture_progress(payload: dict) -> None:
+        snapshots.append(dict(payload))
+        original_write(payload)
+
+    monkeypatch.setattr(state, "write_sync_progress", capture_progress)
+
+    result = MonitorSynchronizer(state).run_sync("startup_sync", force=True)
+
+    assert result["ok"] is True
+    assert snapshots[0]["status"] == "running"
+    assert snapshots[-1]["status"] == "success"
+    assert snapshots[-1]["phase"] == "complete"
+    assert snapshots[-1]["percent"] == 100
+    assert {"scanning", "summary", "cost", "finalizing", "complete"} <= {
+        str(snapshot["phase"]) for snapshot in snapshots
+    }
+    assert [int(snapshot["percent"]) for snapshot in snapshots] == sorted(
+        int(snapshot["percent"]) for snapshot in snapshots
+    )
+    final_snapshot = state.read_sync_progress()
+    assert final_snapshot["target_id"] == profile.id
+    assert final_snapshot["status"] == "success"
+    assert final_snapshot["percent"] == 100
+
+
 def test_monitor_sync_write_lock_serializes_same_profile_across_processes_and_reenters(tmp_path: Path) -> None:
     config = load_config(tmp_path)
     profile = target_profile_for(config)

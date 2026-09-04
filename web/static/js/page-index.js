@@ -28,9 +28,21 @@ const state = {
   filePreviewKeepAliveTimer: 0,
   filePreviewRecoveryPromise: null,
   monitorBridge: null,
+  syncProgressPolling: false,
+  syncProgressAwaitingStart: false,
+  syncProgressRequestInFlight: false,
+  syncProgressPollTimer: 0,
+  syncProgressAnnouncementKey: "",
+  syncProgressDismissTimer: 0,
+  syncProgressHideTimer: 0,
+  syncProgressResultKey: "",
 };
 const FILE_PREVIEW_KEEP_ALIVE_RETRY_MS = 15 * 1000;
 const FILE_PREVIEW_NETWORK_RETRY_MS = 700;
+const SYNC_PROGRESS_POLL_INTERVAL_MS = 650;
+const SYNC_PROGRESS_SUCCESS_VISIBLE_MS = 1100;
+const SYNC_PROGRESS_FAILURE_VISIBLE_MS = 3400;
+const SYNC_PROGRESS_EXIT_MS = 180;
 const refs = {
   banner: document.getElementById("pageBanner"),
   invoiceBody: document.getElementById("invoiceBody"),
@@ -44,6 +56,11 @@ const refs = {
   recentWatchDirs: document.getElementById("recentWatchDirs"),
   validation: document.getElementById("watchDirValidation"),
   rebuildBtn: document.getElementById("rebuildBtn"),
+  syncProgress: document.getElementById("syncProgress"),
+  syncProgressTrack: document.getElementById("syncProgressTrack"),
+  syncProgressFill: document.getElementById("syncProgressFill"),
+  syncProgressPercent: document.getElementById("syncProgressPercent"),
+  syncProgressDetail: document.getElementById("syncProgressDetail"),
   healthBtn: document.getElementById("healthBtn"),
   startBtn: document.getElementById("startBtn"),
   stopBtn: document.getElementById("stopBtn"),
@@ -246,6 +263,171 @@ function renderBridgeStatus(bridge) {
   const externallyManaged = indexBackendIsExternallyManaged();
   refs.startBtn.disabled = externallyManaged || running;
   refs.stopBtn.disabled = externallyManaged || !running;
+}
+
+function syncProgressNumber(value, maximum) {
+  const numeric = Number.parseInt(value, 10);
+  const normalized = Number.isFinite(numeric) ? Math.max(0, numeric) : 0;
+  return typeof maximum === "number" ? Math.min(normalized, maximum) : normalized;
+}
+
+function clearSyncProgressDismissal() {
+  if (state.syncProgressDismissTimer) window.clearTimeout(state.syncProgressDismissTimer);
+  if (state.syncProgressHideTimer) window.clearTimeout(state.syncProgressHideTimer);
+  state.syncProgressDismissTimer = 0;
+  state.syncProgressHideTimer = 0;
+}
+
+function setSyncProgressStatus(status) {
+  if (!refs.syncProgress) return;
+  const nextClass = `sync-progress--${status}`;
+  if (refs.syncProgress.classList.contains(nextClass)) return;
+  refs.syncProgress.classList.remove(
+    "sync-progress--idle",
+    "sync-progress--starting",
+    "sync-progress--running",
+    "sync-progress--success",
+    "sync-progress--failed",
+  );
+  refs.syncProgress.classList.add(nextClass);
+}
+
+function showSyncProgress(status) {
+  if (!refs.syncProgress) return;
+  setSyncProgressStatus(status);
+  refs.syncProgress.classList.remove("sync-progress--leaving");
+  if (!refs.syncProgress.hidden) {
+    refs.syncProgress.classList.add("sync-progress--visible");
+    return;
+  }
+  refs.syncProgress.hidden = false;
+  window.requestAnimationFrame(() => {
+    if (!refs.syncProgress?.hidden) refs.syncProgress.classList.add("sync-progress--visible");
+  });
+}
+
+function dismissSyncProgressAfter(visibleForMs) {
+  if (!refs.syncProgress) return;
+  clearSyncProgressDismissal();
+  state.syncProgressDismissTimer = window.setTimeout(() => {
+    refs.syncProgress?.classList.remove("sync-progress--visible");
+    refs.syncProgress?.classList.add("sync-progress--leaving");
+    state.syncProgressHideTimer = window.setTimeout(() => {
+      if (!refs.syncProgress) return;
+      refs.syncProgress.hidden = true;
+      refs.syncProgress.classList.remove("sync-progress--visible", "sync-progress--leaving");
+      state.syncProgressResultKey = "";
+    }, SYNC_PROGRESS_EXIT_MS);
+  }, visibleForMs);
+}
+
+function renderSyncProgress(payload) {
+  if (!refs.syncProgress || !refs.syncProgressTrack || !refs.syncProgressFill || !refs.syncProgressPercent) return;
+  const backgroundStarting = payload?.status === "idle" && payload?.background_sync_status === "running";
+  const status = ["running", "success", "failed"].includes(payload?.status)
+    ? payload.status
+    : backgroundStarting
+      ? "running"
+      : state.syncProgressAwaitingStart
+        ? "starting"
+        : "idle";
+  const percent = syncProgressNumber(payload?.percent, 100);
+  const total = syncProgressNumber(payload?.total_count);
+  const processed = syncProgressNumber(payload?.processed_count, total || undefined);
+  const fallbackMessage = backgroundStarting ? "正在启动后台汇总" : status === "starting" ? "正在准备汇总" : "等待汇总";
+  const message = String(payload?.message || fallbackMessage).trim() || fallbackMessage;
+  const detail = status === "starting"
+    ? message
+    : total
+      ? `${message}，已处理 ${processed} / ${total}，${percent}%`
+      : `${message}，${percent}%`;
+  const displayedPercent = status === "starting" ? 16 : status === "success" ? 100 : percent;
+  refs.syncProgress.title = detail;
+  refs.syncProgressFill.style.transform = `scaleX(${displayedPercent / 100})`;
+  refs.syncProgressPercent.textContent = status === "starting" ? "准备中" : `${percent}%`;
+  refs.syncProgressTrack.setAttribute("aria-valuenow", String(percent));
+  refs.syncProgressTrack.setAttribute("aria-valuetext", detail);
+  const resultKey = `${status}:${payload?.operation_id || payload?.task_id || payload?.finished_at || payload?.updated_at || ""}`;
+  const announcementKey = `${status}:${payload?.phase || ""}`;
+  if (refs.syncProgressDetail && state.syncProgressAnnouncementKey !== announcementKey) {
+    refs.syncProgressDetail.textContent = detail;
+    state.syncProgressAnnouncementKey = announcementKey;
+  }
+
+  if (status === "starting" || status === "running") {
+    clearSyncProgressDismissal();
+    state.syncProgressResultKey = "";
+    showSyncProgress(status);
+    return;
+  }
+  if (status === "idle") {
+    if (!refs.syncProgress.hidden && !refs.syncProgress.classList.contains("sync-progress--success") && !refs.syncProgress.classList.contains("sync-progress--failed")) {
+      dismissSyncProgressAfter(0);
+    }
+    return;
+  }
+  // Completed snapshots persist on disk, so only animate a run that this page already displayed.
+  if (refs.syncProgress.hidden) return;
+  if (state.syncProgressResultKey === resultKey) return;
+  state.syncProgressResultKey = resultKey;
+  showSyncProgress(status);
+  dismissSyncProgressAfter(status === "success" ? SYNC_PROGRESS_SUCCESS_VISIBLE_MS : SYNC_PROGRESS_FAILURE_VISIBLE_MS);
+}
+
+function stopSyncProgressPolling() {
+  state.syncProgressPolling = false;
+  if (state.syncProgressPollTimer) window.clearTimeout(state.syncProgressPollTimer);
+  state.syncProgressPollTimer = 0;
+}
+
+function scheduleSyncProgressPoll() {
+  if (!state.syncProgressPolling) return;
+  if (state.syncProgressPollTimer) window.clearTimeout(state.syncProgressPollTimer);
+  state.syncProgressPollTimer = window.setTimeout(() => {
+    state.syncProgressPollTimer = 0;
+    void refreshSyncProgress();
+  }, SYNC_PROGRESS_POLL_INTERVAL_MS);
+}
+
+async function refreshSyncProgress() {
+  if (state.syncProgressRequestInFlight) return;
+  state.syncProgressRequestInFlight = true;
+  try {
+    // The backend writes this per-profile snapshot while holding the projection lock.
+    // Polling it separately keeps progress visible during long PDF/OFD/XML parsing.
+    const payload = await app.api("/api/v1/bridge/progress");
+    renderSyncProgress(payload);
+    if (payload?.status === "running" || payload?.background_sync_status === "running" || state.syncProgressAwaitingStart) {
+      state.syncProgressPolling = true;
+      scheduleSyncProgressPoll();
+    } else {
+      stopSyncProgressPolling();
+    }
+  } catch (_error) {
+    if (state.syncProgressPolling || state.syncProgressAwaitingStart) {
+      state.syncProgressPolling = true;
+      scheduleSyncProgressPoll();
+    }
+  } finally {
+    state.syncProgressRequestInFlight = false;
+  }
+}
+
+function startSyncProgressPolling() {
+  state.syncProgressPolling = true;
+  void refreshSyncProgress();
+}
+
+async function rebuildWithProgress() {
+  state.syncProgressAwaitingStart = true;
+  renderSyncProgress();
+  startSyncProgressPolling();
+  try {
+    return await app.api("/api/v1/bridge/rebuild", { method: "POST", body: {} });
+  } finally {
+    state.syncProgressAwaitingStart = false;
+    await refreshSyncProgress();
+  }
 }
 
 function setWatchDirInputValue(value) {
@@ -1737,7 +1919,7 @@ async function openBusinessDossier(key, button) {
   }
 }
 
-refs.rebuildBtn.addEventListener("click", () => runAction(refs.rebuildBtn, "汇总中...", () => app.api("/api/v1/bridge/rebuild", { method: "POST", body: {} }), "汇总已完成"));
+refs.rebuildBtn.addEventListener("click", () => runAction(refs.rebuildBtn, "汇总中...", rebuildWithProgress, "汇总已完成"));
 refs.healthBtn.addEventListener("click", () => runAction(refs.healthBtn, "检查中...", () => app.api("/api/v1/bridge/health-check", { method: "POST", body: {} }), "桥接检查完成"));
 function runOwnedMonitorAction(button, busyText, endpoint, successMessage) {
   if (indexBackendIsExternallyManaged()) {
@@ -1846,6 +2028,7 @@ document.addEventListener("visibilitychange", () => {
   void keepFilePreviewAlive(state.filePreviewJob.job_id);
 });
 window.addEventListener("beforeunload", () => {
+  stopSyncProgressPolling();
   stopFilePreviewKeepAlive();
   clearFilePreviewObjectUrl();
 });
@@ -1876,4 +2059,5 @@ function handleUnexpectedRefreshFailure(error) {
 }
 
 app.connectEvents(refs.eventState, app.debounce(refreshAll, 300), { refreshOnFirstOpen: false });
+void refreshSyncProgress();
 void refreshAll().catch(handleUnexpectedRefreshFailure);

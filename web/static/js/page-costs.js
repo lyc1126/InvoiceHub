@@ -3,6 +3,9 @@ const COST_ROW_LIMITS = [30, 60, 100];
 const COST_ROW_LIMIT_STORAGE_KEY = "invoiceHub.costs.rowLimit";
 const DEFAULT_COST_ROW_LIMIT = 30;
 const COST_AUTO_REFRESH_DEBOUNCE_MS = 350;
+const COST_LOAD_PROGRESS_SUCCESS_VISIBLE_MS = 900;
+const COST_LOAD_PROGRESS_FAILURE_VISIBLE_MS = 3400;
+const COST_LOAD_PROGRESS_EXIT_MS = 180;
 
 const state = {
   payload: null,
@@ -11,6 +14,9 @@ const state = {
   editingReference: null,
   renderedViews: new Set(),
   rowLimit: loadCostRowLimit(),
+  costLoadProgressAnnouncementKey: "",
+  costLoadProgressDismissTimer: 0,
+  costLoadProgressHideTimer: 0,
 };
 let costTableSizingFrame = 0;
 let costAutoRefreshTimer = 0;
@@ -21,6 +27,11 @@ const refs = {
   syncPanel: document.getElementById("syncPanel"),
   refreshBtn: document.getElementById("refreshBtn"),
   rebuildBtn: document.getElementById("rebuildBtn"),
+  costLoadProgress: document.getElementById("costLoadProgress"),
+  costLoadProgressTrack: document.getElementById("costLoadProgressTrack"),
+  costLoadProgressFill: document.getElementById("costLoadProgressFill"),
+  costLoadProgressPercent: document.getElementById("costLoadProgressPercent"),
+  costLoadProgressDetail: document.getElementById("costLoadProgressDetail"),
   openSummaryBtn: document.getElementById("openSummaryBtn"),
   copyBtn: document.getElementById("copyBtn"),
   saveBtn: document.getElementById("saveReferenceBtn"),
@@ -91,6 +102,103 @@ function syncTone(value) {
   if (value === "fresh" || value === "empty") return "success";
   if (value === "pending" || value === "needs_review") return "warning";
   return "danger";
+}
+
+function costLoadProgressNumber(value, maximum) {
+  const numeric = Number.parseInt(value, 10);
+  const normalized = Number.isFinite(numeric) ? Math.max(0, numeric) : 0;
+  return typeof maximum === "number" ? Math.min(normalized, maximum) : normalized;
+}
+
+function clearCostLoadProgressDismissal() {
+  if (state.costLoadProgressDismissTimer) window.clearTimeout(state.costLoadProgressDismissTimer);
+  if (state.costLoadProgressHideTimer) window.clearTimeout(state.costLoadProgressHideTimer);
+  state.costLoadProgressDismissTimer = 0;
+  state.costLoadProgressHideTimer = 0;
+}
+
+function setCostLoadProgressStatus(status) {
+  if (!refs.costLoadProgress) return;
+  const nextClass = `sync-progress--${status}`;
+  if (refs.costLoadProgress.classList.contains(nextClass)) return;
+  refs.costLoadProgress.classList.remove(
+    "sync-progress--idle",
+    "sync-progress--starting",
+    "sync-progress--running",
+    "sync-progress--success",
+    "sync-progress--failed",
+  );
+  refs.costLoadProgress.classList.add(nextClass);
+}
+
+function showCostLoadProgress(status) {
+  if (!refs.costLoadProgress) return;
+  setCostLoadProgressStatus(status);
+  refs.costLoadProgress.classList.remove("sync-progress--leaving");
+  if (!refs.costLoadProgress.hidden) {
+    refs.costLoadProgress.classList.add("sync-progress--visible");
+    return;
+  }
+  refs.costLoadProgress.hidden = false;
+  window.requestAnimationFrame(() => {
+    if (!refs.costLoadProgress?.hidden) refs.costLoadProgress.classList.add("sync-progress--visible");
+  });
+}
+
+function dismissCostLoadProgressAfter(visibleForMs) {
+  if (!refs.costLoadProgress) return;
+  clearCostLoadProgressDismissal();
+  state.costLoadProgressDismissTimer = window.setTimeout(() => {
+    refs.costLoadProgress?.classList.remove("sync-progress--visible");
+    refs.costLoadProgress?.classList.add("sync-progress--leaving");
+    state.costLoadProgressHideTimer = window.setTimeout(() => {
+      if (!refs.costLoadProgress) return;
+      refs.costLoadProgress.hidden = true;
+      refs.costLoadProgress.classList.remove("sync-progress--visible", "sync-progress--leaving");
+      state.costLoadProgressAnnouncementKey = "";
+    }, COST_LOAD_PROGRESS_EXIT_MS);
+  }, visibleForMs);
+}
+
+function updateCostLoadProgress(status, percent, detail) {
+  if (!refs.costLoadProgress || !refs.costLoadProgressTrack || !refs.costLoadProgressFill || !refs.costLoadProgressPercent) return;
+  const displayedPercent = costLoadProgressNumber(percent, 100);
+  showCostLoadProgress(status);
+  refs.costLoadProgress.title = detail;
+  refs.costLoadProgressFill.style.transform = `scaleX(${displayedPercent / 100})`;
+  refs.costLoadProgressPercent.textContent = `${displayedPercent}%`;
+  refs.costLoadProgressTrack.setAttribute("aria-valuenow", String(displayedPercent));
+  refs.costLoadProgressTrack.setAttribute("aria-valuetext", detail);
+  if (refs.costLoadProgressDetail && state.costLoadProgressAnnouncementKey !== detail) {
+    refs.costLoadProgressDetail.textContent = detail;
+    state.costLoadProgressAnnouncementKey = detail;
+  }
+}
+
+function beginCostLoadProgress() {
+  clearCostLoadProgressDismissal();
+  state.costLoadProgressAnnouncementKey = "";
+  updateCostLoadProgress("starting", 14, "正在读取成本汇总数据");
+}
+
+function advanceCostLoadProgress(percent, detail) {
+  clearCostLoadProgressDismissal();
+  updateCostLoadProgress("running", percent, detail);
+}
+
+function completeCostLoadProgress() {
+  updateCostLoadProgress("success", 100, "成本汇总已就绪");
+  dismissCostLoadProgressAfter(COST_LOAD_PROGRESS_SUCCESS_VISIBLE_MS);
+}
+
+function failCostLoadProgress(message) {
+  updateCostLoadProgress("failed", 100, message || "成本汇总读取失败，请重试");
+  dismissCostLoadProgressAfter(COST_LOAD_PROGRESS_FAILURE_VISIBLE_MS);
+}
+
+function waitForCostLoadProgressPaint() {
+  if (document.visibilityState === "hidden") return Promise.resolve();
+  return new Promise((resolve) => window.requestAnimationFrame(resolve));
 }
 
 function costClassificationMeta(value) {
@@ -314,9 +422,28 @@ async function loadCostsNow(reason = "") {
     app.setServiceStatus(refs.eventState, "warning", "正在编辑开票数量或加价率，已暂停自动刷新表格");
     return;
   }
-  state.payload = await app.api("/api/v1/cost-analysis");
-  if (reason === "save") state.dirty.clear();
-  render();
+  const showLoadProgress = !isAutoRefreshReason(reason);
+  if (showLoadProgress) {
+    beginCostLoadProgress();
+    await waitForCostLoadProgressPaint();
+  }
+  try {
+    // This local lifecycle describes only the cost snapshot request and its first view render.
+    // Global rebuild progress remains a homepage concern so the two operations cannot be conflated.
+    state.payload = await app.api("/api/v1/cost-analysis");
+    if (reason === "save") state.dirty.clear();
+    if (showLoadProgress) {
+      advanceCostLoadProgress(58, "正在整理成本明细");
+      await waitForCostLoadProgressPaint();
+      advanceCostLoadProgress(82, "正在初始化成本视图");
+      await waitForCostLoadProgressPaint();
+    }
+    render();
+    if (showLoadProgress) completeCostLoadProgress();
+  } catch (error) {
+    if (showLoadProgress) failCostLoadProgress(error?.message);
+    throw error;
+  }
 }
 
 document.querySelectorAll(".tab").forEach((tab) => {
@@ -442,7 +569,7 @@ refs.refreshBtn.addEventListener("click", () => loadCosts("manual_refresh"));
 refs.rebuildBtn.addEventListener("click", async () => {
   app.setBusy(refs.rebuildBtn, true, "重建中...");
   try {
-    await app.api("/api/v1/bridge/rebuild", { method: "POST", body: "{}" });
+    await app.api("/api/v1/bridge/rebuild", { method: "POST", body: {} });
     await loadCosts("rebuild");
   } finally {
     app.setBusy(refs.rebuildBtn, false);

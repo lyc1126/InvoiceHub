@@ -125,7 +125,14 @@ body.is-page-exiting .shell {
   gap: 10px;
   min-width: min(100%, 320px);
 }
-.page-title { min-width: 0; max-width: 100%; }
+.page-title { flex: 1 1 auto; min-width: 0; max-width: 100%; }
+.page-title__heading {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+.page-title__heading > h2 { flex: 0 0 auto; white-space: nowrap; }
 .page-title h2 { margin: 0; font-size: 24px; letter-spacing: 0; }
 .page-title p { margin: 4px 0 0; color: var(--muted); }
 .path-inline, .path-cell {
@@ -149,6 +156,163 @@ body.is-page-exiting .shell {
 }
 .toolbar { margin-bottom: 14px; }
 .cost-actions { margin-bottom: 0; }
+.sync-progress {
+  --sync-progress-inline-size: 184px;
+  --sync-progress-block-size: 30px;
+  --sync-progress-accent: var(--primary);
+  --sync-progress-success: var(--green);
+  --sync-progress-danger: var(--red);
+  --sync-progress-track: var(--surface-2);
+  --sync-progress-label-surface: var(--surface);
+  --sync-progress-label-text: var(--text);
+  position: relative;
+  display: inline-flex;
+  flex: 0 1 var(--sync-progress-inline-size);
+  inline-size: min(100%, var(--sync-progress-inline-size));
+  min-inline-size: 156px;
+  block-size: var(--sync-progress-block-size);
+  align-items: center;
+  opacity: 0;
+  transform: translateY(-2px) scale(0.985);
+  transition: opacity 160ms ease-out, transform 220ms cubic-bezier(0.2, 0.85, 0.24, 1);
+}
+.sync-progress--visible {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+}
+.sync-progress--leaving {
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(-1px) scale(0.94);
+}
+.sync-progress--title {
+  --sync-progress-inline-size: 176px;
+  min-inline-size: 148px;
+}
+.sync-progress__track {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: var(--sync-progress-block-size);
+  overflow: hidden;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: var(--sync-progress-track);
+  box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.08);
+  transform: translateZ(0);
+  transform-origin: left center;
+  transition: transform 340ms cubic-bezier(0.22, 0.92, 0.3, 1), opacity 140ms ease-out 210ms;
+}
+.sync-progress__fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 100%;
+  border-radius: inherit;
+  background: var(--sync-progress-accent);
+  transform: scaleX(0);
+  transform-origin: left center;
+  transition: transform 240ms cubic-bezier(0.2, 0.84, 0.26, 1), background-color 180ms ease-out;
+}
+.sync-progress__fill::after {
+  position: absolute;
+  inset: 0;
+  content: "";
+  opacity: 0;
+  background: linear-gradient(100deg, transparent 28%, rgba(255, 255, 255, 0.52) 50%, transparent 72%);
+  transform: translateX(-125%);
+}
+@keyframes sync-progress-sheen {
+  from { transform: translateX(-125%); }
+  to { transform: translateX(125%); }
+}
+.sync-progress__percent {
+  position: absolute;
+  top: 50%;
+  right: 5px;
+  display: inline-flex;
+  align-items: center;
+  min-width: 33px;
+  height: 20px;
+  justify-content: center;
+  padding: 0 5px;
+  border: 1px solid color-mix(in srgb, var(--line-strong) 68%, transparent);
+  border-radius: 6px;
+  background: var(--sync-progress-label-surface);
+  color: var(--sync-progress-label-text);
+  font-size: 11px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  transform: translateY(-50%);
+  transition: opacity 120ms ease-out, transform 160ms ease-out;
+}
+.sync-progress__check {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  display: grid;
+  width: var(--sync-progress-block-size);
+  height: var(--sync-progress-block-size);
+  place-items: center;
+  border: 2px solid var(--sync-progress-success);
+  border-radius: 50%;
+  background: var(--surface);
+  opacity: 0;
+  transform: translateY(-50%) scale(0.72);
+  transition: opacity 120ms ease-out 170ms, transform 220ms cubic-bezier(0.18, 1.12, 0.3, 1) 170ms;
+}
+.sync-progress__check::after {
+  width: 9px;
+  height: 5px;
+  content: "";
+  border-bottom: 2px solid var(--sync-progress-success);
+  border-left: 2px solid var(--sync-progress-success);
+  transform: translateY(-1px) rotate(-45deg);
+}
+.sync-progress--starting .sync-progress__track,
+.sync-progress--running .sync-progress__track { border-color: var(--sync-progress-accent); }
+.sync-progress--starting .sync-progress__fill::after,
+.sync-progress--running .sync-progress__fill::after {
+  opacity: 0.46;
+  animation: sync-progress-sheen 1150ms ease-in-out infinite;
+}
+.sync-progress--success .sync-progress__track {
+  border-color: var(--sync-progress-success);
+  opacity: 0;
+  transform: scaleX(0.16);
+}
+.sync-progress--success .sync-progress__fill { background: var(--sync-progress-success); }
+.sync-progress--success .sync-progress__percent {
+  opacity: 0;
+  transform: translate(6px, -50%) scale(0.9);
+}
+.sync-progress--success .sync-progress__check {
+  opacity: 1;
+  transform: translateY(-50%) scale(1);
+}
+.sync-progress--failed .sync-progress__track { border-color: var(--sync-progress-danger); }
+.sync-progress--failed .sync-progress__fill { background: var(--sync-progress-danger); }
+.sync-progress__detail {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+@media (prefers-reduced-motion: reduce) {
+  .sync-progress,
+  .sync-progress__track,
+  .sync-progress__fill,
+  .sync-progress__percent,
+  .sync-progress__check {
+    transition: none;
+  }
+  .sync-progress__fill::after { animation: none; }
+}
 .panel__head .detail-file-actions { margin-bottom: 0; align-items: center; }
 button, .btn {
   min-height: 40px;
@@ -1966,6 +2130,7 @@ body[data-page="documents"] .document-preview-scroll {
   .about-product-card { align-items: flex-start; flex-direction: column; }
   .topbar, .page-head { align-items: flex-start; flex-direction: column; }
   .page-title { width: 100%; max-width: 100%; }
+  .page-title__heading { flex-wrap: wrap; }
   .page-title h2,
   .page-title p { max-width: 100%; }
   .topbar nav { justify-content: flex-start; }
@@ -2005,6 +2170,9 @@ body[data-page="documents"] .document-preview-scroll {
   .field--wide { flex: 0 1 auto; }
   .field-row, .toolbar, .filters { align-items: stretch; flex-direction: column; }
   button, .btn { width: 100%; }
+  .sync-progress { inline-size: 100%; min-inline-size: 0; max-width: none; }
+  .toolbar .sync-progress { flex: 0 0 var(--sync-progress-block-size); }
+  .sync-progress--title { inline-size: min(100%, 176px); min-inline-size: 148px; }
   .cost-table-footer {
     align-items: flex-start;
   }

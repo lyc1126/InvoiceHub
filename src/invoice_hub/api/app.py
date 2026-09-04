@@ -1069,6 +1069,10 @@ def create_app(
             action=_state(request).bridge_status,
         )
 
+    @app.get("/api/v1/bridge/progress")
+    def bridge_progress(request: Request) -> dict:
+        return _state(request).bridge_progress()
+
     @app.get("/favicon.ico", include_in_schema=False)
     def favicon() -> Response:
         return Response(status_code=204)

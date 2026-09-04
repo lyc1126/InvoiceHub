@@ -14,10 +14,10 @@
 Windows 源码开发入口：
 
 ```powershell
-.\启动一站式发票汇总系统.bat -Development
+.\启动一站式发票汇总系统.bat
 ```
 
-该命令只验证当前 checkout 的源码开发入口，不代表正式安装包或便携包已验收。
+该命令在 `.git` 与源码 API 入口存在、且没有 build/package manifest 或内置 Python 时自动选择开发模式；`-Development` 仍兼容。源码 `.venv` launcher 必须在隐藏探测中回传 Python 哨兵，且 stdout/stderr 已被捕获；仅凭退出码或控制台报错不能判为可用。哨兵失败时，只允许使用该 `.venv\pyvenv.cfg` 声明且已验证可执行的基础解释器。带任一正式包标记的目录继续走便携包校验，不会用系统 Python 兜底。端口复用优先要求完整 CIM 命令行；CIM 无法读取或只返回缺失执行路径/命令行的记录时，也必须以解释器路径和 health 的 PID、配置、运行目录、build/package 全部匹配才允许复用；当前会话无法执行的声明基础解释器仅作既有服务身份候选。它只验证当前 checkout 的源码开发入口，不代表正式安装包或便携包已验收。
 
 Tauri macOS development `.app` 已有一次隔离启动与 Cmd-Q 退出证据：它使用 explicit venv launcher、schema-3 manifest 和仅 development profile 的外置 state root，固定绑定 `127.0.0.1:8766` 后完成 health/background、首页/静态资源和 desktop 默认值检查；clean-commit 样本的真实 Cmd-Q 触发 shutdown POST 并形成 stopped state，host/backend/PID/端口清理完成，SSE 未及时退出时由显式 `kill + wait` 兜底。外部 AppleScript quit 仍不属于这一可拦截路径。该样本不覆盖 native picker、browser/tray 点击、单实例、打印、updater 或任何 DMG/签名/公证项，也不改写真实 Application Support。
 
