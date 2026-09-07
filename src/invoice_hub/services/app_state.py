@@ -15,7 +15,7 @@ import re
 from invoice_hub.domain.models import TargetProfile, utc_now_text
 from invoice_hub.monitoring.state import MonitorState
 from invoice_hub.monitoring.sync import MonitorSynchronizer
-from invoice_hub.platform import HostRpcCommand, OCR_EXTENSIONS, host_rpc, open_local_path, pick_directory, pick_file
+from invoice_hub.platform import HostRpcCommand, OCR_EXTENSIONS, host_rpc, open_external_url, open_local_path, pick_directory, pick_file
 from invoice_hub.projections.cost_analysis import invoice_cost_breakdown, selection_cost_breakdown
 from invoice_hub.projections.costs import CostProjectionService
 from invoice_hub.projections.documents import (
@@ -41,6 +41,7 @@ from invoice_hub.extraction.classification import (
 from invoice_hub.release.build_manifest import load_build_manifest
 from invoice_hub.release.package_manifest import load_package_manifest
 from invoice_hub.services.monitor_bridge import MonitorBridge
+from invoice_hub.services.document_index import DocumentIndex
 from invoice_hub.services.file_preview import (
     MAX_PREVIEW_SELECTION_RECORDS,
     PREVIEW_JOB_TTL_SECONDS,
@@ -56,12 +57,13 @@ from invoice_hub.services.invoice_printing import (
     InvoicePrintService,
     InvoicePrintSource,
 )
+from invoice_hub.services.app_icons import AppIconService
 from invoice_hub.services.skins import SkinService
 from invoice_hub.services.update_service import UpdateService
 from invoice_hub.storage import SQLiteRepository, atomic_write_json, read_csv_rows, read_json_object, write_csv_rows
 from invoice_hub.targets import AppConfig, ensure_runtime_layout, load_config, target_profile_for
 from invoice_hub.targets.paths import Layout, serialize_config_path
-from invoice_hub.version import CHANGELOG_URL, PRODUCT_DISPLAY_NAME, PRODUCT_NAME, PUBLIC_SOURCE_URL, WEBSITE_URL
+from invoice_hub.version import CHANGELOG_URL, LOCAL_WEBSITE_PATH, PRODUCT_DISPLAY_NAME, PRODUCT_NAME, PUBLIC_SOURCE_URL
 
 
 RECENT_WATCH_DIRS_KEY = "recent_watch_dirs"
@@ -81,6 +83,7 @@ DEFAULT_PREFERENCES = {
     "system_shutdown_behavior": "ask",
     "ocr_candidate_dir": "",
     "auto_check_updates": True,
+    "allow_print_popups": True,
 }
 SUPPORT_PACKAGE_EVENT_LIMIT = 80
 SUPPORT_PACKAGE_LOG_TAIL_LINES = 240
@@ -105,6 +108,10 @@ BUSINESS_DOSSIER_DIR_HINTS = {
 }
 BUSINESS_DOSSIER_SCAN_MAX_ENTRIES = 4_000
 BUSINESS_DOSSIER_SCAN_MAX_SECONDS = 1.25
+ABOUT_EXTERNAL_LINKS = {
+    "github": PUBLIC_SOURCE_URL,
+    "changelog": CHANGELOG_URL,
+}
 
 BACKGROUND_SYNC_POLL_SECONDS = 0.25
 BACKGROUND_SYNC_MAX_SECONDS = 120.0
@@ -183,6 +190,7 @@ class AppState:
         self.repo = SQLiteRepository(layout.db_path)
         self.repo.init_db()
         self._lock = threading.RLock()
+        self._document_index = DocumentIndex(layout.runtime_dir / "local_state" / "documents" / "index")
         self._host_update_lock = threading.Lock()
         self._host_update_approval_version = ""
         self._host_update_check_generation = 0
@@ -885,6 +893,10 @@ class AppState:
         if isinstance(auto_check_updates, bool):
             result["auto_check_updates"] = auto_check_updates
 
+        allow_print_popups = source.get("allow_print_popups", result["allow_print_popups"])
+        if isinstance(allow_print_popups, bool):
+            result["allow_print_popups"] = allow_print_popups
+
         result["ocr_candidate_dir"] = self._normalize_optional_path_text(source.get("ocr_candidate_dir", result["ocr_candidate_dir"]))
         return result
 
@@ -901,6 +913,7 @@ class AppState:
                 "system_shutdown_behavior": sorted(PREFERENCE_SYSTEM_SHUTDOWN_BEHAVIORS),
                 "startup_surface": sorted(PREFERENCE_STARTUP_SURFACES),
                 "desktop_available": self._desktop_surface_available(),
+                "allow_print_popups": [False, True],
             },
         }
 
@@ -958,6 +971,13 @@ class AppState:
             updated["auto_check_updates"] = value
             changed.append("auto_check_updates")
 
+        if "allow_print_popups" in source:
+            value = source.get("allow_print_popups")
+            if not isinstance(value, bool):
+                raise ValueError("发票打印弹窗许可必须是布尔值")
+            updated["allow_print_popups"] = value
+            changed.append("allow_print_popups")
+
         if "ocr_candidate_dir" in source:
             updated["ocr_candidate_dir"] = self._normalize_optional_path_text(source.get("ocr_candidate_dir"))
             changed.append("ocr_candidate_dir")
@@ -991,12 +1011,23 @@ class AppState:
                 "api_contract_version": build["api_contract_version"],
             },
             "links": {
-                "website": WEBSITE_URL,
+                "website": LOCAL_WEBSITE_PATH,
                 "github": PUBLIC_SOURCE_URL,
                 "release_notes": CHANGELOG_URL,
             },
             "update": self._update_service.state(),
         }
+
+    def open_about_link(self, link_key: str) -> dict:
+        """Open a fixed public project link through the operating system shell."""
+
+        key = str(link_key or "").strip().casefold()
+        try:
+            url = ABOUT_EXTERNAL_LINKS[key]
+        except KeyError as exc:
+            raise ValueError("公开链接不可用") from exc
+        open_external_url(url)
+        return {"ok": True, "link_key": key}
 
     def check_for_updates(self, *, force: bool = False) -> dict:
         # API, settings, and scheduled checks share this method. In a configured
@@ -1374,22 +1405,27 @@ class AppState:
             self.append_event("documents.defaults_updated", {"target_id": self.active_profile.id})
         return {"ok": True, "defaults": defaults, "defaults_path": str(self._document_defaults_path())}
 
-    def document_state(self) -> dict:
+    def document_state(self, *, restart: bool = False, revalidate: bool = True) -> dict:
+        with self._lock:
+            return self._document_state_locked(restart=restart, revalidate=revalidate)
+
+    def _document_state_locked(self, *, restart: bool, revalidate: bool) -> dict:
         defaults = self.document_defaults()
         outbound_dir = self._outbound_invoice_dir_text()
-        inbound_options = inbound_invoice_options(read_csv_rows(self.cost_service().detail_csv))
+        profile = self.active_profile.model_copy(deep=True)
+        detail = Path(profile.watch_dir) / "成本发票明细.csv"
+        catalog = self._document_index.ensure(profile.id, outbound_dir, detail, restart=restart, revalidate=revalidate)
         return {
             "ok": True,
-            "watch_dir": self.active_profile.watch_dir,
-            "target_id": self.active_profile.id,
-            "cost_detail_csv_path": str(self.cost_service().detail_csv),
-            "cost_detail_exists": self.cost_service().detail_csv.exists(),
+            "watch_dir": profile.watch_dir,
+            "target_id": profile.id,
+            "cost_detail_csv_path": str(detail),
+            "cost_detail_exists": detail.exists(),
             "defaults": defaults,
             "outbound_invoice_dir": outbound_dir,
             "outbound_dir_validation": self.inspect_document_dir(Path(outbound_dir)) if outbound_dir else self.inspect_document_dir(None),
             "recent_outbound_invoice_dirs": self._recent_outbound_invoice_dirs(),
-            "inbound_invoices": inbound_options,
-            "outbound_invoices": outbound_invoice_options(Path(outbound_dir)) if outbound_dir else [],
+            **catalog,
         }
 
     def inspect_document_dir(self, directory: Path | None) -> dict:
@@ -1410,7 +1446,11 @@ class AppState:
         supported_count = 0
         if exists and is_dir:
             try:
-                supported_count = sum(1 for item in path.rglob("*") if item.is_file() and item.suffix.lower() in {".pdf", ".ofd", ".xml"} and not item.name.startswith("~$"))
+                # Directory picking/saving only validates access. Recursive discovery
+                # belongs to the cancellable index process, never the API event loop.
+                with os.scandir(path) as entries:
+                    next(entries, None)
+                supported_count = None
                 readable = True
             except OSError:
                 readable = False
@@ -1418,7 +1458,7 @@ class AppState:
             readable = False
         can_use = bool(exists and is_dir and readable)
         if can_use:
-            summary = f"目录可用，发现 {supported_count} 个支持的发票文件。"
+            summary = "目录可用，文件数量由后台加载统计。"
         elif not exists:
             summary = "目录不存在。"
         elif not is_dir:
@@ -1893,6 +1933,11 @@ class AppState:
     def _filter_invoice_items(self, items: list[dict], filters: dict | None) -> list[dict]:
         filters = filters or {}
         keyword = str(filters.get("keyword") or "").strip().casefold()
+        search_fields = {
+            "invoice": ("seller", "invoice_number"),
+            "filename": ("source_file",),
+            "all": ("seller", "invoice_number", "source_file"),
+        }[str(filters.get("search_scope") or "all")]
         file_ext = str(filters.get("file_ext") or "").strip().casefold()
         status = str(filters.get("status") or "").strip()
         invoice_type = str(filters.get("invoice_type") or "").strip()
@@ -1902,20 +1947,9 @@ class AppState:
         date_to = str(filters.get("date_to") or "").strip()
 
         def matches(item: dict) -> bool:
-            haystack = " ".join(
-                str(item.get(key) or "")
-                for key in (
-                    "source_file",
-                    "invoice_number",
-                    "seller",
-                    "buyer",
-                    "amount",
-                    "invoice_type",
-                    "business_type",
-                    "classification_issue",
-                )
-            ).casefold()
-            if keyword and keyword not in haystack:
+            # The homepage defaults to visible invoice fields; legacy API callers
+            # retain filename matching. Match each field separately, never across boundaries.
+            if keyword and not any(keyword in str(item.get(key) or "").casefold() for key in search_fields):
                 return False
             if file_ext and not str(item.get("source_file") or "").casefold().endswith(file_ext):
                 return False
@@ -2694,6 +2728,69 @@ class AppState:
     def bridge_status(self) -> dict:
         return self._monitor_bridge().status()
 
+    def bridge_progress(self) -> dict:
+        with self._lock:
+            profile = self._active_profile.model_copy(deep=True)
+            background_status = self._background_status
+        raw = MonitorState(profile, self.layout.db_path, sync_interval_seconds=60).read_sync_progress()
+        # The parent marks startup work as running before its spawned child has a
+        # chance to publish a file snapshot. Exposing this bounded state keeps the
+        # shared Web UI polling until real per-profile progress becomes available.
+        if background_status not in {"initializing", "running", "ready", "failed"}:
+            background_status = "initializing"
+        idle = {
+            "version": 1,
+            "operation_id": "",
+            "task_id": "",
+            "target_id": profile.id,
+            "trigger": "",
+            "status": "idle",
+            "phase": "idle",
+            "message": "等待汇总",
+            "percent": 0,
+            "processed_count": 0,
+            "total_count": 0,
+            "started_at": "",
+            "updated_at": "",
+            "finished_at": "",
+            "background_sync_status": background_status,
+        }
+        if not isinstance(raw, dict) or str(raw.get("target_id") or "") != profile.id:
+            return idle
+
+        def text(value: object, limit: int = 160) -> str:
+            return str(value or "").strip()[:limit]
+
+        def count(value: object, maximum: int | None = None) -> int:
+            try:
+                normalized = max(0, int(value or 0))
+            except (TypeError, ValueError):
+                return 0
+            return min(normalized, maximum) if maximum is not None else normalized
+
+        total_count = count(raw.get("total_count"))
+        processed_count = count(raw.get("processed_count"), total_count if total_count else None)
+        status = text(raw.get("status"), 24)
+        if status not in {"running", "success", "failed"}:
+            return idle
+        return {
+            "version": 1,
+            "operation_id": text(raw.get("operation_id"), 64),
+            "task_id": text(raw.get("task_id"), 64),
+            "target_id": profile.id,
+            "trigger": text(raw.get("trigger"), 48),
+            "status": status,
+            "phase": text(raw.get("phase"), 48),
+            "message": text(raw.get("message")),
+            "percent": count(raw.get("percent"), 100),
+            "processed_count": processed_count,
+            "total_count": total_count,
+            "started_at": text(raw.get("started_at"), 64),
+            "updated_at": text(raw.get("updated_at"), 64),
+            "finished_at": text(raw.get("finished_at"), 64),
+            "background_sync_status": background_status,
+        }
+
     def bridge_health_check(self) -> dict:
         return self._monitor_bridge().health_check()
 
@@ -2723,23 +2820,68 @@ class AppState:
             profile_identity = _background_profile_identity(profile)
             reference_markup_rate = str(self.config.reference_markup_rate)
         self.repo.create_task(task_id, "bridge.rebuild", "running", {"watch_dir": profile.watch_dir})
+        progress = None
         try:
             monitor_state = MonitorState(profile, self.layout.db_path, sync_interval_seconds=60)
-            cost_service = CostProjectionService(
-                Path(profile.watch_dir),
-                Path(profile.workspace_dir),
-                profile.id,
-                reference_markup_rate=reference_markup_rate,
-            )
+            progress = monitor_state.new_sync_progress("manual_rebuild", task_id=task_id)
             with monitor_state.sync_write_lock():
-                summary = build_summary(Path(profile.watch_dir), Path(profile.workspace_dir))
-                manual_applied = monitor_state.apply_manual_overrides_to_summary()
-                cost_result = cost_service.rebuild()
-                monitor_state.save_processed(monitor_state.rebuild_processed_from_summary())
-                monitor_state.update_status(status="idle", last_sync_at=utc_now_text(), last_trigger="manual_rebuild", last_error="")
-                monitor_state.log_event("MANUAL_REBUILD", f"summary_count={summary.get('count', 0)} cost_detail_count={cost_result.get('detail_count', 0)}")
+                progress.start("正在准备重新汇总")
+                try:
+                    cost_service = CostProjectionService(
+                        Path(profile.watch_dir),
+                        Path(profile.workspace_dir),
+                        profile.id,
+                        reference_markup_rate=reference_markup_rate,
+                    )
+                    progress.report("summary", "正在生成普通汇总", percent=0)
+                    summary = build_summary(
+                        Path(profile.watch_dir),
+                        Path(profile.workspace_dir),
+                        progress=lambda completed, total: progress.report_fraction(
+                            "summary",
+                            "正在生成普通汇总",
+                            completed,
+                            total,
+                            0,
+                            52,
+                        ),
+                    )
+                    progress.report("summary", "正在应用已保存的手工修订", percent=52)
+                    manual_applied = monitor_state.apply_manual_overrides_to_summary()
+                    progress.report("cost", "正在生成成本分析", percent=52)
+                    cost_result = cost_service.rebuild(
+                        progress=lambda completed, total: progress.report_fraction(
+                            "cost",
+                            "正在解析成本发票",
+                            completed,
+                            total,
+                            52,
+                            92,
+                        ),
+                    )
+                    progress.report("finalizing", "正在确认已处理文件", percent=92)
+                    monitor_state.save_processed(
+                        monitor_state.rebuild_processed_from_summary(
+                            progress=lambda completed, total: progress.report_fraction(
+                                "finalizing",
+                                "正在确认已处理文件",
+                                completed,
+                                total,
+                                92,
+                                99,
+                            ),
+                        )
+                    )
+                    monitor_state.update_status(status="idle", last_sync_at=utc_now_text(), last_trigger="manual_rebuild", last_error="")
+                    monitor_state.log_event("MANUAL_REBUILD", f"summary_count={summary.get('count', 0)} cost_detail_count={cost_result.get('detail_count', 0)}")
+                    message = self._rebuild_message(summary, cost_result, profile)
+                    # Publish the terminal state before releasing the profile lock.
+                    # A waiting sync must not be overwritten by this older task.
+                    progress.complete(message)
+                except Exception as exc:
+                    progress.fail(str(exc))
+                    raise
             detail = {"summary": summary, "cost_analysis": cost_result, "manual_applied": manual_applied}
-            message = self._rebuild_message(summary, cost_result, profile)
             self.repo.update_task(task_id, "success", detail, completed=True)
             with self._lock:
                 applies_to_active_profile = profile_identity == _background_profile_identity(self._active_profile)
@@ -2860,6 +3002,7 @@ class AppState:
             raise
 
     def finalize_server_shutdown(self) -> None:
+        self._document_index.close()
         stopped_at = utc_now_text()
         current = read_json_object(self.layout.server_state, {})
         current.update(
@@ -2919,6 +3062,24 @@ class AppState:
 
     def skin_service(self) -> SkinService:
         return SkinService(self.layout)
+
+    def app_icon_service(self) -> AppIconService:
+        return AppIconService(self.layout)
+
+    def app_icon(self) -> dict:
+        return self.app_icon_service().list_payload()
+
+    def update_app_icon(self, icon_id: str) -> dict:
+        with self._lock:
+            service = self.app_icon_service()
+            normalized_icon_id = service.validate_icon_id(icon_id)
+            if self._tauri_desktop_host_enabled():
+                # The host changes window/taskbar/tray state first. Persisting before that
+                # would make the next launch claim an icon that the active desktop rejected.
+                host_rpc.set_app_icon(normalized_icon_id)
+            result = service.update_app_icon(normalized_icon_id)
+            self.append_event("app_icon.updated", {"icon": normalized_icon_id})
+            return result
 
     def skins(self) -> dict:
         return self.skin_service().list_skins()
@@ -3301,6 +3462,53 @@ class AppState:
     def _document_defaults_from_payload(self, payload: dict | None) -> dict:
         return payload.get("defaults") if isinstance((payload or {}).get("defaults"), dict) else {}
 
+    def _validated_inbound_selection(self, payload: dict) -> dict[str, list[dict]]:
+        if not isinstance(payload, dict) or not payload.get("target_id"):
+            raise DocumentError("缺少当前发票目录标识，请返回首页重新勾选。")
+        if payload["target_id"] != self.active_profile.id:
+            raise StaleInvoiceSelectionError("发票目录已切换，请返回首页重新勾选。")
+        _, selected = self._validated_invoice_selection(payload, max_items=1000, operation="开具入库单")
+        root = Path(self.active_profile.watch_dir).resolve()
+        grouped: dict[str, list[dict]] = {}
+        for item in selected:
+            source = Path(item.get("source_path") or item.get("file_path") or "").resolve()
+            if not source.is_relative_to(root) or not source.is_file():
+                raise StaleInvoiceSelectionError("勾选源文件已移除或超出当前目录，请重新勾选。")
+            grouped.setdefault(self._selection_family_key(item), []).append(item)
+        return grouped
+
+    def document_inbound_selection(self, payload: dict) -> dict:
+        # The homepage handoff is only a draft. Recheck identities in the current target
+        # here and again at export, so a directory switch cannot export another invoice.
+        with self._lock:
+            grouped = self._validated_inbound_selection(payload)
+            options = {item["invoice_number"]: item for item in inbound_invoice_options(read_csv_rows(self.cost_service().detail_csv))}
+            entries = []
+            root = Path(self.active_profile.watch_dir) / "入库单"
+            for family, items in grouped.items():
+                number = family.removeprefix("number:") if family.startswith("number:") else ""
+                option = options.get(number)
+                entry = {
+                    "invoice_number": number,
+                    "seller": items[0].get("seller") or "",
+                    "ready": bool(option) and not option.get("blocked", False),
+                    "message": option.get("message", "") if option else ("未找到成本明细，请重新汇总后重试。" if number else "未识别发票号码，无法开具入库单。"),
+                    "selection": {"target_id": self.active_profile.id, "items": [
+                        {"invoice_key": item["invoice_key"], "source_path": item.get("source_path") or item.get("file_path")}
+                        for item in items
+                    ]},
+                }
+                if option:
+                    entry.update(option)
+                    path = inbound_export_path(Path(self.active_profile.watch_dir), option)
+                    status = self._document_export_status(path, root)
+                    entry["export_status"] = status
+                    if not status["ok"] or not root.resolve().is_relative_to(Path(self.active_profile.watch_dir).resolve()):
+                        entry.update(ready=False, message="入库单输出目录超出当前发票目录。")
+                entries.append(entry)
+            return {"ok": True, "target_id": self.active_profile.id, "items": entries,
+                    "record_count": sum(len(items) for items in grouped.values()), "invoice_count": len(entries)}
+
     def document_inbound_preview(self, invoice_number: str, defaults: dict | None = None) -> dict:
         merged_defaults = merge_document_defaults(self.document_defaults(), {"inbound": (defaults or {})})
         return build_inbound_preview(read_csv_rows(self.cost_service().detail_csv), invoice_number, merged_defaults)
@@ -3310,7 +3518,14 @@ class AppState:
         if not outbound_dir:
             raise DocumentError("请先保存开具发票目录")
         merged_defaults = merge_document_defaults(self.document_defaults(), {"outbound": (defaults or {})})
-        return build_outbound_preview(Path(outbound_dir), invoice_number, merged_defaults)
+        catalog = self.document_state(revalidate=False)
+        if catalog["index"]["state"] != "ready":
+            raise DocumentError("出库发票列表尚未加载完成，请继续加载后重试。")
+        option = next((item for item in catalog["outbound_invoices"] if item["invoice_number"] == invoice_number), None)
+        if option is None:
+            raise KeyError(invoice_number)
+        return build_outbound_preview(Path(outbound_dir), invoice_number, merged_defaults,
+                                      source_files=[Path(path) for path in option["source_files"]])
 
     def _inbound_document_target(self, payload: dict | None = None, include_defaults: bool = True) -> tuple[str, dict, Path, Path]:
         payload = payload or {}
@@ -3391,14 +3606,28 @@ class AppState:
             index += 1
 
     def export_inbound_document(self, payload: dict | None = None) -> dict:
+        with self._lock:
+            return self._export_inbound_document_locked(payload)
+
+    def _export_inbound_document_locked(self, payload: dict | None = None) -> dict:
         payload = payload or {}
+        if "selection" in payload:
+            grouped = self._validated_inbound_selection(payload["selection"])
+            if list(grouped) != [f"number:{str(payload.get('invoice_number') or '').strip()}"]:
+                raise StaleInvoiceSelectionError("入库单与勾选发票不一致，请重新核对。")
+            if payload.get("mode") not in {"skip_existing", "copy_existing"}:
+                raise DocumentError("批量导出必须明确选择跳过已有文件或导出副本。")
         invoice_number, preview, path, root = self._inbound_document_target(payload)
         mode = str(payload.get("mode") or "").strip().casefold()
         status = self._document_export_status(path, root)
+        if not status["ok"] or not root.is_relative_to(Path(self.active_profile.watch_dir).resolve()):
+            raise DocumentError("入库单输出目录超出当前发票目录。")
+        if mode == "skip_existing" and status["exists"]:
+            return {**status, "skipped": True, "exported": False, "invoice_number": invoice_number}
         if status.get("occupied"):
             return {**status, "ok": False, "exported": False, "invoice_number": invoice_number}
         original_path = path
-        copy_requested = mode in {"copy", "duplicate", "副本"}
+        copy_requested = mode in {"copy", "duplicate", "副本"} or (mode == "copy_existing" and status["exists"])
         if copy_requested:
             if not status.get("exists"):
                 return {**status, "ok": False, "exported": False, "invoice_number": invoice_number, "message": f"文件已经被删除或尚未导出: {path}"}
@@ -3411,6 +3640,10 @@ class AppState:
         return {"ok": True, "exported": True, "invoice_number": invoice_number, "path": str(path), "file_path": str(path), "file_name": path.name, "folder_path": str(path.parent), "copy": path != original_path, "preview": preview}
 
     def export_outbound_document(self, payload: dict | None = None) -> dict:
+        with self._lock:
+            return self._export_outbound_document_locked(payload)
+
+    def _export_outbound_document_locked(self, payload: dict | None = None) -> dict:
         payload = payload or {}
         invoice_number, preview, path, root = self._outbound_document_target(payload)
         mode = str(payload.get("mode") or "").strip().casefold()

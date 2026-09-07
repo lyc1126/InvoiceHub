@@ -1,5 +1,11 @@
 # InvoiceHub Agent 工程任务导航
 
+大列表/单据缓存入口：`services/document_index.py`、`AppState.document_state/document_outbound_preview`、documents index API、`page-documents.js/page-index.js`、`large-lists.css`。最低验收 `tests/test_document_index.py`、`tests/test_documents.py`、前端/Node 及 7,003 条浏览器场景：停止/恢复、变更/删除、目录隔离、旧任务拒绝、健康接口、两款皮肤和恢复入口。解析字段语义变化需递增缓存版本。
+
+首页搜索范围任务：`AppState._filter_invoice_items`、`api/app.py::invoices`、`index.html` 与 `page-index.js` 联动；最低覆盖大量合成记录的 invoice/filename/all、缺省兼容、非法枚举、组合筛选、统计/空结果、重置及旧响应拒绝，并复验默认外观、两款皮肤和 `no_skin=1`。修改脚本必须更新首页版本参数与静态契约。
+
+2026-09-07 图标/桌面整合入口：`services/app_icons.py`、`platform/host_rpc.py`、`src-tauri/src/app_icon.rs`、设置外观和皮肤页；最低检查 `test_app_icon.py`、`test_tauri_host_rpc.py`、`test_desktop_icon.py`、Tauri lifecycle/Windows marker 契约及四款图标 DOM。同步进度与启动恢复需联动 monitoring、API、首页/成本页、Windows 启停模块与各自契约。打包前同时核对最新前端和已完成桌面分支功能，不能仅按某一分支日期判断新旧。
+
 > 作用：把自然语言任务转换成“先读哪里、从哪个符号开工、会影响什么、至少测什么”。
 > 公共权威基线：单一脱敏根提交；退休私有提交、Tag、包和验证材料不在公开图中。
 > 当前边界：`v0.3.0-alpha.2` public-preview 组装、macOS package identity、LaunchServices/SSE 修复与 receipt finalization 门禁均已合入公开 `main`；现有 foundation、internal-alpha 与 recovery-smoke 仍只是历史证据。最终构建只接受默认 verified finalized receipt，远端同名 Tag 仍指向此前基线，必须从干净 `main` 经新的明确授权重建；尚无 SignPath 请求、公开 Release 或最终平台烟测。
@@ -118,15 +124,25 @@ flowchart TD
 | 真实验收 | 当前 localhost 必须实际送达新 `?v=` 与文件；桌面/390px、当前皮肤/`?no_skin=1`、关键交互、控制台和滚动链 |
 | 高风险提醒 | 未保存目录草稿不能被刷新覆盖；普通禁用态不能显示等待光标；SSE 必须同时处理断线和重连；表格不能改成 div 卡片；共享桌面基础 CSS 不得因缺失大括号被包入移动端 `@media`，契约必须检查规则作用域而非只查选择器文本；详情成本区的固定高度 Grid 必须让隐式项目行按 `max-content` 排布并由外层滚动，不能把带 `overflow:hidden` 的项目卡压扁后裁掉规格表 |
 
+共享电源、请求反馈、导航或固定栏变更还需联动 `system_controls.html`、`system-controls.js`、`_template`、settings-actions CSS 与全部普通模板。最低运行 `node --test tests/frontend_interactions.test.cjs`、前端/预览/打印静态契约和页面/关闭 API；浏览器以一个有足够滚动内容的合成目录检查 sticky、一个延迟请求检查转圈，再验证皮肤/恢复入口、取消和失败恢复。合成量仅用于 UI 行为，不构成真实大目录识别吞吐结论。
+
+## 9.1 独立产品官网
+
+官网入口为 `website/index.html`，样式与交互为 `website/style.css`、`website/app.js`、`website/paper-scene.js`，合成演示数据由 `website/demo-data.js` 提供。先读 `website/README.md` 和 `website/ASSETS.md`，同步 FILE_MAP、README、状态和 CHANGELOG。最低检查是 `node --test website/tests/demo.test.cjs`、修改脚本语法及本地链接，视觉变化另需桌面/手机截图、真实交互和动画/减少动态效果检查。官网不请求业务 API，不加载应用皮肤，不处理真实发票；本轮浏览器访问未获许可，视觉验收保持未执行。
+
+软件入口位于设置 About 模板/脚本、`AppState.about`、`api/app.py` 的 `/website/` 路由及 `version.py::LOCAL_WEBSITE_PATH`；HTTP 与组包共用 `website.py` 白名单。增减官网资源须同步该白名单并检查 Core Build ID、源码快照、Windows portable、Tauri development/alpha/public-preview 与 Swift 参考壳的复制链。最低验收包括 `tests/test_website.py`、About/官网 API、设置静态契约和 build manifest 测试；localhost 实取首页、设置、官网与资源，当前皮肤和恢复入口分开记录。源码复制验收不得当作平台成品验收。
+
+四视图和功能场景变更至少覆盖：筛选后空选择禁用、预览来源逐份保留、同票 PDF 回退与缺 PDF 整批阻断、明细税率/规格/单位分组、概念金额换算的分位守恒、五层画布进入/离开收敛与减少动态效果。Node VM 调度测试只证明控制状态，不替代真实像素或鼠标命中验收。
+
 ## 10. 入库单与出库单
 
 | 导航项 | 内容 |
 |---|---|
 | 首先阅读 | 接口流程第 3.4、6.8 节；数据算法第 10、12.3 节 |
 | 首要入口 | `projections/documents.py::build_inbound_preview/build_outbound_preview/write_*_workbook/rmb_uppercase/_ensure_detail_rows`；AppState 的 `_inbound/_outbound_document_target` 和导出方法 |
-| 必须联动 | 两个 Excel 模板、documents API、page-documents、设置页单据目录/默认值、平台打开文件 |
+| 必须联动 | 两个 Excel 模板、documents API、page-documents、首页 page-index 勾选交接、设置页单据目录/默认值、平台打开文件 |
 | 产物与消费者 | `watch_dir/入库单/*.xlsx`、`outbound_invoice_dir/出库单/*.xlsx`；预览与导出状态 |
-| 最低自动化 | 完整 `tests/test_documents.py` + 单据前端契约；路径配置变化再跑 paths/API |
+| 最低自动化 | 完整 `tests/test_documents.py` + 单据/源预览/打印前端契约与 `node --test tests/frontend_interactions.test.cjs`；批量需身份、缺明细、同票副本、停止/未知结果检查；路径配置变化再跑 paths/API |
 | 真实验收 | 5 行与超模板行数、合并单元格/格式、覆盖/副本/取消/打开、文件占用、删除后重导、实际 Excel/WPS 打开 |
 | 高风险提醒 | 单据不进入 monitor 自动生成；入库逐明细不合并；服务端只接受计算出的受控根内路径 |
 
@@ -156,6 +172,10 @@ flowchart TD
 
 ## 11. 皮肤系统
 
+新共享控件适配需检查原有两款皮肤的 `.appearance-toggle/.system-power` 稳定尺寸、全页关闭弹窗、批量单据和窄屏布局；Ink Pulse 保留深色单据预览，实际 PDF/图片源票面不反色。更新 `skin.json`、`BUILTIN_SKINS` 与前端/API 契约；实际 HTML 动态 CSS `?v=` 和字节必须匹配。
+
+默认 White/Dark 任务同时检查 `appearance_toggle.html`、`appearance.js`、`common.js` 的 skin 同步通知、设置/皮肤列表及 `website-dark`；最低覆盖 CSS 加载失败/保存失败/双击/草稿保留、首屏注入、恢复入口与 reduced-motion。桌面品牌图标从 `scripts/dev/generate_desktop_icon.py`、`src-tauri/icons/`、`tauri.conf.json` 定位，运行 `tests/test_desktop_icon.py` 和 Tauri scaffold 契约，并目视多尺寸；原生任务栏/Dock/托盘和新包需要另行平台验收。
+
 | 导航项 | 内容 |
 |---|---|
 | 首先阅读 | 接口流程第 3.6、6.9 节；数据算法第 12.2 节；AGENTS 皮肤安全规则 |
@@ -168,6 +188,10 @@ flowchart TD
 
 ## 12. Windows 正式入口与平台交互
 
+启动诊断任务联动 `api/main.py::check_startup_port`、根 `检查启动环境.bat`、Windows 模块和 `run_start_localhost.ps1`、Tauri `startup_diagnostics.rs/main.rs`。最低验证真实监听 PID、未知/其他环境占用保持存活、无 Python/坏配置仍可诊断、PS7/PS5.1、GUI 原生提示、跨目录单实例、同实例唤回、PE 产品描述和当前成品；不得把插件无法截图计为视觉验收通过。
+
+源码 venv 握手修改定位 `Test-IHProcessIdentity`，最低增加 PS7/PS5.1 的 venv/base 分离身份正向与未知 Python、错误模块/root/config 负向回归，并复验启动复用和 PID 停止两个消费者。
+
 | 导航项 | 内容 |
 |---|---|
 | 首先阅读 | 接口流程第 6.1、6.10 节；AGENTS Windows 与验收规则；`docs/MAC_WINDOWS_WORKFLOW.md` |
@@ -179,6 +203,8 @@ flowchart TD
 | 高风险提醒 | 含非 ASCII 且可能由 PS 5.1 执行的发布 PS1 必须 UTF-8 BOM；固定 Program Files 路径不存在不代表没有 PS7，必须继续解析 PATH/App Execution Alias；PS5.1 不得直接信任无 charset JSON 的 `.Content`，必须按原始 UTF-8 字节解码后继续严格身份检查；自动化 Python 测试不能替代成品 BAT；系统壳派发成功后不要重复开 URL |
 
 ## 12.1 macOS 壳、构建握手与原生桥接
+
+Windows Tauri 双启动任务定位 `main.rs`、`backend.rs::spawn_backend_liveness_watcher` 和 preferences API；至少验证两种启动偏好、页面关闭后 host/backend/端口释放、单实例及监控保留/停止。ZIP 入口为 `scripts/dev/tauri_windows_portable.py`，构建读取本次工作区的干净快照，不能把旧候选 receipt 当作最新代码验收。
 
 | 导航项 | 内容 |
 |---|---|

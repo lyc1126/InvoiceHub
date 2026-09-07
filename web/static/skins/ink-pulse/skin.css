@@ -1539,6 +1539,24 @@ body[data-page="settings"] .settings-diagnostic-summary {
   color: var(--ink-lime);
 }
 
+/* Shared header tools keep stable hit areas; previews retain the requested dark palette. */
+body[data-page] .topbar :is(.appearance-toggle, .system-power) {
+  transform: none;
+  box-shadow: none;
+  letter-spacing: 0;
+}
+body[data-page] .appearance-toggle { color: var(--ink-cyan); }
+body[data-page] .appearance-toggle:hover:not(:disabled) { color: var(--ink-white); background: var(--ink-panel-raised); }
+.topbar .brand h1, .topbar .brand p { letter-spacing: 0; }
+.document-batch { border-color: var(--ink-cyan); }
+.document-batch__scroll { background: var(--ink-panel); scrollbar-color: var(--ink-cyan) var(--ink-night); }
+/* The topbar opens this same dialog on every page, not only settings. */
+.settings-shutdown-dialog :is(.settings-shutdown-choice, .settings-shutdown-progress) { background: var(--ink-panel); border-color: var(--line); }
+.settings-shutdown-dialog :is(strong, legend, .settings-shutdown-remember) { color: var(--ink-white); }
+.settings-shutdown-dialog .settings-shutdown-choice small { color: var(--ink-muted); }
+.settings-shutdown-dialog .settings-shutdown-choice:has(input:checked) { border-color: var(--ink-cyan); box-shadow: inset 0 0 0 1px var(--ink-cyan); }
+.settings-shutdown-dialog .settings-shutdown-choice--stop:has(input:checked) { border-color: var(--ink-red); box-shadow: inset 0 0 0 1px var(--ink-red); }
+
 @keyframes ink-pulse-page-in {
   from { opacity: 0; }
   to { opacity: 1; }
@@ -1547,6 +1565,46 @@ body[data-page="settings"] .settings-diagnostic-summary {
 @keyframes ink-pulse-modal-in {
   from { opacity: 0; transform: translateY(10px) scale(0.98) rotate(-0.4deg); }
   to { opacity: 1; transform: translateY(0) scale(1) rotate(0); }
+}
+
+.sync-progress {
+  --sync-progress-accent: var(--ink-cyan);
+  --sync-progress-success: var(--ink-green);
+  --sync-progress-danger: var(--ink-red);
+  --sync-progress-track: #252836;
+  --sync-progress-label-surface: #10111a;
+  --sync-progress-label-text: var(--ink-lime);
+}
+
+.sync-progress__track {
+  border: 2px solid #05060a;
+  border-radius: 8px 13px 9px 12px;
+  background: #252836;
+  box-shadow: 3px 3px 0 #05060a, inset 0 -3px 0 rgba(0, 0, 0, 0.26);
+}
+
+.sync-progress__fill {
+  background: linear-gradient(90deg, var(--ink-cyan), var(--ink-lime));
+  box-shadow: inset 0 2px 0 rgba(255, 255, 255, 0.22);
+}
+
+.sync-progress__percent {
+  border-color: #05060a;
+  border-radius: 5px 8px 6px 7px;
+  background: #10111a;
+  color: var(--ink-lime);
+  font-family: var(--ink-font-display);
+  letter-spacing: 0.03em;
+}
+
+.sync-progress__check {
+  border-color: var(--ink-green);
+  background: #10111a;
+  box-shadow: 3px 3px 0 #05060a;
+}
+
+.sync-progress__check::after {
+  border-color: var(--ink-green);
 }
 
 @media (max-width: 860px) {

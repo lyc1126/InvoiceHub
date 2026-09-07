@@ -19,6 +19,7 @@ from invoice_hub.release.content_scan import ReleaseContentError, scan_release_t
 from invoice_hub.release.package_manifest import SHA256_PATTERN
 from invoice_hub.release.runtime_manifest import sha256_file
 from invoice_hub.version import PRODUCT_VERSION, RELEASE_TAG
+from invoice_hub.website import WEBSITE_BUILD_INPUTS
 
 
 SOURCE_MANIFEST_NAME = "invoice-hub-source.json"
@@ -27,6 +28,7 @@ COMMIT_PATTERN = re.compile(r"^[0-9a-f]{40}$")
 FORBIDDEN_PATHS = {"config/app.local.json"}
 FORBIDDEN_PARTS = {".git", ".venv", "dist", "release-staging", "runtime", "运行状态", "wheelhouse", "__pycache__"}
 REQUIRED_PATHS = {
+    *WEBSITE_BUILD_INPUTS,
     "LICENSE",
     "THIRD_PARTY_NOTICES.md",
     "pyproject.toml",

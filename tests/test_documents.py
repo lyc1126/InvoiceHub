@@ -1,13 +1,16 @@
 import json
+import time
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 from openpyxl import load_workbook
 
 from invoice_hub.api.app import create_app
 from invoice_hub.projections.cost_analysis import DETAIL_HEADERS
-from invoice_hub.projections.documents import rmb_uppercase
+from invoice_hub.projections.documents import build_inbound_preview, rmb_uppercase, write_inbound_workbook, write_outbound_workbook
 from invoice_hub.services.app_state import AppState
+from invoice_hub.services.document_index import DocumentIndex
 from invoice_hub.storage.files import read_json_object, write_csv_rows
 
 
@@ -82,6 +85,30 @@ def _client(tmp_path: Path, monkeypatch) -> TestClient:
     return TestClient(create_app(tmp_path))
 
 
+@pytest.fixture(autouse=True)
+def close_document_workers(monkeypatch):
+    indexes = []
+    original = DocumentIndex.__init__
+    def initialize(self, *args, **kwargs):
+        original(self, *args, **kwargs)
+        indexes.append(self)
+    monkeypatch.setattr(DocumentIndex, "__init__", initialize)
+    yield
+    for index in indexes:
+        index.close()
+
+
+def _wait_document_index(client):
+    deadline = time.monotonic() + 20
+    while time.monotonic() < deadline:
+        result = client.get("/api/v1/documents/index").json()["index"]
+        if result["state"] == "ready":
+            return client.get("/api/v1/documents/state").json()
+        assert result["state"] == "running", result
+        time.sleep(0.05)
+    pytest.fail("Document index did not finish")
+
+
 def test_documents_state_defaults_and_invoice_lists(tmp_path: Path, monkeypatch) -> None:
     client = _client(tmp_path, monkeypatch)
     watch = tmp_path / "发票文件"
@@ -95,7 +122,7 @@ def test_documents_state_defaults_and_invoice_lists(tmp_path: Path, monkeypatch)
     )
     assert client.put("/api/v1/documents/outbound-dir", json={"outbound_invoice_dir": str(outbound)}).json()["ok"] is True
 
-    state = client.get("/api/v1/documents/state").json()
+    state = _wait_document_index(client)
 
     assert state["defaults"]["inbound"] == {"采购员": "", "负责人": "", "仓管员": "", "制表人": ""}
     assert state["defaults"]["outbound"]["收货单位"] == ""
@@ -138,7 +165,7 @@ def test_documents_validate_outbound_dir_is_backend_source_of_truth(tmp_path: Pa
     assert validation["ok"] is True
     assert validation["path"] == str(outbound)
     assert validation["can_use"] is True
-    assert validation["supported_count"] == 1
+    assert validation["supported_count"] is None
     assert client.get("/api/v1/documents/state").json()["outbound_invoice_dir"] == ""
 
 
@@ -181,9 +208,12 @@ def test_inbound_preview_filters_invoice_without_merging_same_spec_different_pri
 
 
 def test_rmb_uppercase_keeps_expected_zero_positions() -> None:
-    assert rmb_uppercase("343190.14") == "人民币叁拾肆万叁仟壹佰玖拾元壹角肆分"
-    assert rmb_uppercase("340190.14") == "人民币叁拾肆万零壹佰玖拾元壹角肆分"
-    assert rmb_uppercase("1000101.01") == "人民币壹佰万零壹佰零壹元零壹分"
+    assert rmb_uppercase("343190.14") == "叁拾肆万叁仟壹佰玖拾元壹角肆分"
+    assert rmb_uppercase("340190.14") == "叁拾肆万零壹佰玖拾元壹角肆分"
+    assert rmb_uppercase("1000101.01") == "壹佰万零壹佰零壹元零壹分"
+    assert rmb_uppercase("0") == "零元整"
+    assert rmb_uppercase("-101.05") == "负壹佰零壹元零伍分"
+    assert rmb_uppercase("0.005") == "零元壹分"
 
 
 def test_inbound_export_summary_matches_preview_for_five_line_invoice(tmp_path: Path, monkeypatch) -> None:
@@ -232,7 +262,7 @@ def test_inbound_export_summary_matches_preview_for_five_line_invoice(tmp_path: 
     exported = client.post("/api/v1/documents/inbound/export", json={"invoice_number": "10000000000000000014"}).json()
 
     assert preview["total_with_tax"] == "343190.14"
-    assert preview["total_with_tax_upper"] == "人民币叁拾肆万叁仟壹佰玖拾元壹角肆分"
+    assert preview["total_with_tax_upper"] == "叁拾肆万叁仟壹佰玖拾元壹角肆分"
     wb = load_workbook(exported["path"], data_only=False)
     try:
         ws = wb["入库单"]
@@ -256,6 +286,7 @@ def test_outbound_preview_parses_selected_invoice_details(tmp_path: Path, monkey
     outbound.mkdir()
     (outbound / "dzfp_10000000000000000013.xml").write_text(_cost_xml_text(), encoding="utf-8")
     client.put("/api/v1/documents/outbound-dir", json={"outbound_invoice_dir": str(outbound)})
+    _wait_document_index(client)
 
     preview = client.get("/api/v1/documents/outbound/preview", params={"invoice_number": "10000000000000000013"}).json()
 
@@ -264,7 +295,7 @@ def test_outbound_preview_parses_selected_invoice_details(tmp_path: Path, monkey
     assert preview["rows"][0]["unit_price"] == "113.00"
     assert preview["rows"][1]["unit_price"] == "135.60"
     assert preview["total_with_tax"] == "361.60"
-    assert preview["total_with_tax_upper"].startswith("人民币")
+    assert preview["total_with_tax_upper"] == "叁佰陆拾壹元陆角"
 
 
 def test_inbound_export_writes_excel_and_open_requires_existing_file(tmp_path: Path, monkeypatch) -> None:
@@ -365,6 +396,7 @@ def test_outbound_export_writes_excel_with_tax_amount_and_uppercase(tmp_path: Pa
     outbound.mkdir()
     (outbound / "dzfp_10000000000000000013.xml").write_text(_cost_xml_text(), encoding="utf-8")
     client.put("/api/v1/documents/outbound-dir", json={"outbound_invoice_dir": str(outbound)})
+    _wait_document_index(client)
 
     exported = client.post(
         "/api/v1/documents/outbound/export",
@@ -402,6 +434,7 @@ def test_outbound_export_status_copy_and_location_are_scoped_to_outbound_dir(tmp
     outbound.mkdir()
     (outbound / "dzfp_10000000000000000013.xml").write_text(_cost_xml_text(), encoding="utf-8")
     client.put("/api/v1/documents/outbound-dir", json={"outbound_invoice_dir": str(outbound)})
+    _wait_document_index(client)
 
     exported = client.post("/api/v1/documents/outbound/export", json={"invoice_number": "10000000000000000013"}).json()
     status = client.post("/api/v1/documents/outbound/export-status", json={"invoice_number": "10000000000000000013"}).json()
@@ -420,7 +453,7 @@ def test_outbound_export_status_copy_and_location_are_scoped_to_outbound_dir(tmp
 def test_inbound_export_inserts_extra_rows_when_detail_exceeds_template(tmp_path: Path, monkeypatch) -> None:
     client = _client(tmp_path, monkeypatch)
     watch = tmp_path / "发票文件"
-    rows = [_detail_row(源文件=f"{index}.xml", **{"金额(除税)": "10", "税金": "1.3"}) for index in range(12)]
+    rows = [_detail_row(源文件="long-invoice.xml", **{"金额(除税)": "10", "税金": "1.3"}) for index in range(12)]
     write_csv_rows(watch / "成本发票明细.csv", DETAIL_HEADERS, rows)
 
     exported = client.post("/api/v1/documents/inbound/export", json={"invoice_number": "10000000000000000013"}).json()
@@ -457,3 +490,140 @@ def test_open_document_api_does_not_accept_arbitrary_path(tmp_path: Path, monkey
 
     assert response["ok"] is False
     assert str(outside) not in response.get("path", "")
+
+
+def _batch_selection_client(tmp_path: Path, monkeypatch):
+    client = _client(tmp_path, monkeypatch)
+    state = client.app.state.invoice_hub
+    watch = Path(state.active_profile.watch_dir)
+    watch.mkdir(parents=True, exist_ok=True)
+    for name, number in (("a.xml", "10000000000000000013"), ("a-copy.xml", "10000000000000000013"), ("b.xml", "10000000000000000014")):
+        (watch / name).write_text(_cost_xml_text(number), encoding="utf-8")
+    state.bridge_rebuild()
+    invoices = client.get("/api/v1/invoices").json()
+    selection = {"target_id": invoices["target_id"], "items": [
+        {"invoice_key": item["invoice_key"], "source_path": item["source_path"]} for item in invoices["items"]
+    ]}
+    return client, state, watch, selection
+
+
+def test_inbound_selection_deduplicates_families_and_reports_missing_details(tmp_path: Path, monkeypatch) -> None:
+    client, state, watch, selection = _batch_selection_client(tmp_path, monkeypatch)
+    write_csv_rows(watch / "成本发票明细.csv", DETAIL_HEADERS, [_detail_row()])
+    before = (watch / "成本发票明细.csv").read_bytes()
+    response = client.post("/api/v1/documents/inbound/selection", json=selection)
+    assert response.status_code == 200
+    result = response.json()
+    assert (result["record_count"], result["invoice_count"]) == (3, 2)
+    ready = next(item for item in result["items"] if item["ready"])
+    blocked = next(item for item in result["items"] if not item["ready"])
+    assert len(ready["selection"]["items"]) == 2
+    assert "成本明细" in blocked["message"]
+    assert not (watch / "入库单").exists()
+    assert (watch / "成本发票明细.csv").read_bytes() == before
+
+
+def test_inbound_duplicate_sources_preserve_real_lines_and_block_conflicts(tmp_path: Path, monkeypatch) -> None:
+    client, _state, watch, selection = _batch_selection_client(tmp_path, monkeypatch)
+    rows = [_detail_row(源文件=source) for source in ("a.xml", "a.xml", "a-copy.xml", "a-copy.xml")]
+    write_csv_rows(watch / "成本发票明细.csv", DETAIL_HEADERS, rows)
+    result = client.post("/api/v1/documents/inbound/selection", json=selection).json()
+    entry = next(item for item in result["items"] if item["ready"])
+    assert entry["row_count"] == 2 and entry["total_with_tax"] == "452.00"
+    preview = client.get("/api/v1/documents/inbound/preview", params={"invoice_number": entry["invoice_number"]}).json()
+    assert preview["row_count"] == 2
+    rows[-1]["数量"] = "99"
+    write_csv_rows(watch / "成本发票明细.csv", DETAIL_HEADERS, rows)
+    result = client.post("/api/v1/documents/inbound/selection", json=selection).json()
+    assert not any(item["ready"] for item in result["items"])
+    response = client.post("/api/v1/documents/inbound/export", json={"invoice_number": entry["invoice_number"], "selection": entry["selection"], "mode": "skip_existing"})
+    assert response.status_code == 400
+    assert "明细不一致" in response.json()["detail"]
+    assert not (watch / "入库单").exists()
+
+
+@pytest.mark.parametrize("change", ["target", "key", "path", "deleted", "outside", "empty"])
+def test_inbound_selection_rejects_stale_or_invalid_identity(tmp_path: Path, monkeypatch, change: str) -> None:
+    client, state, watch, selection = _batch_selection_client(tmp_path, monkeypatch)
+    status = 409
+    if change == "target":
+        selection["target_id"] = "another-target"
+    elif change == "key":
+        selection["items"][0]["invoice_key"] = "no-longer-current"
+    elif change == "path":
+        selection["items"][0]["source_path"] = selection["items"][1]["source_path"]
+    elif change == "deleted":
+        Path(selection["items"][0]["source_path"]).unlink()
+    elif change == "outside":
+        outside = tmp_path / "outside.xml"
+        outside.write_text(_cost_xml_text(), encoding="utf-8")
+        current = state.list_invoices()
+        current["items"][0]["source_path"] = str(outside)
+        selection["items"][0]["source_path"] = str(outside)
+        monkeypatch.setattr(state, "list_invoices", lambda: current)
+    else:
+        selection["items"] = []
+        status = 400
+    response = client.post("/api/v1/documents/inbound/selection", json=selection)
+    assert response.status_code == status
+    assert not (watch / "入库单").exists()
+
+
+def test_batch_inbound_export_revalidates_and_never_overwrites_existing(tmp_path: Path, monkeypatch) -> None:
+    client, state, watch, selection = _batch_selection_client(tmp_path, monkeypatch)
+    item = client.post("/api/v1/documents/inbound/selection", json=selection).json()["items"][0]
+    payload = {"invoice_number": item["invoice_number"], "selection": item["selection"], "mode": "skip_existing"}
+    original = client.post("/api/v1/documents/inbound/export", json=payload).json()
+    assert original["exported"]
+    path = Path(original["path"])
+    content = path.read_bytes()
+    skipped = client.post("/api/v1/documents/inbound/export", json=payload).json()
+    assert skipped["skipped"] and not skipped["exported"]
+    payload["mode"] = "copy_existing"
+    copied = client.post("/api/v1/documents/inbound/export", json=payload).json()
+    assert copied["copy"] and copied["path"] != original["path"]
+    assert path.read_bytes() == content
+    payload["selection"]["target_id"] = "stale"
+    assert client.post("/api/v1/documents/inbound/export", json=payload).status_code == 409
+    payload["selection"] = item["selection"] | {"target_id": state.active_profile.id}
+    payload["invoice_number"] = "wrong"
+    assert client.post("/api/v1/documents/inbound/export", json=payload).status_code == 409
+    payload["invoice_number"] = item["invoice_number"]
+    payload["mode"] = ""
+    assert client.post("/api/v1/documents/inbound/export", json=payload).status_code == 400
+    Path(payload["selection"]["items"][0]["source_path"]).unlink()
+    payload["mode"] = "copy_existing"
+    assert client.post("/api/v1/documents/inbound/export", json=payload).status_code == 409
+    assert len(list((watch / "入库单").glob("*.xlsx"))) == 2
+
+
+@pytest.mark.parametrize("kind,count", [("inbound", 5), ("inbound", 15), ("outbound", 5), ("outbound", 15)])
+def test_document_layout_retains_rows_totals_and_print_area(tmp_path: Path, kind: str, count: int) -> None:
+    preview = build_inbound_preview([_detail_row(内部项目名称="跨行测试材料名称与规格说明" * 3) for _ in range(count)], "10000000000000000013")
+    preview["defaults"] = {"收货单位": "测试收货单位名称" * 5, "地址": "测试地址" * 8, "制表人": "制表测试", "项目负责人": "项目测试"}
+    path = tmp_path / f"{kind}-{count}.xlsx"
+    (write_inbound_workbook if kind == "inbound" else write_outbound_workbook)(preview, path)
+    wb = load_workbook(path)
+    try:
+        ws = wb.active
+        first, minimum, last_col, footer_offset = (5, 11, "J", 1) if kind == "inbound" else (6, 10, "H", 2)
+        summary = first + max(count, minimum)
+        footer = summary + footer_offset
+        assert f"$A$1:${last_col}${footer}" in str(ws.print_area)
+        assert ws.print_title_rows == f"$1:${first - 1}"
+        assert ws.row_dimensions[first].height > 25
+        assert ws.row_dimensions[summary].height >= 36
+        assert ws.row_dimensions[footer].height >= 28
+        assert ws[f"B{summary}"].value == preview["total_with_tax_upper"]
+        assert "人民币" not in ws[f"B{summary}"].value
+        assert ws[f"B{first + count - 1}"].value == preview["rows"][-1]["item_name"]
+        assert ws.page_setup.fitToWidth == 1 and ws.page_setup.fitToHeight == 0
+        if kind == "outbound":
+            merges = {str(region) for region in ws.merged_cells.ranges}
+            assert {"A3:B3", "C3:E3", "F3:H3", "A4:B4", "C4:E4", "F4:H4"} <= merges
+            assert ws.row_dimensions[3].height > 28
+        else:
+            assert len(preview["layout"]["column_widths"]) == 10
+            assert preview["layout"]["column_widths"][3:5] == [10, 10]
+    finally:
+        wb.close()

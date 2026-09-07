@@ -2,9 +2,48 @@ from __future__ import annotations
 
 import argparse
 import os
+import socket
+import subprocess
+import sys
 from pathlib import Path
 
 import uvicorn
+
+
+def check_startup_port(host: str, port: int) -> str | None:
+    try:
+        family, socktype, protocol, _, address = socket.getaddrinfo(
+            host, port, type=socket.SOCK_STREAM,
+        )[0]
+        with socket.socket(family, socktype, protocol) as probe:
+            if os.name == "nt":
+                probe.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+            else:
+                probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            probe.bind(address)
+        return None
+    except OSError as error:
+        message = f"InvoiceHub startup blocked at {host}:{port}: {error}\n"
+        if os.name == "nt":
+            try:
+                from invoice_hub.platform.host_rpc import child_environment
+
+                netstat = Path(os.environ["SystemRoot"]) / "System32" / "netstat.exe"
+                result = subprocess.run(
+                    [str(netstat), "-ano", "-p", "tcp"], capture_output=True,
+                    text=True, errors="replace", timeout=3,
+                    env=child_environment(),
+                    creationflags=subprocess.CREATE_NO_WINDOW, check=False,
+                )
+                for line in result.stdout.splitlines():
+                    fields = line.split()
+                    if len(fields) == 5 and fields[0] == "TCP" and fields[1] in (
+                        f"127.0.0.1:{port}", f"0.0.0.0:{port}", f"[::]:{port}",
+                    ) and fields[2].endswith(":0"):
+                        message += f"Listener PID: {fields[4]} (Task Manager > Details).\n"
+            except (OSError, subprocess.TimeoutExpired):
+                message += "Listener lookup unavailable.\n"
+        return message + "Close the owning instance before retrying. No process was stopped."
 
 
 def main() -> int:
@@ -33,12 +72,20 @@ def main() -> int:
         config_path,
         initial_state_dir=Path(initial_state_dir) if initial_state_dir else None,
     )
+    host = args.host or config.host
+    port = args.port if args.port is not None else config.port
+    # CLI/test launches bypass BAT/Tauri guards. Reject an occupied port before AppState
+    # creates runtime state or schedules invoice sync; Uvicorn still owns the final bind.
+    failure = check_startup_port(host, port)
+    if failure:
+        print(failure, file=sys.stderr)
+        return 1
     from invoice_hub.api.app import app
 
     uvicorn.run(
         app,
-        host=args.host or config.host,
-        port=args.port if args.port is not None else config.port,
+        host=host,
+        port=port,
         log_level="info",
     )
     return 0

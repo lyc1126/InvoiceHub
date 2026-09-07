@@ -23,14 +23,19 @@ from invoice_hub.release.update_metadata import (
     api_contract_date,
     validate_update_feed,
 )
+from invoice_hub.release.windows_alpha_metadata import (
+    WINDOWS_ALPHA_FEED_SCOPE,
+    validate_windows_alpha_feed,
+)
 from invoice_hub.storage import atomic_write_json, read_json_object
-from invoice_hub.version import API_CONTRACT_VERSION, PRODUCT_VERSION, UPDATE_FEED_URL
+from invoice_hub.version import API_CONTRACT_VERSION, PRODUCT_VERSION, UPDATE_CHANNEL, UPDATE_FEED_URL
 
 
 UPDATE_STATUSES = {"idle", "checking", "up_to_date", "available", "offline", "invalid", "unsupported"}
 UPDATE_ERROR_CODES = {
     "UPDATE_OFFLINE",
     "UPDATE_FEED_INVALID",
+    "UPDATE_FEED_UNAVAILABLE",
     "UPDATE_HOST_REJECTED",
     "UPDATE_ARTIFACT_NOT_FOUND",
     "UPDATE_VERSION_INVALID",
@@ -348,9 +353,18 @@ def _fetch_update_feed_with_deadline(
     try:
         response = opener.open(request, timeout=deadline.connection_timeout_for_next_phase())
     except HTTPError as exc:
-        if exc.code == 304:
-            deadline.ensure_remaining()
-            return UpdateFetchResult(304, b"", str(exc.headers.get("ETag") or ""), validated_url)
+        if exc.code in {304, 404}:
+            try:
+                deadline.ensure_remaining()
+                final_url = _validate_https_url(str(exc.geturl() or validated_url), allowed_hosts)
+                return UpdateFetchResult(
+                    exc.code,
+                    b"",
+                    str((exc.headers or {}).get("ETag") or ""),
+                    final_url,
+                )
+            finally:
+                exc.close()
         raise
 
     with response:
@@ -488,6 +502,24 @@ class UpdateService:
             "message": "更新检查正在进行，请稍后重试",
         }
 
+    def _unpublished_feed_result(self, checked_at: str) -> dict:
+        """Report a known missing Feed without persisting a stale failure."""
+
+        result = {
+            **self._idle_state(),
+            "ok": False,
+            "status": "unsupported",
+            "checked_at": checked_at,
+            "error_code": "UPDATE_FEED_UNAVAILABLE",
+            "message": (
+                f"当前 {UPDATE_CHANNEL} 版本的更新源尚未发布；"
+                "可通过 GitHub 或更新日志了解项目动态。"
+            ),
+        }
+        with self._lock:
+            self._state = result
+        return dict(result)
+
     def busy_result(self) -> dict:
         """Return the non-persistent concurrent-check result for orchestration callers."""
 
@@ -505,11 +537,22 @@ class UpdateService:
 
     def _evaluate_feed(self, feed: object, checked_at: str) -> dict:
         try:
-            normalized = validate_update_feed(
-                feed,
-                allowed_hosts=self.allowed_hosts,
-                url_validator=_validate_https_url,
-            )
+            if isinstance(feed, dict) and "scope" in feed:
+                if feed.get("scope") != WINDOWS_ALPHA_FEED_SCOPE:
+                    raise UpdateMetadataError("UPDATE_FEED_INVALID", "更新元数据 scope 无效")
+                normalized = validate_windows_alpha_feed(
+                    feed,
+                    allowed_hosts=self.allowed_hosts,
+                    url_validator=_validate_https_url,
+                )
+            else:
+                # Keep the complete dual-platform finalizer unchanged. The
+                # narrow alpha schema is opt-in through its explicit scope.
+                normalized = validate_update_feed(
+                    feed,
+                    allowed_hosts=self.allowed_hosts,
+                    url_validator=_validate_https_url,
+                )
         except UpdateMetadataError as exc:
             raise UpdateCheckError(exc.code, str(exc)) from exc
         latest_text = normalized["latest_version"]
@@ -529,10 +572,28 @@ class UpdateService:
                 "message": "当前平台或包类型不支持自动更新检查",
             }
         artifacts = normalized["artifacts"]
-        artifact = artifacts[artifact_key]
+        artifact = artifacts.get(artifact_key)
+        if not isinstance(artifact, dict):
+            # A Windows-only alpha Feed is intentionally not a macOS Feed.
+            # Treat the absent platform asset as unsupported rather than
+            # leaking a KeyError through the update check.
+            return {
+                **self._idle_state(),
+                "ok": False,
+                "status": "unsupported",
+                "checked_at": checked_at,
+                "latest_version": latest_text,
+                "published_at": normalized["published_at"],
+                "minimum_api_contract": minimum_contract,
+                "current_api_contract": API_CONTRACT_VERSION,
+                "release_notes_url": release_notes_url,
+                "message": "当前平台或包类型暂不支持此更新发布",
+            }
         sparkle_artifact = None
         if str(self.package_manifest.get("platform")) == "macos":
-            sparkle_artifact = artifacts["macos-arm64-sparkle"]
+            candidate = artifacts.get("macos-arm64-sparkle")
+            if isinstance(candidate, dict):
+                sparkle_artifact = candidate
 
         if api_contract_date(minimum_contract) > api_contract_date(API_CONTRACT_VERSION):
             return {
@@ -618,6 +679,10 @@ class UpdateService:
                         feed = json.loads(fetched.body.decode("utf-8"))
                     except (UnicodeError, json.JSONDecodeError) as exc:
                         raise UpdateCheckError("UPDATE_FEED_INVALID", "更新元数据不是有效 UTF-8 JSON") from exc
+                elif fetched.status_code == 404:
+                    # A published Feed can appear after this client ships. Do
+                    # not cache the absence; the next user check must retry it.
+                    return self._unpublished_feed_result(checked_at)
                 else:
                     raise UpdateCheckError("UPDATE_FEED_INVALID", f"更新源返回 HTTP {fetched.status_code}")
                 result = self._evaluate_feed(feed, checked_at)

@@ -17,6 +17,7 @@ from invoice_hub.release.content_scan import ReleaseContentError, scan_release_t
 from invoice_hub.release.package_manifest import load_package_manifest
 from invoice_hub.release.runtime_manifest import RUNTIME_MANIFEST_NAME, sha256_file, validate_runtime_manifest
 from invoice_hub.version import PRODUCT_VERSION, RELEASE_PYTHON_VERSION, WINDOWS_PACKAGE_ID
+from invoice_hub.website import WEBSITE_BUILD_INPUTS
 
 
 EXPECTED_ARCHIVE_NAME = f"InvoiceHub-v{PRODUCT_VERSION}-windows-x64-portable.zip"
@@ -35,6 +36,7 @@ REQUIRED_PATHS = {
     "停止一站式发票汇总系统.bat",
     "停止一站式发票汇总系统并停止监控.bat",
     "导入旧版设置.bat",
+    *WEBSITE_BUILD_INPUTS,
 }
 WINDOWS_ALLOWED_SUBTREES = {
     "python",
@@ -54,6 +56,8 @@ WINDOWS_ALLOWED_FILES = REQUIRED_PATHS | {
     "THIRD_PARTY_NOTICES.md",
 }
 WINDOWS_ALLOWED_CONTAINER_DIRECTORIES = {
+    "website",
+    "website/assets",
     "scripts",
     "scripts/tools",
     "docs",

@@ -1,9 +1,17 @@
 # InvoiceHub 接口与运行流程
 
+2026-09-07 单据大目录：`GET /api/v1/documents/state` 和保存/删除最近开具目录快速返回及 `index`；加载中的出库列表为空，必须结合 index 区分，不能当零发票。`GET /api/v1/documents/index` 仅读进度；`POST /api/v1/documents/index/resume` 重新核对/继续；`POST /api/v1/documents/index/cancel` 接收 `job_id`，只停止当前匹配 worker，过期返回 `ok=false`。index 包含 `state/phase/processed/total/reused/errors/job_id/running`、PID 及最多十项失败诊断，状态为 idle/running/ready/cancelled/interrupted/failed。
+
+目录访问校验成功时 `supported_count=null`，真实计数由后台 index 统计。页面每 700ms 安静轮询，网络失败提示并重试，暂停不被普通 SSE/刷新重启。完成后读取候选并每页显示 100 项；首页也每页 100 行，统计/搜索/全选保留完整结果。出库预览及导出只重读定位来源并实时校验目录/号码，未就绪返回业务错误；后端关闭结束自身索引，不改变 monitor 语义。
+
+`POST /api/v1/about/links/{link_key}` 只接受 `github/changelog` 固定公开链接键，经现有平台浏览器入口打开；不接受客户端地址，官网仍走当前页包内 `/website/`。
+
+2026-09-07 当前 Desktop 整合：`GET/PUT /api/v1/app-icon` 只接受内置 `website/orange/teal/violet`，设置外观/皮肤页读取列表并选择；owned Tauri 先以私有 Host RPC 应用原生窗口/托盘，成功后写 `app_icon_state.json`，失败不得改写选择。favicon 随页面注入，恢复入口只禁用皮肤，不清除图标。打印 `allow_print_popups` 偏好下次完整启动应用，host 只放行受控打印弹窗；`GET /api/v1/bridge/progress` 提供当前目标同步进度，首页/成本页读取并保留最新请求胜出保护。网站保持包内 `/website/`，GitHub/更新日志通过现有系统浏览器入口打开。
+
 > 公共权威基线：经过审计的单一脱敏根提交；旧私有历史和发布资产不属于公开图。
 > 当前发行边界：候选树、Git 对象和托管面验证已通过，仓库已公开；旧私有历史、Tag 和资产仍不得公开或上传。Tauri 2 `v0.3` 才替换平台壳并新增 Host RPC/updater 行为。
 > 校验规则：精确的当前本地与 GitHub HEAD 以实时 Git 引用和双向差异为准。
-> 状态说明：OCR 服务类接口与 Windows desktop surface 属于“未启用能力”；`0.3.0-alpha.2` public-preview 的 macOS package identity、LaunchServices 启动、SSE 关闭修复与 receipt finalization 门禁均已进入 `main`，只有默认 verifier 接受与 DMG SHA-256 绑定的 finalized record。远端同名 Tag 仍指向此前基线，必须在最终干净 `main` 上经新的明确授权重建，不能用当前 Tag 公开构建。没有公开 Release 或 Feed；Tauri 开发分支已有代码级 host 生命周期、Host RPC 和 update-install API，且 L6 已运行隔离 TestClient runtime contract。schema-3 development assembly 已构建且隔离烟测一个 macOS arm64 `.app`；裸 checkout 仍无 manifest 而 fail-closed，development updater 禁用，真实 updater 与平台 release smoke 尚未进行。
+> 状态说明：OCR 服务类接口仍未启用；Windows Tauri portable 已支持 desktop/browser 选择，BAT 入口仍为 browser。`0.3.0-alpha.2` public-preview 的 macOS package identity、LaunchServices 启动、SSE 关闭修复与 receipt finalization 门禁均已进入 `main`，只有默认 verifier 接受与 DMG SHA-256 绑定的 finalized record。远端同名 Tag 仍指向此前基线，必须在最终干净 `main` 上经新的明确授权重建，不能用当前 Tag 公开构建。没有公开 Release 或 Feed；当前本地 Windows ZIP 已做隔离成品启动验收，详见当日 Changelog。裸 checkout 仍无 manifest 而 fail-closed；development/internal-alpha updater 禁用，真实 updater 和 macOS 新成品不在本次验收范围。
 
 Tauri L9/P1-Q 只验证一次 development-profile 组装、启动和真实 Cmd-Q 退出流：host 用编译绑定的 manifest/launcher 启动 owned child，child 固定监听 `127.0.0.1:8766`，health/background ready 后加载首页和静态资源。`INVOICE_HUB_DEV_STATE_ROOT` 只对 development host 可用，必须显式、绝对、已存在、canonicalize 后与 bundle/core 和完整 `.app` 容器双向不包含，`Contents` sibling 同样拒绝，且不传给 Python child。clean-commit 样本的前台 Cmd-Q 经自定义菜单触发 `app.exit(0)` 与 `ExitRequested`，随后 shutdown POST 200、`server_state=stopped`、monitor 未运行、host/backend/PID/8766 清理完成；打开的 SSE 连接由既定 `kill + wait` 兜底。外部 AppleScript quit、tray 点击等不是该样本；该流也未调用真实 Feed/安装、原生 picker、browser、单实例或打印，不能推断为任何发布接口已验收。
 
@@ -28,6 +36,12 @@ flowchart LR
 
 ## 2. 页面路由矩阵
 
+独立官网 `website/index.html` 可直接打开 HTML，也由 FastAPI 提供 `GET/HEAD /website/` 与白名单资源；`/website` 重定向到带尾斜杠的入口，保证相对资源正确解析。设置 About 的 `links.website` 返回 `/website/`，模板同窗口导航，在 About 加载前也可点击；官网仅在 localhost 的该路径下将导航改为「返回工作台」，指向 `/settings#about`。经典 `defer` 脚本只读取合成记录；页面无业务 API、SSE、配置、监控或更新 Feed 请求。筛选、合计、Blob 导出和 dialog 行为仍在当前页面内完成，公网与独立 HTML 保留原导航。
+
+`website.py` 的 10 个资源白名单同时用于 HTTP、Core Build ID、源码快照、Windows portable 和 macOS/Tauri 组装。资源目录跟随实际选定的 `web/` bundle，不能由请求传入本机路径；非白名单返回 404，白名单文件缺失或越界返回脱敏 503，响应 `no-cache`。官网不注入应用皮肤。远端 `WEBSITE_URL` 和 `UPDATE_FEED_URL` 保持原值，本地路径由独立 `LOCAL_WEBSITE_PATH` 表达；设置页仍只允许 HTTPS 更新下载链接。官网版本为 `20260905-3`，应用公共样式、公共脚本及本轮修改的页面脚本版本为 `20260906-appearance-3`。
+
+官网 `20260905-2` 增加：可见勾选 -> 逐份合成预览（不按家族去重）/同票 PDF 候选（任一缺失则整批阻断）/独立项目明细分组与 TSV。打印流程只播放 CSS 动画，不调用 `window.print()`；dialog 关闭清理演示计时器。单据类型和行数控制只调整当前合成表格；工具区区分 OCR 配置入口、做账本地开发状态与税率换算概念预览。五层票据只响应插画命中区，离开归拢，键盘/触屏切换；动画收敛或屏外/后台停止调度，减少动态效果直接切换构图。
+
 | 路由 | 模板与脚本 | 主要数据接口 | SSE / 特殊规则 | 主要测试 |
 |---|---|---|---|---|
 | `GET /` | `index.html` + `page-index.js` | settings、invoices、selection-summary、bridge、目录选择/保存 | 监听公共事件；保留未保存目录草稿 | `test_api_contract.py`、`test_frontend_contract.py` |
@@ -45,14 +59,24 @@ flowchart LR
 
 所有普通页面由 `_template()` 做有限占位替换，不是 Jinja2 模板引擎。活动皮肤由服务端在 `</head>` 前注入；`/backend` 和带 `?no_skin=1` 的请求跳过注入。
 
+普通业务模板还固定引用 `system_controls.html` 与 `system-controls.js`，共用导航右侧的电源入口和唯一关闭弹窗；backend 与打印页不增加该入口。默认样式复用官网 `hi.` 本地字体、黄绿/墨黑/纸白，默认与 `website-dark` 共用品牌布局；其它皮肤保持自身配色。公共 CSS、JS 和对应页面资源版本由所有引用模板及前端契约同步锁定。
+
+品牌名旁的 `appearance_toggle.html` 由固定本地占位替换注入。`appearance.js` 浅色→深色先读取 `/api/v1/skins`，以不激活的 stylesheet 等待资源 load（8 秒超时），再 POST `/api/v1/skins/website-dark/enable`；成功后切换已加载 CSS，不重载页面、不重建业务数据。反向使用 POST `/api/v1/skins/reset`。期间锁定重复点击与同页皮肤动作，失败显示可关闭错误并恢复控件；保存结果未确认不自动重试。`app:skin-applied` 同步图标，`app:appearance-changed` 同步设置和皮肤列表；页内输入草稿/勾选保留。
+
+`active_skin_link` 在 head 内先注入受校验的 skin identity，再加载版本化 CSS，防止暗色换页先闪白。默认“无皮肤”即 White；`website-dark` 为 Dark。`no_skin` 恢复请求不注入皮肤且禁用外观切换，不改写已保存状态；`/backend` 与打印页不增加切换入口。单据白纸和源票面不反色。动效服从 `prefers-reduced-motion`。
+
+`common.js.api` 对真实请求计数，超过 180ms 显示轻量转圈，读取完最后一个响应 JSON 或失败后收回；预览 keep-alive 不参与显示。按钮的 `setBusy` 单独保存原尺寸、DOM 节点与禁用态，只在真实操作中转圈。导航沿用原生点击、下载和浏览器历史，支持 CSS 跨文档过渡，并在 pageshow/pagehide 或取消超时后清理标志。ResizeObserver 将当前顶栏高度交给列表操作栏/设置分类的 sticky top；根元素与 body 的横向裁切使用 clip，避免皮肤改变纵向 sticky 容器。
+
 ## 3. HTTP API 总表
 
 ### 3.1 健康、设置、偏好与诊断
 
+首页搜索补充（2026-09-07）：`GET /api/v1/invoices` 接受 `search_scope=invoice|filename|all`，非法枚举 422，缺省 all 兼容已有调用者。首页提交 invoice 为默认，重置重新读取表单默认；后端逐字段应用 keyword 后计算 filtered 统计。文件名/全部范围的非空搜索在列表显示转义文件名，筛选无结果使用专门空态。已提交范围沿用现有 generation/SSE 刷新链，旧请求不得覆盖新结果。
+
 | 方法与路径 | AppState 入口 | 主要请求/返回 | 消费者与错误 |
 |---|---|---|---|
 | `GET /api/v1/health` | `health` | 运行状态、路径/PID、build/API/协议/能力，以及 `product_version/package_id/platform/architecture/package_type` 与 package manifest 状态 | 双平台启动器、设置页、macOS 严格握手；当前健康可先于后台同步完成 |
-| `GET /api/v1/about` | `about` | 纯本地返回产品、package、build、公开链接和最近更新状态 | 设置“关于”；绝不触发网络 I/O |
+| `GET /api/v1/about` | `about` | 纯本地返回产品、package、build、`links.website=/website/`、公开仓库链接和最近更新状态 | 设置“关于”；绝不触发网络 I/O |
 | `POST /api/v1/update/check` | `check_for_updates` | JSON 只允许布尔 `force`；返回 `idle/checking/up_to_date/available/offline/invalid/unsupported` 与候选 artifact | 同源写请求；线程池执行；URL/主机不可由客户端覆盖 |
 | `POST /api/v1/update/install` | `install_update` | 只接受空 JSON 对象 `{}`；只消费本进程已批准且与 allowlisted Feed 最新版本完全一致的 host candidate | Tauri 配置时要求精确 host origin；host 原子消费 300 秒内完整候选，先 flush `{"ok":true}` 再放行私有 update commit；版本/URL/路径/签名/artifact ID 一律拒绝且不返回；Host RPC/commit 准备失败固定 `503 Update installation unavailable`，不得泄露私有元数据 |
 | `GET /api/v1/settings` | `settings` | 主机端口、活动 TargetProfile、普通/成本产物、最近目录、偏好、bridge、诊断路径 | 首页、设置页、backend |
@@ -115,8 +139,9 @@ preview 和 print 都以短期内存 job 输出，不能把 PNG、XML 文本或�
 | `POST /api/v1/documents/recent-outbound-dirs/remove` | `remove_recent_outbound_invoice_dir` | 删除历史目录记忆 | 当前目录受到保护 |
 | `PUT /api/v1/documents/defaults` | `save_document_defaults` | 入库/出库允许字段 | 写 `runtime/local_state/documents/defaults.json` |
 | `GET /api/v1/documents/inbound/preview` | `document_inbound_preview` | 查询 `invoice_number`；返回逐明细预览和合计 | 无票 `404`，预览规则错误 `400` |
+| `POST /api/v1/documents/inbound/selection` | `document_inbound_selection` | `{target_id,items:[{invoice_key,source_path}]}`，最多 1000 条；按同票家族返回 ready、原因、明细/金额、文件状态与逐票 selection | 只读成本 CSV；格式 `400`、过期/越界/缺源文件 `409` |
 | `POST /api/v1/documents/inbound/export-status` | `inbound_document_export_status` | `{invoice_number}` | 返回存在、占用、目标/文件夹路径；`404/400` |
-| `POST /api/v1/documents/inbound/export` | `export_inbound_document` | `{invoice_number,defaults,mode}`；`mode=copy` 可导出副本 | `404/400`；占用以 `ok=false` 返回 |
+| `POST /api/v1/documents/inbound/export` | `export_inbound_document` | `{invoice_number,defaults,mode,selection?}`；传统 `mode=copy` 保留；批量携带 selection 且 mode 仅 skip_existing/copy_existing | 同一目标锁内重验选择到写出；`404/400/409`；占用以 `ok=false` 返回 |
 | `POST /api/v1/documents/inbound/open` | `open_inbound_document` | `{invoice_number}` | 只打开受控目录内已导出文件；`404/400` |
 | `POST /api/v1/documents/inbound/open-location` | `open_inbound_document_location` | `{invoice_number}` | 只打开受控目录；`404/400` |
 | `GET /api/v1/documents/outbound/preview` | `document_outbound_preview` | 查询 `invoice_number`；解析出库发票明细 | 无票 `404`，目录/解析规则错误 `400` |
@@ -125,7 +150,15 @@ preview 和 print 都以短期内存 job 输出，不能把 PNG、XML 文本或�
 | `POST /api/v1/documents/outbound/open` | `open_outbound_document` | `{invoice_number}` | 只打开受控目录内文件 |
 | `POST /api/v1/documents/outbound/open-location` | `open_outbound_document_location` | `{invoice_number}` | 只打开受控目录 |
 
+首页 `>>` 的“批量开具入库单”通过同标签页 sessionStorage 传递 30 分钟内的勾选草稿，再进入 `/documents?batch=inbound`；URL 不含源路径，`no_skin=1` 保留。单据页只读核对后由用户明确批量导出，每张请求在工作线程执行并返回结果；停止只阻止剩余任务，当前请求仍收尾。缺成本明细/明细冲突逐票展示；断网或服务端 5xx 标为结果未确认并停止队列，同次页面重新核对不会自动重试该票。目标切换使队列失效，已确认导出或跳过的记录保持终态。
+
+入/出库预览新增模板 `layout`，网页通过 colgroup 使用真实列宽和最低明细行数。预览请求按递增序号防止迟到响应覆盖新选择。大写金额与工作簿共用无“人民币”前缀的结果；动态行高、合并范围与实际打印范围见数据算法第 10 节。
+
 ### 3.4.1 Tauri 私有握手与原生选择器
+
+2026-09-07 当前语义：Windows Tauri 支持 desktop/browser，非 Tauri BAT/core 仍禁用 desktop。保存偏好不切换当前 host 的 `StartupSurface`，完整退出再启动才生效。页面结束 owned backend 后，watcher 原子撤销授权、使 lifecycle 失效并请求 host 退出释放单实例；host 主动退出先撤销 ownership，避免重入。下方早期 source-only 记录不替代当日 Windows ZIP 验收。
+
+Portable builder 从干净工作区快照复制共享核心、Web 与官网精确白名单，编译绑定 manifest 后生成 GUI host ZIP、逐文件 SHA 和 receipt；不含本机 config/runtime/业务文件。皮肤更新仍由动态模板注入内容版本 URL，恢复入口跳过皮肤。Ink Pulse 单据 HTML 预览保留用户要求的深色，导出与源票面内容不变。
 
 这不是新的浏览器公开能力。未来 bundle 的 Rust host 在创建 WebView 前，先以固定
 `127.0.0.1:8766` 启动自己的 backend child，并向仅该 child 知道的 256 位 secret
@@ -307,6 +340,18 @@ health 的当前 API 契约是 `2026-08-02-release-update-v1`，做账协议是 
 ## 6. 关键运行时序
 
 ### 6.1 正式启动与后台首轮同步
+
+2026-09-07 启动诊断：根 `检查启动环境.bat` 转发正式启动器的 `-Diagnose`，在 Python、manifest 和启动 mutex 之前完成只读端口检查。真实启动失败先释放已持有的 mutex，再保存 `startup-diagnostic-<PID>.txt` 并显示原生前台提示；自动化可指定 `-NoDialog`，仍保留失败退出码。诊断与 backend 会重写的 preflight 分文件，包含 OS 监听 PID、可读进程名称/路径、配置位置和公开 health 白名单；查询超时/权限不足明确展示，不调用停止接口。
+
+Desktop 的 `startup_diagnostics.rs` 直接读取 Windows IPv4/IPv6 监听表和进程信息，GUI 错误不再仅写 stderr；托盘和 `--diagnose-startup` 复用该诊断。无有效 bundle 时日志回退用户 diagnostics 目录；正常 runtime 的诊断按本次 PID 保存。服务自报请求固定 loopback、1 秒总期限、32 KiB 上限，只展示 PID/package_type/product_version/config_path/runtime_dir，不能触碰 Host RPC secret 或被当作授权。Windows 官方单实例插件使用由 EXE 和 runtime 路径派生的标识；同一环境唤回原启动方式，不同环境进入固定端口拒绝流程。产品元数据仍为 InvoiceHub。
+
+直接 `python -m invoice_hub.api.main` 在导入模块级 app 之前预检查端口，失败以非零退出码打印监听 PID，不创建 AppState/投影/后台同步。该预检查不持有服务 socket，不代替 Uvicorn 的最终绑定，也不能保证并发两个首次启动之间没有竞争。
+
+Tauri 的 setup 在事件循环中执行，不能只依赖 `Builder::build` 的错误返回。setup 内完成 owned child 清理后必须就地展示失败，再请求退出并保留失败退出码；不能让 `Err` 触发仅写隐藏 stderr 的 panic。Windows 自动化可显式使用 `--no-startup-dialog` 跳过弹窗，日志与退出码保留，普通双击默认仍展示。
+
+宿主使用 Tauri `run_return` 取得实际退出结果后映射进程退出码，避免 Windows event loop 的普通 `run` 直接退出而丢失 setup 的失败标记。CLI 的诊断子进程使用现有 `child_environment()` 清除私有 host 变量，不能把尚未被 app 捕获的 Host RPC 凭据传给 netstat。
+
+Windows venv 转发器的 CIM `ExecutablePath` 可以是基础 Python，而 `CommandLine` 首项仍为 `.venv` Python。`Test-IHProcessIdentity` 必须分别确认两者均属于 `Get-IHLaunchContext.IdentityPython`，再精确核验 `-m invoice_hub.api.main --root --config`；不能要求两个 Python 路径相同，也不能仅凭 health 绕过完整 CIM 的矛盾。该判断共用于启动复用和 PID 停止。release 仅提供随包 Python 候选，因此不接受源码 venv；不同配置的桌面实例占用端口时仍拒绝接管。
 
 ```mermaid
 sequenceDiagram
@@ -552,6 +597,8 @@ flowchart TD
 ```
 
 ### 6.10 WebUI 关闭
+
+顶部电源在所有普通页面始终打开确认弹窗，从 preferences 读取已保存行为作为单选默认值；设置内原按钮保留 ask/记住后直接执行的既有语义。二者共用控制器与 `{shutdown_behavior, remember}` API。弹窗同时锁定 html/body，取消恢复焦点，失败保留选择并允许重试；外部兼容服务保护同时作用于新入口。只有响应 `ok=true`、scheduled/idempotent 与行为一致后才标为已提交，并派发 `app:shutdown-accepted` 让 SSE 关闭并显示“关闭中”，避免主动关机被误报成断线。
 
 ```mermaid
 sequenceDiagram

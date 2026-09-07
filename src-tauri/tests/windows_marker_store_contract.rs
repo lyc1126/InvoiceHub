@@ -28,7 +28,8 @@ fn windows_marker_store_contract_is_pinned_and_handle_relative() {
         "FILE_OPEN_REPARSE_POINT",
         "FILE_ATTRIBUTE_REPARSE_POINT",
         "SetFileInformationByHandle",
-        "FileRenameInfo",
+        "NtSetInformationFile",
+        "FILE_RENAME_INFORMATION_CLASS",
         "ReplaceIfExists = false",
         "FileDispositionInfo",
         "FlushFileBuffers",
@@ -37,6 +38,7 @@ fn windows_marker_store_contract_is_pinned_and_handle_relative() {
         "align_of::<FILE_RENAME_INFO>()",
         "vec![0_usize",
         "byte_len_u32",
+        "unsafe impl Send for WindowsHandle",
     ] {
         assert!(
             windows.contains(required),
@@ -85,6 +87,35 @@ fn windows_marker_store_contract_is_pinned_and_handle_relative() {
     assert!(
         !flush.contains("ERROR_ACCESS_DENIED"),
         "access denied must remain a directory flush failure"
+    );
+
+    let publish = windows
+        .split("fn publish")
+        .nth(1)
+        .and_then(|body| body.split("fn clear").next())
+        .expect("publish implementation");
+    assert!(
+        publish.contains(
+            "FILE_GENERIC_WRITE | FILE_READ_ATTRIBUTES | DELETE_ACCESS | SYNCHRONIZE_ACCESS"
+        ),
+        "temporary marker validation must retain read-attributes access"
+    );
+    assert!(
+        rename.contains("let name_bytes = usize::from(object_name.length);"),
+        "rename extent must exclude the UTF-16 terminator"
+    );
+    assert!(
+        rename.contains("name_words"),
+        "rename copy length must follow the non-terminated UnicodeString extent"
+    );
+    assert!(
+        rename.contains("NtSetInformationFile(")
+            && rename.contains("FILE_RENAME_INFORMATION_CLASS"),
+        "handle-relative rename must use the native information call"
+    );
+    assert!(
+        !rename.contains("SetFileInformationByHandle("),
+        "Win32 rename rejects the pinned RootDirectory handle"
     );
 }
 

@@ -2,6 +2,13 @@
   const state = {
     active: "inbound",
     payload: null,
+    listPages: { inbound: 1, outbound: 1 },
+    loadGeneration: 0,
+    loadController: null,
+    indexTimer: 0,
+    previewRequest: { inbound: 0, outbound: 0 },
+    exporting: { inbound: false, outbound: false },
+    batch: { handoff: null, items: [], loading: false, running: false, stop: false, initialized: false, invalid: false },
     inboundPreview: null,
     outboundPreview: null,
     pendingOutboundDir: "",
@@ -52,6 +59,14 @@
     dialogYesBtn: app.qs("#documentDialogYesBtn"),
     dialogNoBtn: app.qs("#documentDialogNoBtn"),
     dialogOpenBtn: app.qs("#documentDialogOpenBtn"),
+    batch: app.qs("#inboundBatch"),
+    batchBody: app.qs("#inboundBatchBody"),
+    batchProgress: app.qs("#inboundBatchProgress"),
+    batchExisting: app.qs("#inboundBatchExisting"),
+    batchExport: app.qs("#inboundBatchExportBtn"),
+    batchStop: app.qs("#inboundBatchStopBtn"),
+    batchCheck: app.qs("#inboundBatchCheckBtn"),
+    batchSelectAll: app.qs("#inboundBatchSelectAll"),
   };
 
   let dialogResolver = null;
@@ -120,10 +135,69 @@
   function renderInvoiceOptions(select, items, placeholder) {
     const selected = select.value;
     select.innerHTML = `<option value="">${app.escapeHtml(placeholder)}</option>`
-      + (items || []).map((item) => `<option value="${app.escapeHtml(item.invoice_number)}">${app.escapeHtml(optionLabel(item))}</option>`).join("");
+      + (items || []).map((item) => `<option value="${app.escapeHtml(item.invoice_number)}" ${item.blocked ? "disabled" : ""}>${app.escapeHtml(optionLabel(item))}${item.blocked ? " · 明细冲突，待核对" : ""}</option>`).join("");
     if ([...select.options].some((option) => option.value === selected)) {
       select.value = selected;
     }
+  }
+
+  function renderInvoiceChoices(kind) {
+    const select = refs[`${kind}Select`];
+    const all = state.payload?.[`${kind}_invoices`] || [];
+    const query = app.qs(`#${kind}InvoiceSearch`).value.trim().toLocaleLowerCase();
+    const matches = all.filter(item => !query || [item.invoice_number, item.seller].some(value => String(value || "").toLocaleLowerCase().includes(query)));
+    const pages = Math.max(1, Math.ceil(matches.length / 100));
+    state.listPages[kind] = Math.min(state.listPages[kind], pages);
+    const items = matches.slice((state.listPages[kind] - 1) * 100, state.listPages[kind] * 100);
+    const selected = all.find(item => item.invoice_number === select.value);
+    // Keep a current preview selection across pages, without mounting the full list.
+    if (selected && !items.includes(selected)) items.unshift(selected);
+    renderInvoiceOptions(select, items, `请选择${kind === "inbound" ? "入库" : "出库"}发票`);
+    app.qs(`#${kind}PageStatus`).textContent = `第 ${state.listPages[kind]} / ${pages} 页 · ${matches.length} 张`;
+    app.qs(`#${kind}PreviousPage`).disabled = state.listPages[kind] === 1;
+    app.qs(`#${kind}NextPage`).disabled = state.listPages[kind] === pages;
+  }
+
+  function renderIndexStatus(index = {}) {
+    const busy = index.running || index.state === "running";
+    const labels = { starting: "正在启动加载", inbound: "正在读取入库明细", discovering: "正在统计出库文件", extracting: "正在加载出库发票" };
+    app.qs("#documentIndexStatus").textContent = busy
+      ? `${labels[index.phase] || "正在加载"} · ${index.processed || 0} / ${index.total || 0} · 缓存复用 ${index.reused || 0}`
+      : ({ ready: `加载完成 · ${index.total || 0} 个文件 · 失败 ${index.errors || 0}`, cancelled: "已停止加载，进度已保留", interrupted: "加载已中断，进度已保留", failed: "加载失败，可继续重试" }[index.state] || "");
+    app.qs("#documentIndexStatus").title = index.message || (index.error_files || []).map(item => `${item.file_name}: ${item.message}`).join("\n");
+    app.qs("#documentIndexStop").hidden = !busy;
+    app.qs("#documentIndexResume").disabled = busy;
+    app.qs("#documentIndexResume").textContent = ["cancelled", "interrupted", "failed"].includes(index.state) ? "继续加载" : "刷新列表";
+    window.clearTimeout(state.indexTimer);
+    if (busy) state.indexTimer = window.setTimeout(pollIndex, 700);
+  }
+
+  async function pollIndex() {
+    const generation = state.loadGeneration;
+    try {
+      const { index } = await app.api("/api/v1/documents/index", { activity: false, signal: state.loadController?.signal });
+      if (generation !== state.loadGeneration) return;
+      renderIndexStatus(index);
+      if (index.state === "ready") await loadState("index.ready");
+    } catch (error) {
+      if (error.name !== "AbortError" && generation === state.loadGeneration) {
+        setBanner("danger", `读取加载进度失败：${error.message}`);
+        state.indexTimer = window.setTimeout(pollIndex, 1500);
+      }
+    }
+  }
+
+  async function stopIndex() {
+    const job = state.payload?.index?.job_id;
+    ++state.loadGeneration;
+    state.loadController?.abort();
+    window.clearTimeout(state.indexTimer);
+    try {
+      const payload = await app.api("/api/v1/documents/index/cancel", { method: "POST", body: { job_id: job } });
+      if (!payload.ok) throw new Error(payload.message);
+      state.payload.index = payload.index;
+      renderIndexStatus(payload.index);
+    } catch (error) { setBanner("danger", `停止加载失败：${error.message}`); }
   }
 
   function renderPathOption(path, { active = false, removable = false } = {}) {
@@ -207,11 +281,31 @@
   }
 
   function renderState(payload) {
+    const targetChanged = state.payload && state.payload.target_id !== payload.target_id;
+    if (state.payload && (targetChanged || state.payload.outbound_invoice_dir !== payload.outbound_invoice_dir)) {
+      state.previewRequest.outbound += 1;
+      state.outboundPreview = null;
+      state.lastExport.outbound = "";
+      refs.outboundSelect.value = "";
+      renderOutboundPreview(null);
+    }
+    if (targetChanged) {
+      refs.inboundSelect.value = "";
+      state.batch.stop = true;
+      state.batch.invalid = true;
+      state.previewRequest.inbound += 1;
+      state.inboundPreview = null;
+      state.lastExport.inbound = "";
+      renderInboundPreview(null);
+      if (state.batch.handoff) refs.batchProgress.textContent = "发票目录已切换，请返回首页重新勾选。";
+      renderBatch();
+    }
     state.payload = payload;
     refs.path.textContent = `当前发票目录：${payload.watch_dir || "--"}`;
     refs.meta.textContent = `入库发票 ${payload.inbound_invoices?.length || 0} 张 · 出库发票 ${payload.outbound_invoices?.length || 0} 张`;
-    renderInvoiceOptions(refs.inboundSelect, payload.inbound_invoices || [], "请选择入库发票");
-    renderInvoiceOptions(refs.outboundSelect, payload.outbound_invoices || [], "请选择出库发票");
+    renderInvoiceChoices("inbound");
+    renderInvoiceChoices("outbound");
+    renderIndexStatus(payload.index);
     if (!refs.outboundDirInput.value || !state.pendingOutboundDir) {
       refs.outboundDirInput.value = payload.outbound_invoice_dir || "";
     }
@@ -229,11 +323,19 @@
   }
 
   async function loadState(reason = "manual") {
+    const generation = ++state.loadGeneration;
+    state.loadController?.abort();
+    state.loadController = new AbortController();
     try {
-      const payload = await app.api("/api/v1/documents/state");
+      const payload = await app.api(reason === "resume" ? "/api/v1/documents/index/resume" : "/api/v1/documents/state", {
+        ...(reason === "resume" ? { method: "POST", body: {} } : {}), signal: state.loadController.signal,
+      });
+      if (generation !== state.loadGeneration) return;
       renderState(payload);
       if (reason !== "eventsource.open") setBanner("muted", "");
+      if (!state.batch.initialized) await receiveBatchSelection();
     } catch (error) {
+      if (error.name === "AbortError" || generation !== state.loadGeneration) return;
       setBanner("danger", `读取单据状态失败：${error.message}`);
     }
   }
@@ -252,12 +354,144 @@
   }
 
   function updateControls() {
-    refs.exportInboundBtn.disabled = !refs.inboundSelect.value || !state.inboundPreview;
+    refs.exportInboundBtn.disabled = state.exporting.inbound || state.batch.running || refs.exportInboundBtn.dataset.busy === "true" || !refs.inboundSelect.value || !state.inboundPreview;
+    refs.inboundSelect.disabled = state.exporting.inbound;
     refs.openInboundBtn.disabled = !state.lastExport.inbound;
     refs.openInboundLocationBtn.disabled = !state.lastExport.inbound;
-    refs.exportOutboundBtn.disabled = !refs.outboundSelect.value || !state.outboundPreview;
+    refs.exportOutboundBtn.disabled = state.exporting.outbound || refs.exportOutboundBtn.dataset.busy === "true" || !refs.outboundSelect.value || !state.outboundPreview;
+    refs.outboundSelect.disabled = state.exporting.outbound;
     refs.openOutboundBtn.disabled = !state.lastExport.outbound;
     refs.openOutboundLocationBtn.disabled = !state.lastExport.outbound;
+  }
+
+  async function receiveBatchSelection() {
+    state.batch.initialized = true;
+    if (new URLSearchParams(window.location.search).get("batch") !== "inbound") return;
+    refs.batch.hidden = false;
+    try {
+      const handoff = JSON.parse(sessionStorage.getItem("invoicehub.inbound-selection") || "null");
+      if (handoff?.version !== 1 || !Array.isArray(handoff.items) || !Number.isFinite(handoff.created_at)
+          || Date.now() - handoff.created_at > 30 * 60 * 1000 || handoff.created_at > Date.now()) {
+        throw new Error("勾选已过期，请返回首页重新勾选。");
+      }
+      state.batch.handoff = handoff;
+      await checkBatchSelection();
+    } catch (error) {
+      refs.batchProgress.textContent = error.message;
+      renderBatch();
+    }
+  }
+
+  function renderBatch() {
+    const batch = state.batch;
+    const available = batch.items.filter((item) => item.ready && !["exported", "skipped", "unknown"].includes(item.result));
+    const locked = batch.loading || batch.running || batch.invalid || state.exporting.inbound;
+    refs.batchExport.disabled = locked || !available.some((item) => item.selected);
+    refs.batchCheck.disabled = locked || !batch.handoff;
+    refs.batchStop.hidden = !batch.running;
+    refs.batchStop.disabled = batch.stop;
+    refs.batchExisting.disabled = locked;
+    refs.batchSelectAll.disabled = locked || !available.length;
+    refs.batchSelectAll.checked = available.length > 0 && available.every((item) => item.selected);
+    refs.batchSelectAll.indeterminate = available.some((item) => item.selected) && !refs.batchSelectAll.checked;
+    refs.batchBody.innerHTML = batch.items.map((item, index) => {
+      const disabled = locked || !available.includes(item);
+      const tone = item.result === "exported" ? "success" : (!item.ready || ["failed", "unknown"].includes(item.result) ? "warning" : "muted");
+      const label = item.resultText || item.message || (item.export_status?.exists ? "已导出" : "待导出");
+      return `<tr><td><input type="checkbox" data-batch-select="${index}" aria-label="选择入库单 ${app.escapeHtml(item.invoice_number || index + 1)}" ${item.selected ? "checked" : ""} ${disabled ? "disabled" : ""}></td>
+        <td>${app.escapeHtml(item.invoice_number || "未识别")}</td><td>${app.escapeHtml(item.seller || "--")}</td>
+        <td>${item.row_count || 0}</td><td class="document-number">${app.escapeHtml(item.total_with_tax || "--")}</td>
+        <td>${item.result === "working" ? '<span class="ui-spinner" aria-hidden="true"></span>' : ""}${app.statusPill(label, tone)}</td>
+        <td><button type="button" class="btn btn--ghost" data-batch-preview="${index}" ${!item.ready || batch.invalid || state.exporting.inbound ? "disabled" : ""}>预览</button></td></tr>`;
+    }).join("");
+  }
+
+  async function checkBatchSelection() {
+    if (!state.batch.handoff || state.batch.loading || state.batch.running || state.batch.invalid) return;
+    state.batch.loading = true;
+    app.setBusy(refs.batchCheck, true, "核对中");
+    renderBatch();
+    refs.batchProgress.textContent = "正在核对勾选发票...";
+    try {
+      const payload = await app.api("/api/v1/documents/inbound/selection", { method: "POST", body: state.batch.handoff });
+      if (state.batch.invalid) return;
+      // Preserve known successes on recheck. An uncertain network result must be inspected
+      // in the output folder before the user starts a new selection, never retried here.
+      const previous = new Map(state.batch.items.map((item) => [item.invoice_number, item]));
+      state.batch.items = payload.items.map((item) => {
+        const old = previous.get(item.invoice_number);
+        const retained = ["exported", "skipped", "unknown"].includes(old?.result);
+        return { ...item, selected: item.ready && !retained, ...(retained ? { result: old.result, resultText: old.resultText } : {}) };
+      });
+      const blocked = state.batch.items.filter((item) => !item.ready).length;
+      refs.batchProgress.textContent = `${payload.record_count} 条勾选记录，共 ${payload.invoice_count} 张发票${blocked ? `，${blocked} 张待处理` : ""}。`;
+    } catch (error) {
+      state.batch.items.forEach((item) => { item.ready = false; });
+      refs.batchProgress.textContent = `核对失败：${error.message}`;
+    } finally {
+      state.batch.loading = false;
+      app.setBusy(refs.batchCheck, false);
+      renderBatch();
+    }
+  }
+
+  async function exportBatchInbound() {
+    const batch = state.batch;
+    if (batch.running || batch.loading || batch.invalid || state.exporting.inbound) return;
+    const queue = batch.items.filter((item) => item.selected && item.ready && !["exported", "skipped", "unknown"].includes(item.result));
+    if (!queue.length) return;
+    const defaults = formValues(refs.inboundDefaultsForm);
+    const mode = refs.batchExisting.value;
+    batch.running = true;
+    batch.stop = false;
+    app.setBusy(refs.batchExport, true, "导出中");
+    updateControls();
+    let completed = 0;
+    try {
+      for (const item of queue) {
+        if (batch.stop) break;
+        item.result = "working";
+        item.resultText = "正在导出";
+        refs.batchProgress.textContent = `正在导出 ${completed + 1} / ${queue.length}：${item.invoice_number}`;
+        renderBatch();
+        try {
+          const payload = await app.api("/api/v1/documents/inbound/export", {
+            method: "POST", body: { invoice_number: item.invoice_number, defaults, mode, selection: item.selection },
+          });
+          item.result = payload.skipped ? "skipped" : (payload.exported ? "exported" : "failed");
+          item.resultText = payload.skipped ? "已跳过已有文件" : (payload.exported ? (payload.copy ? "已导出副本" : "已导出") : payload.message || "导出失败");
+          if (payload.exported || payload.skipped) item.selected = false;
+        } catch (error) {
+          item.result = error.status && error.status < 500 ? "failed" : "unknown";
+          item.resultText = item.result === "unknown" ? "结果未确认，请核对入库单文件夹" : error.message;
+          if (item.result === "unknown" || error.status === 409) batch.stop = true;
+        }
+        completed += 1;
+        renderBatch();
+      }
+    } finally {
+      batch.running = false;
+      app.setBusy(refs.batchExport, false);
+      renderBatch();
+      updateControls();
+      const exported = queue.filter((item) => item.result === "exported").length;
+      const skipped = queue.filter((item) => item.result === "skipped").length;
+      const failed = queue.filter((item) => ["failed", "unknown"].includes(item.result)).length;
+      refs.batchProgress.textContent = `${batch.invalid ? "目录已切换。" : ""}已导出 ${exported} 张，跳过 ${skipped} 张，待处理 ${failed} 张，未执行 ${queue.length - completed} 张。`;
+      if (state.inboundPreview) await refreshExportStatus("inbound");
+    }
+  }
+
+  function previewColumns(preview) {
+    const widths = preview.layout.column_widths;
+    const total = widths.reduce((sum, width) => sum + width, 0);
+    return `<colgroup>${widths.map((width) => `<col style="width:${width / total * 100}%">`).join("")}</colgroup>`;
+  }
+
+  function previewRows(preview) {
+    const rows = [...preview.rows];
+    while (rows.length < preview.layout.minimum_rows) rows.push({});
+    return rows;
   }
 
   function renderInboundPreview(preview) {
@@ -268,17 +502,17 @@
       refs.inboundPreviewTable.innerHTML = '<tbody><tr><td>请选择发票</td></tr></tbody>';
       return;
     }
-    refs.inboundPreviewTable.innerHTML = `
+    refs.inboundPreviewTable.innerHTML = `${previewColumns(preview)}
       <tbody>
         <tr class="document-title-row"><th colspan="10">入 库 单</th></tr>
         <tr class="document-meta-row"><td>供应商</td><td colspan="2">${app.escapeHtml(preview.supplier || "")}</td><td>送货时间</td><td colspan="2">${app.escapeHtml(preview.invoice_date || "")}</td><td colspan="4">NO：${app.escapeHtml(preview.invoice_number || "")}</td></tr>
         <tr>${["编码", "品名", "规格", "单位", "数量", "单价", "金额", "税金", "税率", "备注"].map((h) => `<th>${h}</th>`).join("")}</tr>
-        ${rows.length ? rows.map((row) => `<tr>
+        ${previewRows(preview).map((row) => `<tr class="document-detail-row">
           <td></td><td>${app.escapeHtml(row.item_name)}</td><td>${app.escapeHtml(row.spec)}</td><td>${app.escapeHtml(row.unit)}</td>
           <td class="document-number">${app.escapeHtml(row.quantity)}</td><td class="document-number">${app.escapeHtml(row.unit_price)}</td>
           <td class="document-number">${app.escapeHtml(row.amount)}</td><td class="document-number">${app.escapeHtml(row.tax_amount)}</td>
           <td>${app.escapeHtml(row.tax_rate)}</td><td></td>
-        </tr>`).join("") : '<tr><td colspan="10">暂无明细</td></tr>'}
+        </tr>`).join("")}
         <tr class="document-total-row"><td>合计（大写）</td><td colspan="4">${app.escapeHtml(preview.total_with_tax_upper || "")}</td><td>合计（小写）</td><td colspan="4" class="document-total-amount">${app.escapeHtml(preview.total_with_tax || "0.00")}</td></tr>
         <tr class="document-footer-row"><td>采购员</td><td>${app.escapeHtml(preview.defaults?.采购员 || "")}</td><td>负责人</td><td colspan="2">${app.escapeHtml(preview.defaults?.负责人 || "")}</td><td>仓管员</td><td colspan="2">${app.escapeHtml(preview.defaults?.仓管员 || "")}</td><td>制表人</td><td>${app.escapeHtml(preview.defaults?.制表人 || "")}</td></tr>
       </tbody>`;
@@ -292,17 +526,17 @@
       refs.outboundPreviewTable.innerHTML = '<tbody><tr><td>请选择发票</td></tr></tbody>';
       return;
     }
-    refs.outboundPreviewTable.innerHTML = `
+    refs.outboundPreviewTable.innerHTML = `${previewColumns(preview)}
       <tbody>
         <tr class="document-title-row"><th colspan="8">出 库 单</th></tr>
-        <tr class="document-meta-row"><td colspan="2">收货单位：${app.escapeHtml(preview.defaults?.收货单位 || "")}</td><td colspan="2">开单日期：${app.escapeHtml(preview.invoice_date || "")}</td><td></td><td colspan="2">单据编号：${app.escapeHtml(preview.invoice_number || "")}</td><td></td></tr>
-        <tr class="document-meta-row"><td colspan="2">地    址：${app.escapeHtml(preview.defaults?.地址 || "")}</td><td colspan="2">电    话：${app.escapeHtml(preview.defaults?.电话 || "")}</td><td></td><td colspan="2">联 系 人：${app.escapeHtml(preview.defaults?.联系人 || "")}</td><td></td></tr>
+        <tr class="document-meta-row"><td colspan="2">收货单位：${app.escapeHtml(preview.defaults?.收货单位 || "")}</td><td colspan="3">开单日期：${app.escapeHtml(preview.invoice_date || "")}</td><td colspan="3">单据编号：${app.escapeHtml(preview.invoice_number || "")}</td></tr>
+        <tr class="document-meta-row"><td colspan="2">地    址：${app.escapeHtml(preview.defaults?.地址 || "")}</td><td colspan="3">电    话：${app.escapeHtml(preview.defaults?.电话 || "")}</td><td colspan="3">联 系 人：${app.escapeHtml(preview.defaults?.联系人 || "")}</td></tr>
         <tr>${["序号", "名称", "规格", "单位", "数量", "单价", "金额", "备 注"].map((h) => `<th>${h}</th>`).join("")}</tr>
-        ${rows.length ? rows.map((row) => `<tr>
+        ${previewRows(preview).map((row) => `<tr class="document-detail-row">
           <td class="document-number">${app.escapeHtml(row.index)}</td><td>${app.escapeHtml(row.item_name)}</td><td>${app.escapeHtml(row.spec)}</td><td>${app.escapeHtml(row.unit)}</td>
           <td class="document-number">${app.escapeHtml(row.quantity)}</td><td class="document-number">${app.escapeHtml(row.unit_price)}</td>
           <td class="document-number">${app.escapeHtml(row.amount)}</td><td></td>
-        </tr>`).join("") : '<tr><td colspan="8">暂无明细</td></tr>'}
+        </tr>`).join("")}
         <tr class="document-total-row"><td>合计(大写)</td><td colspan="3">${app.escapeHtml(preview.total_with_tax_upper || "")}</td><td>合计（小写）</td><td colspan="3" class="document-total-amount">${app.escapeHtml(preview.total_with_tax || "0.00")}</td></tr>
         <tr class="document-footer-row"><td>备      注</td><td colspan="7"></td></tr>
         <tr class="document-footer-row"><td>编辑人</td><td>${app.escapeHtml(preview.defaults?.编辑人 || "")}</td><td colspan="2">收货人</td><td>${app.escapeHtml(preview.defaults?.收货人 || "")}</td><td colspan="2">项目负责人</td><td>${app.escapeHtml(preview.defaults?.项目负责人 || "")}</td></tr>
@@ -311,6 +545,7 @@
 
   async function loadPreview(kind) {
     const invoiceNumber = selectedInvoice(kind);
+    const requestId = ++state.previewRequest[kind];
     state.lastExport[kind] = "";
     if (kind === "inbound") {
       state.inboundPreview = null;
@@ -326,6 +561,7 @@
     const url = `/api/v1/documents/${kind}/preview?invoice_number=${encodeURIComponent(invoiceNumber)}`;
     try {
       const preview = await app.api(url);
+      if (requestId !== state.previewRequest[kind] || invoiceNumber !== selectedInvoice(kind)) return;
       if (kind === "inbound") {
         state.inboundPreview = preview;
         renderInboundPreview({ ...preview, defaults: formValues(refs.inboundDefaultsForm) });
@@ -336,6 +572,7 @@
       await refreshExportStatus(kind);
       updateControls();
     } catch (error) {
+      if (requestId !== state.previewRequest[kind]) return;
       setBanner("danger", `生成预览失败：${error.message}`);
     }
   }
@@ -361,6 +598,7 @@
 
   async function refreshExportStatus(kind) {
     const invoiceNumber = selectedInvoice(kind);
+    const previewRequest = state.previewRequest[kind];
     if (!invoiceNumber) {
       state.lastExport[kind] = "";
       updateControls();
@@ -371,6 +609,7 @@
         method: "POST",
         body: { invoice_number: invoiceNumber },
       });
+      if (invoiceNumber !== selectedInvoice(kind) || previewRequest !== state.previewRequest[kind]) return null;
       state.lastExport[kind] = status.exists ? (status.path || "") : "";
       updateControls();
       return status;
@@ -431,6 +670,21 @@
   }
 
   async function exportDocument(kind) {
+    if (state.exporting[kind] || (kind === "inbound" && state.batch.running)) return;
+    // Keep the selected invoice stable through the existing-file check and decision.
+    state.exporting[kind] = true;
+    updateControls();
+    renderBatch();
+    try {
+      await exportSelectedDocument(kind);
+    } finally {
+      state.exporting[kind] = false;
+      updateControls();
+      renderBatch();
+    }
+  }
+
+  async function exportSelectedDocument(kind) {
     const button = kind === "inbound" ? refs.exportInboundBtn : refs.exportOutboundBtn;
     app.setBusy(button, true, "检查中");
     let status = null;
@@ -530,11 +784,16 @@
       return;
     }
     app.setBusy(refs.saveOutboundDirBtn, true, "保存中");
+    ++state.loadGeneration;
+    state.loadController?.abort();
+    window.clearTimeout(state.indexTimer);
     try {
       const payload = await app.api("/api/v1/documents/outbound-dir", { method: "PUT", body: { outbound_invoice_dir: path } });
       if (payload.ok === false) {
         setBanner("danger", payload.message || "保存目录失败。");
       } else {
+        ++state.loadGeneration;
+        state.loadController?.abort();
         state.pendingOutboundDir = "";
         state.pendingOutboundValidation = null;
         state.outboundPreview = null;
@@ -547,19 +806,79 @@
       setBanner("danger", `保存目录失败：${error.message}`);
     } finally {
       app.setBusy(refs.saveOutboundDirBtn, false);
+      state.loadController = new AbortController();
+      if (state.payload) renderIndexStatus(state.payload.index);
     }
   }
 
   async function removeOutboundDir(path) {
+    ++state.loadGeneration;
+    state.loadController?.abort();
     try {
       const payload = await app.api("/api/v1/documents/recent-outbound-dirs/remove", { method: "POST", body: { outbound_invoice_dir: path } });
+      ++state.loadGeneration;
+      state.loadController?.abort();
       renderState(payload);
     } catch (error) {
       setBanner("danger", `删除目录记录失败：${error.message}`);
+    } finally {
+      state.loadController = new AbortController();
+      if (state.payload) renderIndexStatus(state.payload.index);
     }
   }
 
   function bindEvents() {
+    app.qs("#documentIndexStop").addEventListener("click", stopIndex);
+    app.qs("#documentIndexResume").addEventListener("click", () => loadState("resume"));
+    for (const kind of ["inbound", "outbound"]) {
+      app.qs(`#${kind}InvoiceSearch`).addEventListener("input", app.debounce(() => {
+        state.listPages[kind] = 1;
+        renderInvoiceChoices(kind);
+      }, 120));
+      for (const [direction, delta] of [["Previous", -1], ["Next", 1]]) {
+        app.qs(`#${kind}${direction}Page`).addEventListener("click", () => {
+          state.listPages[kind] += delta;
+          renderInvoiceChoices(kind);
+        });
+      }
+    }
+    window.addEventListener("pagehide", () => {
+      ++state.loadGeneration;
+      state.loadController?.abort();
+      window.clearTimeout(state.indexTimer);
+    });
+    refs.batchExport.addEventListener("click", exportBatchInbound);
+    refs.batchCheck.addEventListener("click", checkBatchSelection);
+    refs.batchStop.addEventListener("click", () => {
+      state.batch.stop = true;
+      refs.batchProgress.textContent = "当前单据完成后停止，剩余单据将保留。";
+      renderBatch();
+    });
+    refs.batchSelectAll.addEventListener("change", () => {
+      state.batch.items.forEach((item) => { if (item.ready && !["exported", "skipped", "unknown"].includes(item.result)) item.selected = refs.batchSelectAll.checked; });
+      renderBatch();
+    });
+    refs.batchBody.addEventListener("change", (event) => {
+      const checkbox = event.target.closest("[data-batch-select]");
+      if (checkbox && !state.batch.running) {
+        state.batch.items[Number(checkbox.dataset.batchSelect)].selected = checkbox.checked;
+        renderBatch();
+      }
+    });
+    refs.batchBody.addEventListener("click", async (event) => {
+      const button = event.target.closest("[data-batch-preview]");
+      if (!button) return;
+      const item = state.batch.items[Number(button.dataset.batchPreview)];
+      app.qs("#inboundInvoiceSearch").value = item.invoice_number;
+      state.listPages.inbound = 1;
+      renderInvoiceChoices("inbound");
+      refs.inboundSelect.value = item.invoice_number;
+      await loadPreview("inbound");
+      refs.inboundPreviewTable.closest(".document-preview-panel").scrollIntoView({ block: "start", behavior: "auto" });
+    });
+    window.addEventListener("beforeunload", (event) => {
+      if (state.batch.running) { event.preventDefault(); event.returnValue = ""; }
+    });
     refs.tabs.forEach((tab) => tab.addEventListener("click", () => updateTabs(tab.dataset.documentTab)));
     refs.inboundSelect.addEventListener("change", () => loadPreview("inbound"));
     refs.outboundSelect.addEventListener("change", () => loadPreview("outbound"));

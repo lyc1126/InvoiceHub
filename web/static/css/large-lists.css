@@ -1,0 +1,43 @@
+body[data-page="documents"] .documents-controls {
+  flex-wrap: wrap;
+  overflow: visible;
+  gap: 12px;
+}
+body[data-page="documents"] .document-index-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  max-width: 100%;
+}
+#documentIndexStatus {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+body[data-page="documents"] .document-index-controls .btn {
+  flex: 0 0 auto;
+  width: auto;
+}
+body .document-pagination {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+body .document-pagination .btn {
+  flex: 0 0 44px;
+  width: 44px;
+  min-width: 44px;
+  min-height: 44px;
+}
+body .document-pagination[hidden] { display: none; }
+@media (max-width: 600px) {
+  body[data-page="documents"] .document-index-controls {
+    width: 100%;
+  }
+  #documentIndexStatus { flex-basis: 100%; }
+}

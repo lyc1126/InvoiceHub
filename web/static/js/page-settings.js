@@ -21,33 +21,6 @@ const settingsRefs = {
   diagnosticsList: document.getElementById("settingsDiagnosticsList"),
 };
 
-const SETTINGS_SHUTDOWN_BEHAVIORS = ["ask", "keep_monitor", "stop_monitor"];
-
-function normalizeSettingsShutdownBehavior(value) {
-  const normalized = String(value || "").trim();
-  return SETTINGS_SHUTDOWN_BEHAVIORS.includes(normalized) ? normalized : "ask";
-}
-
-function settingsShutdownBehaviorLabel(value) {
-  const normalized = normalizeSettingsShutdownBehavior(value);
-  if (normalized === "keep_monitor") return "保留监控，仅关闭 WebUI";
-  if (normalized === "stop_monitor") return "关闭 WebUI，并停止监控";
-  return "每次询问";
-}
-
-function publishSettingsShutdownBehavior(value) {
-  const normalized = normalizeSettingsShutdownBehavior(value);
-  document.body.dataset.systemShutdownBehavior = normalized;
-  document.dispatchEvent(new CustomEvent("settings:shutdown-behavior", { detail: { value: normalized } }));
-}
-
-function settingsBackendIsExternallyManaged() {
-  const bridge = window.invoiceHubMac;
-  return Boolean(bridge && (
-    bridge.backendOwnership === "externalCompatible"
-    || bridge.canManageBackend !== true
-  ));
-}
 
 const settingsOperationNoticeRefs = {
   root: document.getElementById("settingsOperationNotice"),
@@ -436,6 +409,10 @@ app.connectEvents(settingsRefs.eventState, () => loadSettings("event"), { refres
 
     resetSkinBtn: document.getElementById("settingsResetSkinBtn"),
 
+    appIconStatus: document.getElementById("settingsAppIconStatus"),
+
+    appIconList: document.getElementById("settingsAppIconList"),
+
   };
 
   const state = {
@@ -455,6 +432,12 @@ app.connectEvents(settingsRefs.eventState, () => loadSettings("event"), { refres
     skins: null,
 
     skinBusy: "",
+
+    appIcons: null,
+
+    appIconBusy: "",
+
+    pendingAppIconId: "",
 
   };
 
@@ -746,6 +729,8 @@ app.connectEvents(settingsRefs.eventState, () => loadSettings("event"), { refres
 
   function swatchesForSkin(skin) {
 
+    if (app.skinId(skin) === "website-dark") return ["#242520", "#d9fb5c", "#f3f4ee", "#9cdeb4"];
+
     return app.skinId(skin) === "animal-island" ? ["#fff3c5", "#2f9d83", "#72c6dd", "#f08b7f"] : ["#111827", "#1f6feb", "#0f766e", "#ffffff"];
 
   }
@@ -783,6 +768,7 @@ app.connectEvents(settingsRefs.eventState, () => loadSettings("event"), { refres
   function renderSkins(payload) {
 
     state.skins = payload;
+    renderAppearance({ skins: payload }, {});
 
     const items = app.skinItems(payload);
 
@@ -802,6 +788,208 @@ app.connectEvents(settingsRefs.eventState, () => loadSettings("event"), { refres
 
 
 
+  document.addEventListener("app:appearance-changed", (event) => {
+    state.selectedSkinId = app.activeSkinId(event.detail);
+    renderSkins(event.detail);
+  });
+  function appIconItems(payload) {
+
+    return Array.isArray(payload?.icons) ? payload.icons : [];
+
+  }
+
+
+
+  function appIconId(icon) {
+
+    return String(icon?.id || "").trim();
+
+  }
+
+
+
+  function currentAppIconId() {
+
+    return String(state.appIcons?.icon || "").trim();
+
+  }
+
+
+
+  function appIconById(iconId) {
+
+    return appIconItems(state.appIcons).find((icon) => appIconId(icon) === String(iconId || "").trim());
+
+  }
+
+
+
+  function setPageFavicon(icon) {
+
+    const href = String(icon?.favicon_url || "").trim();
+
+    if (!href) return;
+
+    let link = document.getElementById("appIconLink");
+
+    if (!link) {
+
+      link = document.createElement("link");
+
+      link.id = "appIconLink";
+
+      link.rel = "icon";
+
+      link.type = "image/png";
+
+      document.head.appendChild(link);
+
+    }
+
+    link.setAttribute("href", href);
+
+  }
+
+
+
+  function renderAppIconCard(icon) {
+
+    const id = appIconId(icon);
+
+    const active = id === currentAppIconId();
+
+    const checked = id === (state.pendingAppIconId || currentAppIconId());
+
+    const pending = id === state.pendingAppIconId;
+
+    const busy = Boolean(state.appIconBusy);
+
+    const name = String(icon?.name || id);
+
+    const description = String(icon?.description || "");
+
+    const previewUrl = String(icon?.preview_url || "");
+
+    return `<label class="app-icon-card${active ? " is-active" : ""}${checked ? " is-selected" : ""}${pending ? " is-pending" : ""}">
+
+      <input class="app-icon-card__radio" type="radio" name="settingsAppIconChoice" data-settings-app-icon-select="${app.escapeHtml(id)}" value="${app.escapeHtml(id)}"${checked ? " checked" : ""}${busy ? " disabled" : ""}>
+
+      <span class="app-icon-card__preview" aria-hidden="true"><img src="${app.escapeHtml(previewUrl)}" alt=""></span>
+
+      <span class="app-icon-card__body"><span class="app-icon-card__title"><strong>${app.escapeHtml(name)}</strong>${active ? app.statusPill("当前使用", "success") : ""}</span><span class="app-icon-card__description">${app.escapeHtml(description)}</span></span>
+
+    </label>`;
+
+  }
+
+
+
+  function renderAppIcons(payload) {
+
+    state.appIcons = payload || null;
+
+    if (!refs.appIconList || !refs.appIconStatus) return;
+
+    const items = appIconItems(state.appIcons);
+
+    const current = appIconById(currentAppIconId());
+
+    refs.appIconList.dataset.busy = state.appIconBusy ? "true" : "false";
+
+    refs.appIconList.setAttribute("aria-busy", state.appIconBusy ? "true" : "false");
+
+    refs.appIconList.innerHTML = items.length
+
+      ? items.map(renderAppIconCard).join("")
+
+      : '<div class="empty-state">暂无可用应用图标</div>';
+
+    if (!items.length) {
+
+      refs.appIconStatus.textContent = "应用图标：读取失败";
+
+    } else if (state.appIconBusy) {
+
+      refs.appIconStatus.textContent = `正在应用：${appIconById(state.pendingAppIconId)?.name || state.pendingAppIconId}`;
+
+    } else {
+
+      refs.appIconStatus.textContent = `当前应用图标：${current?.name || currentAppIconId()}`;
+
+    }
+
+  }
+
+
+
+  function renderAppIconError(error) {
+
+    state.appIcons = null;
+
+    if (refs.appIconStatus) refs.appIconStatus.textContent = "应用图标：读取失败";
+
+    if (refs.appIconList) refs.appIconList.innerHTML = `<div class="empty-state">${app.escapeHtml(error?.message || "应用图标读取失败")}</div>`;
+
+  }
+
+
+
+  async function selectAppIcon(iconId) {
+
+    const next = appIconById(iconId);
+
+    if (!next || state.appIconBusy) {
+
+      renderAppIcons(state.appIcons);
+
+      return;
+
+    }
+
+    if (appIconId(next) === currentAppIconId()) {
+
+      renderAppIcons(state.appIcons);
+
+      return;
+
+    }
+
+    state.appIconBusy = "update";
+
+    state.pendingAppIconId = appIconId(next);
+
+    renderAppIcons(state.appIcons);
+
+    try {
+
+      const payload = await app.api("/api/v1/app-icon", { method: "PUT", body: { icon: appIconId(next) } });
+
+      state.appIcons = payload;
+
+      state.pendingAppIconId = "";
+
+      setPageFavicon(appIconById(payload?.icon));
+
+      app.setBanner(settingsRefs.banner, "success", `应用图标已切换为：${appIconById(payload?.icon)?.name || payload?.icon}`);
+
+    } catch (error) {
+
+      state.pendingAppIconId = "";
+
+      app.setBanner(settingsRefs.banner, "danger", error.message || "应用图标更新失败");
+
+    } finally {
+
+      state.appIconBusy = "";
+
+      renderAppIcons(state.appIcons);
+
+    }
+
+  }
+
+
+
   async function loadPhase2Settings() {
 
     const settled = await Promise.allSettled([
@@ -814,6 +1002,8 @@ app.connectEvents(settingsRefs.eventState, () => loadSettings("event"), { refres
 
       app.api("/api/v1/cost-analysis"),
 
+      app.api("/api/v1/app-icon"),
+
     ]);
 
     const settings = settled[0].status === "fulfilled" ? settled[0].value : null;
@@ -823,6 +1013,8 @@ app.connectEvents(settingsRefs.eventState, () => loadSettings("event"), { refres
     const skins = settled[2].status === "fulfilled" ? settled[2].value : null;
 
     const costs = settled[3].status === "fulfilled" ? settled[3].value : null;
+
+    const appIcons = settled[4].status === "fulfilled" ? settled[4].value : null;
 
     if (settings || costs) renderWatchDirEditor(settings, costs);
 
@@ -835,6 +1027,14 @@ app.connectEvents(settingsRefs.eventState, () => loadSettings("event"), { refres
     }
 
     if (skins) renderSkins(skins);
+
+    if (!state.appIconBusy) {
+
+      if (appIcons) renderAppIcons(appIcons);
+
+      else renderAppIconError(settled[4].reason);
+
+    }
 
   }
 
@@ -1338,6 +1538,16 @@ app.connectEvents(settingsRefs.eventState, () => loadSettings("event"), { refres
 
   refs.resetSkinBtn?.addEventListener("click", resetSkin);
 
+  refs.appIconList?.addEventListener("change", (event) => {
+
+    const input = event.target.closest("[data-settings-app-icon-select]");
+
+    if (!input) return;
+
+    selectAppIcon(input.dataset.settingsAppIconSelect || input.value);
+
+  });
+
   window.addEventListener("resize", app.debounce(() => {
 
     updatePathOverflow(refs.watchDirHistory);
@@ -1601,6 +1811,8 @@ app.connectEvents(settingsRefs.eventState, () => loadSettings("event"), { refres
     startupSurfaceButtons: [...document.querySelectorAll("[data-settings-startup-surface]")],
     autoUpdateButtons: [...document.querySelectorAll("[data-settings-auto-check-updates]")],
     startupSurfaceHint: document.getElementById("settingsStartupSurfaceHint"),
+    printPopupCheckbox: document.getElementById("settingsAllowPrintPopups"),
+    printPopupHint: document.getElementById("settingsPrintPopupHint"),
     ocrCandidateInput: document.getElementById("settingsOcrCandidateDirInput"),
     pickOcrCandidateBtn: document.getElementById("settingsPickOcrCandidateDirBtn"),
     useWatchDirBtn: document.getElementById("settingsUseWatchDirForOcrBtn"),
@@ -1615,6 +1827,7 @@ app.connectEvents(settingsRefs.eventState, () => loadSettings("event"), { refres
     system_shutdown_behavior: "ask",
     startup_surface: "browser",
     auto_check_updates: true,
+    allow_print_popups: true,
     ocr_candidate_dir: "",
   };
 
@@ -1639,6 +1852,7 @@ app.connectEvents(settingsRefs.eventState, () => loadSettings("event"), { refres
       system_shutdown_behavior: shutdownBehavior,
       startup_surface: ["browser", "desktop"].includes(String(source.startup_surface || "")) ? String(source.startup_surface) : defaults.startup_surface,
       auto_check_updates: typeof source.auto_check_updates === "boolean" ? source.auto_check_updates : defaults.auto_check_updates,
+      allow_print_popups: typeof source.allow_print_popups === "boolean" ? source.allow_print_popups : defaults.allow_print_popups,
       ocr_candidate_dir: String(source.ocr_candidate_dir || "").trim(),
     };
   }
@@ -1684,18 +1898,28 @@ app.connectEvents(settingsRefs.eventState, () => loadSettings("event"), { refres
       const value = button.dataset.settingsStartupSurface;
       button.setAttribute("aria-pressed", value === state.preferences.startup_surface ? "true" : "false");
       button.disabled = Boolean(state.busy) || (value === "desktop" && !state.desktopAvailable);
-      if (value === "desktop" && !state.desktopAvailable) button.title = "Windows 便携版将在后续版本提供桌面窗口";
+      if (value === "desktop" && !state.desktopAvailable) button.title = "当前运行入口不提供桌面窗口";
     });
     refs.autoUpdateButtons.forEach((button) => {
       const value = button.dataset.settingsAutoCheckUpdates === "true";
       button.setAttribute("aria-pressed", value === state.preferences.auto_check_updates ? "true" : "false");
       button.disabled = Boolean(state.busy);
     });
+    if (refs.printPopupCheckbox) {
+      refs.printPopupCheckbox.checked = state.preferences.allow_print_popups;
+      refs.printPopupCheckbox.disabled = Boolean(state.busy);
+    }
     if (refs.startupSurfaceHint) {
       refs.startupSurfaceHint.className = "settings-action-status settings-action-status--muted";
       refs.startupSurfaceHint.textContent = state.desktopAvailable
-        ? "macOS 支持桌面窗口或系统默认浏览器；下次启动生效。"
-        : "Windows 便携版当前仅支持系统默认浏览器；桌面窗口将在后续版本提供。";
+        ? "可选择桌面窗口或系统默认浏览器；下次启动生效。"
+        : "当前运行入口仅支持系统默认浏览器。";
+    }
+    if (refs.printPopupHint) {
+      refs.printPopupHint.className = "settings-action-status settings-action-status--muted";
+      refs.printPopupHint.textContent = state.preferences.allow_print_popups
+        ? "已允许发票打印弹窗。桌面端更改将在下次启动 InvoiceHub 后生效。"
+        : "已阻止发票打印弹窗。重新启动 InvoiceHub 后，批量打印将保持关闭。";
     }
   }
 
@@ -1722,6 +1946,7 @@ app.connectEvents(settingsRefs.eventState, () => loadSettings("event"), { refres
       { label: "已导出单据处理", value: labelDocumentStrategy(prefs.document_export_existing_strategy) },
       { label: "系统关闭方式", value: settingsShutdownBehaviorLabel(prefs.system_shutdown_behavior) },
       { label: "启动方式", value: prefs.startup_surface === "desktop" ? "桌面窗口" : "系统默认浏览器" },
+      { label: "发票打印弹窗许可", value: prefs.allow_print_popups ? "已允许（桌面端下次启动生效）" : "已关闭（桌面端下次启动生效）" },
       { label: "自动检查更新", value: prefs.auto_check_updates ? "已开启（仅元数据）" : "已关闭" },
       { label: "OCR 候选目录", html: prefs.ocr_candidate_dir ? pathText(prefs.ocr_candidate_dir) : app.escapeHtml("当前发票目录") },
       { label: "当前发票目录", html: pathText(settings?.watch_dir) },
@@ -1823,6 +2048,16 @@ app.connectEvents(settingsRefs.eventState, () => loadSettings("event"), { refres
     });
   });
 
+  refs.printPopupCheckbox?.addEventListener("change", () => {
+    const value = Boolean(refs.printPopupCheckbox.checked);
+    if (value === state.preferences.allow_print_popups) return;
+    savePreferencePatch(
+      { allow_print_popups: value },
+      null,
+      value ? "已允许发票打印弹窗，将在下次启动 InvoiceHub 后生效。" : "已关闭发票打印弹窗，将在下次启动 InvoiceHub 后生效。",
+    );
+  });
+
   refs.ocrCandidateInput?.addEventListener("input", markOcrCandidateDirty);
   refs.pickOcrCandidateBtn?.addEventListener("click", async () => {
     app.setBusy(refs.pickOcrCandidateBtn, true, "选择中...");
@@ -1891,6 +2126,11 @@ app.connectEvents(settingsRefs.eventState, () => loadSettings("event"), { refres
     return text.startsWith("https://") ? text : "#";
   }
 
+  function safeWebsiteHref(value) {
+    // Only the bundled site may use a relative URL; update downloads stay HTTPS.
+    return value === "/website/" ? value : safeExternalHref(value);
+  }
+
   function formatBytes(value) {
     const bytes = Number(value);
     if (!Number.isFinite(bytes) || bytes <= 0) return "--";
@@ -1923,8 +2163,11 @@ app.connectEvents(settingsRefs.eventState, () => loadSettings("event"), { refres
 
     const platform = String(packageInfo?.platform || "");
     if (refs.downloadLink) {
-      refs.downloadLink.hidden = !(available && platform === "windows" && artifact?.url);
-      refs.downloadLink.href = safeExternalHref(artifact?.url);
+      // Portable Windows releases are manually installed from a new ZIP. Link
+      // to the prerelease page, never directly to an asset or installer flow.
+      const releasePage = safeExternalHref(update?.release_notes_url);
+      refs.downloadLink.hidden = !(available && platform === "windows" && releasePage !== "#");
+      refs.downloadLink.href = releasePage;
     }
     if (refs.installBtn) refs.installBtn.hidden = !(available && platform === "macos");
   }
@@ -1936,7 +2179,7 @@ app.connectEvents(settingsRefs.eventState, () => loadSettings("event"), { refres
     const build = payload?.build || {};
     if (refs.productName) refs.productName.textContent = product.display_name || product.name || "InvoiceHub";
     if (refs.version) refs.version.textContent = `版本 ${product.version || "--"}`;
-    if (refs.website) refs.website.href = safeExternalHref(payload?.links?.website);
+    if (refs.website) refs.website.href = safeWebsiteHref(payload?.links?.website);
     if (refs.github) refs.github.href = safeExternalHref(payload?.links?.github);
     if (refs.changelog) refs.changelog.href = safeExternalHref(payload?.links?.release_notes);
     renderRows(refs.identityList, [
@@ -1994,6 +2237,28 @@ app.connectEvents(settingsRefs.eventState, () => loadSettings("event"), { refres
     }
   }
 
+  async function openAboutLink(linkKey, button) {
+    if (!button || button.disabled) return;
+    app.setBusy(button, true, "打开中...");
+    try {
+      await app.api(`/api/v1/about/links/${encodeURIComponent(linkKey)}`, { method: "POST", body: {} });
+      app.setBanner(settingsRefs.banner, "success", "已交由系统默认浏览器打开。");
+    } catch (error) {
+      app.setBanner(settingsRefs.banner, "warning", error.message || "无法打开系统默认浏览器。");
+    } finally {
+      app.setBusy(button, false);
+    }
+  }
+
+  // Remote links use the host opener; the bundled website keeps same-tab navigation.
+  refs.github?.addEventListener("click", (event) => {
+    event.preventDefault();
+    openAboutLink("github", refs.github);
+  });
+  refs.changelog?.addEventListener("click", (event) => {
+    event.preventDefault();
+    openAboutLink("changelog", refs.changelog);
+  });
   refs.checkBtn?.addEventListener("click", checkForUpdates);
   refs.installBtn?.addEventListener("click", installMacUpdate);
 
@@ -2008,232 +2273,6 @@ app.connectEvents(settingsRefs.eventState, () => loadSettings("event"), { refres
   });
 })();
 
-// Settings system shutdown. The API response is returned before localhost terminates.
-(() => {
-  const refs = {
-    shutdownBtn: document.getElementById("settingsShutdownBtn"),
-    behaviorCurrent: document.getElementById("settingsShutdownBehaviorCurrent"),
-    behaviorHint: document.getElementById("settingsShutdownBehaviorHint"),
-    actionStatus: document.getElementById("settingsShutdownActionStatus"),
-    dialog: document.getElementById("settingsShutdownDialog"),
-    card: document.getElementById("settingsShutdownDialogCard"),
-    title: document.getElementById("settingsShutdownDialogTitle"),
-    description: document.getElementById("settingsShutdownDialogDescription"),
-    decision: document.getElementById("settingsShutdownDecision"),
-    radios: [...document.querySelectorAll('input[name="settingsShutdownBehavior"]')],
-    remember: document.getElementById("settingsShutdownRemember"),
-    error: document.getElementById("settingsShutdownDialogError"),
-    cancelBtn: document.getElementById("settingsShutdownCancelBtn"),
-    confirmBtn: document.getElementById("settingsShutdownConfirmBtn"),
-    progress: document.getElementById("settingsShutdownProgress"),
-    progressTitle: document.getElementById("settingsShutdownProgressTitle"),
-    progressText: document.getElementById("settingsShutdownProgressText"),
-  };
-
-  if (!refs.shutdownBtn || !refs.dialog || !refs.card) return;
-
-  const state = { busy: false, completed: false, previousFocus: null };
-
-  function selectedAction() {
-    const checked = refs.radios.find((radio) => radio.checked);
-    return checked?.value === "stop_monitor" ? "stop_monitor" : "keep_monitor";
-  }
-
-  function setSelectedAction(value) {
-    const normalized = value === "stop_monitor" ? "stop_monitor" : "keep_monitor";
-    refs.radios.forEach((radio) => {
-      radio.checked = radio.value === normalized;
-    });
-  }
-
-  function renderBehavior(value) {
-    if (settingsBackendIsExternallyManaged()) {
-      if (refs.behaviorCurrent) refs.behaviorCurrent.textContent = "由外部服务管理";
-      if (refs.behaviorHint) refs.behaviorHint.textContent = "当前 WebUI 连接到外部兼容服务，不能从此页面关闭后端。";
-      if (refs.actionStatus) {
-        refs.actionStatus.className = "settings-action-status settings-action-status--warning";
-        refs.actionStatus.textContent = "关闭系统 / WebUI 由外部服务管理，请使用外部服务提供的停止入口。";
-      }
-      refs.shutdownBtn.disabled = true;
-      refs.shutdownBtn.textContent = "由外部服务管理";
-      refs.shutdownBtn.title = "当前页面无权关闭外部服务";
-      refs.shutdownBtn.dataset.externalBackendManagement = "true";
-      return;
-    }
-    delete refs.shutdownBtn.dataset.externalBackendManagement;
-    refs.shutdownBtn.removeAttribute("title");
-    const normalized = normalizeSettingsShutdownBehavior(value);
-    if (refs.behaviorCurrent) refs.behaviorCurrent.textContent = settingsShutdownBehaviorLabel(normalized);
-    if (normalized === "keep_monitor") {
-      if (refs.behaviorHint) refs.behaviorHint.textContent = "已记住：关闭 WebUI 后，独立监控继续运行。";
-      if (refs.actionStatus) {
-        refs.actionStatus.className = "settings-action-status settings-action-status--success";
-        refs.actionStatus.textContent = "点击后将直接关闭 WebUI；监控保持当前运行状态。";
-      }
-      if (!state.busy) refs.shutdownBtn.textContent = "关闭 WebUI";
-      return;
-    }
-    if (normalized === "stop_monitor") {
-      if (refs.behaviorHint) refs.behaviorHint.textContent = "已记住：关闭 WebUI 前先停止独立监控。";
-      if (refs.actionStatus) {
-        refs.actionStatus.className = "settings-action-status settings-action-status--danger";
-        refs.actionStatus.textContent = "点击后将直接停止监控并关闭 WebUI。";
-      }
-      if (!state.busy) refs.shutdownBtn.textContent = "关闭系统并停止监控";
-      return;
-    }
-    if (refs.behaviorHint) refs.behaviorHint.textContent = "点击后将先询问是否保留监控。";
-    if (refs.actionStatus) {
-      refs.actionStatus.className = "settings-action-status settings-action-status--warning";
-      refs.actionStatus.textContent = "关闭浏览器标签不会停止 WebUI 或监控；只有点击关闭系统才执行。";
-    }
-    if (!state.busy) refs.shutdownBtn.textContent = "关闭系统";
-  }
-
-  function showDialog() {
-    if (refs.dialog.hidden) state.previousFocus = document.activeElement;
-    refs.dialog.hidden = false;
-    document.body.classList.add("settings-shutdown-dialog-open");
-  }
-
-  function openDecision(value = "keep_monitor", remember = false, errorMessage = "") {
-    state.busy = false;
-    state.completed = false;
-    showDialog();
-    refs.card.removeAttribute("aria-busy");
-    refs.title.textContent = "关闭本系统？";
-    refs.description.textContent = "关闭 WebUI 后，当前页面将无法继续操作。请选择是否让独立监控继续运行。";
-    refs.decision.hidden = false;
-    refs.progress.hidden = true;
-    setSelectedAction(value);
-    refs.radios.forEach((radio) => { radio.disabled = false; });
-    refs.remember.disabled = false;
-    refs.remember.checked = Boolean(remember);
-    refs.cancelBtn.disabled = false;
-    app.setBusy(refs.confirmBtn, false);
-    refs.error.textContent = errorMessage;
-    refs.error.hidden = !errorMessage;
-    window.requestAnimationFrame(() => refs.radios.find((radio) => radio.checked)?.focus());
-  }
-
-  function closeDecision() {
-    if (state.busy || state.completed) return;
-    refs.dialog.hidden = true;
-    document.body.classList.remove("settings-shutdown-dialog-open");
-    const target = state.previousFocus;
-    state.previousFocus = null;
-    if (target && typeof target.focus === "function") target.focus();
-  }
-
-  function decisionFocusableElements() {
-    return [
-      refs.radios.find((radio) => radio.checked && !radio.disabled),
-      refs.remember,
-      refs.cancelBtn,
-      refs.confirmBtn,
-    ].filter((element) => element && !element.disabled);
-  }
-
-  function showProgress(behavior) {
-    showDialog();
-    refs.card.setAttribute("aria-busy", "true");
-    refs.title.textContent = "正在关闭本系统...";
-    refs.description.textContent = behavior === "stop_monitor"
-      ? "系统正在先停止独立监控，再关闭 localhost WebUI。"
-      : "系统正在关闭 localhost WebUI，独立监控保持当前状态。";
-    refs.decision.hidden = true;
-    refs.progress.hidden = false;
-    refs.progressTitle.textContent = behavior === "stop_monitor" ? "正在停止监控并关闭 WebUI" : "正在关闭 WebUI";
-    refs.progressText.textContent = "请稍候，不要重复点击关闭按钮。";
-    refs.card.focus();
-  }
-
-  async function executeShutdown(behavior, remember) {
-    if (settingsBackendIsExternallyManaged()) {
-      renderBehavior(document.body.dataset.systemShutdownBehavior);
-      return;
-    }
-    const normalized = behavior === "stop_monitor" ? "stop_monitor" : "keep_monitor";
-    if (state.busy) return;
-    state.busy = true;
-    refs.shutdownBtn.dataset.shutdownBusy = "true";
-    app.setBusy(refs.shutdownBtn, true, "关闭中...");
-    refs.shutdownBtn.disabled = true;
-    showProgress(normalized);
-    try {
-      const payload = await app.api("/api/v1/server/shutdown", {
-        method: "POST",
-        body: { shutdown_behavior: normalized, remember: Boolean(remember) },
-      });
-      const accepted = payload?.ok === true
-        && (payload.scheduled === true || payload.idempotent === true)
-        && payload.shutdown_behavior === normalized;
-      if (!accepted) {
-        throw new Error(payload?.message || "后端未确认关闭请求，请重试。");
-      }
-      state.completed = true;
-      refs.card.removeAttribute("aria-busy");
-      refs.title.textContent = "关闭命令已提交";
-      refs.description.textContent = normalized === "stop_monitor" ? "WebUI 与监控均已进入关闭流程。" : "WebUI 已进入关闭流程，监控保持当前状态。";
-      refs.progressTitle.textContent = normalized === "stop_monitor" ? "WebUI 与监控正在关闭" : "WebUI 正在关闭";
-      refs.progressText.textContent = `${payload.message || "关闭命令已提交。"} 可关闭此浏览器页面；重新使用时请运行启动入口。`;
-      document.body.dataset.systemShutdownSubmitted = "true";
-    } catch (error) {
-      state.busy = false;
-      delete refs.shutdownBtn.dataset.shutdownBusy;
-      app.setBusy(refs.shutdownBtn, false);
-      refs.shutdownBtn.disabled = settingsBackendIsExternallyManaged();
-      renderBehavior(document.body.dataset.systemShutdownBehavior);
-      if (!settingsBackendIsExternallyManaged()) {
-        openDecision(normalized, remember, error.message || "关闭系统失败，请重试。");
-      }
-      app.setBanner(settingsRefs.banner, "danger", error.message || "关闭系统失败");
-    }
-  }
-
-  refs.shutdownBtn.addEventListener("click", () => {
-    if (settingsBackendIsExternallyManaged()) {
-      renderBehavior(document.body.dataset.systemShutdownBehavior);
-      return;
-    }
-    const behavior = normalizeSettingsShutdownBehavior(document.body.dataset.systemShutdownBehavior);
-    if (behavior === "ask") {
-      openDecision("keep_monitor", false);
-      return;
-    }
-    executeShutdown(behavior, false);
-  });
-
-  refs.confirmBtn?.addEventListener("click", () => executeShutdown(selectedAction(), refs.remember.checked));
-  refs.cancelBtn?.addEventListener("click", closeDecision);
-  refs.dialog.addEventListener("click", (event) => {
-    if (event.target === refs.dialog) closeDecision();
-  });
-
-  refs.dialog.addEventListener("keydown", (event) => {
-    if (refs.dialog.hidden) return;
-    if (event.key === "Escape") {
-      event.preventDefault();
-      closeDecision();
-      return;
-    }
-    if (event.key !== "Tab" || refs.decision.hidden) return;
-    const focusable = decisionFocusableElements();
-    if (!focusable.length) return;
-    const first = focusable[0];
-    const last = focusable[focusable.length - 1];
-    if (event.shiftKey && document.activeElement === first) {
-      event.preventDefault();
-      last.focus();
-    } else if (!event.shiftKey && document.activeElement === last) {
-      event.preventDefault();
-      first.focus();
-    }
-  });
-
-  document.addEventListener("settings:shutdown-behavior", (event) => renderBehavior(event.detail?.value));
-  renderBehavior(document.body.dataset.systemShutdownBehavior);
-})();
 
 // Phase 5 advanced diagnostics. Support packages contain summaries and log tails, not invoice sources.
 (() => {

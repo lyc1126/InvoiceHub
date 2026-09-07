@@ -4,11 +4,12 @@
   <title>皮肤</title>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <link rel="stylesheet" href="/static/css/app.css?v=20260802-release-update-v1">
+  <link rel="stylesheet" href="/static/css/app.css?v=20260907-desktop-integrated-2">
+  <link rel="stylesheet" href="/static/css/settings-actions.css?v=20260907-desktop-integrated-2">
 </head>
 <body data-page="skins">
   <header class="topbar">
-    <a class="brand" href="/"><span class="brand-mark">票</span><span><h1>一站式发票汇总系统</h1><p>界面皮肤</p></span></a>
+    <div class="brand"><a href="/" aria-label="返回发票汇总首页"><span class="brand-mark" aria-hidden="true">hi<span>.</span></span></a><div class="brand-copy"><div class="brand-title"><a href="/"><h1>InvoiceHub</h1></a>{{appearance_toggle}}</div><p>界面皮肤</p></div></div>
     <nav aria-label="主导航">
       <a class="nav-link" href="/">首页</a>
       <a class="nav-link" href="/costs">成本分析</a>
@@ -18,6 +19,7 @@
       <a class="nav-link" href="/consistency">一致性</a>
       <a class="nav-link" href="/settings">设置</a>
     </nav>
+    <button id="systemPowerBtn" class="system-power" type="button" title="关闭系统" aria-label="关闭系统" aria-haspopup="dialog" aria-controls="settingsShutdownDialog" aria-expanded="false"><span class="system-power__icon" aria-hidden="true"></span></button>
   </header>
   <main class="shell">
     <section class="page-head">
@@ -28,6 +30,17 @@
     </section>
 
     <section id="skinBanner" class="banner banner--muted" hidden></section>
+
+    <section class="panel app-icon-panel" aria-labelledby="appIconTitle">
+      <div class="panel__head">
+        <div>
+          <h3 id="appIconTitle">应用图标</h3>
+          <p id="appIconStatus">正在读取当前应用图标...</p>
+        </div>
+      </div>
+      <div id="appIconList" class="app-icon-list" role="radiogroup" aria-label="应用图标"></div>
+      <div class="panel__meta">窗口、任务栏、托盘和浏览器标签共用所选图标。安装包图标为 hi.。</div>
+    </section>
 
     <section class="panel skin-upload-panel">
       <div class="panel__head">
@@ -61,7 +74,9 @@
       <div id="skinList" class="skin-list" role="radiogroup" aria-label="可用皮肤"></div>
     </section>
   </main>
-  <script src="/static/js/common.js?v=20260729-main-macos-sync"></script>
-  <script src="/static/js/page-skins.js?v=20260717-settings-macos-sync"></script>
+  {{system_controls}}
+  <script src="/static/js/common.js?v=20260907-desktop-integrated-2"></script>
+  <script src="/static/js/system-controls.js?v=20260907-desktop-integrated-2"></script>
+  <script src="/static/js/page-skins.js?v=20260907-desktop-integrated-2"></script>
 </body>
 </html>

@@ -1,4 +1,5 @@
 const skinState = { payload: null, selectedId: "", file: null, busy: "" };
+const appIconState = { payload: null, busy: "", pendingId: "" };
 const skinRefs = {
   status: document.getElementById("skinStatus"),
   banner: document.getElementById("skinBanner"),
@@ -11,6 +12,10 @@ const skinRefs = {
   resetBtn: document.getElementById("resetSkinBtn"),
   replaceBtn: document.getElementById("replaceSkinBtn"),
 };
+const appIconRefs = {
+  status: document.getElementById("appIconStatus"),
+  list: document.getElementById("appIconList"),
+};
 
 function setSkinBanner(tone, message) {
   app.setBanner(skinRefs.banner, tone, message);
@@ -18,6 +23,114 @@ function setSkinBanner(tone, message) {
 
 function jsonHeaders(extra = {}) {
   return { Accept: "application/json", ...extra };
+}
+
+function appIconItems(payload) {
+  return Array.isArray(payload?.icons) ? payload.icons : [];
+}
+
+function appIconId(icon) {
+  return String(icon?.id || "").trim();
+}
+
+function currentAppIconId() {
+  return String(appIconState.payload?.icon || "").trim();
+}
+
+function appIconById(id) {
+  return appIconItems(appIconState.payload).find((icon) => appIconId(icon) === String(id || ""));
+}
+
+function setPageFavicon(icon) {
+  const href = String(icon?.favicon_url || "").trim();
+  if (!href) return;
+  let link = document.getElementById("appIconLink");
+  if (!link) {
+    link = document.createElement("link");
+    link.id = "appIconLink";
+    link.rel = "icon";
+    link.type = "image/png";
+    document.head.appendChild(link);
+  }
+  link.setAttribute("href", href);
+}
+
+function renderAppIconCard(icon) {
+  const id = appIconId(icon);
+  const active = id === currentAppIconId();
+  const checked = id === (appIconState.pendingId || currentAppIconId());
+  const pending = id === appIconState.pendingId;
+  const busy = Boolean(appIconState.busy);
+  const name = String(icon?.name || id);
+  const description = String(icon?.description || "");
+  const previewUrl = String(icon?.preview_url || "");
+  return `
+    <label class="app-icon-card${active ? " is-active" : ""}${checked ? " is-selected" : ""}${pending ? " is-pending" : ""}">
+      <input class="app-icon-card__radio" type="radio" name="appIconChoice" data-app-icon-select="${app.escapeHtml(id)}" value="${app.escapeHtml(id)}"${checked ? " checked" : ""}${busy ? " disabled" : ""}>
+      <span class="app-icon-card__preview" aria-hidden="true"><img src="${app.escapeHtml(previewUrl)}" alt=""></span>
+      <span class="app-icon-card__body">
+        <span class="app-icon-card__title"><strong>${app.escapeHtml(name)}</strong>${active ? app.statusPill("当前使用", "success") : ""}</span>
+        <span class="app-icon-card__description">${app.escapeHtml(description)}</span>
+      </span>
+    </label>`;
+}
+
+function renderAppIcons() {
+  const items = appIconItems(appIconState.payload);
+  const current = appIconById(currentAppIconId());
+  appIconRefs.list.dataset.busy = appIconState.busy ? "true" : "false";
+  appIconRefs.list.setAttribute("aria-busy", appIconState.busy ? "true" : "false");
+  appIconRefs.list.innerHTML = items.length
+    ? items.map(renderAppIconCard).join("")
+    : '<div class="empty-state">暂无可用应用图标</div>';
+  if (!items.length) {
+    appIconRefs.status.textContent = "应用图标：读取失败";
+  } else if (appIconState.busy) {
+    appIconRefs.status.textContent = `正在应用：${appIconById(appIconState.pendingId)?.name || appIconState.pendingId}`;
+  } else {
+    appIconRefs.status.textContent = `当前应用图标：${current?.name || currentAppIconId()}`;
+  }
+}
+
+async function loadAppIcons() {
+  try {
+    appIconState.payload = await app.api("/api/v1/app-icon");
+    appIconState.pendingId = "";
+    renderAppIcons();
+  } catch (error) {
+    appIconState.payload = null;
+    appIconRefs.status.textContent = "应用图标：读取失败";
+    appIconRefs.list.innerHTML = `<div class="empty-state">${app.escapeHtml(error.message || "应用图标读取失败")}</div>`;
+    setSkinBanner("danger", error.message || "应用图标读取失败");
+  }
+}
+
+async function selectAppIcon(iconId) {
+  const next = appIconById(iconId);
+  if (!next || appIconState.busy) {
+    renderAppIcons();
+    return;
+  }
+  if (appIconId(next) === currentAppIconId()) {
+    renderAppIcons();
+    return;
+  }
+  appIconState.busy = "update";
+  appIconState.pendingId = appIconId(next);
+  renderAppIcons();
+  try {
+    const payload = await app.api("/api/v1/app-icon", { method: "PUT", body: { icon: appIconId(next) } });
+    appIconState.payload = payload;
+    appIconState.pendingId = "";
+    setPageFavicon(appIconById(payload?.icon));
+    setSkinBanner("success", `应用图标已切换为：${appIconById(payload?.icon)?.name || payload?.icon}`);
+  } catch (error) {
+    appIconState.pendingId = "";
+    setSkinBanner("danger", error.message || "应用图标更新失败");
+  } finally {
+    appIconState.busy = "";
+    renderAppIcons();
+  }
 }
 
 async function requestJson(url, options = {}) {
@@ -69,6 +182,7 @@ function sourceLabel(skin) {
 }
 
 function swatchesForSkin(skin) {
+  if (app.skinId(skin) === "website-dark") return ["#242520", "#d9fb5c", "#f3f4ee", "#9cdeb4"];
   if (app.skinId(skin) === "animal-island") {
     return ["#fff3c5", "#2f9d83", "#72c6dd", "#f08b7f"];
   }
@@ -142,6 +256,12 @@ function render() {
   updateSkinControls();
 }
 
+document.addEventListener("app:appearance-changed", (event) => {
+  skinState.payload = event.detail;
+  skinState.selectedId = app.activeSkinId(event.detail);
+  render();
+});
+
 async function loadSkins(reason = "") {
   try {
     skinState.payload = await app.api("/api/v1/skins");
@@ -208,6 +328,12 @@ skinRefs.list.addEventListener("change", (event) => {
   selectSkin(input.dataset.skinSelect || input.value);
 });
 
+appIconRefs.list.addEventListener("change", (event) => {
+  const input = event.target.closest("[data-app-icon-select]");
+  if (!input) return;
+  selectAppIcon(input.dataset.appIconSelect || input.value);
+});
+
 skinRefs.importBtn.addEventListener("click", () => withBusy(skinRefs.importBtn, "import", "导入中...", async () => {
   if (!skinState.file) return;
   const payload = await uploadSkinZip("/api/v1/skins/import", skinState.file);
@@ -234,3 +360,4 @@ skinRefs.replaceBtn.addEventListener("click", () => withBusy(skinRefs.replaceBtn
 }));
 
 loadSkins();
+loadAppIcons();

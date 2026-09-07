@@ -4,7 +4,7 @@
   <title>后端状态</title>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <link rel="stylesheet" href="/static/css/app.css?v=20260802-release-update-v1">
+  <link rel="stylesheet" href="/static/css/app.css?v=20260907-desktop-integrated-2">
 </head>
 <body data-page="backend">
   <header class="topbar">
@@ -15,7 +15,7 @@
     <section class="page-head"><div class="page-title"><h2>后端状态</h2><p>健康、桥接与运行路径</p></div></section>
     <pre id="backendJson" class="panel json-panel"></pre>
   </main>
-  <script src="/static/js/common.js?v=20260729-main-macos-sync"></script>
+  <script src="/static/js/common.js?v=20260907-desktop-integrated-2"></script>
   <script>Promise.all([app.api('/api/v1/health'), app.api('/api/v1/settings'), app.api('/api/v1/bridge/status')]).then(([health,settings,bridge])=>document.getElementById('backendJson').textContent=JSON.stringify({health,settings,bridge},null,2))</script>
 </body>
 </html>

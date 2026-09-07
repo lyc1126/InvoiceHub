@@ -17,6 +17,7 @@ from invoice_hub.release.package_manifest import build_package_manifest_payload
 from invoice_hub.release.runtime_manifest import RUNTIME_MANIFEST_NAME, sha256_file, validate_runtime_manifest
 from invoice_hub.release.sbom import build_sbom_payload
 from invoice_hub.version import PRODUCT_VERSION, RELEASE_PYTHON_VERSION, WINDOWS_PACKAGE_ID
+from invoice_hub.website import WEBSITE_BUILD_INPUTS
 
 
 INCLUDE_DIRS = ("src", "web", "scripts/windows", "docs/jierui")
@@ -34,6 +35,7 @@ INCLUDE_FILES = (
     "LICENSE",
     "THIRD_PARTY_NOTICES.md",
     "docs/release/UPDATE_SYSTEM.md",
+    *WEBSITE_BUILD_INPUTS,
 )
 CORE_PROVENANCE_INPUTS = tuple(dict.fromkeys((*BUILD_INPUTS, "scripts/windows", *INCLUDE_FILES)))
 EXCLUDE_PARTS = {

@@ -100,11 +100,19 @@ class SkinPackage:
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 BUILTIN_SKINS: dict[str, dict[str, Any]] = {
+    "website-dark": {
+        "id": "website-dark",
+        "name": "Dark 深色",
+        "description": "InvoiceHub 官网深色外观",
+        "version": "1.0.0",
+        "entry": BUILTIN_ENTRYPOINT,
+        "entrypoint": BUILTIN_ENTRYPOINT,
+    },
     "animal-island": {
         "id": "animal-island",
         "name": "Animal Island",
         "description": "动森风格的可选内置皮肤，使用本地开源字体子集、原创纸纹与柔和 3D 控件。",
-        "version": "2.0.8",
+        "version": "2.1.0",
         "entry": BUILTIN_ENTRYPOINT,
         "entrypoint": BUILTIN_ENTRYPOINT,
     },
@@ -112,7 +120,7 @@ BUILTIN_SKINS: dict[str, dict[str, Any]] = {
         "id": "ink-pulse",
         "name": "Ink Pulse 墨潮电波",
         "description": "原创喷墨街头风内置皮肤：栅格喷溅、印刷拼贴纹理、趣味展示字体与硬阴影。",
-        "version": "1.3.0",
+        "version": "1.4.0",
         "entry": BUILTIN_ENTRYPOINT,
         "entrypoint": BUILTIN_ENTRYPOINT,
     },

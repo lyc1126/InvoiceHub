@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from pathlib import Path
-from typing import Iterable
+from typing import Callable, Iterable
 
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
@@ -2099,6 +2099,7 @@ def build_cost_analysis_outputs(
     output_folder: Path,
     invoice_metadata: object = None,
     reference_markup_rate: object = DEFAULT_REFERENCE_MARKUP_RATE,
+    progress: Callable[[int, int], None] | None = None,
 ) -> dict:
     watch_folder = Path(watch_folder)
     output_folder = Path(output_folder)
@@ -2118,13 +2119,20 @@ def build_cost_analysis_outputs(
         metadata = metadata_index.get(_canonical_path(source_path), {})
         source_groups[_cost_family_key(source_path, metadata)].append((source_path, metadata))
 
-    for candidates in source_groups.values():
+    total_sources = len(source_groups)
+    if progress:
+        progress(0, total_sources)
+    for index, candidates in enumerate(source_groups.values(), start=1):
         analysis, attempts = _select_cost_analysis(candidates)
         all_attempts.extend(attempts)
         if analysis is None:
+            if progress:
+                progress(index, total_sources)
             continue
         analyses.append(analysis)
         detail_rows.extend(analysis.get("rows") or [])
+        if progress:
+            progress(index, total_sources)
 
     check_rows = _check_rows(detail_rows, analyses)
     detail_csv = output_folder / COST_DETAIL_CSV_NAME

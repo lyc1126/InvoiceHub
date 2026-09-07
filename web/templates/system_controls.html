@@ -1,0 +1,46 @@
+<aside id="pageActivity" class="page-activity" role="status" aria-live="polite" hidden>
+  <span class="ui-spinner" aria-hidden="true"></span><span>正在处理...</span>
+</aside>
+<aside id="appearanceError" class="appearance-error" role="alert" hidden>
+  <span id="appearanceErrorText"></span>
+  <button id="appearanceErrorDismiss" type="button" aria-label="关闭提示" title="关闭提示">×</button>
+</aside>
+<script src="/static/js/appearance.js?v=20260907-desktop-integrated-2" defer></script>
+  <div id="settingsShutdownDialog" class="modal-backdrop settings-shutdown-dialog" role="presentation" hidden>
+    <section id="settingsShutdownDialogCard" class="modal-card settings-shutdown-dialog__card" role="dialog" aria-modal="true" aria-labelledby="settingsShutdownDialogTitle" aria-describedby="settingsShutdownDialogDescription" tabindex="-1">
+      <h3 id="settingsShutdownDialogTitle">关闭本系统？</h3>
+      <p id="settingsShutdownDialogDescription">关闭 WebUI 后，当前页面将无法继续操作。请选择是否让独立监控继续运行。</p>
+      <div id="settingsShutdownDecision" class="settings-shutdown-decision">
+        <fieldset class="settings-shutdown-options">
+          <legend>关闭后如何处理监控</legend>
+          <label class="settings-shutdown-choice">
+            <input id="settingsShutdownKeepMonitor" type="radio" name="settingsShutdownBehavior" value="keep_monitor" checked>
+            <span>
+              <strong>保留监控，仅关闭 WebUI</strong>
+              <small>独立监控继续处理当前发票目录的文件变化。</small>
+            </span>
+          </label>
+          <label class="settings-shutdown-choice settings-shutdown-choice--stop">
+            <input id="settingsShutdownStopMonitor" type="radio" name="settingsShutdownBehavior" value="stop_monitor">
+            <span>
+              <strong>关闭 WebUI，并停止监控</strong>
+              <small>先等待独立监控退出，再关闭 localhost WebUI。</small>
+            </span>
+          </label>
+        </fieldset>
+        <label class="settings-shutdown-remember">
+          <input id="settingsShutdownRemember" type="checkbox">
+          <span>记住本次选择</span>
+        </label>
+        <div id="settingsShutdownDialogError" class="settings-shutdown-error" role="alert" hidden></div>
+        <div class="modal-actions settings-shutdown-dialog__actions">
+          <button id="settingsShutdownCancelBtn" class="btn btn--ghost" type="button">取消</button>
+          <button id="settingsShutdownConfirmBtn" class="btn btn--danger" type="button">确认关闭</button>
+        </div>
+      </div>
+      <div id="settingsShutdownProgress" class="settings-shutdown-progress" role="status" aria-live="polite" aria-atomic="true" hidden>
+        <strong id="settingsShutdownProgressTitle">正在关闭...</strong>
+        <p id="settingsShutdownProgressText">请稍候，当前页面将保留关闭结果提示。</p>
+      </div>
+    </section>
+  </div>

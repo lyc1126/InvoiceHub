@@ -1,11 +1,40 @@
 # InvoiceHub 完整文件地图
 
+- `docs/BRANCH_STATUS.md`：当前 Desktop 整合分支、稳定主线、历史来源与本地构建快照分类，以及提交/推送范围。
+
+| 新增路径 | 职责 |
+|---|---|
+| `src/invoice_hub/services/document_index.py` | 单据 spawn worker、逐文件缓存与进度，AppState 调度 |
+| `tests/test_document_index.py` | 真实进程停止/恢复、健康并发、变更/删除/隔离、过期身份 |
+| `web/static/css/large-lists.css` | 首页/单据分页与加载控件尺寸，兼容皮肤和窄屏 |
+
+运行产物 `runtime/local_state/documents/index/<scope>/files.sqlite3`（含 WAL/SHM）、`inbound.json`、`outbound.json`、`status.json` 只作派生缓存，不进入 Git/Release 或源目录。实际 runtime 随配置解析，Desktop 使用用户运行目录。
+
 > 公共基线：经过审计的单一脱敏根提交及其公开后代；旧私有提交、Tag、包和验证材料不在公开图中。
 > 当前治理变化以 `docs/release/HISTORY_SANITIZATION_EXECUTION.md` 为真值。公开门槛已完成；`v0.3` Tauri 2 开发分支已从 `main` 建立，已有经审查的 Cargo lock 和代码级生命周期边界。裸 checkout 缺 manifest 而 fail-closed；development assembler 已构建并隔离烟测一个本地 macOS arm64 `.app`，internal-alpha 也已完成 arm64 App/DMG/receipt verifier 与隔离启动烟测，尚无 Release。
 > 本表覆盖当前受版本控制的全部工程文件，包括架构文档与文档契约测试；运行态、投影和本机未跟踪内容只登记生成规则，不使用会随增删文件失真的固定数量。
 > 路径是导航键；职责和关系按符号而不是易漂移的行号描述。
 
 ## 1. 如何阅读文件关系
+
+2026-09-07 既有 Desktop 功能整合新增文件导航：
+
+| 文件 | 职责与关系 |
+| --- | --- |
+| `src/invoice_hub/services/app_icons.py` | 四款内置图标、默认值和运行态保存，由 app_state/API 使用。 |
+| `src-tauri/src/app_icon.rs` | 固定图标枚举、包内 PNG 解码及窗口/托盘更新，由 main 和 Host RPC 使用。 |
+| `web/static/app-icon/website/icon_32.png`、`web/static/app-icon/website/icon_256.png` | 官网图标 favicon/选择预览，由当前图标生成器生成。 |
+| `web/static/app-icon/orange/icon_32.png`、`web/static/app-icon/orange/icon_256.png` | 橙色图标 favicon/选择预览，来自已有公开分支。 |
+| `web/static/app-icon/teal/icon_32.png`、`web/static/app-icon/teal/icon_256.png` | 青色图标 favicon/选择预览，来自已有公开分支。 |
+| `web/static/app-icon/violet/icon_32.png`、`web/static/app-icon/violet/icon_256.png` | 紫色图标 favicon/选择预览，来自已有公开分支。 |
+| `tests/test_app_icon.py` | 图标列表、状态、拒绝非法输入、host 失败与 favicon 契约。 |
+| `src/invoice_hub/release/windows_alpha_metadata.py` | 现有 update_service 所需的 Windows alpha 元数据校验；不会自动发布或切换 Feed。 |
+| `tests/test_windows_alpha_metadata.py` | alpha 元数据格式、身份和发布资产约束。 |
+| `scripts/dev/smoke_windows_portable.ps1` | 已有 Windows BAT 验包脚本，检查进程归属和包内产物；不代表 Tauri EXE 验收。 |
+
+现有文件同时恢复 WebView 目录/打印偏好、picker 调度、监控状态/同步进度和 Windows 启动恢复；工程路径不变。构建器仍仅 stage/build/verify，不提供发布动作。
+
+2026-09-07 接入已有 Windows Tauri ZIP 工具：`scripts/dev/tauri_windows_portable.py` 负责干净快照 stage/build/verify；`src-tauri/tauri.windows.conf.json` 复用默认图标与固定端口构建 raw host；`src/invoice_hub/release/verify_tauri_windows_portable.py` 校验白名单、逐文件 SHA、manifest、GUI subsystem、runtime 与 receipt；`tests/test_tauri_windows_portable.py` 覆盖合法、篡改、缓存、官网越界和产品身份。官网只按 `website.py` 列表复制，不引入候选分支 Feed/handoff 工具。内置皮肤修改仍位于原有 CSS/manifest，不新增业务 DOM。
 
 每一行包含三类信息：
 
@@ -135,10 +164,11 @@
 | `scripts/tools/jierui_voucher_import.py` | 随包 runner 包装。 | 转发到 `invoice_hub.runners.jierui_voucher_import`，要求显式 batch manifest。 |
 | `scripts/windows/run_monitor_status.ps1` | monitor 状态 CLI 包装。 | 解析 Python，调用 `invoice_hub.monitoring.control status`。 |
 | `scripts/windows/run_start_localhost.ps1` | localhost 正式启动器。 | 读配置、准备 runtime、启动 uvicorn、探测首页、写 PID/state/log 与 PowerShell version/edition/home 诊断并拉起浏览器。 |
+| `检查启动环境.bat` | 源码/测试环境只读启动诊断入口。 | 转发正式启动器的 `-Diagnose`，支持 `-ConfigPath/-NoDialog`，不依赖 Python 可用或获取启动锁。 |
 | `scripts/windows/run_start_monitor.ps1` | monitor 启动包装。 | 调用 `monitoring.control start`，成功由 ready 握手决定。 |
 | `scripts/windows/run_stop_localhost.ps1` | localhost 停止实现。 | 处理 PID、仓库进程和 `server_state.json`；不调用 monitor stop。 |
 | `scripts/windows/run_stop_monitor.ps1` | monitor 停止包装。 | 调用 `monitoring.control stop`，支持超时参数。 |
-| `scripts/windows/InvoiceHub.Windows.psm1` | 正式 Windows 公共启动/停止真值与浏览器派发。 | 严格识别包、Python、PID、模块、root/config/port；health 从原始响应流按 UTF-8 解码后再比较中文路径身份；负责槽位冲突隔离。 |
+| `scripts/windows/InvoiceHub.Windows.psm1` | 正式 Windows 公共启动/停止真值与浏览器派发。 | 严格识别包、Python、PID、模块、root/config/port；venv 转发后的 executable 与命令行首项分别匹配可信解释器集合；health 从原始响应流按 UTF-8 解码后再比较中文路径身份；负责槽位冲突隔离。 |
 | `scripts/windows/import_previous_settings.ps1` | 旧包到新包的白名单迁移包装。 | 调用 `release.settings_migration`；拒绝同根目录。 |
 | `scripts/windows/创建根目录快捷方式.ps1` | 生成本机 `.lnk`。 | 目标是根启动 BAT；生成物 ignored。 |
 | `scripts/windows/启动localhost汇总页.bat` | PowerShell 7 优先、5.1 后备的启动 BAT。 | 先验证 Program Files PS7，再解析 PATH/App Execution Alias；保留强制 5.1，调用 `run_start_localhost.ps1`。 |
@@ -153,6 +183,7 @@
 | `src-tauri/Cargo.toml` | Tauri host package metadata, including the explicit `tray-icon` feature, exact direct Tauri/plugin/HMAC dependencies, Unix-only `libc` for descriptor-pinned marker storage, and pinned Windows-only `windows-sys` for handle-relative/no-reparse marker storage. | Version is derived by `tauri_version_sync.py`; direct crates are pinned to published releases and must match `Cargo.lock`. The Windows dependency documents a source-level boundary only and does not imply Windows runtime acceptance. |
 | `src-tauri/Cargo.lock` | Reviewed Rust 1.85-compatible Cargo dependency graph. | Generated only in the controlled toolchain with `.cargo/config.toml`; it locks dependency integrity. Runnable development behavior additionally requires the staged manifest/launcher binding, and remains distinct from release evidence. |
 | `src-tauri/build.rs` | Tauri build-script entry point. | It runs only with the exact direct crate versions and reviewed `Cargo.lock` in a controlled Rust environment. |
+| `src-tauri/src/startup_diagnostics.rs` | 原生启动/运行诊断与 Windows 单实例标识派生。 | OS 监听 PID、进程路径/父进程、受限公开 health 字段；原生提示与本地日志；不授权、不停止进程。 |
 | `src-tauri/tauri.conf.json` | Derived product identity, fixed localhost development origin, no config-created WebView, and disabled bundling configuration. | Must retain `http://127.0.0.1:8766`; `main.rs` creates a WebView only after the owned-backend handshake. |
 | `src-tauri/tauri.dev.conf.json` | Development-only bundle configuration. | Enables only the macOS arm64 app bundle used by `tauri_dev_app.py`; it cannot be reused for DMG/NSIS, release signing, or updater inputs. |
 | `src-tauri/tauri.alpha.conf.json` | Internal-alpha bundle configuration for version `0.3.0-alpha.1`. | Enables only the isolated allowlisted App resources staged by `tauri_alpha_release.py`; updater remains disabled and this config is not a public Release or notarization input. |
@@ -168,7 +199,12 @@
 | `src-tauri/src/host_rpc.rs` | Private random-loopback listener, exact-origin/token/enum authorization, native picker dispatch, host-owned full updater candidates, authenticated startup restore, deferred private commit, Tauri updater adapters, and platform relaunch state. | The token and retained `Update` metadata never enter Web/Tauri IPC/Python API/logs/descendants. The listener expires a generation-checked 300-second candidate; metadata and download use 5-second timeouts. Enabled runtime activates only after gate release/manage and restores the marker first. Install atomically consumes one fresh candidate, reserves/spawns a latch worker, flushes exact success, then executes built-in verified download -> pause -> install -> relaunch. Writer/spawn/latch loss is `CommitLost` with no side effects; failed restore/transaction blocks further updater work. Windows confirms backend exit in `on_before_exit`; macOS prepares and requests restart. |
 | `src-tauri/src/main.rs` | Loads a compiled-bound bundle manifest, installs single-instance/dialog/host-only-opener plugins, creates a custom macOS application Quit item with Cmd-Q, launches and registers `BackendHost`, activates the updater runtime after the released gate, initializes the selected surface, and routes `ExitRequested` through update-aware confirmed shutdown. | A checkout without the manifest exits `78`. Setup keeps the child local until tray/surface success and confirms cleanup before returning errors. Updater activation failure leaves backend/WebUI diagnostics available; successful activation emits only a non-sensitive recovery-runtime diagnostic used by L10-E. Tray Quit and custom Cmd-Q share `app.exit(0)`; reserved/executing commits block ordinary Quit, macOS `relaunch_prepared` skips duplicate shutdown, and other received exits require structured shutdown plus confirmed kill/wait fallback. |
 | `src-tauri/boot/index.html` | Inert local boot asset required by the minimal Tauri configuration. | It is not a replacement frontend; the real application remains the existing localhost Web UI. |
-| `src-tauri/icons/icon.png` | Local icon required by Tauri's macOS context macro and tray setup. | It must remain 8-bit RGBA: the prior 16-bit RGBA encoding caused tray initialization failure, so PNG IHDR has a focused regression. It does not authorize Release branding. |
+| `src-tauri/icons/icon.png` | 512px desktop 图标 04，Tauri 窗口与托盘输入。 | 固定 8-bit RGBA；由纸白母版生成，IHDR 契约防止 tray 初始化失败。 |
+| `src-tauri/icons/desktop-04.png` | 官网纸白底、墨黑 `hi.`、荧光折角的 1024px RGBA 母版。 | `generate_desktop_icon.py` 确定性生成；与平台容器保持一致。 |
+| `src-tauri/icons/icon.ico` | Windows 多尺寸默认图标。 | 16/20/24/32/40/48/64/128/256px；tauri.conf.json 显式接入。 |
+| `src-tauri/icons/icon.icns` | macOS 多尺寸默认图标。 | 最大 1024px；与 PNG/ICO 同母版，不代表新包已构建。 |
+| `src-tauri/icons/README.md` | 第四款设计、生成命令、平台接线和字体许可。 | 图标更新同步。 |
+| `scripts/dev/generate_desktop_icon.py` | Pillow + 包内 Dela Gothic One 字体的确定性图标生成器。 | 生成四个图标资源；不依赖本机字体或联网。 |
 | `src-tauri/README.md` | Lifecycle scope, development assembly, and release boundary. | Update together with the execution plan whenever Cargo, lifecycle, Host RPC, updater, staging, or packaging status changes. |
 | `src-tauri/tests/monitor_recovery_contract.rs` | Focused transaction and Unix marker-store contracts. | Covers ready/stopped monitor paths, marker corruption/scope/pending state, gate/lease loss, bridge failures, Unix serialization/republication and symlink rejection; it does not invoke a real monitor or updater. |
 | `src-tauri/tests/update_coordinator_contract.rs` | Pure update coordinator contract tests. | Covers verified-artifact promotion, candidate mismatch, ordering, pause/install/relaunch failures and restore-attempt preservation; it does not download, install or restart. |
@@ -180,6 +216,7 @@
 |---|---|---|
 | `src/invoice_hub/__init__.py` | 包说明和 `__version__`。 | 被包导入和发布元数据使用；版本策略变化时同步发布文档。 |
 | `src/invoice_hub/version.py` | 产品/包版本、API 契约、通道、链接、白名单和 package ID 单一真值。 | Python、Swift 脚本、manifest、About、Feed 与测试必须一致。 |
+| `src/invoice_hub/website.py` | 随包官网资源白名单、路径校验与精确复制。 | `/website/`、Core Build ID、源码快照、Windows/Tauri/Swift 组装共用；许可证随资源分发，维护脚本不公开。 |
 | `src/invoice_hub/api/__init__.py` | 惰性导出 `create_app`。 | 保持外部工厂入口，同时避免执行 `api.main` 前抢先实例化默认 AppState。 |
 | `src/invoice_hub/api/app.py` | FastAPI 应用、页面路由、API、错误码、静态资源、SSE，以及三条 monitor recovery route 的可选 authenticated response wrapper。 | 上游是浏览器；下游是 `AppState`、皮肤文件和模板。普通 bridge 调用保持原语义；只有带完整 recovery 认证头、空 body 且 challenge 未重放的 host 请求才执行 HMAC 校验并签名精确响应。四条 Tauri picker route 与 update install 继续把 private failure 映射为固定脱敏 503，install 只接受 `{}`。 |
 | `src/invoice_hub/api/main.py` | 参数化 uvicorn CLI 入口。 | 读取 root/config/host/port 后通过模块应用只构造一个 AppState；正式 BAT 当前直接启动 uvicorn app。 |
@@ -222,7 +259,7 @@
 | `src/invoice_hub/projections/summary.py` | `build_summary`、重复标记、CSV/XLSX schema 和写表。 | 消费 extraction；写入 profile workspace；monitor/AppState 调用。 |
 | `src/invoice_hub/projections/cost_analysis.py` | PDF 坐标表格、XML/OFD 明细、校验、均价、参考价和工作簿生成。 | 成本算法核心；`costs.py`、documents 和选择/详情成本拆分使用。 |
 | `src/invoice_hub/projections/costs.py` | `CostProjectionService`，状态兼容、快照、参考状态保存与同步统计。 | AppState、monitoring 调用；输出 `/api/v1/cost-analysis` 契约。 |
-| `src/invoice_hub/projections/documents.py` | 入库/出库预览、人民币大写、模板扩行和原子导出。 | AppState documents 用例调用；复用票头和成本明细解析。 |
+| `src/invoice_hub/projections/documents.py` | 入库/出库预览、无前缀大写金额、模板列宽/扩行/打印范围和原子导出。 | AppState documents 用例调用；只读入库明细按完整来源副本去重、冲突阻断。 |
 | `src/invoice_hub/projections/document_templates/电子入库单模板.xlsx` | 入库单版式真值。 | `write_inbound_workbook` 读取；版式变化需跑单据渲染/单元格测试。 |
 | `src/invoice_hub/projections/document_templates/电子出库单模板.xlsx` | 出库单版式真值。 | `write_outbound_workbook` 读取；版式变化需跑单据测试。 |
 
@@ -334,6 +371,8 @@
 | `tests/test_file_preview_frontend_contract.py` | 首页预览 DOM、交互和静态资源契约。 | index.html、page-index.js、app.css。 |
 | `tests/test_documents.py` | 单据状态、预览、人民币大写、模板扩行、导出和路径限制。 | documents、AppState documents API。 |
 | `tests/test_frontend_contract.py` | 模板、JS、CSS、资源版本、表格、SSE、设置和皮肤静态契约。 | `web/**` 与 API 字段名称。 |
+| `tests/test_desktop_icon.py` | 图标生成一致性、native 配置继承、PNG 位深、ICO/ICNS 尺寸和透明度/对比度。 | 图标生成器、Tauri 配置与图标资源。 |
+| `tests/test_website.py` | 标准库官网资源、打包白名单、缺失资源、构建一致性和更新地址检查。 | 不依赖 pytest；实际执行 alpha 资源复制，不构建 App 或安装器。 |
 | `tests/test_invoice_printing.py` | 同票 PDF 选择、打印 job、分页、过期和容量边界。 | invoice_printing、document_rendering、AppState、API。 |
 | `tests/test_invoice_print_frontend_contract.py` | 首页批量打印和受控打印页的前端契约。 | index.html、invoice_print.html、page-index.js。 |
 | `tests/test_invoice_classification.py` | 两维分类、上下文证据、PDF/OFD、表头和候选校验。 | classification、parsers、cost analysis、summary。 |
@@ -379,17 +418,28 @@
 | `web/static/css/app.css` | 全站布局、表格、状态、响应式和无皮肤默认样式。 | 所有普通模板引用；修改需更新模板 `?v=` 和前端契约。 |
 | `web/static/css/settings-actions.css` | 首页/设置页操作、确认对话框和通知样式。 | `index.html`、`settings.html` 引用；版本参数需同步。 |
 | `web/static/js/common.js` | API 包装、转义、表格 TSV、皮肤、SSE 和导航过渡。 | 所有页面 JS 依赖；SSE 页面通过 `connectEvents` 复用重连语义。 |
-| `web/static/js/page-index.js` | 首页目录草稿、发票列表、筛选、预览续租/自动恢复、批量打印、勾选合计和 monitor 操作。 | 消费 settings/invoices/preview/keep-alive/print/selection/bridge API；弹窗关闭必须停止续租。 |
+| `web/static/js/system-controls.js` | 普通页面共享的关闭偏好、外部服务保护、电源确认、重试和焦点控制。 | 先于 page-settings 加载；同一 shutdown API 成功确认后通知 common.js 结束 SSE。 |
+| `web/templates/system_controls.html` | 请求转圈与唯一关闭弹窗片段。 | `api/app.py::_template` 只替换固定 `{{system_controls}}`；不增加任意模板入口。 |
+| `web/templates/appearance_toggle.html` | 品牌名旁的太阳/月亮切换片段。 | 九个普通模板通过固定占位替换；backend/打印页不加载。 |
+| `web/static/js/appearance.js` | 明暗切换、CSS 预加载、失败提示、重复点击保护与页面状态同步。 | 复用 skins enable/reset；保留业务草稿，不在皮肤包中执行 JS。 |
+| `web/static/icons/sun.svg` | Lucide Sun 本地 CSS mask。 | 默认浅灰太阳，ISC/Feather MIT 许可。 |
+| `web/static/icons/moon.svg` | Lucide Moon 本地 CSS mask。 | Dark 的白色月亮，ISC 许可。 |
+| `web/static/icons/power.svg` | Lucide 1.8.0 电源图标，作为固定 CSS mask。 | 所有普通页顶栏共用；悬停与键盘焦点为浅红色。 |
+| `web/static/icons/LICENSE-lucide` | 电源及明暗图标 ISC 与 Feather MIT 许可。 | 随 `web/` 打包，来源同步第三方声明。 |
+| `tests/frontend_interactions.test.cjs` | Node 内置 test/VM 执行真实公共 JS、关闭控制器和单据队列。 | 验证批量停止/结果未确认/迟到预览、并发请求、失败清理、按钮恢复、浏览器返回、关闭/SSE；无需新增 npm 依赖。 |
+| `web/static/js/page-index.js` | 首页目录草稿、发票列表、筛选、预览续租/自动恢复、批量打印/入库交接、勾选合计和 monitor 操作。 | 消费 settings/invoices/preview/keep-alive/print/selection/bridge API；弹窗关闭必须停止续租。 |
 | `web/static/js/page-costs.js` | 成本标签、表格、行级加价和状态保存。 | 消费 preferences/cost-analysis/bridge API；对应成本工作簿 sheet。 |
 | `web/static/js/page-detail.js` | 发票详情、成本拆分、手改和打开文件。 | 消费 invoice detail/manual/open API。 |
-| `web/static/js/page-documents.js` | 入出库标签、目录草稿、预览、导出策略和打开操作。 | 消费 documents/preferences API，并监听汇总事件。 |
+| `web/static/js/page-documents.js` | 入出库标签、目录草稿、模板列宽预览、逐票批量队列、导出策略和打开操作。 | 消费 documents/preferences API；身份交接、停止/未知结果与目标切换保护，并监听汇总事件。 |
 | `web/static/js/page-ocr.js` | OCR 候选目录和禁用服务状态。 | 消费 preferences/ocr API；当前不执行正式 OCR。 |
 | `web/static/js/page-consistency.js` | 同票多格式一致性表。 | 消费 consistency-report API。 |
-| `web/static/js/page-settings.js` | 设置中心、运行控制、重命名、偏好、诊断和关闭系统。 | 消费多数设置/bridge/documents/skins/ocr/diagnostics/shutdown API。 |
+| `web/static/js/page-settings.js` | 设置中心、运行控制、重命名、偏好与诊断。 | 消费设置/bridge/documents/skins/ocr/diagnostics；关闭入口委托先加载的 system-controls.js。 |
 | `web/static/js/page-skins.js` | 皮肤 ZIP 导入、替换、启用和重置。 | 消费 skins API；不执行包内 JS。 |
 | `web/static/js/page-bookkeeping.js` | 凭证人审、映射规则、账套设置和批次状态。 | 消费 `/api/v1/bookkeeping/*`，持续展示服务端 blockers。 |
 
 ## 16. 内置皮肤资产
+
+`web/static/skins/website-dark/skin.json` 声明只读 Dark 深色 `1.0.0`；`web/static/skins/website-dark/skin.css` 以官网墨黑/荧光/灰白覆盖既有选择器并保留纸质预览原色；`web/static/skins/website-dark/asset-sources.json` 记录原创 CSS 来源与许可，不增加任何外部资源。三者与 SkinService、明暗控件及皮肤恢复契约同步。
 
 | 文件 | 职责与关系 |
 |---|---|
@@ -429,6 +479,26 @@
 | `web/templates/skins.html` | `/skins`。 | page-skins 提供 ZIP 导入/替换/启用。 |
 | `web/templates/bookkeeping.html` | `/bookkeeping`。 | W8/W9 人审、映射、账套和批次视图。 |
 | `web/templates/backend.html` | `/backend` 高级诊断。 | 不注入皮肤；内联请求 health/settings/bridge，不出现在普通首要导航。 |
+
+## 17.1 独立产品官网
+
+| 文件 | 职责与入口 | 关系与修改影响 |
+|---|---|---|
+| `website/index.html` | Hi 品牌官网、发票/成本/单据/工具四视图、功能动效、开源入口与 FAQ。 | 独立静态页面，不替换业务 WebUI；资源使用独立版本参数。 |
+| `website/style.css` | 官网排版、色彩、响应式、表格和 dialog。 | 桌面/手机、焦点、滚动与减少动态效果需浏览器验收。 |
+| `website/app.js` | 页面内筛选、合计、成本、CSV、预览翻页/放大、打印动画、明细 TSV、单据行数与工具交互。 | 消费合成数据和图标；本地 `/website/` 模式显示返回工作台，不请求生产 API，不写业务投影。 |
+| `website/demo-data.js` | 固定合成票头/明细、整数分金额、同票去重、打印候选、分组与税额概念换算。 | Node 合同守护，不能替代生产算法或发票真值。 |
+| `website/paper-scene.js` | 五层原创 Canvas 票纸/标签独立展开、归拢及有界调度。 | 只命中票据区域，支持键盘/触屏、屏外/后台/静止停止与减少动态效果。 |
+| `website/assets/mark.svg` | 原创 h/i 字母 favicon。 | 只用于官网，不改变软件图标偏好或桌面 surface。 |
+| `website/assets/display.woff` | 本地 Dela Gothic One Latin 字体。 | 来自仓库已许可字体，配合字体许可证分发。 |
+| `website/assets/OFL-DelaGothicOne.txt` | 官网展示字体的 SIL OFL 许可。 | 与字体一起保留。 |
+| `website/assets/icons.js` | 精选 Lucide 节点的生成文件。 | app.js 生成 SVG 图标；源码入口采用 GitFork 通用图标。 |
+| `website/assets/LICENSE-lucide` | Lucide ISC 许可。 | 与精选图标一起保留。 |
+| `website/scripts/vendor-icons.cjs` | 从显式已安装 Lucide 包机械生成精选图标。 | 不自动下载依赖；生成 icons.js 与许可。 |
+| `website/scripts/preview.cjs` | 可选的 Node loopback 静态预览。 | 只提供官网目录，不复用或改变业务固定端口；不用于生产。 |
+| `website/tests/demo.test.cjs` | 去重、明细边界、打印缺 PDF 阻断、换算分位、图层调度及资源/链接契约。 | Node 内置测试，不依赖 Python 或业务运行态；不替代浏览器截图。 |
+| `website/README.md` | 官网运行、维护、验证假设与未覆盖项。 | 明确直接打开 HTML、可选预览和独立部署边界。 |
+| `website/ASSETS.md` | 原创视觉与第三方图标/字体的来源、许可和生成方式。 | 新资源必须同步登记，不引入业务资料。 |
 
 ## 18. 生成物与非源码边界
 

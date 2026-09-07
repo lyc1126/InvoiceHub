@@ -1,0 +1,7 @@
+{
+  "id": "website-dark",
+  "name": "Dark 深色",
+  "description": "InvoiceHub 官网深色外观",
+  "version": "1.0.0",
+  "entry": "skin.css"
+}

@@ -11,12 +11,13 @@ import signal
 import threading
 from collections import deque
 from collections.abc import Callable
+from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import AsyncIterator
+from typing import AsyncIterator, Literal
 from urllib.parse import urlsplit
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, Request
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
 
@@ -30,8 +31,10 @@ from invoice_hub.services import (
     UnsupportedStartupSurfaceError,
     create_state,
 )
+from invoice_hub.services.app_icons import DEFAULT_APP_ICON_ID, AppIconService, AppIconServiceError
 from invoice_hub.services.skins import MAX_SKIN_ZIP_BYTES, SkinServiceError
-from invoice_hub.version import PRODUCT_VERSION
+from invoice_hub.version import LOCAL_WEBSITE_PATH, PRODUCT_VERSION
+from invoice_hub.website import website_asset_path
 
 
 ROOT_DIR = Path(os.environ.get("INVOICE_HUB_ROOT") or Path(__file__).resolve().parents[3]).resolve()
@@ -55,6 +58,8 @@ NATIVE_PICKER_FAILURE_STATUS = 503
 NATIVE_PICKER_FAILURE_DETAIL = "Native picker unavailable"
 UPDATE_INSTALL_FAILURE_STATUS = 503
 UPDATE_INSTALL_FAILURE_DETAIL = "Update installation unavailable"
+APP_ICON_FAILURE_STATUS = 503
+APP_ICON_FAILURE_DETAIL = "App icon update unavailable"
 
 
 def _schedule_process_shutdown(state: AppState, delay_seconds: float = 0.8) -> None:
@@ -69,18 +74,32 @@ def _schedule_process_shutdown(state: AppState, delay_seconds: float = 0.8) -> N
     timer.start()
 
 
-def _template(name: str, context: dict[str, object] | None = None, web_dir: Path = WEB_DIR, skin_link: str = "") -> str:
+def _template(
+    name: str,
+    context: dict[str, object] | None = None,
+    web_dir: Path = WEB_DIR,
+    skin_link: str = "",
+    favicon_link: str = "",
+) -> str:
     context = context or {}
     path = web_dir / "templates" / name
     text = path.read_text(encoding="utf-8")
+    # Ordinary pages share one shutdown dialog; fixed local markup never comes from a request.
+    if "{{system_controls}}" in text:
+        controls = (web_dir / "templates" / "system_controls.html").read_text(encoding="utf-8")
+        text = text.replace("{{system_controls}}", controls)
+    if "{{appearance_toggle}}" in text:
+        toggle = (web_dir / "templates" / "appearance_toggle.html").read_text(encoding="utf-8")
+        text = text.replace("{{appearance_toggle}}", toggle)
     for key, value in context.items():
         if isinstance(value, (dict, list)):
             rendered = json.dumps(value, ensure_ascii=False)
         else:
             rendered = str(value)
         text = text.replace("{{" + key + "}}", rendered)
-    if skin_link and "</head>" in text:
-        text = text.replace("</head>", f"  {skin_link}\n</head>", 1)
+    head_links = "\n".join(link for link in (favicon_link, skin_link) if link)
+    if head_links and "</head>" in text:
+        text = text.replace("</head>", f"  {head_links}\n</head>", 1)
     return text
 
 
@@ -134,6 +153,17 @@ def _run_host_update_install(action: Callable[[], dict]) -> dict:
         raise HTTPException(
             status_code=UPDATE_INSTALL_FAILURE_STATUS,
             detail=UPDATE_INSTALL_FAILURE_DETAIL,
+        ) from None
+
+
+def _run_app_icon_update(action: Callable[[str], dict], icon_id: str) -> dict:
+    try:
+        return action(icon_id)
+    except host_rpc.HostRpcError:
+        # The private host failure must not reveal listener details to browser code.
+        raise HTTPException(
+            status_code=APP_ICON_FAILURE_STATUS,
+            detail=APP_ICON_FAILURE_DETAIL,
         ) from None
 
 
@@ -443,7 +473,14 @@ def create_app(
     web_dir = root / "web"
     if not (web_dir / "templates").exists():
         web_dir = WEB_DIR
-    app = FastAPI(title="一站式发票汇总系统", version=PRODUCT_VERSION)
+    @asynccontextmanager
+    async def lifespan(_app):
+        try:
+            yield
+        finally:
+            await run_in_threadpool(state._document_index.close)
+
+    app = FastAPI(title="一站式发票汇总系统", version=PRODUCT_VERSION, lifespan=lifespan)
     app.state.invoice_hub = state
     app.state.desktop_host_secret = desktop_host_secret
     app.state.monitor_recovery_replay_lock = threading.Lock()
@@ -478,14 +515,61 @@ def create_app(
             return ""
         skin_id = html.escape(str(active.get("id") or ""), quote=True)
         escaped_href = html.escape(href, quote=True)
-        return f'<link id="activeSkinStylesheet" rel="stylesheet" href="{escaped_href}" data-skin-id="{skin_id}">'
+        # Apply the validated skin identity before the body paints; bottom-of-page
+        # hydration alone flashes the white surface on every dark-mode navigation.
+        identity = json.dumps(str(active.get("id") or "")).replace("<", "\\u003c")
+        return (
+            f'<script>document.documentElement.dataset.activeSkin = {identity};</script>'
+            f'<link id="activeSkinStylesheet" rel="stylesheet" href="{escaped_href}" data-skin-id="{skin_id}">'
+        )
+
+    def app_icon_favicon_link(request: Request) -> str:
+        # App icons are independent from skins, so backend and ?no_skin pages keep it.
+        favicon_url = AppIconService.favicon_url(DEFAULT_APP_ICON_ID)
+        try:
+            payload = _state(request).app_icon()
+            current_icon = str(payload.get("icon") or "").strip()
+            for item in payload.get("icons") or []:
+                if isinstance(item, dict) and str(item.get("id") or "") == current_icon:
+                    candidate = str(item.get("favicon_url") or "").strip()
+                    if candidate:
+                        favicon_url = candidate
+                    break
+        except Exception:
+            favicon_url = AppIconService.favicon_url(DEFAULT_APP_ICON_ID)
+        return (
+            '<link id="appIconLink" rel="icon" type="image/png" '
+            f'href="{html.escape(favicon_url, quote=True)}">'
+        )
 
     def render_page(request: Request, name: str, bootstrap: dict[str, object], skin: bool = True) -> str:
-        return _template(name, {"BOOTSTRAP_JSON": bootstrap}, web_dir=web_dir, skin_link=active_skin_link(request) if skin else "")
+        return _template(
+            name,
+            {"BOOTSTRAP_JSON": bootstrap},
+            web_dir=web_dir,
+            skin_link=active_skin_link(request) if skin else "",
+            favicon_link=app_icon_favicon_link(request),
+        )
 
     @app.get("/", response_class=HTMLResponse)
     def index(request: Request) -> str:
         return render_page(request, "index.html", {"page": "index"})
+
+    @app.api_route(LOCAL_WEBSITE_PATH.rstrip("/"), methods=["GET", "HEAD"], include_in_schema=False)
+    def website_redirect() -> RedirectResponse:
+        return RedirectResponse(LOCAL_WEBSITE_PATH)
+
+    @app.api_route(LOCAL_WEBSITE_PATH + "{asset_path:path}", methods=["GET", "HEAD"], include_in_schema=False)
+    def official_website(asset_path: str) -> FileResponse:
+        # Follow the selected Web bundle even when config/state use another root.
+        # Only packaged assets are public; never expose the repository directory.
+        try:
+            path = website_asset_path(web_dir.parent / "website", asset_path or "index.html")
+        except ValueError:
+            raise HTTPException(status_code=404, detail="Not found") from None
+        except OSError:
+            raise HTTPException(status_code=503, detail="官网资源缺失，请重新安装完整的软件包。") from None
+        return FileResponse(path, headers={"Cache-Control": "no-cache", "X-Content-Type-Options": "nosniff"})
 
     @app.get("/costs", response_class=HTMLResponse)
     def costs(request: Request) -> str:
@@ -523,6 +607,7 @@ def create_app(
             {"BASE_HEAD": base_head, "BOOTSTRAP_JSON": {"page": "bookkeeping"}},
             web_dir=web_dir,
             skin_link=active_skin_link(request),
+            favicon_link=app_icon_favicon_link(request),
         )
 
     @app.get("/invoices/print/{job_id}", response_class=HTMLResponse)
@@ -535,6 +620,7 @@ def create_app(
             "invoice_print.html",
             {"PRINT_JOB_JSON": payload},
             web_dir=web_dir,
+            favicon_link=app_icon_favicon_link(request),
         )
         return HTMLResponse(
             content,
@@ -562,6 +648,22 @@ def create_app(
     @app.get("/api/v1/about")
     def about(request: Request) -> dict:
         return _state(request).about()
+
+    @app.post("/api/v1/about/links/{link_key}")
+    async def open_about_link(request: Request, link_key: str) -> dict:
+        _require_same_origin_write(request)
+        try:
+            payload = await request.json()
+        except (json.JSONDecodeError, UnicodeError):
+            raise HTTPException(status_code=400, detail="公开链接参数必须是 JSON 对象")
+        if not isinstance(payload, dict) or payload:
+            raise HTTPException(status_code=400, detail="公开链接参数必须为空对象")
+        try:
+            return await run_in_threadpool(_state(request).open_about_link, link_key)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except OSError:
+            raise HTTPException(status_code=503, detail="无法打开系统默认浏览器") from None
 
     @app.post("/api/v1/update/check")
     async def check_for_updates(request: Request) -> dict:
@@ -641,8 +743,8 @@ def create_app(
         return _state(request).rename_invoice_files()
 
     @app.get("/api/v1/invoices")
-    def invoices(request: Request) -> dict:
-        return _state(request).list_invoices(dict(request.query_params))
+    def invoices(request: Request, search_scope: Literal["invoice", "filename", "all"] = "all") -> dict:
+        return _state(request).list_invoices({**dict(request.query_params), "search_scope": search_scope})
 
     @app.post("/api/v1/invoices/selection-summary")
     async def invoice_selection_summary(request: Request) -> dict:
@@ -810,6 +912,19 @@ def create_app(
     def documents_state(request: Request) -> dict:
         return _state(request).document_state()
 
+    @app.get("/api/v1/documents/index")
+    def documents_index_status(request: Request) -> dict:
+        return {"ok": True, "index": _state(request)._document_index.status()}
+
+    @app.post("/api/v1/documents/index/resume")
+    def documents_index_resume(request: Request) -> dict:
+        return _state(request).document_state(restart=True)
+
+    @app.post("/api/v1/documents/index/cancel")
+    async def documents_index_cancel(request: Request) -> dict:
+        payload = await request.json()
+        return await run_in_threadpool(_state(request)._document_index.cancel, str(payload.get("job_id") or ""))
+
     @app.post("/api/v1/documents/pick-outbound-dir")
     def documents_pick_outbound_dir(request: Request) -> dict:
         _require_native_picker_origin(request)
@@ -817,15 +932,15 @@ def create_app(
 
     @app.post("/api/v1/documents/validate-outbound-dir")
     async def documents_validate_outbound_dir(request: Request) -> dict:
-        return _state(request).validate_outbound_invoice_dir(await request.json())
+        return await run_in_threadpool(_state(request).validate_outbound_invoice_dir, await request.json())
 
     @app.put("/api/v1/documents/outbound-dir")
     async def documents_update_outbound_dir(request: Request) -> dict:
-        return _state(request).update_outbound_invoice_dir(await request.json())
+        return await run_in_threadpool(_state(request).update_outbound_invoice_dir, await request.json())
 
     @app.post("/api/v1/documents/recent-outbound-dirs/remove")
     async def documents_remove_recent_outbound_dir(request: Request) -> dict:
-        return _state(request).remove_recent_outbound_invoice_dir(await request.json())
+        return await run_in_threadpool(_state(request).remove_recent_outbound_invoice_dir, await request.json())
 
     @app.put("/api/v1/documents/defaults")
     async def documents_defaults(request: Request) -> dict:
@@ -840,10 +955,19 @@ def create_app(
         except DocumentError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
 
+    @app.post("/api/v1/documents/inbound/selection")
+    async def documents_inbound_selection(request: Request) -> dict:
+        try:
+            return await run_in_threadpool(_state(request).document_inbound_selection, await request.json())
+        except StaleInvoiceSelectionError as exc:
+            raise HTTPException(status_code=409, detail=str(exc))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+
     @app.post("/api/v1/documents/inbound/export-status")
     async def documents_inbound_export_status(request: Request) -> dict:
         try:
-            return _state(request).inbound_document_export_status(await request.json())
+            return await run_in_threadpool(_state(request).inbound_document_export_status, await request.json())
         except KeyError:
             raise HTTPException(status_code=404, detail="inbound invoice not found")
         except DocumentError as exc:
@@ -852,16 +976,18 @@ def create_app(
     @app.post("/api/v1/documents/inbound/export")
     async def documents_inbound_export(request: Request) -> dict:
         try:
-            return _state(request).export_inbound_document(await request.json())
+            return await run_in_threadpool(_state(request).export_inbound_document, await request.json())
+        except StaleInvoiceSelectionError as exc:
+            raise HTTPException(status_code=409, detail=str(exc))
         except KeyError:
             raise HTTPException(status_code=404, detail="inbound invoice not found")
-        except DocumentError as exc:
+        except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
 
     @app.post("/api/v1/documents/inbound/open")
     async def documents_inbound_open(request: Request) -> dict:
         try:
-            return _state(request).open_inbound_document(await request.json())
+            return await run_in_threadpool(_state(request).open_inbound_document, await request.json())
         except KeyError:
             raise HTTPException(status_code=404, detail="inbound invoice not found")
         except DocumentError as exc:
@@ -870,7 +996,7 @@ def create_app(
     @app.post("/api/v1/documents/inbound/open-location")
     async def documents_inbound_open_location(request: Request) -> dict:
         try:
-            return _state(request).open_inbound_document_location(await request.json())
+            return await run_in_threadpool(_state(request).open_inbound_document_location, await request.json())
         except KeyError:
             raise HTTPException(status_code=404, detail="inbound invoice not found")
         except DocumentError as exc:
@@ -888,7 +1014,7 @@ def create_app(
     @app.post("/api/v1/documents/outbound/export-status")
     async def documents_outbound_export_status(request: Request) -> dict:
         try:
-            return _state(request).outbound_document_export_status(await request.json())
+            return await run_in_threadpool(_state(request).outbound_document_export_status, await request.json())
         except KeyError:
             raise HTTPException(status_code=404, detail="outbound invoice not found")
         except DocumentError as exc:
@@ -897,7 +1023,7 @@ def create_app(
     @app.post("/api/v1/documents/outbound/export")
     async def documents_outbound_export(request: Request) -> dict:
         try:
-            return _state(request).export_outbound_document(await request.json())
+            return await run_in_threadpool(_state(request).export_outbound_document, await request.json())
         except KeyError:
             raise HTTPException(status_code=404, detail="outbound invoice not found")
         except DocumentError as exc:
@@ -906,7 +1032,7 @@ def create_app(
     @app.post("/api/v1/documents/outbound/open")
     async def documents_outbound_open(request: Request) -> dict:
         try:
-            return _state(request).open_outbound_document(await request.json())
+            return await run_in_threadpool(_state(request).open_outbound_document, await request.json())
         except KeyError:
             raise HTTPException(status_code=404, detail="outbound invoice not found")
         except DocumentError as exc:
@@ -915,7 +1041,7 @@ def create_app(
     @app.post("/api/v1/documents/outbound/open-location")
     async def documents_outbound_open_location(request: Request) -> dict:
         try:
-            return _state(request).open_outbound_document_location(await request.json())
+            return await run_in_threadpool(_state(request).open_outbound_document_location, await request.json())
         except KeyError:
             raise HTTPException(status_code=404, detail="outbound invoice not found")
         except DocumentError as exc:
@@ -932,6 +1058,24 @@ def create_app(
     @app.get("/api/v1/skins")
     def skins(request: Request) -> dict:
         return _state(request).skins()
+
+    @app.get("/api/v1/app-icon")
+    def app_icon(request: Request) -> dict:
+        return _state(request).app_icon()
+
+    @app.put("/api/v1/app-icon")
+    async def update_app_icon(request: Request) -> dict:
+        _require_same_origin_write(request)
+        try:
+            payload = await request.json()
+        except (json.JSONDecodeError, UnicodeError):
+            raise HTTPException(status_code=400, detail="请求体必须是仅含 icon 的 JSON 对象")
+        if not isinstance(payload, dict) or set(payload) != {"icon"} or not isinstance(payload.get("icon"), str):
+            raise HTTPException(status_code=400, detail="请求体必须是仅含字符串字段 icon 的 JSON 对象")
+        try:
+            return await run_in_threadpool(_run_app_icon_update, _state(request).update_app_icon, payload["icon"])
+        except AppIconServiceError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
 
     @app.post("/api/v1/skins/import")
     async def import_skin(request: Request) -> dict:
@@ -986,6 +1130,10 @@ def create_app(
             path="/api/v1/bridge/status",
             action=_state(request).bridge_status,
         )
+
+    @app.get("/api/v1/bridge/progress")
+    def bridge_progress(request: Request) -> dict:
+        return _state(request).bridge_progress()
 
     @app.get("/favicon.ico", include_in_schema=False)
     def favicon() -> Response:

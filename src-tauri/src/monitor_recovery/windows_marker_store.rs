@@ -7,17 +7,18 @@ use std::path::Path;
 use std::ptr::null_mut;
 
 use windows_sys::Win32::Foundation::{
-    CloseHandle, GetLastError, ERROR_ACCESS_DENIED, ERROR_ALREADY_EXISTS, ERROR_CANT_ACCESS_FILE,
-    ERROR_FILE_EXISTS, ERROR_INVALID_FUNCTION, ERROR_INVALID_HANDLE, ERROR_INVALID_REPARSE_DATA,
-    ERROR_NOT_SUPPORTED, HANDLE, INVALID_HANDLE_VALUE,
+    CloseHandle, GetLastError, ERROR_ACCESS_DENIED, ERROR_CANT_ACCESS_FILE, ERROR_INVALID_FUNCTION,
+    ERROR_INVALID_HANDLE, ERROR_INVALID_REPARSE_DATA, ERROR_NOT_SUPPORTED, HANDLE,
+    INVALID_HANDLE_VALUE,
 };
 use windows_sys::Win32::Storage::FileSystem::{
-    FileAttributeTagInfo, FileDispositionInfo, FileRenameInfo, FileStandardInfo, FlushFileBuffers,
+    FileAttributeTagInfo, FileDispositionInfo, FileStandardInfo, FlushFileBuffers,
     GetFileInformationByHandleEx, GetFileSizeEx, GetFileType, ReadFile, SetFileInformationByHandle,
     WriteFile, FILE_ATTRIBUTE_DEVICE, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_REPARSE_POINT,
     FILE_ATTRIBUTE_TAG_INFO, FILE_DISPOSITION_INFO, FILE_FLAG_BACKUP_SEMANTICS,
-    FILE_FLAG_OPEN_REPARSE_POINT, FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_RENAME_INFO,
-    FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_STANDARD_INFO, FILE_TYPE_DISK,
+    FILE_FLAG_OPEN_REPARSE_POINT, FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_READ_ATTRIBUTES,
+    FILE_RENAME_INFO, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_STANDARD_INFO,
+    FILE_TYPE_DISK,
 };
 
 use super::{MarkerStoreError, RecoveryMarker, RecoveryMarkerStore, RECOVERY_MARKER_FILE};
@@ -37,6 +38,7 @@ const FILE_WRITE_THROUGH: u32 = 0x0000_0002;
 const FILE_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
 const DELETE_ACCESS: u32 = 0x0001_0000;
 const SYNCHRONIZE_ACCESS: u32 = 0x0010_0000;
+const FILE_RENAME_INFORMATION_CLASS: u32 = 10;
 
 const STATUS_OBJECT_NAME_NOT_FOUND: NtStatus = 0xC000_0034u32 as NtStatus;
 const STATUS_NO_SUCH_FILE: NtStatus = 0xC000_000Fu32 as NtStatus;
@@ -85,9 +87,21 @@ unsafe extern "system" {
         ea_buffer: *mut c_void,
         ea_length: u32,
     ) -> NtStatus;
+
+    fn NtSetInformationFile(
+        file_handle: HANDLE,
+        io_status_block: *mut IoStatusBlock,
+        file_information: *mut c_void,
+        length: u32,
+        file_information_class: u32,
+    ) -> NtStatus;
 }
 
 struct WindowsHandle(HANDLE);
+
+// A Windows HANDLE is process-global, while this wrapper has unique ownership:
+// it is neither Clone nor Sync, and its single Drop closes the handle after transfer.
+unsafe impl Send for WindowsHandle {}
 
 impl WindowsHandle {
     fn from_raw(raw: HANDLE) -> Result<Self, MarkerStoreError> {
@@ -308,16 +322,19 @@ impl WindowsRecoveryMarkerStore {
         handle: &WindowsHandle,
         destination: &str,
     ) -> Result<(), MarkerStoreError> {
-        let (name, _) = relative_name(destination)?;
+        let (name, object_name) = relative_name(destination)?;
         if align_of::<FILE_RENAME_INFO>() > align_of::<usize>() {
             return Err(MarkerStoreError::InvalidEntry);
         }
-        let name_bytes = name
-            .len()
-            .checked_mul(size_of::<u16>())
-            .ok_or(MarkerStoreError::InvalidEntry)?;
+        // UNICODE_STRING::length excludes the storage's trailing NUL. Native rename
+        // information receives only that validated relative-name extent.
+        let name_bytes = usize::from(object_name.length);
+        let name_words = name_bytes / size_of::<u16>();
         let header_size = offset_of!(FILE_RENAME_INFO, FileName);
-        let byte_len = header_size
+        if header_size >= size_of::<FILE_RENAME_INFO>() {
+            return Err(MarkerStoreError::InvalidEntry);
+        }
+        let byte_len = size_of::<FILE_RENAME_INFO>()
             .checked_add(name_bytes)
             .ok_or(MarkerStoreError::InvalidEntry)?;
         let byte_len_u32 = u32::try_from(byte_len).map_err(|_| MarkerStoreError::InvalidEntry)?;
@@ -333,16 +350,24 @@ impl WindowsRecoveryMarkerStore {
             (*info).Anonymous.ReplaceIfExists = false;
             (*info).RootDirectory = self.directory.raw();
             (*info).FileNameLength = name_bytes as u32;
-            std::ptr::copy_nonoverlapping(name.as_ptr(), (*info).FileName.as_mut_ptr(), name.len());
-            if SetFileInformationByHandle(
+            std::ptr::copy_nonoverlapping(name.as_ptr(), (*info).FileName.as_mut_ptr(), name_words);
+            let mut io_status = IoStatusBlock {
+                status: 0,
+                information: 0,
+            };
+            // SetFileInformationByHandle rejects a non-null RootDirectory with
+            // ERROR_INVALID_PARAMETER. NtSetInformationFile preserves the pinned
+            // directory handle, so the destination cannot be redirected through a
+            // path re-resolution between validation and the no-replace rename.
+            let status = NtSetInformationFile(
                 handle.raw(),
-                FileRenameInfo,
-                info as *const c_void,
+                &mut io_status,
+                info.cast::<c_void>(),
                 byte_len_u32,
-            ) == 0
-            {
-                let error = GetLastError();
-                if error == ERROR_ALREADY_EXISTS || error == ERROR_FILE_EXISTS {
+                FILE_RENAME_INFORMATION_CLASS,
+            );
+            if status < 0 {
+                if status == STATUS_OBJECT_NAME_COLLISION {
                     return Err(MarkerStoreError::MarkerChanged);
                 }
                 return Err(MarkerStoreError::StorageUnavailable);
@@ -375,7 +400,9 @@ impl RecoveryMarkerStore for WindowsRecoveryMarkerStore {
         );
         let temporary = match self.open_leaf(
             &temporary_name,
-            FILE_GENERIC_WRITE | DELETE_ACCESS | SYNCHRONIZE_ACCESS,
+            // The new handle is validated before writing. Without read-attributes
+            // access, a valid temporary marker fails the no-reparse check as storage unavailable.
+            FILE_GENERIC_WRITE | FILE_READ_ATTRIBUTES | DELETE_ACCESS | SYNCHRONIZE_ACCESS,
             FILE_SHARE_READ | FILE_SHARE_DELETE,
             FILE_CREATE,
             FILE_NON_DIRECTORY_FILE

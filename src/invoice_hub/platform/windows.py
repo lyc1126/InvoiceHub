@@ -5,6 +5,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from invoice_hub.platform import host_rpc
 
@@ -25,6 +26,37 @@ def open_local_path(path: Path) -> None:
     opener = "open" if sys.platform == "darwin" else "xdg-open"
     subprocess.Popen(
         [opener, str(resolved)],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        env=host_rpc.child_environment(),
+    )
+
+
+def open_external_url(url: str) -> None:
+    """Hand an approved public HTTPS URL to the operating system shell."""
+
+    candidate = str(url or "").strip()
+    parsed = urlsplit(candidate)
+    try:
+        port = parsed.port
+    except ValueError as exc:
+        raise ValueError("external URL must use a valid port") from exc
+    if (
+        parsed.scheme.casefold() != "https"
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or port is not None and not 1 <= port <= 65535
+    ):
+        raise ValueError("external URL must be an absolute HTTPS URL without credentials")
+    if os.environ.get("INVOICE_HUB_DISABLE_OPEN") == "1":
+        return
+    if os.name == "nt":
+        os.startfile(candidate)  # type: ignore[attr-defined]
+        return
+    opener = "open" if sys.platform == "darwin" else "xdg-open"
+    subprocess.Popen(
+        [opener, candidate],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         env=host_rpc.child_environment(),

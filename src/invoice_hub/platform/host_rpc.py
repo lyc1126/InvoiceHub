@@ -44,6 +44,10 @@ class HostRpcCommand(str, Enum):
     PICK_OCR_FILE = "pick_ocr_file"
     UPDATE_CHECK = "update_check"
     UPDATE_INSTALL = "update_install"
+    SET_APP_ICON = "set_app_icon"
+
+
+_APP_ICON_IDS = frozenset({"website", "orange", "teal", "violet"})
 
 
 def capture_environment() -> None:
@@ -131,14 +135,13 @@ def _validated_response(raw: bytes) -> dict[str, Any]:
     return {"ok": True, "selected": selected, "path": path}
 
 
-def _send(command: HostRpcCommand) -> bytes | None:
-    """Submit one fixed enum command without accepting caller-controlled metadata."""
+def _post(payload: bytes) -> bytes | None:
+    """Send one prebuilt fixed payload over the credentialed loopback channel."""
 
     configuration = _configuration()
     if configuration is None:
         return None
     url, token = configuration
-    payload = json.dumps({"command": command.value}, separators=(",", ":")).encode("utf-8")
     rpc_request = request.Request(
         url,
         data=payload,
@@ -157,6 +160,12 @@ def _send(command: HostRpcCommand) -> bytes | None:
     except (HostRpcError, OSError, ValueError, error.URLError):
         # The token must not appear in a Python API error or diagnostic output.
         raise HostRpcError("Tauri host request is unavailable") from None
+
+
+def _send(command: HostRpcCommand) -> bytes | None:
+    """Submit one fixed enum command without accepting caller-controlled metadata."""
+
+    return _post(json.dumps({"command": command.value}, separators=(",", ":")).encode("utf-8"))
 
 
 def pick(command: HostRpcCommand) -> dict[str, Any] | None:
@@ -213,3 +222,22 @@ def update_install() -> None:
         raise HostRpcError("Tauri host updater is unavailable") from None
     if payload != {"ok": True}:
         raise HostRpcError("Tauri host updater is unavailable")
+
+
+def set_app_icon(icon_id: str) -> None:
+    """Apply one bundled App icon in the Tauri host before Python persists it."""
+
+    normalized = str(icon_id or "").strip()
+    if normalized not in _APP_ICON_IDS:
+        raise HostRpcError("Tauri host App icon is unavailable")
+    try:
+        raw = _post(
+            json.dumps(
+                {"command": HostRpcCommand.SET_APP_ICON.value, "icon": normalized},
+                separators=(",", ":"),
+            ).encode("utf-8")
+        )
+        if raw is None or json.loads(raw.decode("utf-8")) != {"ok": True}:
+            raise HostRpcError("Tauri host App icon is unavailable")
+    except (HostRpcError, UnicodeDecodeError, ValueError, TypeError):
+        raise HostRpcError("Tauri host App icon is unavailable") from None

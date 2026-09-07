@@ -2,8 +2,8 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-APP_CSS_VERSION = "20260802-release-update-v1"
-PAGE_INDEX_VERSION = "20260803-external-monitor-guard"
+APP_CSS_VERSION = "20260907-desktop-integrated-2"
+PAGE_INDEX_VERSION = "20260907-desktop-integrated-2"
 
 
 def _assets() -> tuple[str, str, str]:
@@ -13,14 +13,15 @@ def _assets() -> tuple[str, str, str]:
     return html, js, css
 
 
-def test_preview_menu_order_and_two_item_keyboard_loop() -> None:
+def test_preview_menu_order_and_three_item_keyboard_loop() -> None:
     html, js, _css = _assets()
 
     preview_index = html.index('id="previewSelectedInvoicesBtn"')
     print_index = html.index('id="printSelectedInvoicesBtn"')
     assert preview_index < print_index
     assert html.index("预览", preview_index) < print_index
-    assert "return [refs.previewSelectedInvoicesBtn, refs.printSelectedInvoicesBtn].filter(Boolean);" in js
+    assert print_index < html.index('id="batchInboundDocumentsBtn"')
+    assert "return [refs.previewSelectedInvoicesBtn, refs.printSelectedInvoicesBtn, refs.batchInboundDocumentsBtn].filter(Boolean);" in js
     assert 'if (event.key === "ArrowDown") nextIndex = (currentIndex + 1) % items.length;' in js
     assert 'if (event.key === "ArrowUp") nextIndex = (currentIndex - 1 + items.length) % items.length;' in js
     assert 'if (event.key === "Home") nextIndex = 0;' in js
@@ -51,6 +52,11 @@ def test_preview_dialog_focus_close_and_stable_states() -> None:
     assert 'document.documentElement.classList.toggle("selection-summary-modal-open", modalOpen);' in js
     assert 'document.body.classList.toggle("selection-summary-modal-open", modalOpen);' in js
     assert "html.selection-summary-modal-open," in css
+    assert (
+        "html.selection-summary-modal-open,\nbody.selection-summary-modal-open,\n"
+        "html.settings-shutdown-dialog-open,\n"
+        "body.settings-shutdown-dialog-open { overflow: hidden !important; }"
+    ) in css
     assert "refs.filePreviewRetryBtn?.addEventListener(\"click\", loadFilePreviewJob);" in js
     assert "stopFilePreviewKeepAlive();" in js
     assert ".file-preview-viewport" in css

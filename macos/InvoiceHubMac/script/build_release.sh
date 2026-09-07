@@ -114,6 +114,9 @@ find "$CORE" -type f \( -name '*.pyc' -o -name '*.pyo' -o -name '.DS_Store' \) -
 [[ ! -e "$RESOURCES/dev-python-path.txt" && ! -d "$CORE/.venv" ]]
 
 EMBEDDED_PYTHON="$RESOURCES/python/bin/python3"
+PYTHONPATH="$SOURCE_ROOT/src" "$EMBEDDED_PYTHON" -c \
+  'from pathlib import Path; import sys; from invoice_hub.website import copy_website; copy_website(Path(sys.argv[1]), Path(sys.argv[2]))' \
+  "$SOURCE_ROOT" "$CORE"
 PYTHONPATH="$SOURCE_ROOT/src" "$EMBEDDED_PYTHON" -m invoice_hub.release.build_manifest \
   --root "$CORE" \
   --output "$CORE/invoice-hub-build.json" \

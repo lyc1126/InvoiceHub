@@ -8,6 +8,17 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def test_gui_setup_failure_is_presented_before_requesting_exit() -> None:
+    main = (ROOT / "src-tauri/src/main.rs").read_text(encoding="utf-8")
+    setup = main[main.index(".setup(move |app|") : main.index(".build(context)")]
+    failure = setup[setup.index("if let Err(error) = outcome") :]
+    assert failure.index("startup_diagnostics::present(") < failure.index("app.handle().exit(1)")
+    assert "setup_failure_flag.store(true" in failure
+    assert "Ok(())" in failure
+    assert "setup_failed.load(Ordering::Acquire)" in main
+    assert "app.run_return(" in main
+
+
 def test_tauri_lifecycle_uses_exact_official_plugins_and_has_no_webview_command_bridge() -> None:
     cargo = tomllib.loads((ROOT / "src-tauri" / "Cargo.toml").read_text(encoding="utf-8"))
     main = (ROOT / "src-tauri" / "src" / "main.rs").read_text(encoding="utf-8")
@@ -91,8 +102,8 @@ def test_tauri_setup_selects_surface_only_after_handshake_and_keeps_close_host_o
     backend = (ROOT / "src-tauri" / "src" / "backend.rs").read_text(encoding="utf-8")
 
     assert "INVOICE_HUB_DESKTOP_HOST" in backend
-    assert backend.index("probe_backend_with_retry") < backend.index("load_startup_surface")
-    assert backend.index("let startup_surface = match load_startup_surface()") < backend.index(
+    assert backend.index("probe_backend_with_retry") < backend.index("load_startup_preferences")
+    assert backend.index("let startup_preferences = match load_startup_preferences()") < backend.index(
         "revalidate_backend_after_preferences("
     )
     assert backend.index("revalidate_backend_after_preferences(") < backend.index(
@@ -118,7 +129,7 @@ def test_tauri_setup_selects_surface_only_after_handshake_and_keeps_close_host_o
     tray_quit = main[main.index("fn quit_from_tray") : main.index("fn prepare_backend_exit")]
     assert "request_application_exit(app);" in tray_quit
     assert "shutdown_keep_monitor" not in tray_quit
-    exit_handler = main[main.index("app.run(") :]
+    exit_handler = main[main.index("app.run_return(") :]
     assert "RunEvent::ExitRequested" in exit_handler
     assert "prepare_backend_exit(app_handle)" in exit_handler
     assert "api.prevent_exit();" in exit_handler
@@ -139,11 +150,14 @@ def test_tauri_setup_cleans_up_an_owned_backend_before_returning_surface_failure
     assert "std::thread::sleep(std::time::Duration::from_secs(1));" in cleanup
     assert "setup remains blocked until owned backend termination is confirmed" in cleanup
 
-    setup = main[main.index(".setup(move |app|") : main.index(".build(tauri::generate_context!())")]
+    setup = main[main.index(".setup(move |app|") : main.index(".build(context)")]
     assert "let backend = BackendHost::launch" in setup
     assert "let setup_result = (|| -> Result<(), Box<dyn Error>>" in setup
-    assert "install_tray(app)?;" in setup
-    assert "create_desktop_window(app)?" in setup
+    assert "install_tray(app, app_icon_id)?;" in setup
+    assert "create_desktop_window(" in setup
+    assert "app_icon_id," in setup
+    assert "backend.webview_data_directory()," in setup
+    assert "backend.allow_print_popups()," in setup
     assert "open_backend_in_browser(&app.handle())?" in setup
     assert "if let Err(error) = setup_result" in setup
     assert "complete_setup_failure_cleanup(&backend);" in setup
@@ -155,8 +169,8 @@ def test_tauri_setup_cleans_up_an_owned_backend_before_returning_surface_failure
     assert setup.index("complete_setup_failure_cleanup(&backend);") < setup.index(
         "return Err(error);"
     )
-    assert setup.index("install_tray(app)?;") < setup.index("app.manage(backend);")
-    assert setup.index("create_desktop_window(app)?") < setup.index("app.manage(backend);")
+    assert setup.index("install_tray(app, app_icon_id)?;") < setup.index("app.manage(backend);")
+    assert setup.index("create_desktop_window(") < setup.index("app.manage(backend);")
     assert setup.index("open_backend_in_browser(&app.handle())?") < setup.index(
         "app.manage(backend);"
     )
@@ -213,6 +227,33 @@ def test_tauri_webview_is_created_only_after_the_owned_backend_handshake() -> No
     assert "WebviewUrl::External(backend_url)" in main
 
 
+def test_tauri_app_icon_is_selected_from_bundled_assets_and_applied_by_the_private_host() -> None:
+    main = (ROOT / "src-tauri" / "src" / "main.rs").read_text(encoding="utf-8")
+    host_rpc = (ROOT / "src-tauri" / "src" / "host_rpc.rs").read_text(encoding="utf-8")
+    app_icon = (ROOT / "src-tauri" / "src" / "app_icon.rs").read_text(encoding="utf-8")
+    config = json.loads((ROOT / "src-tauri" / "tauri.conf.json").read_text(encoding="utf-8"))
+
+    assert (ROOT / "src-tauri" / "icons" / "icon.png").is_file()
+    assert (ROOT / "src-tauri" / "icons" / "icon.ico").is_file()
+    assert (ROOT / "src-tauri" / "icons" / "icon.icns").is_file()
+    for icon_id in ("website", "orange", "teal", "violet"):
+        assert (ROOT / "web" / "static" / "app-icon" / icon_id / "icon_256.png").is_file()
+        assert (ROOT / "web" / "static" / "app-icon" / icon_id / "icon_32.png").is_file()
+        assert f'"{icon_id}"' in app_icon
+
+    assert config["bundle"]["icon"] == ["icons/icon.png", "icons/icon.ico", "icons/icon.icns"]
+    assert "let app_icon_id = app_icon::load_selected(backend.runtime_dir());" in main
+    assert "install_tray(app, app_icon_id)?;" in main
+    assert "create_desktop_window(" in main
+    assert "backend.webview_data_directory()," in main
+    assert "backend.allow_print_popups()," in main
+    assert "tray.set_icon(Some(next_image.clone()))" in app_icon
+    assert "window.set_icon(next_image)" in app_icon
+    assert "HostRpcCommand::SetAppIcon" in host_rpc
+    assert '"set_app_icon"' in host_rpc
+    assert "HostRpcResponse::AppIconUpdated" in host_rpc
+
+
 def test_tauri_checkout_guard_and_liveness_order_fail_closed() -> None:
     main = (ROOT / "src-tauri" / "src" / "main.rs").read_text(encoding="utf-8")
     backend = (ROOT / "src-tauri" / "src" / "backend.rs").read_text(encoding="utf-8")
@@ -222,6 +263,15 @@ def test_tauri_checkout_guard_and_liveness_order_fail_closed() -> None:
     assert backend.index("ownership_verified.store(true, Ordering::Release);") < backend.index(
         "let liveness_worker = spawn_backend_liveness_watcher"
     )
+    watcher = backend[
+        backend.index("fn spawn_backend_liveness_watcher") : backend.index(
+            "fn current_child_pid"
+        )
+    ]
+    assert "ownership_verified.swap(false, Ordering::AcqRel)" in watcher
+    assert "if was_owned" in watcher
+    assert "on_exit();" in watcher
+    assert "move || app_handle.exit(0)" in backend
 
 
 def test_tauri_monitor_recovery_foundation_requires_a_released_lifecycle_lease_and_pinned_marker_store() -> None:
@@ -269,7 +319,7 @@ def test_tauri_updater_runtime_activates_after_the_owned_gate_and_commits_after_
     assert "pub ownership_secret" not in backend
     assert "fn ownership_secret(" not in backend
 
-    setup = main[main.index(".setup(move |app|") : main.index(".build(tauri::generate_context!())")]
+    setup = main[main.index(".setup(move |app|") : main.index(".build(context)")]
     assert setup.index("backend.release_startup_gate()") < setup.index("app.manage(backend);")
     assert setup.index("app.manage(backend);") < setup.index("backend.activate_updater_runtime()")
     assert "the backend remains available for diagnostics" in setup
@@ -394,3 +444,24 @@ def test_tauri_configuration_remains_fixed_to_the_product_localhost_origin() -> 
     assert config["build"]["devUrl"] == "http://127.0.0.1:8766"
     assert config["bundle"]["active"] is False
     assert config["bundle"]["macOS"]["minimumSystemVersion"] == "13.0"
+
+
+def test_tauri_print_popup_policy_only_allows_local_print_jobs() -> None:
+    main = (ROOT / "src-tauri" / "src" / "main.rs").read_text(encoding="utf-8")
+    backend = (ROOT / "src-tauri" / "src" / "backend.rs").read_text(encoding="utf-8")
+
+    assert "pub struct StartupPreferences" in backend
+    assert "pub fn parse_startup_preferences" in backend
+    assert 'get("allow_print_popups")' in backend
+    assert "allow_print_popups: startup_preferences.allow_print_popups" in backend
+    assert "pub fn allow_print_popups(&self) -> bool" in backend
+    assert "backend.allow_print_popups()," in main
+    assert 'const PRINT_POPUP_INITIAL_URL: &str = "about:blank";' in main
+    assert 'const PRINT_POPUP_ROUTE_PREFIX: &str = "/invoices/print/";' in main
+    assert "PRINT_POPUP_JOB_ID_MIN_LENGTH" in main
+    assert "PRINT_POPUP_JOB_ID_MAX_LENGTH" in main
+    assert ".on_new_window(move |url, features|" in main
+    assert "!allow_print_popups || !is_print_popup_initial_url(url.as_str())" in main
+    assert ".window_features(features)" in main
+    assert ".on_navigation(|destination| is_print_popup_navigation_url(destination.as_str()))" in main
+    assert "tauri::webview::NewWindowResponse::Deny" in main
