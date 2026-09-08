@@ -2,9 +2,11 @@
 
 更新时间：2026-09-08。此页记录本次源码整合；精确远端状态仍以 Git 查询为准。
 
+查询本地与远端主线：`git rev-parse main`、`git ls-remote --heads origin main`。PR #20 的精确合并身份属于当次历史记录，见 `CHANGELOG.md`；不将历史提交号作为持续更新的 main 当前值。
+
 | 分支 | 当前用途 |
 |---|---|
-| `main` / `origin/main` | PR #20 已合并；产品基线 `53544e3c96ba01906520637fae60cbc215b7808b`，后续纯文档提交不改变该产品代码基线 |
+| `main` / `origin/main` | 已包含 PR #20 的 Desktop 整合；当前提交以实时 Git 查询为准，后续产品开发与发行源码均从当前 main 开始 |
 | `codex/desktop-latest` | 已合并的 Desktop 完整源码整合分支，保留来源记录；后续功能从当前 main 新建分支 |
 | `codex/fix-desktop-search-filter` | 既有独立提交线；新版整合了其监控、搜索和启动修复，原提交继续保留 |
 | `codex/simplify-windows-portable` | 早期 Windows 打包与验收提交；上游分支已删除，本地保留回溯 |
@@ -40,4 +42,4 @@
 
 整合时 15 项文档契约、31 项前端/官网 Node 测试、Python compileall 和 Git diff 检查通过。产品代码/资源与构建快照一致，差异只有六份文档及一份官网测试；内容扫描仅命中两项已人工确认的固定合成负向测试值。2026-09-08 只重试推送、清理分支引用并同步本文档，不重复产品测试或重打包。本机审计脚本与测试临时目录保留在 ignored 的 `runtime/desktop-push-check/` 供本次源码整合审计回溯，后续不再需要审计复现时可按该精确目录清理。
 
-合并门禁已经覆盖完整 Windows/macOS Python 测试、编译、静态/发布契约及 macOS Swift 测试；不等于 macOS 成品、签名安装器、updater、原生选择器或实体打印验收，不改变既有 BAT 验证范围。源码回退使用 `git revert -m 1 53544e3c96ba01906520637fae60cbc215b7808b` 创建反向提交并走 PR；旧 Desktop 解包仍可本地回退。
+合并门禁已经覆盖完整 Windows/macOS Python 测试、编译、静态/发布契约及 macOS Swift 测试；不等于 macOS 成品、签名安装器、updater、原生选择器或实体打印验收，不改变既有 BAT 验证范围。源码回退先核对 PR #20 的实际 merge commit，再以 `git revert -m 1 <merge_commit>` 创建反向提交并走 PR；旧 Desktop 解包仍可本地回退。
