@@ -103,7 +103,14 @@ py -3 -m venv .venv
 .\启动一站式发票汇总系统.bat -Development
 ```
 
-默认服务地址为 `http://127.0.0.1:8766/`。Tauri 工具链诊断使用 `scripts/dev/tauri-doctor.ps1` 与 `scripts/dev/tauri-bootstrap.ps1`；桌面壳开发说明见 [src-tauri](src-tauri/README.md)。
+默认服务地址为 `http://127.0.0.1:8766/`。Tauri 工具链诊断：
+
+```powershell
+.\scripts\dev\tauri-doctor.ps1 --require-ready
+.\scripts\dev\tauri-bootstrap.ps1
+```
+
+桌面壳开发说明见 [src-tauri](src-tauri/README.md)。
 
 更新协议的工程状态：L10-D 已把这些边界接入 Host RPC/updater/startup restore，响应 flush 后才进入私有 commit，失败保持 `CommitLost` 诊断。L10-E 是不安装更新的隔离恢复样本，记录 `update_requests=0`；`internal-alpha` 也不代表正式更新验收。本预览禁用宿主自动安装更新，未发布更新 Feed。
 
