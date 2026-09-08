@@ -2,6 +2,11 @@
 
 ## 未发布
 
+### 2026-09-08 Desktop 主线合并检查
+
+- 用户授权将 `codex/desktop-latest` 合入 `main`，从已推送的 `482dff6` 开始复核。首次远端 CI 在 Windows/macOS 各有两项失败，均为预览/打印前端契约仍引用旧首页脚本版本；分别已有 661/652 项 Python 测试通过。
+- 将两处测试版本预期同步为页面已使用的 `20260907-large-list-1`，保留现有产品源码、缓存参数及已验 Desktop 包；继续运行聚焦回归与远端 CI，合并结果以本节后续记录为准。
+
 ### 2026-09-08 Desktop 推送重试与分支整理完成
 
 - 从 `codex/desktop-latest@f35d314` 继续用户已授权的推送；GitHub 成功接收完整整合提交，分支已跟踪同名远端，`git ls-remote` 核对一致。稳定 `main` 仍为 `eb425bc`，未创建 PR、Release 或 Feed，也未上传本机配置、业务数据与 ZIP。
