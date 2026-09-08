@@ -1,11 +1,11 @@
 # IMPLEMENTATION_STATUS
 
-更新时间：2026-09-07
+更新时间：2026-09-08
 
-## 源码整合分支
+## 主线基线
 
 - 合并检查修复监控状态读取等待整轮汇总锁的问题：状态短锁独立，写入仍按 sync -> status 串行；停止请求及原有超时可在汇总过程中执行。旧 ZIP 尚未包含这项补充。
-- 最新 Desktop 全量更新统一在 `codex/desktop-latest`，包含已验构建快照中的源码/资源与后续文档。`main` 保持稳定基线，原独立提交和构建快照仍可回溯；七个仅指向基线的本地空分支由整合分支接替。详情见 `docs/BRANCH_STATUS.md`。
+- 最新 Desktop 全量更新已通过 PR #20 合入 `main`，开发实现与后续发行源码统一以该合并提交及其主线后代为准。最终功能提交的 Windows/macOS CI 与 DCO 均通过，原独立提交和构建快照保留回溯；不发布新包。精确提交身份见 `docs/BRANCH_STATUS.md`，下文日期和旧分支名仅记录实现来源。
 
 ## 大列表响应
 
@@ -27,7 +27,7 @@
 
 ## 源码 BAT 握手
 
-- 当前跟进分支 `codex/fix-source-bat-handshake` 保留前序 Desktop 整合。Windows venv 的实际 executable 与 argv 首项分别核验可信 Python 集合，模块/root/config 继续精确匹配；不放宽 release 或完整 CIM 不匹配保护。
+- 源码握手修复原来自 `codex/fix-source-bat-handshake`，现已整合到上述 main。Windows venv 的实际 executable 与 argv 首项分别核验可信 Python 集合，模块/root/config 继续精确匹配；不放宽 release 或完整 CIM 不匹配保护。
 - 23 项原握手契约通过；隔离空目录配置完成根 BAT 的 PS7/强制 PS5.1 启动与重复启动、只停 WebUI 保留 monitor、stop-all 退出两者。本轮诊断任务又在正式退出 Desktop 后，验证真实默认 8766 的根 BAT 成功启动、重复复用和正式停止；被 Desktop 占用时仍正确拒绝接管。Tauri ZIP 不含 BAT 模块，本轮因新增 host/CLI 诊断重新构建。
 
 ## 当前工作区 Desktop 包
