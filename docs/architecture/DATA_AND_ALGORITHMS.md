@@ -1,5 +1,7 @@
 # InvoiceHub 数据结构与算法
 
+2026-09-08 监控状态采用独立 `state_dir/.invoice_monitor_status.lock` 保护短读写，状态更新仍在完整 sync 锁内按 sync -> status 顺序执行；状态读取不取 sync 锁。锁文件不是运行真值，PID 与 `.invoice_monitor.lock` 的判定保持不变。
+
 2026-09-07 单据缓存 scope 为缓存版本、TargetProfile ID、开具目录、成本 CSV 路径的 SHA256。逐文件键为路径及大小/mtime_ns/ctime_ns，只缓存派生 InvoiceRecord。spawn worker 完成解析后提交 SQLite WAL/NORMAL，恢复核对签名，变化/失败项重解析，完整扫描后删失效缓存行。入库选项绑定成本 CSV 签名，读取前后不一致则失败，不写成本真值。出库快照绑定 job_id，未完成不得作为完整结果；预览仍实时核对目录/号码。60 秒后下一次列表读取会重核目录，预览本身不触发定时全量检查。进程重启先重新核对，暂停保留已完成工作；断电不保证最近缓存进度。
 
 2026-09-07 搜索算法：列表 keyword 先 strip/casefold，再对 search_scope 指定的各字段独立做子串匹配；invoice 为 seller/invoice_number，filename 为 source_file，all 为三者。不能拼接字段后匹配，避免跨字段虚假命中。默认 API all 保持兼容，首页显式 invoice。统计仍从最终 filtered 列表派生，不改源记录或投影。

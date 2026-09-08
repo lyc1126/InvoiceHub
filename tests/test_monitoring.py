@@ -248,7 +248,7 @@ def test_daemon_status_update_waits_for_profile_sync_lock(tmp_path: Path) -> Non
     assert status["observer_active"] is True
 
 
-def test_monitor_status_read_waits_for_profile_sync_lock(tmp_path: Path) -> None:
+def test_monitor_status_read_remains_responsive_during_profile_sync(tmp_path: Path) -> None:
     config = load_config(tmp_path)
     profile = target_profile_for(config)
     db_path = tmp_path / "runtime" / "invoice_hub.db"
@@ -275,9 +275,8 @@ def test_monitor_status_read_waits_for_profile_sync_lock(tmp_path: Path) -> None
     assert entered.wait(timeout=5)
     reader.start()
     try:
-        assert not read_finished.wait(timeout=0.25)
-        release.set()
-        assert read_finished.wait(timeout=5)
+        assert read_finished.wait(timeout=2), "Status read waited for the long rebuild lock"
+        assert not release.is_set()
     finally:
         release.set()
         holder.join(timeout=5)
@@ -287,6 +286,53 @@ def test_monitor_status_read_waits_for_profile_sync_lock(tmp_path: Path) -> None
     assert not reader.is_alive()
     assert observed["ready"] is True
     assert observed["observer_active"] is True
+
+
+def test_monitor_stop_reaches_request_and_timeout_during_sync(tmp_path: Path, monkeypatch) -> None:
+    from invoice_hub.services import monitor_bridge as bridge_module
+
+    config = load_config(tmp_path)
+    layout, _notes = ensure_runtime_layout(config)
+    profile = target_profile_for(config)
+    repo = SQLiteRepository(layout.db_path)
+    repo.init_db()
+    bridge = MonitorBridge(config, layout, profile, repo)
+    bridge.state.lock_file.write_text('{"pid": 424242}', encoding="utf-8")
+    bridge.state.update_status(pid=424242, ready=True)
+    entered, release, stopped = threading.Event(), threading.Event(), threading.Event()
+    alive = [True]
+    result = {}
+
+    def hold_sync():
+        with MonitorState(profile, layout.db_path).sync_write_lock():
+            entered.set()
+            release.wait(timeout=10)
+
+    def kill(pid):
+        assert pid == 424242
+        assert bridge.state.stop_requested()
+        alive[0] = False
+        return True
+
+    def stop():
+        result.update(bridge.stop(timeout=0))
+        stopped.set()
+
+    monkeypatch.setattr(bridge_module, "is_pid_alive", lambda pid: alive[0])
+    monkeypatch.setattr(bridge, "_kill_pid", kill)
+    holder, stopper = threading.Thread(target=hold_sync), threading.Thread(target=stop)
+    holder.start()
+    assert entered.wait(timeout=5)
+    stopper.start()
+    try:
+        assert stopped.wait(timeout=2), "Stop request/timeout waited for the rebuild"
+        assert result["forced"] is True
+        assert result["status"]["running"] is False
+        assert not release.is_set()
+    finally:
+        release.set()
+        holder.join(timeout=5)
+        stopper.join(timeout=5)
 
 
 def test_monitor_sync_can_suppress_child_events_and_notifications(tmp_path: Path, monkeypatch) -> None:

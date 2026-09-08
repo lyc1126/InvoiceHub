@@ -25,6 +25,7 @@ from invoice_hub.storage.files import atomic_write_json, read_csv_rows, read_jso
 STOP_FLAG_NAME = ".invoice_stop"
 LOCK_FILE_NAME = ".invoice_monitor.lock"
 SYNC_WRITE_LOCK_FILE_NAME = ".invoice_sync.lock"
+STATUS_LOCK_FILE_NAME = ".invoice_monitor_status.lock"
 PROCESSED_FILE_NAME = "processed_files.json"
 MANUAL_OVERRIDES_FILE_NAME = "manual_overrides.json"
 STATUS_FILE_NAME = "monitor_status.json"
@@ -300,6 +301,7 @@ class MonitorState:
         self.stop_file = self.workspace_dir / STOP_FLAG_NAME
         self.lock_file = self.state_dir / LOCK_FILE_NAME
         self.sync_write_lock_file = self.state_dir / SYNC_WRITE_LOCK_FILE_NAME
+        self.status_lock_file = self.state_dir / STATUS_LOCK_FILE_NAME
         self.processed_file = self.state_dir / PROCESSED_FILE_NAME
         self.manual_overrides_file = self.state_dir / MANUAL_OVERRIDES_FILE_NAME
         self.status_file = self.state_dir / STATUS_FILE_NAME
@@ -316,7 +318,12 @@ class MonitorState:
     @contextmanager
     def sync_write_lock(self) -> Iterator[None]:
         """Serialize projection and monitor-state writes for this TargetProfile."""
-        key = canonical_path(self.state_dir)
+        with self._file_lock(self.sync_write_lock_file):
+            yield
+
+    @contextmanager
+    def _file_lock(self, path: Path) -> Iterator[None]:
+        key = canonical_path(path)
         thread_lock = _sync_thread_lock(key)
         with thread_lock:
             held = getattr(_SYNC_HELD_LOCKS, "counts", {})
@@ -330,7 +337,7 @@ class MonitorState:
                 return
 
             self.state_dir.mkdir(parents=True, exist_ok=True)
-            with self.sync_write_lock_file.open("a+b") as handle:
+            with path.open("a+b") as handle:
                 _acquire_sync_os_lock(handle)
                 held[key] = 1
                 _SYNC_HELD_LOCKS.counts = held
@@ -431,7 +438,7 @@ class MonitorState:
     def update_status(self, **updates: Any) -> dict:
         # status_file is a read/modify/write projection shared by the daemon,
         # startup child, and manual rebuild. Its whole transaction is locked.
-        with self.sync_write_lock():
+        with self.sync_write_lock(), self._file_lock(self.status_lock_file):
             payload = read_json_object(self.status_file, {})
             payload.update(updates)
             payload.update(
@@ -449,10 +456,10 @@ class MonitorState:
             return payload
 
     def read_status(self) -> dict:
-        # On Windows, a reader can briefly deny the delete-sharing needed by
-        # os.replace(). Keep status reads inside the same profile transaction
-        # as the daemon's atomic status writes.
-        with self.sync_write_lock():
+        # Stop/health polling must not wait for a full rebuild before its timeout
+        # starts. Only serialize the short status I/O to retain Windows replace sharing;
+        # writers acquire sync then status, and readers never acquire sync.
+        with self._file_lock(self.status_lock_file):
             return read_json_object(self.status_file, {})
 
     def new_sync_progress(self, trigger: str, task_id: str = "") -> SyncProgress:

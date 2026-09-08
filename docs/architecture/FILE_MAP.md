@@ -2,6 +2,8 @@
 
 - `docs/BRANCH_STATUS.md`：当前 Desktop 整合分支、稳定主线、历史来源与本地构建快照分类，以及提交/推送范围。
 
+`state_dir/.invoice_monitor_status.lock` 是 `monitoring/state.py` 生成的短状态读写锁，与完整汇总锁分离；仅运行态使用，不作为 daemon 存活真值或发行输入。
+
 | 新增路径 | 职责 |
 |---|---|
 | `src/invoice_hub/services/document_index.py` | 单据 spawn worker、逐文件缓存与进度，AppState 调度 |
