@@ -39,3 +39,4 @@ Desktop.ini
 /src-tauri/.public-preview-staging/
 /src-tauri/.windows-portable-staging/
 /src-tauri/target/
+/tools/ofd-preview/target/

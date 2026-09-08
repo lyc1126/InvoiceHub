@@ -1,5 +1,7 @@
 # InvoiceHub 开发架构与工程导航
 
+2026-09-08 OFD 专用预览纳入 main 统一源码基线，功能来源为 `codex/ofd-preview-renderer`，精确集成身份见 [分支记录](BRANCH_STATUS.md) 与实时 Git。`file_preview.py → ofd_rendering.py → Java 21/OFDRW → PNG` 独立于发票提取；短期 PNG 继续留在原预览 job 内存，组件构建、边界与验收见 [OFD 预览说明](OFD_PREVIEW.md)。稳定源码随 main 维护，已发布的 alpha.2 制品身份与未覆盖项保持原记录，本次源码集成不代表发布新包。
+
 2026-09-08：[`v0.3.0-alpha.2` 双平台预览](https://github.com/lyc1126/InvoiceHub/releases/tag/v0.3.0-alpha.2) 已按所有者确认的验收范围发布。Windows x64 portable ZIP 与 macOS arm64 preview DMG 同源，包含校验和、收据和平台 Python SBOM；Mac 离线核验与实际默认配置验收通过，隔离 HOME 自动烟测仍未通过，未启用安装 updater 或更新 Feed。精确发布身份和限制见[分支与发布记录](BRANCH_STATUS.md)。
 
 

@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>com.invoicehub</groupId><artifactId>ofd-preview</artifactId><version>1.0.0</version>
+  <properties>
+    <maven.compiler.release>21</maven.compiler.release>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <project.build.outputTimestamp>2026-09-08T00:00:00Z</project.build.outputTimestamp>
+  </properties>
+  <dependencies>
+    <dependency>
+      <groupId>org.ofdrw</groupId><artifactId>ofdrw-converter</artifactId><version>2.4.0</version>
+      <exclusions>
+        <!-- PNG uses AWT. PDF font parsing/blending is shared and must remain. -->
+        <exclusion><groupId>org.apache.xmlgraphics</groupId><artifactId>batik-all</artifactId></exclusion>
+        <exclusion><groupId>com.itextpdf</groupId><artifactId>layout</artifactId></exclusion>
+        <exclusion><groupId>com.itextpdf</groupId><artifactId>font-asian</artifactId></exclusion>
+        <exclusion><groupId>org.ofdrw</groupId><artifactId>ofdrw-layout</artifactId></exclusion>
+        <exclusion><groupId>org.ofdrw</groupId><artifactId>ofdrw-graphics2d</artifactId></exclusion>
+        <!-- UJMP's JSON export is not used by the matrix operations in PNG rendering. -->
+        <exclusion><groupId>org.json</groupId><artifactId>json</artifactId></exclusion>
+      </exclusions>
+    </dependency>
+    <!-- TIFF decoding is shared by OFD preview; retain it after removing writer modules. -->
+    <dependency><groupId>com.twelvemonkeys.imageio</groupId><artifactId>imageio-tiff</artifactId><version>3.13.0</version></dependency>
+  </dependencies>
+  <build>
+    <finalName>ofd-preview</finalName>
+    <plugins>
+      <plugin><groupId>org.apache.maven.plugins</groupId><artifactId>maven-compiler-plugin</artifactId><version>3.14.1</version></plugin>
+      <plugin><groupId>org.apache.maven.plugins</groupId><artifactId>maven-jar-plugin</artifactId><version>3.4.2</version></plugin>
+      <plugin><groupId>org.apache.maven.plugins</groupId><artifactId>maven-dependency-plugin</artifactId><version>3.8.1</version></plugin>
+    </plugins>
+  </build>
+</project>

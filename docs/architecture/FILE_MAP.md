@@ -1,5 +1,24 @@
 # InvoiceHub 完整文件地图
 
+2026-09-08 OFD 预览新增工程文件：
+
+| 文件 | 职责与关系 |
+|---|---|
+| `src/invoice_hub/services/ofd_rendering.py` | 真实 OFD 页树、ZIP/XML 预检、组件身份/哈希、独立 worker 与 PNG 管道；由 file_preview 调用 |
+| `scripts/dev/build_ofd_preview.py` | SHA 锁定输入下载、Java 编译、jlink、组件文件清单和独立 SBOM；无 Maven 构建入口 |
+| `tools/ofd-preview/pom.xml` | OFDRW 依赖裁剪来源，供维护者重新解析依赖时对照 |
+| `tools/ofd-preview/dependencies.lock.json` | 实际运行 JAR 的坐标、URL、长度、SHA-256 |
+| `tools/ofd-preview/toolchains.lock.json` | Windows x64/macOS arm64 JDK 21 原包身份与解包入口 |
+| `tools/ofd-preview/NOTICE.md` | 组件与保留依赖许可说明、源码来源；随组件携带 |
+| `tools/ofd-preview/LICENSE-OFDRW` | OFDRW 的 Apache-2.0 许可证原文，随组件保留 |
+| `tools/ofd-preview/src/main/java/com/invoicehub/ofd/Preview.java` | 只开放单页 PNG、字形/尺寸预检及私有二进制输出 |
+| `tools/ofd-preview/src/main/java/org/slf4j/impl/StaticLoggerBinder.java` | 本项目实现的 SLF4J binding，把渲染告警转为失败而不记录发票文字 |
+| `tests/ofd_preview_fixture.py` | 原创合成 OFD 页树、中文、金额、线框和测试图像，供单测生成临时文件 |
+| `tests/test_ofd_rendering.py` | 结构安全、组件完整性、超时/并发、真实引擎与混选 API 回归 |
+| `docs/OFD_PREVIEW.md` | 方案、实验决策、构建命令、容量与未覆盖项 |
+
+生成物 `runtime/components/ofd-preview/`、`runtime/ofd-preview-qa/`、`runtime/ofd-build-cache/` 与 Maven `tools/ofd-preview/target/` 均 ignored。分发时组件位于内嵌 Python 的 `components/ofd-preview/` 并纳入外层 runtime tree/制品哈希；不得将任一平台 runtime 作为源码提交。
+
 2026-09-08：[`v0.3.0-alpha.2` 双平台预览](https://github.com/lyc1126/InvoiceHub/releases/tag/v0.3.0-alpha.2) 已按所有者确认的验收范围发布。Windows x64 portable ZIP 与 macOS arm64 preview DMG 同源，包含校验和、收据和平台 Python SBOM；Mac 离线核验与实际默认配置验收通过，隔离 HOME 自动烟测仍未通过，未启用安装 updater 或更新 Feed。精确发布身份和限制见[分支与发布记录](../BRANCH_STATUS.md)。
 
 

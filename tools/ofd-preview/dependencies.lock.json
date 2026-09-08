@@ -1,0 +1,281 @@
+[
+  {
+    "group": "org.bouncycastle",
+    "name": "bcpkix-jdk18on",
+    "version": "1.84",
+    "filename": "bcpkix-jdk18on-1.84.jar",
+    "sha256": "c87f16ed9e5ec61bc94151e9f3646ac44e50cd448121ce84367fa4b7ec7ec1bb",
+    "url": "https://repo.maven.apache.org/maven2/org/bouncycastle/bcpkix-jdk18on/1.84/bcpkix-jdk18on-1.84.jar",
+    "size": 1165716
+  },
+  {
+    "group": "org.bouncycastle",
+    "name": "bcprov-jdk18on",
+    "version": "1.84",
+    "filename": "bcprov-jdk18on-1.84.jar",
+    "sha256": "64d6c5a6121fcd927152dd182cbed39afe0fda641a970d9bcc0c9cb1858b2731",
+    "url": "https://repo.maven.apache.org/maven2/org/bouncycastle/bcprov-jdk18on/1.84/bcprov-jdk18on-1.84.jar",
+    "size": 8919063
+  },
+  {
+    "group": "org.bouncycastle",
+    "name": "bcutil-jdk18on",
+    "version": "1.84",
+    "filename": "bcutil-jdk18on-1.84.jar",
+    "sha256": "b374e16963421fb9cfb01cc20d7ad8fd2f8b8188e3eef0ec0a8965e245f7619a",
+    "url": "https://repo.maven.apache.org/maven2/org/bouncycastle/bcutil-jdk18on/1.84/bcutil-jdk18on-1.84.jar",
+    "size": 707499
+  },
+  {
+    "group": "com.twelvemonkeys.common",
+    "name": "common-image",
+    "version": "3.13.0",
+    "filename": "common-image-3.13.0.jar",
+    "sha256": "e0fd4f0376a00004136d67753026a39ce785771b37c4646e59839a97ba0b1ca2",
+    "url": "https://repo.maven.apache.org/maven2/com/twelvemonkeys/common/common-image/3.13.0/common-image-3.13.0.jar",
+    "size": 79655
+  },
+  {
+    "group": "com.twelvemonkeys.common",
+    "name": "common-io",
+    "version": "3.13.0",
+    "filename": "common-io-3.13.0.jar",
+    "sha256": "685db53ae98014780fc7011db993e38f7a297913863aac686a2cb83b9b29aefa",
+    "url": "https://repo.maven.apache.org/maven2/com/twelvemonkeys/common/common-io/3.13.0/common-io-3.13.0.jar",
+    "size": 92346
+  },
+  {
+    "group": "com.twelvemonkeys.common",
+    "name": "common-lang",
+    "version": "3.13.0",
+    "filename": "common-lang-3.13.0.jar",
+    "sha256": "8f3774b5ce5e53c7fd3879a3b8281182fcc008ebb7ac69efb096910ec66d9990",
+    "url": "https://repo.maven.apache.org/maven2/com/twelvemonkeys/common/common-lang/3.13.0/common-lang-3.13.0.jar",
+    "size": 121817
+  },
+  {
+    "group": "com.itextpdf",
+    "name": "commons",
+    "version": "7.2.6",
+    "filename": "commons-7.2.6.jar",
+    "sha256": "ee00748a95c31474199d43bf72bfa34855cb468f83001ad328e26814da194279",
+    "url": "https://repo.maven.apache.org/maven2/com/itextpdf/commons/7.2.6/commons-7.2.6.jar",
+    "size": 92403
+  },
+  {
+    "group": "commons-codec",
+    "name": "commons-codec",
+    "version": "1.19.0",
+    "filename": "commons-codec-1.19.0.jar",
+    "sha256": "5c3881e4f556855e9c532927ee0c9dfde94cc66760d5805c031a59887070af5f",
+    "url": "https://repo.maven.apache.org/maven2/commons-codec/commons-codec/1.19.0/commons-codec-1.19.0.jar",
+    "size": 374716
+  },
+  {
+    "group": "org.apache.commons",
+    "name": "commons-compress",
+    "version": "1.28.0",
+    "filename": "commons-compress-1.28.0.jar",
+    "sha256": "e1522945218456f3649a39bc4afd70ce4bd466221519dba7d378f2141a4642ca",
+    "url": "https://repo.maven.apache.org/maven2/org/apache/commons/commons-compress/1.28.0/commons-compress-1.28.0.jar",
+    "size": 1117221
+  },
+  {
+    "group": "commons-io",
+    "name": "commons-io",
+    "version": "2.16.1",
+    "filename": "commons-io-2.16.1.jar",
+    "sha256": "f41f7baacd716896447ace9758621f62c1c6b0a91d89acee488da26fc477c84f",
+    "url": "https://repo.maven.apache.org/maven2/commons-io/commons-io/2.16.1/commons-io-2.16.1.jar",
+    "size": 508826
+  },
+  {
+    "group": "org.apache.commons",
+    "name": "commons-lang3",
+    "version": "3.18.0",
+    "filename": "commons-lang3-3.18.0.jar",
+    "sha256": "4eeeae8d20c078abb64b015ec158add383ac581571cddc45c68f0c9ae0230720",
+    "url": "https://repo.maven.apache.org/maven2/org/apache/commons/commons-lang3/3.18.0/commons-lang3-3.18.0.jar",
+    "size": 702952
+  },
+  {
+    "group": "commons-logging",
+    "name": "commons-logging",
+    "version": "1.2",
+    "filename": "commons-logging-1.2.jar",
+    "sha256": "daddea1ea0be0f56978ab3006b8ac92834afeefbd9b7e4e6316fca57df0fa636",
+    "url": "https://repo.maven.apache.org/maven2/commons-logging/commons-logging/1.2/commons-logging-1.2.jar",
+    "size": 61829
+  },
+  {
+    "group": "org.dom4j",
+    "name": "dom4j",
+    "version": "2.1.4",
+    "filename": "dom4j-2.1.4.jar",
+    "sha256": "235a9167a8a199be04b5326d92927ca0adeb90d11f69fe2e821b34ce8433b591",
+    "url": "https://repo.maven.apache.org/maven2/org/dom4j/dom4j/2.1.4/dom4j-2.1.4.jar",
+    "size": 324655
+  },
+  {
+    "group": "org.apache.pdfbox",
+    "name": "fontbox",
+    "version": "2.0.27",
+    "filename": "fontbox-2.0.27.jar",
+    "sha256": "dc7429868aaf3d313c524b9aab846a405e89ca4927f35762ca4d1a60bce1d7f4",
+    "url": "https://repo.maven.apache.org/maven2/org/apache/pdfbox/fontbox/2.0.27/fontbox-2.0.27.jar",
+    "size": 1567313
+  },
+  {
+    "group": "com.twelvemonkeys.imageio",
+    "name": "imageio-core",
+    "version": "3.13.0",
+    "filename": "imageio-core-3.13.0.jar",
+    "sha256": "3966b4dadd9f7569fb9a295faa23cf51eccb2ad8454ecc83fc2b5148e9e24d68",
+    "url": "https://repo.maven.apache.org/maven2/com/twelvemonkeys/imageio/imageio-core/3.13.0/imageio-core-3.13.0.jar",
+    "size": 119907
+  },
+  {
+    "group": "com.twelvemonkeys.imageio",
+    "name": "imageio-metadata",
+    "version": "3.13.0",
+    "filename": "imageio-metadata-3.13.0.jar",
+    "sha256": "e5b3a3f08d0ca7fa19cf17b476cbe86fc957ca3f03cebcbb63bae6ceeeebd313",
+    "url": "https://repo.maven.apache.org/maven2/com/twelvemonkeys/imageio/imageio-metadata/3.13.0/imageio-metadata-3.13.0.jar",
+    "size": 83615
+  },
+  {
+    "group": "com.twelvemonkeys.imageio",
+    "name": "imageio-tiff",
+    "version": "3.13.0",
+    "filename": "imageio-tiff-3.13.0.jar",
+    "sha256": "2ae10aca4801f7f039648d5be2f7d2101228d3db5481c992ad4383a7254b4c22",
+    "url": "https://repo.maven.apache.org/maven2/com/twelvemonkeys/imageio/imageio-tiff/3.13.0/imageio-tiff-3.13.0.jar",
+    "size": 118862
+  },
+  {
+    "group": "com.itextpdf",
+    "name": "io",
+    "version": "7.2.6",
+    "filename": "io-7.2.6.jar",
+    "sha256": "f95d5f09bd7fec6584aef81091d5dd19ad8be28ce3a8fd315e9130383c223476",
+    "url": "https://repo.maven.apache.org/maven2/com/itextpdf/io/7.2.6/io-7.2.6.jar",
+    "size": 807058
+  },
+  {
+    "group": "jaxen",
+    "name": "jaxen",
+    "version": "1.2.0",
+    "filename": "jaxen-1.2.0.jar",
+    "sha256": "70feef9dd75ad064def05a3ce8975aeba515ee7d1be146d12199c8828a64174c",
+    "url": "https://repo.maven.apache.org/maven2/jaxen/jaxen/1.2.0/jaxen-1.2.0.jar",
+    "size": 232455
+  },
+  {
+    "group": "org.apache.pdfbox",
+    "name": "jbig2-imageio",
+    "version": "3.0.3",
+    "filename": "jbig2-imageio-3.0.3.jar",
+    "sha256": "c80110fda57128563d3d0656bff78da8bf35a934cf54edfa10e8b76fc6389929",
+    "url": "https://repo.maven.apache.org/maven2/org/apache/pdfbox/jbig2-imageio/3.0.3/jbig2-imageio-3.0.3.jar",
+    "size": 152680
+  },
+  {
+    "group": "com.itextpdf",
+    "name": "kernel",
+    "version": "7.2.6",
+    "filename": "kernel-7.2.6.jar",
+    "sha256": "505acc59b3381bcbe90d1b93d9f76d10d5e2651486b95098204f7dd55d2e915a",
+    "url": "https://repo.maven.apache.org/maven2/com/itextpdf/kernel/7.2.6/kernel-7.2.6.jar",
+    "size": 1243279
+  },
+  {
+    "group": "org.ofdrw",
+    "name": "ofdrw-converter",
+    "version": "2.4.0",
+    "filename": "ofdrw-converter-2.4.0.jar",
+    "sha256": "8bce306cc94298cddc4c2fbac38ba63d3277b478e9d91a94457d5b8d82e83090",
+    "url": "https://repo.maven.apache.org/maven2/org/ofdrw/ofdrw-converter/2.4.0/ofdrw-converter-2.4.0.jar",
+    "size": 206725
+  },
+  {
+    "group": "org.ofdrw",
+    "name": "ofdrw-core",
+    "version": "2.4.0",
+    "filename": "ofdrw-core-2.4.0.jar",
+    "sha256": "c959d6b097af39baf76bd2b3aaf0f5b1c1703261ddfd589a782b81fcadad7e08",
+    "url": "https://repo.maven.apache.org/maven2/org/ofdrw/ofdrw-core/2.4.0/ofdrw-core-2.4.0.jar",
+    "size": 249489
+  },
+  {
+    "group": "org.ofdrw",
+    "name": "ofdrw-gm",
+    "version": "2.4.0",
+    "filename": "ofdrw-gm-2.4.0.jar",
+    "sha256": "89140783256e6852bea27e552d4ea92278ab528fab873b610a345c4c9819ae9f",
+    "url": "https://repo.maven.apache.org/maven2/org/ofdrw/ofdrw-gm/2.4.0/ofdrw-gm-2.4.0.jar",
+    "size": 88980
+  },
+  {
+    "group": "org.ofdrw",
+    "name": "ofdrw-gv",
+    "version": "2.4.0",
+    "filename": "ofdrw-gv-2.4.0.jar",
+    "sha256": "0d3434969d87d484a893d98862b1f0f81d41953d7628374d05932df8dbabd537",
+    "url": "https://repo.maven.apache.org/maven2/org/ofdrw/ofdrw-gv/2.4.0/ofdrw-gv-2.4.0.jar",
+    "size": 2059
+  },
+  {
+    "group": "org.ofdrw",
+    "name": "ofdrw-pkg",
+    "version": "2.4.0",
+    "filename": "ofdrw-pkg-2.4.0.jar",
+    "sha256": "8fa4c1236fff0f9b996dc5c1bd9e2930943b5488432230d464b83014790fc16a",
+    "url": "https://repo.maven.apache.org/maven2/org/ofdrw/ofdrw-pkg/2.4.0/ofdrw-pkg-2.4.0.jar",
+    "size": 36532
+  },
+  {
+    "group": "org.ofdrw",
+    "name": "ofdrw-reader",
+    "version": "2.4.0",
+    "filename": "ofdrw-reader-2.4.0.jar",
+    "sha256": "69a63f0eca55b81bc1690a9db9d6fc7eae101b95d7b8960f9eaa7b0aefa6691e",
+    "url": "https://repo.maven.apache.org/maven2/org/ofdrw/ofdrw-reader/2.4.0/ofdrw-reader-2.4.0.jar",
+    "size": 70959
+  },
+  {
+    "group": "org.apache.pdfbox",
+    "name": "pdfbox",
+    "version": "2.0.27",
+    "filename": "pdfbox-2.0.27.jar",
+    "sha256": "a25ad2a0be6b0bf9eb0e972abd09c34c0e797a3ce2a980d5ff035ff4cf078037",
+    "url": "https://repo.maven.apache.org/maven2/org/apache/pdfbox/pdfbox/2.0.27/pdfbox-2.0.27.jar",
+    "size": 2776232
+  },
+  {
+    "group": "org.slf4j",
+    "name": "slf4j-api",
+    "version": "1.7.36",
+    "filename": "slf4j-api-1.7.36.jar",
+    "sha256": "d3ef575e3e4979678dc01bf1dcce51021493b4d11fb7f1be8ad982877c16a1c0",
+    "url": "https://repo.maven.apache.org/maven2/org/slf4j/slf4j-api/1.7.36/slf4j-api-1.7.36.jar",
+    "size": 41125
+  },
+  {
+    "group": "org.ujmp",
+    "name": "ujmp-core",
+    "version": "0.3.0",
+    "filename": "ujmp-core-0.3.0.jar",
+    "sha256": "e5cf6dbb7b7ebc6b4eb088a6f6f76162fd8c1ad8d222bf5777b59de8ea7e47a7",
+    "url": "https://repo.maven.apache.org/maven2/org/ujmp/ujmp-core/0.3.0/ujmp-core-0.3.0.jar",
+    "size": 1361373
+  },
+  {
+    "group": "net.lingala.zip4j",
+    "name": "zip4j",
+    "version": "2.11.3",
+    "filename": "zip4j-2.11.3.jar",
+    "sha256": "fc224f0e2845a4b84a15a113b2e2445ce862fe455633193e2dfde28638e8acff",
+    "url": "https://repo.maven.apache.org/maven2/net/lingala/zip4j/zip4j/2.11.3/zip4j-2.11.3.jar",
+    "size": 209870
+  }
+]
