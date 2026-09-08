@@ -1,8 +1,9 @@
 # InvoiceHub 完整文件地图
 
-2026-09-08 本附录与开发架构总入口统一以 `main` 的 PR #20 合并提交为产品实现及后续发行源码基线，精确身份见 [分支记录](../BRANCH_STATUS.md)；下文旧分支名只记录来源，不能再作为并行真值。源码 CI 不替代平台成品验收。
+2026-09-08：[`v0.3.0-alpha.2` 双平台预览](https://github.com/lyc1126/InvoiceHub/releases/tag/v0.3.0-alpha.2) 已按所有者确认的验收范围发布。Windows x64 portable ZIP 与 macOS arm64 preview DMG 同源，包含校验和、收据和平台 Python SBOM；Mac 离线核验与实际默认配置验收通过，隔离 HOME 自动烟测仍未通过，未启用安装 updater 或更新 Feed。精确发布身份和限制见[分支与发布记录](../BRANCH_STATUS.md)。
 
-- `docs/BRANCH_STATUS.md`：当前 Desktop 整合分支、稳定主线、历史来源与本地构建快照分类，以及提交/推送范围。
+
+- `docs/BRANCH_STATUS.md`：当前 `main`/文档分支身份、已清理与保留引用、同源双平台候选的 source/core/哈希边界，以及提交/推送/验收范围。
 
 `state_dir/.invoice_monitor_status.lock` 是 `monitoring/state.py` 生成的短状态读写锁，与完整汇总锁分离；仅运行态使用，不作为 daemon 存活真值或发行输入。
 
@@ -526,3 +527,15 @@
 - [数据结构与算法](DATA_AND_ALGORITHMS.md)
 - [Agent 任务导航](AGENT_TASK_MAP.md)
 - [注释与设计原因地图](COMMENT_RATIONALE_MAP.md)
+
+## README 产品展示与使用说明
+
+| 文件 | 职责与约束 |
+|---|---|
+| `docs/USER_GUIDE.md` | 面向使用者的目录、汇总、成本、单据、监控及外观恢复说明；README 的详细操作入口。 |
+| `docs/screenshots/README.md` | 三张当前版本截图的来源、空目录事实和隐私处理说明；不保存原始业务 DOM。 |
+| `docs/screenshots/invoicehub-home.png` | 真实汇总首页截图，只在截图会话中隐藏本机路径。 |
+| `docs/screenshots/invoicehub-costs.png` | 同版本成本分析零记录截图，不伪造业务数据。 |
+| `docs/screenshots/invoicehub-appearance.png` | 同版本图标与皮肤管理截图，拍摄不保存新的外观设置。 |
+
+以上只用于 GitHub 文档展示，不增加包内业务资源或改变当前 Release 输入。

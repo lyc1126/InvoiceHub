@@ -1,6 +1,8 @@
 # InvoiceHub 开发架构与工程导航
 
-2026-09-08 当前开发实现与稳定发行源码统一基于 `main` 的 PR #20 合并提交，包括 Desktop 全量更新、单据缓存发布重试与监控状态短锁。后续纯文档提交不改变该产品代码基线；新功能从当前 main 建分支。精确提交身份见 [分支整理记录](BRANCH_STATUS.md)，下文日期及旧分支名为演进记录，不再表示独立开发基线。本次不生成 Release/Feed，旧 ZIP 尚未包含合并检查新增的两项运行修复。
+2026-09-08：[`v0.3.0-alpha.2` 双平台预览](https://github.com/lyc1126/InvoiceHub/releases/tag/v0.3.0-alpha.2) 已按所有者确认的验收范围发布。Windows x64 portable ZIP 与 macOS arm64 preview DMG 同源，包含校验和、收据和平台 Python SBOM；Mac 离线核验与实际默认配置验收通过，隔离 HOME 自动烟测仍未通过，未启用安装 updater 或更新 Feed。精确发布身份和限制见[分支与发布记录](BRANCH_STATUS.md)。
+
+
 
 2026-09-07 大列表实现在 `codex/fix-large-list-responsiveness`：`services/document_index.py` 用单个 spawn 进程建立单据索引，runtime 保存逐文件缓存、入库选项及进度，API 安排/读取/停止。出库预览经索引定位仍实时校验文件；首页和单据候选每页 100 条，既有提取/投影业务规则保持。
 
@@ -12,7 +14,7 @@
 > 更新日期：2026-09-08
 > 公共权威基线：经过审计的单一脱敏根提交；旧私有提交、Tag、二进制和验证材料不在公开图中
 > 公开状态：候选树、保留 Git 对象和托管面已完成一次内容与凭据审计；公开图从脱敏根提交开始，详见 `docs/release/HISTORY_SANITIZATION_EXECUTION.md`
-> 发行边界：沿用 `0.3.0-alpha.2` public-preview 的独立 package identity、LaunchServices/quarantine smoke、SSE 关闭和 finalized receipt 门禁；后续构建须使用上述统一 main 产品基线或其后代，不能复用旧 Tag/快照冒充新成品。本次不创建 Release、签名请求或 Feed；macOS 成品、签名和 updater 仍需独立验收，源码 CI 不替代这些门槛。
+> 发行边界：alpha.2 已按公开 Release 所列范围发布，源码实现基线继续跟随 main；源自同一提交的 Windows portable 与 macOS preview 具有相同核心构建身份。自动隔离烟测与签名/原生功能的未覆盖项不因发布而改记为通过。
 > 校验规则：精确的本地与 GitHub HEAD 以实时 `git rev-parse`、`git ls-remote` 和双向差异为准；发行源码候选不等于双平台成品 RC 或 GitHub 已发布版本
 
 ## 1. 这套文档解决什么问题
@@ -76,6 +78,8 @@ InvoiceHub 不是只有一个 FastAPI 页面。它同时包含发票提取、文
 
 当前代码边界已实现固定端口的 spawned-child ownership：Host 先读取 bundle manifest 的原始字节并要求 SHA-256 与编译期 `INVOICE_HUB_BUNDLE_MANIFEST_SHA256` 相等。裸源码 checkout 没有该输入，因此以状态 `78` 退出；development assembler 则从 allowlisted core、schema-3 manifest 和显式 venv launcher stage 资源后注入该哈希，release profile 仍需独立的正式发行输入。Host 以新 challenge 要求 backend 回传 HMAC-SHA256，随后复核 child PID、build/package identity、静态首页和 OpenAPI 的精确 HTTP 方法。读取严格的 `startup_surface` 偏好后，必须再次发起 fresh challenge/HMAC 与 identity 复核，才 arm 授权并选择 `desktop` 的无 IPC WebView 或 `browser` 的 host-only 固定 origin opener；托盘和单实例重开同一 surface，desktop 关闭只隐藏窗口且不停止 monitor。Tray Quit 与 macOS 自定义应用菜单/Cmd-Q 只请求同一个 `app.exit(0)`；应用菜单不使用会直接绑定原生 `terminate:` 的 predefined Quit。Host 收到普通 `ExitRequested` 后请求结构化 `keep_monitor` shutdown 并有界等待 owned child，错误或超时后显式 `kill + wait`，无法确认 child 已退出则阻止 host 退出；update commit 期间普通 Quit 同样被阻止，只有 macOS 已准备 update relaunch 可跳过重复关闭。外部 AppleScript quit、Force Quit 或信号可以绕过该事件，不属于有序退出承诺。Host 只把 Host RPC token 传给其直接启动的 Python backend，backend 启动时捕获并从 descendant 环境清除；token 不进入 Web、Tauri command/event、API 响应或日志，携带 token 的 private loopback 请求显式绕过环境代理。Rust dialog 最多 120 秒，Python 等待 125 秒并在四条 picker route 上把 private failure 固定映射为脱敏 503；release-host updater metadata 与下载对象另有 5 秒时限。development profile 的 updater 委托明确禁用；它必须显式给出已存在、canonicalize 后与 bundle/core 及完整 macOS `.app` 容器双向不包含的绝对 `INVOICE_HUB_DEV_STATE_ROOT`，`Contents` sibling 同样拒绝，并在启动 Python child 前清除它。enabled updater 只在 startup gate 释放、`BackendHost` manage 后激活；激活先从 expected runtime dir 恢复 marker，随后才接受检查或安装。L9/P1-Q 已使用隔离 state root 验证 `127.0.0.1:8766` owned backend、health/background ready、首页/静态资源、desktop 默认值，以及 clean-commit 样本上真实 Cmd-Q 的 shutdown POST、stopped state、host/backend/PID/端口清理；打开的 SSE 连接由显式 `kill + wait` 兜底收束，且未触碰真实 Application Support。外部终止仍不属于该结论。该样本没有覆盖原生面板、browser/tray、真实单实例、下载/安装、DMG、签名或任何平台 release smoke。
 
+2026-09-08 从当前 `main` 形成双平台 alpha.2 候选输入：macOS arm64 preview 候选目录与 core build ID 为 `c081eb0348cc3f1d8192b5e243b65877ca7650147dad86bd480468838716c2bf`，DMG SHA-256 为 `21715661a3bffa48e8afd0034a81eb975758280f3a6ed6d2356d982ec5607298`；同源 Windows x64 portable 候选由用户交付，ZIP SHA-256 为 `f7c03a502d06d19faa61ee5f9ed859c4da3f57c6789f52014dec3fd4005a6ff3`、大小 `58040173` bytes。两者均为 updater-disabled 的候选输入；Mac 为 ad-hoc/未公证，receipt finalized verifier 已通过，但保留 quarantine 的 App 经 Gatekeeper/`spctl` 拒绝，未在隔离 HOME 建立可归属的 health/backend；另一次实例使用真实 Application Support，不能计入 smoke/runtime；Windows 真机证据来自用户交付，本机仅做静态验包。
+
 Tauri `setup` 在 `BackendHost::launch` 后也不立即将 child 放入 app state：tray 或选定 surface 的任何初始化失败都会先通过同一 structured keep-monitor shutdown 及必要的 kill+wait 收束 owned child；若仍不能确认 child 已退出，setup 会保持阻塞并重试，child mutex 或 `try_wait` 错误也不能伪装成 graceful exit，绝不返回错误后交给 `Drop`。只有确认清理且全部初始化成功后才会释放 startup gate 并 `app.manage`；updater activation 必须再晚于 manage。setup failure 不经过正常 `ExitRequested`，且 Drop 不构成可靠收尾。
 
 L10-R/C 建立的 monitor recovery foundation 仍是运行时安全不变量：全部 marker 或 bridge 操作必须携带并前后复核 released owned lifecycle lease（generation、phase、health/owned/process PID、state scope）。它只暂停已 `running && ready` 的 owned monitor，已有/损坏/跨 scope marker、ownership loss 或操作失败都保留恢复义务并 fail closed；Unix marker store 的最终读写/删除固定使用 opened-directory descriptor 和 no-follow `openat`/atomic no-clobber `linkat`/`unlinkat`，遵循目录锁协议的整段 load/publish/clear 串行化已闭合，stale-clear 在锁内重读，publish/clear 在最终 link/unlink 后同步目录元数据，绕过协议的同用户直接文件编辑不在保证内；Windows 已有相对已打开目录句柄、拒绝 reparse point 的 source-level marker store，最小 `x86_64-pc-windows-msvc` 临时 crate 交叉编译已通过，但没有 Windows runtime 证据，完整 Tauri Windows target check 仍因 `ring` 的 `assert.h` 依赖阻塞。
@@ -84,7 +88,7 @@ L10-D 把这些 seams 接入运行时而不扩大公开 API。`BackendHost` 私�
 
 L10-E 将运行验证收窄为不可安装的 development recovery smoke。ordinary development/internal-alpha 保持 updater-disabled；只有显式 recovery staging 才写固定不可达 HTTPS loopback endpoint、无验签能力 key sentinel 和精确三字段 updater 对象。隔离 runner 使用临时 HOME/state/runtime/watch、关闭自动更新检查并预置同 scope marker，且自身 localhost allowlist 只有 health、monitor status 和 monitor stop；它不调用 update check/install 或 bridge start。macOS arm64 样本已恢复 owned monitor 到 `running && ready`、删除 marker、显式停止 monitor并完成进程/端口/临时目录清理，runner 报告 `update_requests=0`。该证据仍不能扩大为 Feed、候选、下载、验签、安装、restart 或发行验收。
 
-public-preview 的成品 smoke 与 L10-E 保持隔离：它不复用 development state root，而是从 mounted DMG 复制 App、独立验签/receipt、为复制件保留 quarantine，并只经 `open -n -W -g` 的 LaunchServices 路径注入临时 `HOME`。直接执行 `Contents/MacOS` 会在 Tauri 的 AppKit 注册阶段失败，不能当作用户启动或 Gatekeeper 样本。发布 smoke 只允许 health、monitor start/status/stop 和固定 `stop_monitor` shutdown；当 shutdown 已被接受时，SSE generator 必须结束，以免 WKWebView 的 EventSource 让 Uvicorn 无法完成 graceful exit。该 runner 已有聚焦契约，最终干净 Tag 的 DMG 和 Finder/Gatekeeper 交互仍是待验证成品证据。
+public-preview 的成品 smoke 与 L10-E 保持隔离：它不复用 development state root，而是从 mounted DMG 复制 App、独立验签/receipt、为复制件保留 quarantine，并只经 `open -n -W -g` 的 LaunchServices 路径注入临时 `HOME`。直接执行 `Contents/MacOS` 会在 Tauri 的 AppKit 注册阶段失败，不能当作用户启动或 Gatekeeper 样本。发布 smoke 只允许 health、monitor start/status/stop 和固定 `stop_monitor` shutdown；当 shutdown 已被接受时，SSE generator 必须结束，以免 WKWebView 的 EventSource 让 Uvicorn 无法完成 graceful exit。该 runner 已有聚焦契约；本轮同源 DMG 的离线与实际默认配置验收已分别记录，隔离 HOME 自动烟测未通过，所有者确认按所披露的范围发布预览。
 
 固定 endpoint/method/origin 本身仍不是 ownership proof；只有上述 L10-D recovery 调用具有请求/响应双向认证。后续增加 endpoint、body 或状态字段时必须同步更新域分隔 transcript、Python replay/空 body 校验和 Rust 常量时间响应 proof 校验，且不得向候选固定端口发送 bearer secret。
 

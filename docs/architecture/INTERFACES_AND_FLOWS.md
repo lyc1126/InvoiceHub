@@ -1,10 +1,9 @@
 # InvoiceHub 接口与运行流程
 
-2026-09-08 本附录与开发架构总入口统一以 `main` 的 PR #20 合并提交为产品实现及后续发行源码基线，精确身份见 [分支记录](../BRANCH_STATUS.md)；下文旧分支名只记录来源，不能再作为并行真值。源码 CI 不替代平台成品验收。
+2026-09-08：[`v0.3.0-alpha.2` 双平台预览](https://github.com/lyc1126/InvoiceHub/releases/tag/v0.3.0-alpha.2) 已按所有者确认的验收范围发布。Windows x64 portable ZIP 与 macOS arm64 preview DMG 同源，包含校验和、收据和平台 Python SBOM；Mac 离线核验与实际默认配置验收通过，隔离 HOME 自动烟测仍未通过，未启用安装 updater 或更新 Feed。精确发布身份和限制见[分支与发布记录](../BRANCH_STATUS.md)。
 
-2026-09-08 monitor 状态读取只持有 `.invoice_monitor_status.lock` 短锁，不能等待完整汇总的 `.invoice_sync.lock`；状态写入按 sync -> status 顺序取锁。这样停止请求可以及时进入既有超时/强制停止流程，同时避免 Windows 状态读写阻碍原子替换。
 
-2026-09-08 单据索引缓存/状态发布遇 Windows 5/32/33 短暂替换拒绝时最多重试 20 次，累计等待不超过 0.95 秒；先写目录快照、再写 ready 的顺序保持，持续写入错误仍进入失败/中断诊断，不改变 API 字段或缓存身份。重试不在 API 事件循环中执行。
+
 
 2026-09-07 单据大目录：`GET /api/v1/documents/state` 和保存/删除最近开具目录快速返回及 `index`；加载中的出库列表为空，必须结合 index 区分，不能当零发票。`GET /api/v1/documents/index` 仅读进度；`POST /api/v1/documents/index/resume` 重新核对/继续；`POST /api/v1/documents/index/cancel` 接收 `job_id`，只停止当前匹配 worker，过期返回 `ok=false`。index 包含 `state/phase/processed/total/reused/errors/job_id/running`、PID 及最多十项失败诊断，状态为 idle/running/ready/cancelled/interrupted/failed。
 

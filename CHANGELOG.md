@@ -2,6 +2,26 @@
 
 ## 未发布
 
+### 2026-09-08 发布 alpha.2 双平台预览并整理产品首页
+
+- 所有者明确确认既有验收范围后，将注释 Tag `v0.3.0-alpha.2` 从 `eb425bc2690b374a61be67172e4acdbdc1e35c6e` 改指两端共同源码 `55a59870630198b7b8b055b85decfaa5bb360db6`；使用旧 Tag 对象身份的 force-with-lease，只更新该引用，不改写 main 或独立功能历史。
+- GitHub Pre-release 已公开，Release ID `384542627`，8 项资源包括 Windows portable ZIP、Mac preview DMG、各自 SHA-256/receipt 及平台 Python SBOM；服务器报告的所有大小、SHA-256 与本地清单逐项一致。未重打程序、未开启安装 updater，也未发布 Feed；公开资源重新下载并逐项校验，8 项文件大小与 SHA-256 全部一致；网络中断后使用断点续传完成两个大文件复验。
+- 发布说明保留 Windows 为用户验证后交付、本机静态验包的证据界限；Mac 25 项离线核验、实际默认空目录的启动/页面/monitor 验收，以及 62 项聚焦契约和 15 项文档契约均分别说明。隔离 HOME 自动烟测未通过、原生 picker/打印/完整浏览器与托盘交互/公证/updater 未覆盖，源归档器合成负向夹具误报仍存在；所有者确认只按这一预览范围发布，不将其改写成全量通过。
+- 用户要求将 GitHub README 改为官网 hi. 风格的产品首页。新增居中标识/标题、真实版本和平台徽章、直接下载入口、简短场景介绍与官网已有 OCR/做账/税额换算后续方向；许可证保持 AGPL-3.0-or-later，不采用参考图中的 MIT、排名或下载量。使用指南移至 `docs/USER_GUIDE.md`，开发状态放入折叠区并保留架构导航。
+- GitHub 实际 Markdown 渲染已检查，标题、徽章、截图和下载地址正常。首轮 Windows/macOS CI 仅因 README 工具链命令被缩写而失败，已在折叠开发区恢复两条完整入口，保留现有契约不放宽；产品代码不变。
+- 三张截图来自当时运行的 alpha.2 默认空目录页面：汇总、成本分析、图标与皮肤。仅在独立截图浏览器内将本机路径替换为明确隐藏标记；未增加演示发票、修改金额、保存皮肤或改变当前 App 配置，原始 DOM 快照不进入仓库。截图来源、文件地图与发布真值在本轮同步。
+
+### 2026-09-08 main 同步、Mac 候选与过期引用清理
+
+- 本轮从 `codex/tauri2-alpha2-main-baseline@8d1c904` 收束到公开 `main`，本地 `main`、`origin/main` 和文档分支同步到 `55a59870630198b7b8b055b85decfaa5bb360db6`。税费计算器与 Mac 工作区的脏改动完整保存在 stash `df6451e0018c0de4db9734efecdae09da89a0eb0`，不作为公开源码、候选构建或 Release 输入；独立功能不因本轮同步改变。
+- 已普通 `git branch -d` 删除六个只指向已合并历史的本地分支：`codex/tauri2-alpha2-main-baseline`、`codex/tauri2-alpha2-packaging`、`codex/tauri2-alpha2-postmerge-baseline`、`codex/tauri2-alpha2-public-preview-fix`、`codex/tauri2-alpha2-receipt-gate` 和 `codex/tauri2-unified-desktop`。唯一旧 Mac alpha baseline 的远端引用也已删除，并用 `git ls-remote --heads origin` 复核；`codex/desktop-latest`、`codex/desktop-main-docs`、图标/搜索/税费/更新恢复和 Dependabot 引用继续保留。旧的 dirty `codex/alpha2-dual-platform-release-prep` worktree 保留，本轮不执行 `git worktree prune`。
+- 从精确 `main@55a59870630198b7b8b055b85decfaa5bb360db6` 构建 macOS arm64 alpha.2 preview：目录为 `dist/candidates/20260908-macos-main-55a5987/`，产物为 `InvoiceHub-v0.3.0-alpha.2-macos-arm64-preview.app`、`.dmg` 和 `build-receipt.json`；core build ID 为 `c081eb0348cc3f1d8192b5e243b65877ca7650147dad86bd480468838716c2bf`，DMG 为 `109535179` bytes，SHA-256 为 `21715661a3bffa48e8afd0034a81eb975758280f3a6ed6d2356d982ec5607298`。该候选为 ad-hoc、未公证、host updater disabled，finalized receipt verifier 已通过。
+- Mac 包内源码、官网、运行时、锁和签名的离线核验通过；隔离 HOME smoke 尚未通过；Mac smoke 未得到属于隔离 HOME 的 health；其后观察到构建身份正确且后台 ready 的实例，却使用真实 Application Support，不能计入隔离烟测通过，因此不能把候选描述为 public-preview 成品验收、签名/公证结果或 Release 资产。已收到与 Mac 同源的 Windows x64 portable 候选、SHA sidecar 和 build receipt：`source_commit=55a59870630198b7b8b055b85decfaa5bb360db6`、`core_build_id=c081eb0348cc3f1d8192b5e243b65877ca7650147dad86bd480468838716c2bf`、ZIP 大小 `58040173` bytes、SHA-256 `f7c03a502d06d19faa61ee5f9ed859c4da3f57c6789f52014dec3fd4005a6ff3`，unsigned portable 且 `updater_enabled=false`。Windows 完整包由用户说明已验证后交付；本机独立静态验包和收据/实际 ZIP SHA-256 核对通过，不能把本机检查描述为 Windows 真机运行验收。
+- 远端 `v0.3.0-alpha.2` Tag 仍为 `eb425bc`，不能与本轮 `55a5987` Mac 候选或其它 source snapshot 配对；本轮没有修改 Tag、GitHub Release、资产或更新 Feed。源码快照导出曾因 `tests/test_tauri_windows_portable.py` 中既有的合成负向 secret 值命中扫描而失败，没有绕过或放宽该扫描。后续双平台候选仍需以同一 source/core 身份闭合 ZIP、SHA-256、receipt 和 SBOM；构建入口使用现有 `scripts/dev/tauri_windows_portable.py` 的精确参数 `--root`、`--python`、`--runtime-dir`（指向含 `python/python.exe` 的父目录）、`--pnpm`、`--output-dir` 和 `--source-commit`，不把脚本部署或环境自动准备描述为已完成，也不复用旧 release-prep 输入。
+- Mac 离线深验 25 项通过，源码/web/website 与构建提交逐字节一致，运行时及 App/DMG/receipt 签名与哈希闭合；未生成新包。检查器初次中文 Git 路径解析、构建后文档状态和上游既有 bytecode 分类误报已纠正；本轮检查生成的缓存已通过从只读 DMG 恢复 App 消除，并重新校验原 receipt 的 App SHA 与签名。旁置运行时哈希表 2621 条验证通过，报告不包含本机绝对路径。
+- 用户确认已允许并打开软件后，主代理核实先前只剩临时宿主、8766 无监听，按精确身份收束该宿主并从保留的候选 App 正常重启。新包在实际 Application Support 默认空目录达到 health/background ready，原生首页实际渲染；普通首页和 `?no_skin=1` 各 8 项静态资源与当前源码字节一致，首页脚本为 `20260907-large-list-1`。monitor 从原 false 启动到 running/ready，再停止并恢复 false，后端保持 ready，新 App 保留供用户使用。原生 picker 因控制工具返回 noWindowsAvailable 未完成，不冒充通过。该当前配置证据不能替代失败的隔离 HOME smoke，先前仅据 spctl 拒绝断言无法启动的归因撤回。
+- 本轮聚焦测试通过 62 项，覆盖 Mac 发布/烟测契约、Tauri foundation、图标、release identity 和 build manifest；另有 15 项文档契约通过，版本派生与 diff 检查通过。没有重复全仓 CI、Windows BAT、原生选择器、实体打印或真实 updater。最小无业务 App 证实同样的 LaunchServices `--env HOME=...` 传参能正确隔离；正式候选的 quarantine/Gatekeeper 首次打开与隔离运行仍须闭合，不能删除 quarantine 来制造通过。
+
 ### 2026-09-08 Desktop 主线合并检查
 
 - 结果：最终功能提交 `f9eebca` 的 Windows/macOS push 与 PR CI、DCO 全部通过，审查意见修复并解决后，以普通 merge 合入 PR #20，主线产品基线为 `53544e3c96ba01906520637fae60cbc215b7808b`。本地主线同步，随后用纯文档分支同步 README、实现状态、分支记录及全部架构附录的统一基线；保留完整提交历史，不创建 Release/Feed。

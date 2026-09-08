@@ -1,10 +1,12 @@
 # 迁移与公开缺口清单
 
-2026-09-08 Desktop 整合及合并检查新增的缓存发布/监控状态锁修复已通过 PR #20 进入 `main`，精确提交身份见 [分支记录](BRANCH_STATUS.md)；最终提交的 Windows/macOS push/PR CI 与 DCO 通过。现有本地 ZIP 尚不包含两项新增运行修复，平台成品/签名/updater 缺口不因源码合并而勾选完成。
+2026-09-08：[`v0.3.0-alpha.2` 双平台预览](https://github.com/lyc1126/InvoiceHub/releases/tag/v0.3.0-alpha.2) 已按所有者确认的验收范围发布。Windows x64 portable ZIP 与 macOS arm64 preview DMG 同源，包含校验和、收据和平台 Python SBOM；Mac 离线核验与实际默认配置验收通过，隔离 HOME 自动烟测仍未通过，未启用安装 updater 或更新 Feed。精确发布身份和限制见[分支与发布记录](BRANCH_STATUS.md)。
+
+
 
 2026-09-07 Desktop 整合补齐前端工作区未包含的既有桌面功能：四款内置图标选择（白底 hi. 默认）、打印弹窗许可、固定 WebView 数据目录、picker 调度、串行 monitor 状态与同步进度、Windows 启动恢复。最新官网/批量单据/全局外观和关闭控制器继续保留；旧候选及中间试包撤下，成品验证范围以当日 Changelog 为准。
 
-更新时间：2026-09-07
+更新时间：2026-09-08
 
 ## 大目录单据与列表性能
 
@@ -37,13 +39,13 @@
 - [x] 保留 owned backend 结束联动 host 退出，修正 Windows 启动方式文案；一个 Desktop 包可选择浏览器或桌面，下次完整启动生效。
 - [x] Ink Pulse `1.4.0` 与 Animal Island `2.1.0` 适配新顶栏工具、批量单据和全局关闭弹窗；Ink Pulse 保留深色单据预览。
 - [x] 复用 Windows portable builder/verifier，将官网精确白名单接入组包与验包；旧基线候选撤下，禁止作为当前工作区产物交付。
-- [ ] 签名 NSIS、macOS 新成品、真实 updater 与纸张实打；本轮 Windows 本地 ZIP 不替代上述验收。
+- [ ] 签名 NSIS、macOS 新成品、真实 updater 与纸张实打；本轮 Mac 候选仍待 smoke/runtime，Windows 同源 portable 候选虽已由用户交付且本机仅做静态验包，仍不替代签名、安装、真实 updater 与双平台成品验收。
 
 ## 默认前端与关闭入口
 
 - [x] 官网浅色/深色切换、太阳/月亮动效、首屏持久状态、设置标记与恢复入口；失败保持当前界面且可重试。
 - [x] 白底 desktop 图标 04 与 Tauri 默认 PNG/ICO/ICNS 绑定，确定性生成及小尺寸图像检查。
-- [ ] 含新图标的 Windows/macOS 原生桌面构建、任务栏/Dock/托盘实机显示；现有安装包不因源文件更新而改变。
+- [ ] 含新图标的 Windows/macOS 原生桌面构建、任务栏/Dock/托盘实机显示；当前 main 已有 Mac arm64 ad-hoc 候选但尚未完成 smoke/runtime，Windows 同源 portable 候选已由用户交付且本机仅做静态验包，现有安装包不因源文件更新而改变。
 
 - [x] `hi.` 粗体官网标记、首页勾选到单据批量入库交接、目标/源文件重验、已有文件保护及逐票结果。
 - [x] 双单据预览/导出列宽、合并、最低行数、超行数打印范围与无“人民币”前缀大写金额；明细副本与冲突守护。
@@ -60,7 +62,7 @@
 - [x] 新增 `website/` 静态产品官网和合成数据交互演示；不改变旧能力迁移、业务 API 或公开应用发行资格。
 - [x] 本地字体、图标与许可、静态资源和演示数据的 Node 契约。
 - [x] 软件「官方网站」链接到随包 `/website/`，同窗口返回工作台；资源白名单同步后端、构建身份、源码快照与双平台组包器，公开更新 Feed 保持原地址。
-- [ ] 含官网入口的新安装包与 Windows/macOS 桌面壳交互验收：本轮只修改源码和组包链，不重打成品。
+- [ ] 含官网入口的新安装包与 Windows/macOS 桌面壳交互验收：本轮已产生 Mac 候选但尚未完成壳交互 smoke，Windows 同源候选由用户交付、本机仅做静态验包；不能把候选构建替代双平台成品验收。
 - [x] 官网内容补充：预览/打印/项目明细、自适应单据、OCR/做账状态与概念税率换算；五层票据展开和功能动效，仅使用合成数据。13 项 Node 检查通过。
 - [ ] 浏览器实际 DOM 交互、桌面/手机截图和画布像素验收：本轮浏览器访问未获许可，未执行。
 - [ ] 官网部署：本轮未请求上线，不修改 GitHub Pages、Release 或 `updates/` Feed。
@@ -107,7 +109,7 @@
 
 ## 发布缺口
 
-- [ ] 从包含 receipt finalization 门禁的最终干净 `v0.3.0-alpha.2` Tag 构建并挂载 macOS public-preview DMG，验证默认 finalized ad-hoc receipt、隔离 Application Support 状态、quarantine、LaunchServices 启动、monitor 与结构化退出；该包未公证。receipt gate 已合入 `main`，远端同名 Tag 仍是此前基线，仍须经新的明确授权重建，当前 Tag 不能作为构建输入。
+- [ ] 从包含 receipt finalization 门禁的最终干净 `v0.3.0-alpha.2` Tag 构建并挂载 macOS public-preview DMG，验证默认 finalized ad-hoc receipt、隔离 Application Support 状态、quarantine、LaunchServices 启动、monitor 与结构化退出；该包未公证。receipt gate 已合入 `main`，Tag 已按所有者确认绑定本轮同源制品；此项因隔离 HOME 自动烟测未通过仍不勾选，预览发布不改变这一结果。
 - [ ] 在 GitHub-hosted Windows runner 执行 WebView2 hash gate、两层 SignPath、NSIS 安装/卸载与 receipt 烟测；本 alpha 接受卸载器未签名。
 
 - [ ] Windows 10/11 x64 NSIS 安装器与新的公开构建/签名证据。

@@ -1,11 +1,18 @@
 # IMPLEMENTATION_STATUS
 
+2026-09-08：[`v0.3.0-alpha.2` 双平台预览](https://github.com/lyc1126/InvoiceHub/releases/tag/v0.3.0-alpha.2) 已按所有者确认的验收范围发布。Windows x64 portable ZIP 与 macOS arm64 preview DMG 同源，包含校验和、收据和平台 Python SBOM；Mac 离线核验与实际默认配置验收通过，隔离 HOME 自动烟测仍未通过，未启用安装 updater 或更新 Feed。精确发布身份和限制见[分支与发布记录](docs/BRANCH_STATUS.md)。
+
+
 更新时间：2026-09-08
 
 ## 主线基线
 
+- 本轮文档分支 `codex/macos-desktop-main-sync` 从已同步的公开 `main` 开始维护；本轮提交仅作文档收尾，产品代码仍沿用已合入 `main` 的 Desktop 基线。开工前的税费/Mac 脏改动保存在不进入公开输入的 stash，精确引用见[分支整理记录](docs/BRANCH_STATUS.md)。
+- 本轮已清理六个只指向已合并历史的本地 alpha2 分支，并删除唯一旧 Mac alpha baseline 的远端引用；`codex/desktop-latest`、`codex/desktop-main-docs`、图标/搜索/税费/更新恢复和 Dependabot 引用继续保留，旧 dirty release-prep worktree 不执行 prune。详细引用状态见 [`docs/BRANCH_STATUS.md`](docs/BRANCH_STATUS.md)。
 - 合并检查修复监控状态读取等待整轮汇总锁的问题：状态短锁独立，写入仍按 sync -> status 串行；停止请求及原有超时可在汇总过程中执行。旧 ZIP 尚未包含这项补充。
 - 最新 Desktop 全量更新已通过 PR #20 合入 `main`，开发实现与后续发行源码统一以该合并提交及其主线后代为准。最终功能提交的 Windows/macOS CI 与 DCO 均通过，原独立提交和构建快照保留回溯；不发布新包。精确提交身份见 `docs/BRANCH_STATUS.md`，下文日期和旧分支名仅记录实现来源。
+- 从当前 `main` 构建的 macOS arm64 alpha.2 preview 候选目录与 source 身份见[分支整理记录](docs/BRANCH_STATUS.md)，core build ID 为 `c081eb0348cc3f1d8192b5e243b65877ca7650147dad86bd480468838716c2bf`，DMG SHA-256 为 `21715661a3bffa48e8afd0034a81eb975758280f3a6ed6d2356d982ec5607298`、大小 `109535179` bytes。该候选为 ad-hoc、未公证、host updater disabled，finalized receipt verifier 已通过；Mac 包内源码与 runtime 离线核验通过，隔离 HOME smoke 尚未通过，已观察到新包后端及后台同步 ready，但该实例使用真实 Application Support，未满足隔离 HOME 验收条件。
+- 已收到与 Mac 同源的 Windows x64 portable 候选、SHA sidecar 和 build receipt：source 身份见[分支整理记录](docs/BRANCH_STATUS.md)，core build ID 同上，ZIP 大小 `58040173` bytes，SHA-256 为 `f7c03a502d06d19faa61ee5f9ed859c4da3f57c6789f52014dec3fd4005a6ff3`，unsigned 且 updater disabled。Windows 完整包由用户说明已验证后交付，本机独立静态验包和收据/实际 ZIP SHA-256 核对通过。`v0.3.0-alpha.2` Tag 已经所有者确认调整到本轮双平台共同源码；已发布的 ZIP、SHA-256、receipt 和 SBOM 按相同身份闭合。
 
 ## 大列表响应
 
@@ -34,7 +41,7 @@
 
 - 补齐并整合公开开发分支中已完成的图标选择、打印弹窗偏好、WebView 数据目录、原生选择器调度、监控串行读取、同步进度及 Windows 启动恢复。设置外观/皮肤页提供 `website/orange/teal/violet`，默认 `website` 使用当前白底 hi.；旧显式选择保留。当前资源版本为 `20260907-desktop-integrated-2`，覆盖旧候选脚本缓存冲突修复。
 
-- `codex/desktop-current-package` 从公开 `origin/main` 建立，保留工作区已有官网、外观、单据与故障修复。旧 desktop-surface 候选不含这些更新，按用户要求撤下；新的隔离干净构建快照必须来自当前工作区。精确提交身份记录于当日变更日志和构建收据。
+- 历史 `codex/desktop-current-package` 曾从公开 `origin/main` 建立并保留官网、外观、单据与故障修复；该来源线已纳入主线整理，旧 desktop-surface 候选不含这些更新，不能作为当前工作区输入。新的隔离干净构建快照必须来自实时 `main`，精确平台候选身份记录于 [`docs/BRANCH_STATUS.md`](docs/BRANCH_STATUS.md)。
 - Desktop 支持浏览器/桌面偏好，下次完整启动生效；owned backend 退出时 watcher 同步请求 host 退出并释放单实例。Windows host 使用 GUI subsystem，child 无控制台且日志留在 owned runtime。
 - Ink Pulse `1.4.0`、Animal Island `2.1.0` 适配新共享控件、批量单据和全局关闭弹窗；Ink Pulse 深色单据预览按用户偏好保留，真实源票面不反色。默认无皮肤及 `no_skin=1` 保留。
 - 复用已有 Tauri portable 构建/验包器并接入官网白名单；不新增 Feed。最终验收、清理和未覆盖项写入当日变更日志。
@@ -62,7 +69,7 @@
 ## 公开基线
 
 - 本仓库已将单一、脱敏的根提交发布为公开 `main`。旧的私有提交图、验证记录、二进制包和 Tag 只保留在 owner-only 私有归档中，不属于公开历史，也不会作为 Release 资产上传。
-- 当前开发版本为 `0.3.0-alpha.2`；macOS public-preview 的独立 package identity、LaunchServices/quarantine smoke、SSE 关闭修复与 receipt finalization 门禁已合入公开 `main`，远端同名 Tag 仍是此前基线。组包器只可内部验证精确 pending receipt，随后必须写入并默认复验与实际 DMG SHA-256 绑定的 finalized record。该旧 Tag 不含此门禁，最终仍须在干净 `main` 上经新的明确授权重建 Tag。Windows SignPath 工作流已锁定安装器、SHA-256 与 receipt 三项 Actions artifact，但还未触发签名请求。没有 GitHub Release、公开资产或 Feed，任何公开二进制仍必须从脱敏图上的干净版本、Tag 和新发布证据构建。
+- 当前 alpha.2 已按所有者确认的预览验收范围发布：同源 Windows portable 和 macOS preview 具有 finalized receipt，8 项公开资源重下载哈希一致。Tag 已调整至共同来源，正式签名/公证、隔离 HOME 自动烟测及原生能力的未覆盖项保留；不启用旧 Windows NSIS/SignPath 交付或更新 Feed。
 - public-preview 另有专用成品烟测：它从 DMG 挂载复制的 App 复核默认 finalized receipt 与 ad-hoc 签名、写入 quarantine，再通过 LaunchServices 的 `open -n -W -g` 和临时 `HOME` 启动；不允许直接执行 `Contents/MacOS`，也不允许传递 `INVOICE_HUB_DEV_STATE_ROOT`。为使 WebView 的 EventSource 不再拖住 Uvicorn，SSE 生成器会在结构化 shutdown 已被接受后结束。receipt gate 的聚焦契约与既有 smoke 契约已经就绪，但最终干净 Tag 的 DMG、Finder/Gatekeeper 人工交互和成品验收尚未完成。
 - 历史净化的范围、私有备份和已完成的公开门槛见 [执行记录](docs/release/HISTORY_SANITIZATION_EXECUTION.md)。公开仓库已启用 DCO、Dependabot、Secret Scanning、Push Protection 和私密漏洞报告；仍未创建 Release 或更新 Feed。
 
