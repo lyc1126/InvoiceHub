@@ -17,6 +17,7 @@ use tauri::Manager;
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_updater::{Update, UpdaterExt};
 
+use crate::app_icon::{self, AppIconId};
 use crate::backend::{BackendHost, BackendLifecycleAuthority};
 use crate::monitor_bridge::PythonMonitorRecoveryBridge;
 use crate::monitor_recovery::{
@@ -44,6 +45,7 @@ pub enum HostRpcCommand {
     PickOcrFile,
     UpdateCheck,
     UpdateInstall,
+    SetAppIcon(AppIconId),
 }
 
 impl HostRpcCommand {
@@ -65,13 +67,24 @@ impl HostRpcCommand {
         let object = value
             .as_object()
             .ok_or(HostRpcAuthorizationError::CommandRejected)?;
-        if object.len() != 1 {
-            return Err(HostRpcAuthorizationError::CommandRejected);
-        }
         let command = object
             .get("command")
             .and_then(Value::as_str)
             .ok_or(HostRpcAuthorizationError::CommandRejected)?;
+        if command == "set_app_icon" {
+            if object.len() != 2 {
+                return Err(HostRpcAuthorizationError::CommandRejected);
+            }
+            let icon = object
+                .get("icon")
+                .and_then(Value::as_str)
+                .and_then(AppIconId::parse)
+                .ok_or(HostRpcAuthorizationError::CommandRejected)?;
+            return Ok(Self::SetAppIcon(icon));
+        }
+        if object.len() != 1 {
+            return Err(HostRpcAuthorizationError::CommandRejected);
+        }
         Self::parse(command).ok_or(HostRpcAuthorizationError::CommandRejected)
     }
 }
@@ -128,7 +141,7 @@ impl HostRpcAuthorizer {
         origin: &str,
         candidate_token: &[u8],
         command: &str,
-    ) -> Result<HostRpcCommand, HostRpcAuthorizationError> {
+    ) -> Result<(), HostRpcAuthorizationError> {
         if !self.ownership_verified.load(Ordering::Acquire) {
             return Err(HostRpcAuthorizationError::OwnershipRejected);
         }
@@ -138,7 +151,18 @@ impl HostRpcAuthorizer {
         if !constant_time_equal(&self.token, candidate_token) {
             return Err(HostRpcAuthorizationError::TokenRejected);
         }
-        HostRpcCommand::parse(command).ok_or(HostRpcAuthorizationError::CommandRejected)
+        matches!(
+            command,
+            "pick_watch_dir"
+                | "pick_outbound_invoice_dir"
+                | "pick_ocr_directory"
+                | "pick_ocr_file"
+                | "update_check"
+                | "update_install"
+                | "set_app_icon"
+        )
+        .then_some(())
+        .ok_or(HostRpcAuthorizationError::CommandRejected)
     }
 
     fn token_hex(&self) -> String {
@@ -155,7 +179,6 @@ impl HostRpcAuthorizer {
 pub enum HostRpcServerError {
     RandomUnavailable,
     ListenerUnavailable,
-    MainThreadUnavailable,
     PickerUnavailable,
     UpdaterUnavailable,
 }
@@ -165,9 +188,6 @@ impl fmt::Display for HostRpcServerError {
         let message = match self {
             Self::RandomUnavailable => "secure random token generation is unavailable",
             Self::ListenerUnavailable => "the private loopback listener is unavailable",
-            Self::MainThreadUnavailable => {
-                "the native picker cannot reach the application main thread"
-            }
             Self::PickerUnavailable => "the native picker is unavailable",
             Self::UpdaterUnavailable => "the host updater is unavailable",
         };
@@ -869,6 +889,15 @@ fn handle_request(
         HostRpcCommand::UpdateInstall => updater
             .install()
             .map_err(|_| HostRpcAuthorizationError::CommandRejected),
+        HostRpcCommand::SetAppIcon(icon) => {
+            let backend = app_handle
+                .try_state::<BackendHost>()
+                .ok_or(HostRpcAuthorizationError::CommandRejected)?;
+            let previous_icon = app_icon::load_selected(backend.runtime_dir());
+            app_icon::apply(app_handle, icon, previous_icon)
+                .map(|_| HostRpcReply::immediate(HostRpcResponse::AppIconUpdated))
+                .map_err(|_| HostRpcAuthorizationError::CommandRejected)
+        }
     }
 }
 
@@ -978,27 +1007,25 @@ fn select_path(
         | HostRpcCommand::PickOutboundInvoiceDirectory
         | HostRpcCommand::PickOcrDirectory => false,
         HostRpcCommand::PickOcrFile => true,
-        HostRpcCommand::UpdateCheck | HostRpcCommand::UpdateInstall => {
-            return Err(HostRpcServerError::PickerUnavailable)
-        }
+        HostRpcCommand::UpdateCheck
+        | HostRpcCommand::UpdateInstall
+        | HostRpcCommand::SetAppIcon(_) => return Err(HostRpcServerError::PickerUnavailable),
     };
     let (sender, receiver) = mpsc::sync_channel(1);
-    let dispatch_handle = app_handle.clone();
-    app_handle
-        .run_on_main_thread(move || {
-            let respond = move |selection: Option<tauri_plugin_dialog::FilePath>| {
-                let path = selection
-                    .and_then(|file_path| file_path.into_path().ok())
-                    .map(|path| path.to_string_lossy().into_owned());
-                let _ = sender.send(path);
-            };
-            if pick_file {
-                dispatch_handle.dialog().file().pick_file(respond);
-            } else {
-                dispatch_handle.dialog().file().pick_folder(respond);
-            }
-        })
-        .map_err(|_| HostRpcServerError::MainThreadUnavailable)?;
+    let respond = move |selection: Option<tauri_plugin_dialog::FilePath>| {
+        let path = selection
+            .and_then(|file_path| file_path.into_path().ok())
+            .map(|path| path.to_string_lossy().into_owned());
+        let _ = sender.send(path);
+    };
+    // tauri-plugin-dialog already marshals its asynchronous picker onto Tauri's
+    // main thread. A second dispatch can be rejected before the plugin receives
+    // the request, turning a usable native dialog into a redacted 503.
+    if pick_file {
+        app_handle.dialog().file().pick_file(respond);
+    } else {
+        app_handle.dialog().file().pick_folder(respond);
+    }
     receiver
         .recv_timeout(PICKER_TIMEOUT)
         .map_err(|_| HostRpcServerError::PickerUnavailable)
@@ -1105,6 +1132,7 @@ enum HostRpcResponse {
     Picker(Option<String>),
     UpdateCheck { available: bool, version: String },
     UpdateInstall,
+    AppIconUpdated,
 }
 
 fn write_rpc_reply<W: Write>(writer: &mut W, mut reply: HostRpcReply) -> std::io::Result<()> {
@@ -1144,6 +1172,9 @@ fn write_response<W: Write>(writer: &mut W, response: HostRpcResponse) -> std::i
         HostRpcResponse::UpdateInstall => json!({
             "ok": true,
         }),
+        HostRpcResponse::AppIconUpdated => json!({
+            "ok": true,
+        }),
     }
     .to_string();
     let header = format!(
@@ -1173,6 +1204,7 @@ fn command_name(command: HostRpcCommand) -> &'static str {
         HostRpcCommand::PickOcrFile => "pick_ocr_file",
         HostRpcCommand::UpdateCheck => "update_check",
         HostRpcCommand::UpdateInstall => "update_install",
+        HostRpcCommand::SetAppIcon(_) => "set_app_icon",
     }
 }
 
@@ -1232,6 +1264,8 @@ mod tests {
     use std::sync::{mpsc, Arc, Mutex};
     use std::thread;
     use std::time::{Duration, Instant};
+
+    use crate::app_icon::AppIconId;
 
     use super::{
         candidate_is_fresh, clear_candidate_if_current, read_request, spawn_deferred_commit,
@@ -1319,6 +1353,24 @@ mod tests {
             br#"{"command":"update_check","url":"https://attacker.invalid"}"#.as_slice(),
             br#"{"command":"update_install","signature":"candidate"}"#.as_slice(),
             br#"{"command":"run_updater"}"#.as_slice(),
+        ] {
+            assert_eq!(
+                HostRpcCommand::from_payload(payload),
+                Err(HostRpcAuthorizationError::CommandRejected)
+            );
+        }
+    }
+
+    #[test]
+    fn app_icon_command_accepts_only_one_bundled_icon_without_extra_metadata() {
+        assert_eq!(
+            HostRpcCommand::from_payload(br#"{"command":"set_app_icon","icon":"teal"}"#),
+            Ok(HostRpcCommand::SetAppIcon(AppIconId::Teal))
+        );
+        for payload in [
+            br#"{"command":"set_app_icon"}"#.as_slice(),
+            br#"{"command":"set_app_icon","icon":"unbundled"}"#.as_slice(),
+            br#"{"command":"set_app_icon","icon":"teal","path":"/tmp/icon.png"}"#.as_slice(),
         ] {
             assert_eq!(
                 HostRpcCommand::from_payload(payload),

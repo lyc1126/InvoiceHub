@@ -4,14 +4,15 @@
   <title>成本分析</title>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <link rel="stylesheet" href="/static/css/app.css?v=20260802-release-update-v1">
+  <link rel="stylesheet" href="/static/css/app.css?v=20260907-desktop-integrated-2">
+  <link rel="stylesheet" href="/static/css/settings-actions.css?v=20260907-desktop-integrated-2">
 </head>
 <body data-page="costs">
   <header class="topbar">
-    <a class="brand" href="/">
-      <span class="brand-mark">票</span>
-      <span><h1>一站式发票汇总系统</h1><p>成本分析 · 开票参考</p></span>
-    </a>
+    <div class="brand">
+      <a href="/" aria-label="返回发票汇总首页"><span class="brand-mark" aria-hidden="true">hi<span>.</span></span></a>
+      <div class="brand-copy"><div class="brand-title"><a href="/"><h1>InvoiceHub</h1></a>{{appearance_toggle}}</div><p>成本分析 · 开票参考</p></div>
+    </div>
     <nav aria-label="主导航">
       <a class="nav-link" href="/">首页</a>
       <a class="nav-link" aria-current="page" href="/costs">成本分析</a>
@@ -21,11 +22,22 @@
       <a class="nav-link" href="/consistency">一致性</a>
       <a class="nav-link" href="/settings">设置</a>
     </nav>
+    <button id="systemPowerBtn" class="system-power" type="button" title="关闭系统" aria-label="关闭系统" aria-haspopup="dialog" aria-controls="settingsShutdownDialog" aria-expanded="false"><span class="system-power__icon" aria-hidden="true"></span></button>
   </header>
   <main class="shell">
     <section class="page-head">
       <div class="page-title">
-        <h2>成本分析</h2>
+        <div class="page-title__heading">
+          <h2>成本分析</h2>
+          <div id="costLoadProgress" class="sync-progress sync-progress--title sync-progress--idle" title="正在读取成本汇总数据" hidden>
+            <div id="costLoadProgressTrack" class="sync-progress__track" role="progressbar" aria-label="成本汇总读取进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-valuetext="正在读取成本汇总数据">
+              <span id="costLoadProgressFill" class="sync-progress__fill" aria-hidden="true"></span>
+              <strong id="costLoadProgressPercent" class="sync-progress__percent">0%</strong>
+            </div>
+            <span class="sync-progress__check" aria-hidden="true"></span>
+            <span id="costLoadProgressDetail" class="sync-progress__detail" aria-live="polite" aria-atomic="true">正在读取成本汇总数据</span>
+          </div>
+        </div>
         <p id="costPath" class="path-inline">正在读取当前发票目录...</p>
       </div>
       <div class="page-head__actions">
@@ -44,7 +56,7 @@
       <div class="stat-card"><span>同步状态</span><strong id="syncState">--</strong><small>发票池对比成本产物</small></div>
     </section>
 
-    <section class="list-controls" aria-label="成本列表操作">
+    <section class="list-controls sticky-controls" aria-label="成本列表操作">
       <div class="toolbar cost-actions">
         <button id="refreshBtn" class="btn btn--ghost" type="button">刷新</button>
         <button id="rebuildBtn" class="btn btn--primary" type="button">重新汇总</button>
@@ -128,7 +140,9 @@
       </div>
     </section>
   </main>
-  <script src="/static/js/common.js?v=20260729-main-macos-sync"></script>
-  <script src="/static/js/page-costs.js?v=20260726-invoice-taxonomy"></script>
+  {{system_controls}}
+  <script src="/static/js/common.js?v=20260907-desktop-integrated-2"></script>
+  <script src="/static/js/system-controls.js?v=20260907-desktop-integrated-2"></script>
+  <script src="/static/js/page-costs.js?v=20260907-desktop-integrated-2"></script>
 </body>
 </html>

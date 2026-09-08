@@ -1,5 +1,5 @@
 const state = {
-  filters: {},
+  filters: { search_scope: "invoice" },
   savedWatchDir: "",
   pendingWatchDir: "",
   watchDirDirty: false,
@@ -7,11 +7,14 @@ const state = {
   hasInvoiceSnapshot: false,
   selectedInvoices: new Map(),
   invoiceItems: [],
+  invoicePage: 1,
+  targetId: "",
   dateSort: "",
   selectionSummaryRequestId: 0,
   selectionSummaryLoading: false,
   selectionSummaryReturnFocus: null,
   printJobLoading: false,
+  allowPrintPopups: true,
   filePreviewJobLoading: false,
   filePreviewContentLoading: false,
   filePreviewRequestId: 0,
@@ -27,9 +30,21 @@ const state = {
   filePreviewKeepAliveTimer: 0,
   filePreviewRecoveryPromise: null,
   monitorBridge: null,
+  syncProgressPolling: false,
+  syncProgressAwaitingStart: false,
+  syncProgressRequestInFlight: false,
+  syncProgressPollTimer: 0,
+  syncProgressAnnouncementKey: "",
+  syncProgressDismissTimer: 0,
+  syncProgressHideTimer: 0,
+  syncProgressResultKey: "",
 };
 const FILE_PREVIEW_KEEP_ALIVE_RETRY_MS = 15 * 1000;
 const FILE_PREVIEW_NETWORK_RETRY_MS = 700;
+const SYNC_PROGRESS_POLL_INTERVAL_MS = 650;
+const SYNC_PROGRESS_SUCCESS_VISIBLE_MS = 1100;
+const SYNC_PROGRESS_FAILURE_VISIBLE_MS = 3400;
+const SYNC_PROGRESS_EXIT_MS = 180;
 const refs = {
   banner: document.getElementById("pageBanner"),
   invoiceBody: document.getElementById("invoiceBody"),
@@ -43,6 +58,11 @@ const refs = {
   recentWatchDirs: document.getElementById("recentWatchDirs"),
   validation: document.getElementById("watchDirValidation"),
   rebuildBtn: document.getElementById("rebuildBtn"),
+  syncProgress: document.getElementById("syncProgress"),
+  syncProgressTrack: document.getElementById("syncProgressTrack"),
+  syncProgressFill: document.getElementById("syncProgressFill"),
+  syncProgressPercent: document.getElementById("syncProgressPercent"),
+  syncProgressDetail: document.getElementById("syncProgressDetail"),
   healthBtn: document.getElementById("healthBtn"),
   startBtn: document.getElementById("startBtn"),
   stopBtn: document.getElementById("stopBtn"),
@@ -67,6 +87,7 @@ const refs = {
   invoiceSelectionActionMenu: document.getElementById("invoiceSelectionActionMenu"),
   previewSelectedInvoicesBtn: document.getElementById("previewSelectedInvoicesBtn"),
   printSelectedInvoicesBtn: document.getElementById("printSelectedInvoicesBtn"),
+  batchInboundDocumentsBtn: document.getElementById("batchInboundDocumentsBtn"),
   filePreviewModal: document.getElementById("filePreviewModal"),
   filePreviewDialog: document.getElementById("filePreviewDialog"),
   filePreviewSubtitle: document.getElementById("filePreviewSubtitle"),
@@ -245,6 +266,171 @@ function renderBridgeStatus(bridge) {
   const externallyManaged = indexBackendIsExternallyManaged();
   refs.startBtn.disabled = externallyManaged || running;
   refs.stopBtn.disabled = externallyManaged || !running;
+}
+
+function syncProgressNumber(value, maximum) {
+  const numeric = Number.parseInt(value, 10);
+  const normalized = Number.isFinite(numeric) ? Math.max(0, numeric) : 0;
+  return typeof maximum === "number" ? Math.min(normalized, maximum) : normalized;
+}
+
+function clearSyncProgressDismissal() {
+  if (state.syncProgressDismissTimer) window.clearTimeout(state.syncProgressDismissTimer);
+  if (state.syncProgressHideTimer) window.clearTimeout(state.syncProgressHideTimer);
+  state.syncProgressDismissTimer = 0;
+  state.syncProgressHideTimer = 0;
+}
+
+function setSyncProgressStatus(status) {
+  if (!refs.syncProgress) return;
+  const nextClass = `sync-progress--${status}`;
+  if (refs.syncProgress.classList.contains(nextClass)) return;
+  refs.syncProgress.classList.remove(
+    "sync-progress--idle",
+    "sync-progress--starting",
+    "sync-progress--running",
+    "sync-progress--success",
+    "sync-progress--failed",
+  );
+  refs.syncProgress.classList.add(nextClass);
+}
+
+function showSyncProgress(status) {
+  if (!refs.syncProgress) return;
+  setSyncProgressStatus(status);
+  refs.syncProgress.classList.remove("sync-progress--leaving");
+  if (!refs.syncProgress.hidden) {
+    refs.syncProgress.classList.add("sync-progress--visible");
+    return;
+  }
+  refs.syncProgress.hidden = false;
+  window.requestAnimationFrame(() => {
+    if (!refs.syncProgress?.hidden) refs.syncProgress.classList.add("sync-progress--visible");
+  });
+}
+
+function dismissSyncProgressAfter(visibleForMs) {
+  if (!refs.syncProgress) return;
+  clearSyncProgressDismissal();
+  state.syncProgressDismissTimer = window.setTimeout(() => {
+    refs.syncProgress?.classList.remove("sync-progress--visible");
+    refs.syncProgress?.classList.add("sync-progress--leaving");
+    state.syncProgressHideTimer = window.setTimeout(() => {
+      if (!refs.syncProgress) return;
+      refs.syncProgress.hidden = true;
+      refs.syncProgress.classList.remove("sync-progress--visible", "sync-progress--leaving");
+      state.syncProgressResultKey = "";
+    }, SYNC_PROGRESS_EXIT_MS);
+  }, visibleForMs);
+}
+
+function renderSyncProgress(payload) {
+  if (!refs.syncProgress || !refs.syncProgressTrack || !refs.syncProgressFill || !refs.syncProgressPercent) return;
+  const backgroundStarting = payload?.status === "idle" && payload?.background_sync_status === "running";
+  const status = ["running", "success", "failed"].includes(payload?.status)
+    ? payload.status
+    : backgroundStarting
+      ? "running"
+      : state.syncProgressAwaitingStart
+        ? "starting"
+        : "idle";
+  const percent = syncProgressNumber(payload?.percent, 100);
+  const total = syncProgressNumber(payload?.total_count);
+  const processed = syncProgressNumber(payload?.processed_count, total || undefined);
+  const fallbackMessage = backgroundStarting ? "正在启动后台汇总" : status === "starting" ? "正在准备汇总" : "等待汇总";
+  const message = String(payload?.message || fallbackMessage).trim() || fallbackMessage;
+  const detail = status === "starting"
+    ? message
+    : total
+      ? `${message}，已处理 ${processed} / ${total}，${percent}%`
+      : `${message}，${percent}%`;
+  const displayedPercent = status === "starting" ? 16 : status === "success" ? 100 : percent;
+  refs.syncProgress.title = detail;
+  refs.syncProgressFill.style.transform = `scaleX(${displayedPercent / 100})`;
+  refs.syncProgressPercent.textContent = status === "starting" ? "准备中" : `${percent}%`;
+  refs.syncProgressTrack.setAttribute("aria-valuenow", String(percent));
+  refs.syncProgressTrack.setAttribute("aria-valuetext", detail);
+  const resultKey = `${status}:${payload?.operation_id || payload?.task_id || payload?.finished_at || payload?.updated_at || ""}`;
+  const announcementKey = `${status}:${payload?.phase || ""}`;
+  if (refs.syncProgressDetail && state.syncProgressAnnouncementKey !== announcementKey) {
+    refs.syncProgressDetail.textContent = detail;
+    state.syncProgressAnnouncementKey = announcementKey;
+  }
+
+  if (status === "starting" || status === "running") {
+    clearSyncProgressDismissal();
+    state.syncProgressResultKey = "";
+    showSyncProgress(status);
+    return;
+  }
+  if (status === "idle") {
+    if (!refs.syncProgress.hidden && !refs.syncProgress.classList.contains("sync-progress--success") && !refs.syncProgress.classList.contains("sync-progress--failed")) {
+      dismissSyncProgressAfter(0);
+    }
+    return;
+  }
+  // Completed snapshots persist on disk, so only animate a run that this page already displayed.
+  if (refs.syncProgress.hidden) return;
+  if (state.syncProgressResultKey === resultKey) return;
+  state.syncProgressResultKey = resultKey;
+  showSyncProgress(status);
+  dismissSyncProgressAfter(status === "success" ? SYNC_PROGRESS_SUCCESS_VISIBLE_MS : SYNC_PROGRESS_FAILURE_VISIBLE_MS);
+}
+
+function stopSyncProgressPolling() {
+  state.syncProgressPolling = false;
+  if (state.syncProgressPollTimer) window.clearTimeout(state.syncProgressPollTimer);
+  state.syncProgressPollTimer = 0;
+}
+
+function scheduleSyncProgressPoll() {
+  if (!state.syncProgressPolling) return;
+  if (state.syncProgressPollTimer) window.clearTimeout(state.syncProgressPollTimer);
+  state.syncProgressPollTimer = window.setTimeout(() => {
+    state.syncProgressPollTimer = 0;
+    void refreshSyncProgress();
+  }, SYNC_PROGRESS_POLL_INTERVAL_MS);
+}
+
+async function refreshSyncProgress() {
+  if (state.syncProgressRequestInFlight) return;
+  state.syncProgressRequestInFlight = true;
+  try {
+    // The backend writes this per-profile snapshot while holding the projection lock.
+    // Polling it separately keeps progress visible during long PDF/OFD/XML parsing.
+    const payload = await app.api("/api/v1/bridge/progress");
+    renderSyncProgress(payload);
+    if (payload?.status === "running" || payload?.background_sync_status === "running" || state.syncProgressAwaitingStart) {
+      state.syncProgressPolling = true;
+      scheduleSyncProgressPoll();
+    } else {
+      stopSyncProgressPolling();
+    }
+  } catch (_error) {
+    if (state.syncProgressPolling || state.syncProgressAwaitingStart) {
+      state.syncProgressPolling = true;
+      scheduleSyncProgressPoll();
+    }
+  } finally {
+    state.syncProgressRequestInFlight = false;
+  }
+}
+
+function startSyncProgressPolling() {
+  state.syncProgressPolling = true;
+  void refreshSyncProgress();
+}
+
+async function rebuildWithProgress() {
+  state.syncProgressAwaitingStart = true;
+  renderSyncProgress();
+  startSyncProgressPolling();
+  try {
+    return await app.api("/api/v1/bridge/rebuild", { method: "POST", body: {} });
+  } finally {
+    state.syncProgressAwaitingStart = false;
+    await refreshSyncProgress();
+  }
 }
 
 function setWatchDirInputValue(value) {
@@ -510,11 +696,32 @@ function updateSelectionControls() {
   }
   if (refs.previewSelectedInvoicesBtn) refs.previewSelectedInvoicesBtn.disabled = !hasSelection || actionLoading;
   if (refs.printSelectedInvoicesBtn) refs.printSelectedInvoicesBtn.disabled = !hasSelection || state.printJobLoading;
+  if (refs.batchInboundDocumentsBtn) refs.batchInboundDocumentsBtn.disabled = !hasSelection || actionLoading || !state.targetId;
   if (!hasSelection || actionLoading) setInvoiceActionMenuOpen(false);
 }
 
 function invoiceActionMenuItems() {
-  return [refs.previewSelectedInvoicesBtn, refs.printSelectedInvoicesBtn].filter(Boolean);
+  return [refs.previewSelectedInvoicesBtn, refs.printSelectedInvoicesBtn, refs.batchInboundDocumentsBtn].filter(Boolean);
+}
+
+function prepareBatchInboundDocuments() {
+  const items = selectedSummaryRequestItems();
+  if (!items.length || !state.targetId) return;
+  if (items.length > 1000) {
+    app.setBanner(refs.banner, "warning", "单次最多开具 1000 条发票记录，请减少勾选数量。");
+    return;
+  }
+  try {
+    // Same-tab handoff keeps source paths out of URLs. The documents API revalidates it.
+    sessionStorage.setItem("invoicehub.inbound-selection", JSON.stringify({
+      version: 1, created_at: Date.now(), target_id: state.targetId, items,
+    }));
+    const query = new URLSearchParams({ batch: "inbound" });
+    if (new URLSearchParams(window.location.search).get("no_skin") === "1") query.set("no_skin", "1");
+    window.location.assign(`/documents?${query}`);
+  } catch (_error) {
+    app.setBanner(refs.banner, "danger", "无法传递勾选发票，请检查浏览器是否允许会话存储后重试。");
+  }
 }
 
 function setInvoiceActionMenuOpen(open, options = {}) {
@@ -665,9 +872,14 @@ function rowHtml(item) {
   const businessType = app.text(item.business_type);
   const recognitionStatus = recognitionStatusMeta(item);
   const checkboxLabel = `勾选发票 ${item.invoice_number || item.source_file || invoiceKey || ""}`.trim();
+  const showFileName = Boolean(String(state.filters.keyword || "").trim())
+    && ["filename", "all"].includes(state.filters.search_scope);
+  const fileName = showFileName
+    ? `<div class="path-cell" tabindex="0" title="${app.escapeHtml(item.source_file || "")}">${app.escapeHtml(item.source_file || "")}</div>`
+    : "";
   return `
     <tr>
-      <td class="table__seller" title="${app.escapeHtml(item.seller || "--")}">${app.escapeHtml(app.text(item.seller))}</td>
+      <td class="table__seller" title="${app.escapeHtml(item.seller || "--")}">${app.escapeHtml(app.text(item.seller))}${fileName}</td>
       <td class="table__format"><span class="format-badge format-badge--${app.escapeHtml(fileFormatTone)}">${app.escapeHtml(fileFormat)}</span></td>
       <td class="table__number">${app.escapeHtml(app.text(item.invoice_number))}</td>
       <td class="table__classification">
@@ -698,10 +910,22 @@ function rowHtml(item) {
 
 function renderInvoiceRows() {
   const items = sortedInvoiceItems(state.invoiceItems);
+  const pages = Math.max(1, Math.ceil(items.length / 100));
+  state.invoicePage = Math.min(state.invoicePage || 1, pages);
+  const pageItems = items.slice((state.invoicePage - 1) * 100, state.invoicePage * 100);
+  const pager = document.getElementById("invoicePager");
+  if (pager) {
+    pager.hidden = items.length <= 100;
+    document.getElementById("invoicePageStatus").textContent = `第 ${state.invoicePage} / ${pages} 页 · 共 ${items.length} 条`;
+    document.getElementById("invoicePreviousPage").disabled = state.invoicePage === 1;
+    document.getElementById("invoiceNextPage").disabled = state.invoicePage === pages;
+  }
   updateDateSortControl();
   refs.invoiceBody.innerHTML = items.length
-    ? items.map(rowHtml).join("")
-    : '<tr><td colspan="10">暂无发票。请选择目录后点击“重新汇总”。</td></tr>';
+    ? pageItems.map(rowHtml).join("")
+    : `<tr><td colspan="10">${Object.entries(state.filters).some(([key, value]) => key !== "search_scope" && String(value || "").trim())
+      ? "没有符合当前筛选条件的发票。"
+      : "暂无发票。请选择目录后点击“重新汇总”。"}</td></tr>`;
   updateSelectedInvoiceTotal();
 }
 
@@ -921,6 +1145,15 @@ async function printSelectedInvoices() {
   const items = selectedSummaryRequestItems();
   if (!items.length || state.printJobLoading) return;
   setInvoiceActionMenuOpen(false);
+
+  if (!state.allowPrintPopups) {
+    showOperationNotice(
+      "warning",
+      "发票打印弹窗许可已关闭",
+      "请在 设置 > 偏好 中开启“发票打印弹窗许可”，重新启动 InvoiceHub 后再打印。",
+    );
+    return;
+  }
 
   let printWindow = null;
   try {
@@ -1498,6 +1731,9 @@ function handleSelectionSummaryKeydown(event) {
 async function loadSettings(generation) {
   const settings = await app.api("/api/v1/settings");
   if (!isCurrentRefresh(generation)) return { status: "stale" };
+  state.allowPrintPopups = typeof settings?.preferences?.allow_print_popups === "boolean"
+    ? settings.preferences.allow_print_popups
+    : true;
   state.savedWatchDir = settings.watch_dir || "";
   if (!state.watchDirDirty) state.pendingWatchDir = "";
   if (!state.watchDirDirty) setWatchDirInputValue(state.savedWatchDir);
@@ -1513,6 +1749,7 @@ async function loadInvoices(generation) {
   const payload = await app.api(query ? `/api/v1/invoices?${query}` : "/api/v1/invoices");
   if (!isCurrentRefresh(generation)) return { status: "stale" };
   state.invoiceItems = payload.items || [];
+  state.targetId = payload.target_id || "";
   state.hasInvoiceSnapshot = true;
   pruneSelectedInvoices(state.invoiceItems);
   renderStats(payload);
@@ -1724,7 +1961,7 @@ async function openBusinessDossier(key, button) {
   }
 }
 
-refs.rebuildBtn.addEventListener("click", () => runAction(refs.rebuildBtn, "汇总中...", () => app.api("/api/v1/bridge/rebuild", { method: "POST", body: {} }), "汇总已完成"));
+refs.rebuildBtn.addEventListener("click", () => runAction(refs.rebuildBtn, "汇总中...", rebuildWithProgress, "汇总已完成"));
 refs.healthBtn.addEventListener("click", () => runAction(refs.healthBtn, "检查中...", () => app.api("/api/v1/bridge/health-check", { method: "POST", body: {} }), "桥接检查完成"));
 function runOwnedMonitorAction(button, busyText, endpoint, successMessage) {
   if (indexBackendIsExternallyManaged()) {
@@ -1768,23 +2005,34 @@ window.addEventListener("resize", app.debounce(updateWatchDirMarquee, 150));
 refs.filterForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   state.filters = Object.fromEntries(new FormData(refs.filterForm).entries());
+  state.invoicePage = 1;
   await refreshAll();
 });
 refs.filterResetBtn.addEventListener("click", async () => {
   refs.filterForm.reset();
-  state.filters = {};
+  state.filters = Object.fromEntries(new FormData(refs.filterForm).entries());
+  state.invoicePage = 1;
   await refreshAll();
 });
 refs.invoiceDateSortBtn?.addEventListener("click", () => {
   state.dateSort = state.dateSort === "asc" ? "desc" : "asc";
+  state.invoicePage = 1;
   renderInvoiceRows();
 });
 refs.selectAllInvoicesBtn?.addEventListener("click", selectAllVisibleInvoices);
+for (const [id, delta] of [["invoicePreviousPage", -1], ["invoiceNextPage", 1]]) {
+  document.getElementById(id)?.addEventListener("click", () => {
+    state.invoicePage += delta;
+    renderInvoiceRows();
+    refs.invoiceBody.closest(".table-wrap")?.scrollTo(0, 0);
+  });
+}
 refs.clearSelectedInvoicesBtn?.addEventListener("click", clearSelectedInvoices);
 refs.invoiceSelectionMoreBtn?.addEventListener("click", toggleInvoiceActionMenu);
 refs.invoiceSelectionMore?.addEventListener("keydown", handleInvoiceActionMenuKeydown);
 refs.previewSelectedInvoicesBtn?.addEventListener("click", openFilePreview);
 refs.printSelectedInvoicesBtn?.addEventListener("click", printSelectedInvoices);
+refs.batchInboundDocumentsBtn?.addEventListener("click", prepareBatchInboundDocuments);
 refs.filePreviewCloseBtn?.addEventListener("click", closeFilePreview);
 refs.filePreviewRetryBtn?.addEventListener("click", loadFilePreviewJob);
 refs.filePreviewFileSelect?.addEventListener("change", () => {
@@ -1833,6 +2081,7 @@ document.addEventListener("visibilitychange", () => {
   void keepFilePreviewAlive(state.filePreviewJob.job_id);
 });
 window.addEventListener("beforeunload", () => {
+  stopSyncProgressPolling();
   stopFilePreviewKeepAlive();
   clearFilePreviewObjectUrl();
 });
@@ -1863,4 +2112,5 @@ function handleUnexpectedRefreshFailure(error) {
 }
 
 app.connectEvents(refs.eventState, app.debounce(refreshAll, 300), { refreshOnFirstOpen: false });
+void refreshSyncProgress();
 void refreshAll().catch(handleUnexpectedRefreshFailure);

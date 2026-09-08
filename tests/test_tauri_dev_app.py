@@ -4,12 +4,14 @@ import base64
 import hashlib
 import importlib.util
 import json
+import os
 import shutil
 import stat
 import sys
 from pathlib import Path
 
 import pytest
+from invoice_hub.website import WEBSITE_BUILD_INPUTS, copy_website
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -28,6 +30,7 @@ def _load_module():
 def _copy_source_tree(tmp_path: Path) -> Path:
     root = tmp_path / "InvoiceHub"
     root.mkdir()
+    copy_website(ROOT, root)
     for relative in (
         "src",
         "web",
@@ -49,9 +52,14 @@ def _copy_source_tree(tmp_path: Path) -> Path:
 
 def _venv_python(tmp_path: Path) -> Path:
     venv = tmp_path / "tools" / ".venv"
-    executable = venv / "bin/python"
+    executable = venv / "bin" / ("python.exe" if os.name == "nt" else "python")
     executable.parent.mkdir(parents=True)
-    (venv / "pyvenv.cfg").write_text("home = test\n", encoding="utf-8")
+    (venv / "pyvenv.cfg").write_text(f"home = {sys.base_prefix}\n", encoding="utf-8")
+    if os.name == "nt":
+        shutil.copy2(sys.executable, executable)
+        for runtime_dll in Path(sys.executable).parent.glob("*.dll"):
+            shutil.copy2(runtime_dll, executable.parent / runtime_dll.name)
+        return executable
     try:
         executable.symlink_to(Path(sys.executable))
     except OSError:
@@ -118,6 +126,9 @@ def test_stage_creates_a_development_manifest_and_allowlisted_core(tmp_path: Pat
 
     assert (result.core_root / "src/invoice_hub/api/main.py").is_file()
     assert (result.core_root / "web").is_dir()
+    for relative in WEBSITE_BUILD_INPUTS:
+        assert (result.core_root / relative).read_bytes() == (root / relative).read_bytes()
+    assert not (result.core_root / "website/README.md").exists()
     assert (result.core_root / "docs/jierui").is_dir()
     assert (result.core_root / "scripts/tools/jierui_voucher_import.py").is_file()
     for forbidden in ("config", "runtime", "发票文件", ".venv", "invoice-hub-package.json"):

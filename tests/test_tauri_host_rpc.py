@@ -100,6 +100,15 @@ def test_host_rpc_wait_budget_outlasts_the_rust_picker_dialog() -> None:
     assert host_rpc.HOST_RPC_TIMEOUT_SECONDS > host_rpc.PICKER_DIALOG_TIMEOUT_SECONDS
 
 
+def test_host_rpc_delegates_native_picker_main_thread_dispatch_to_the_plugin() -> None:
+    rust_host_rpc = (ROOT / "src-tauri" / "src" / "host_rpc.rs").read_text(encoding="utf-8")
+    selector = rust_host_rpc.split("fn select_path(", 1)[1].split("\nenum HostRpcResponse", 1)[0]
+
+    assert "app_handle.dialog().file().pick_file(respond);" in selector
+    assert "app_handle.dialog().file().pick_folder(respond);" in selector
+    assert ".run_on_main_thread(" not in selector
+
+
 def test_picker_routes_map_host_rpc_errors_to_a_stable_redacted_5xx_contract() -> None:
     app = (ROOT / "src" / "invoice_hub" / "api" / "app.py").read_text(encoding="utf-8")
 
@@ -169,6 +178,30 @@ def test_host_updater_uses_only_fixed_enum_commands_and_hides_candidate_metadata
     assert host_rpc.update_install() is None
     assert observed == [b'{"command":"update_check"}', b'{"command":"update_install"}']
     assert all(b"url" not in body and b"signature" not in body for body in observed)
+
+
+def test_host_app_icon_uses_a_fixed_bundled_icon_payload_and_exact_success_response(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _configure_host(monkeypatch)
+    observed: list[bytes] = []
+
+    def fake_open(request_value, timeout):
+        assert request_value.full_url == RPC_URL
+        assert request_value.get_header("Origin") == host_rpc.HOST_RPC_EXPECTED_ORIGIN
+        assert request_value.get_header("Authorization") == f"Bearer {TOKEN}"
+        assert timeout == host_rpc.HOST_RPC_TIMEOUT_SECONDS
+        observed.append(request_value.data)
+        return _Response({"ok": True})
+
+    monkeypatch.setattr(host_rpc.request, "build_opener", lambda *_handlers: _Opener(fake_open))
+
+    assert host_rpc.set_app_icon("teal") is None
+    assert observed == [b'{"command":"set_app_icon","icon":"teal"}']
+
+    with pytest.raises(host_rpc.HostRpcError):
+        host_rpc.set_app_icon("unbundled")
+    assert observed == [b'{"command":"set_app_icon","icon":"teal"}']
 
 
 def test_host_updater_rejects_extra_or_inconsistent_private_response_fields(

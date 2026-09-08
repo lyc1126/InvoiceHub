@@ -32,6 +32,8 @@ def test_invoice_selection_menu_exposes_batch_print_action() -> None:
     assert body.index('window.open("about:blank", "_blank")') < body.index(
         'await app.api("/api/v1/invoices/print-jobs"'
     )
+    assert "state.allowPrintPopups" in body
+    assert "发票打印弹窗许可已关闭" in body
     assert "浏览器阻止了打印窗口" in js
     assert "setInvoiceActionMenuOpen" in js
     assert "handleInvoiceActionMenuKeydown" in js
@@ -82,6 +84,6 @@ def test_invoice_print_static_asset_versions_are_current() -> None:
     for template in templates:
         html = template.read_text(encoding="utf-8")
         if "app.css?v=" in html:
-            assert "app.css?v=20260802-release-update-v1" in html
+            assert "app.css?v=20260907-desktop-integrated-2" in html
     index = (ROOT / "web" / "templates" / "index.html").read_text(encoding="utf-8")
-    assert "page-index.js?v=20260803-external-monitor-guard" in index
+    assert "page-index.js?v=20260907-large-list-1" in index

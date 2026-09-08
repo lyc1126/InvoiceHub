@@ -1,5 +1,13 @@
 # InvoiceHub 开发架构与工程导航
 
+2026-09-07 当前完整开发实现归集到 `codex/desktop-latest`；下文各功能分支名记录实现来源，最新维护以该整合分支为入口。稳定 `main` 未合并变更，分支分类与保留策略见 [分支整理记录](BRANCH_STATUS.md)。
+
+2026-09-07 大列表实现在 `codex/fix-large-list-responsiveness`：`services/document_index.py` 用单个 spawn 进程建立单据索引，runtime 保存逐文件缓存、入库选项及进度，API 安排/读取/停止。出库预览经索引定位仍实时校验文件；首页和单据候选每页 100 条，既有提取/投影业务规则保持。
+
+2026-09-07 首页搜索跟进位于 `codex/fix-invoice-search-scope`：沿用列表筛选与 generation 刷新链，增加 `search_scope` 显式字段枚举。首页默认销售方/发票号，文件名与全部范围可选，旧 API 缺省 all 保持兼容；不改变发票提取、投影或监控架构。接口、算法与最低验收详见对应专题的同日补充。
+
+2026-09-07 当前实现整合公开 main 上的最新前端与既有 Windows Desktop 分支：图标选择经 `app_icons.py → app_state → host_rpc → app_icon.rs` 后保存运行态；默认 `website` 为白底 hi.，另外三款兼容既有状态。保留打印弹窗偏好、WebView 独立目录、picker 插件调度、monitor 状态串行化和同步进度。当前公共资源 `20260907-desktop-integrated-2`；源码工作区不以单独旧分支作为打包输入，必须形成含两边功能的干净快照。
+
 > 文档状态：当前开发实现的权威架构入口
 > 更新日期：2026-08-28
 > 公共权威基线：经过审计的单一脱敏根提交；旧私有提交、Tag、二进制和验证材料不在公开图中
@@ -8,6 +16,18 @@
 > 校验规则：精确的本地与 GitHub HEAD 以实时 `git rev-parse`、`git ls-remote` 和双向差异为准；发行源码候选不等于双平台成品 RC 或 GitHub 已发布版本
 
 ## 1. 这套文档解决什么问题
+
+2026-09-07 当前跟进位于 `codex/startup-conflict-diagnostics`。BAT 的启动失败和 Desktop GUI subsystem 下的失败均需可见诊断；Windows Desktop 单实例标识按安装 EXE 与 runtime 派生，跨环境转为固定端口冲突。诊断仅读取监听与公开身份字段，不能参与 ownership 授权。Python CLI 在 AppState 构造前做端口预检查，最终绑定仍由 Uvicorn 完成。
+
+2026-09-07 后续源码 BAT 修复位于 `codex/fix-source-bat-handshake`，保留此前 Desktop 整合，稳定 main 不变。公共 Windows 模块分别核验 venv/base 的真实 executable 与命令行首项，继续精确绑定模块/root/config；实际占用端口的桌面实例不得被源码启动器接管。验证范围见当日源码握手变更日志。
+
+2026-09-07 当前工作区转入 `codex/desktop-current-package`，保留已有前端与业务改动，稳定 main 不变。Windows Tauri 支持 `desktop/browser`，owned backend 结束时 watcher 原子撤销授权并请求 host 退出，避免占据单实例。构建使用本工作区的干净快照，不能再使用不含最新 UI 的旧候选源码。Ink Pulse `1.4.0`、Animal Island `2.1.0` 只覆盖既有 CSS 选择器；前者按用户要求保留深色单据预览。接入已有 portable builder/verifier 和官网白名单，不提供新的 Feed。
+
+2026-09-06 的明暗外观继续位于 `codex/default-ui-polish`：`appearance_toggle.html` 与 `appearance.js` 复用 skin enable/reset，`website-dark` 为 CSS-only 内置外观；默认仍无皮肤，恢复入口强制浅色。第四款 desktop 图标以官网纸白底、墨黑 `hi.` 与荧光折角为准，由本地字体和 Pillow 确定性生成，Tauri 默认图标清单包含 PNG/ICO/ICNS。未构建新桌面成品，稳定发布基线不变。
+
+当前前端工作分支为 `codex/default-ui-polish`，从公开 `origin/main` 建立并保留既有官网集成修改，尚未合并。共享控件由 `system_controls.html` 和 `system-controls.js` 复用设置关闭协议；`common.js` 管理请求反馈、原生导航状态与顶栏高度，`app.css` 承载官网风格的默认工作界面与 `hi.`。新增首页到单据页的批量入库交接、逐票身份复核与导出反馈；`projections/documents.py` 统一预览/导出的模板布局和无前缀大写金额。发票提取、成本产物生成与做账核心不变。
+
+`website/` 是公开产品介绍站点，可直接打开 HTML，也由现有 localhost 在 `/website/` 提供随包资源，运行方式见 [官网维护说明](../website/README.md)。设置页「官方网站」同窗口进入该路径，并可返回「设置 → 关于」。发票、成本、单据和工具四视图只消费本地合成演示数据，打印仅为动画，税率换算仅为官网概念示例；它不进入下方业务数据链，也不替换 `web/` 的 localhost 应用。`src/invoice_hub/website.py` 的精确白名单联动 HTTP、共享 Build ID、源码快照与双平台组装；公网部署及更新 Feed 独立，源码和静态检查不构成平台成品或浏览器视觉验收。
 
 InvoiceHub 不是只有一个 FastAPI 页面。它同时包含发票提取、文件投影、成本计算、做账安全协议、独立监控进程、Windows 正式入口、macOS 本地壳、共享浏览器页面、皮肤导入、诊断事件和离线打包。任何一个字段或状态的改动，都可能沿着多条链路传播。
 

@@ -244,7 +244,7 @@ def test_tauri_scaffold_is_fixed_to_the_expected_localhost_origin() -> None:
     assert config["bundle"]["macOS"]["minimumSystemVersion"] == "13.0"
     assert icon.startswith(b"\x89PNG\r\n\x1a\n")
     assert struct.unpack(">II", icon[16:24]) == (512, 512)
-    assert icon[24:26] == b"\x08\x06"
+    assert icon[24:26] == bytes((8, 6))
     assert "load_bundle_manifest" in source
     assert "std::process::exit(78)" not in source
     assert "fn main() -> ExitCode" in source

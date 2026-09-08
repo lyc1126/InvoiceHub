@@ -5,6 +5,27 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def test_default_appearance_assets_and_reduced_motion_contract() -> None:
+    css = (ROOT / "web/static/css/app.css").read_text(encoding="utf-8")
+    dark = ROOT / "web/static/skins/website-dark"
+    assert not list(dark.glob("*.js"))
+    assert not list(dark.glob("*.html"))
+    dark_css = (dark / "skin.css").read_text(encoding="utf-8")
+    assert "@import" not in dark_css
+    assert "url(" not in dark_css
+    assert "color-scheme: dark" in dark_css
+    assert "filter: invert" not in dark_css
+    assert '.appearance-toggle__moon' in css
+    assert 'prefers-reduced-motion: reduce' in css
+    for icon in ("sun", "moon"):
+        assert f'../icons/{icon}.svg' in css
+        assert (ROOT / f"web/static/icons/{icon}.svg").is_file()
+    settings = (ROOT / "web/templates/settings.html").read_text(encoding="utf-8")
+    assert '>票</span>' not in settings
+    assert 'class="brand-title"' in settings
+    assert '{{appearance_toggle}}' in settings
+
+
 def _css_brace_depth_at(source: str, offset: int) -> int:
     """Return the CSS block depth at offset while ignoring comments and strings."""
     depth = 0
@@ -123,9 +144,9 @@ def test_cost_page_keeps_required_controls() -> None:
     assert "applySelectedMarkup" in js
     assert "锁定" in js
     assert "解锁" in js
-    assert "common.js?v=20260729-main-macos-sync" in html
-    assert "app.css?v=20260802-release-update-v1" in html
-    assert "page-costs.js?v=20260726-invoice-taxonomy" in html
+    assert "common.js?v=20260907-desktop-integrated-2" in html
+    assert "app.css?v=20260907-desktop-integrated-2" in html
+    assert "page-costs.js?v=20260907-desktop-integrated-2" in html
     for token in (
         "发票大类",
         "特定业务类型",
@@ -172,7 +193,7 @@ def test_cost_page_keeps_required_controls() -> None:
     assert '<div class="tabs cost-tabs" role="tablist" aria-label="成本分析视图">' in html
     assert '<div class="toolbar cost-actions">' in html
     assert "table-scroll-x" not in html
-    assert html.index('<section class="stats-grid">') < html.index('<section class="list-controls"') < html.index('<section class="panel cost-view" data-view="details">')
+    assert html.index('<section class="stats-grid">') < html.index('<section class="list-controls sticky-controls"') < html.index('<section class="panel cost-view" data-view="details">')
     assert html.index('<div class="toolbar cost-actions">') < html.index('<div class="cost-view-switcher">') < html.index('<div class="tabs cost-tabs"') < html.index('<section class="panel cost-view" data-view="details">')
     assert 'href="/backend"' not in html
     common = (ROOT / "web" / "static" / "js" / "common.js").read_text(encoding="utf-8")
@@ -205,12 +226,12 @@ def test_cost_page_keeps_required_controls() -> None:
     assert "app.setBusy" in js
     assert ".cost-view[hidden]" in css
     assert "@keyframes page-enter" in css
-    assert "@keyframes page-exit" in css
+    assert "@view-transition { navigation: auto; }" in css
     assert "@keyframes view-switch-in" in css
-    assert "body.is-page-exiting" in css
-    assert "body.is-page-exiting .shell" in css
-    assert "animation: page-enter 140ms ease-out both;" in css
-    assert "animation: page-exit 80ms ease-in both;" in css
+    assert "body.is-page-navigating" in css
+    assert "body.is-page-exiting .shell" not in css
+    assert "animation: page-enter 160ms ease-out;" in css
+    assert "::view-transition-old(root), ::view-transition-new(root)" in css
     assert "animation: view-switch-in 120ms ease-out both;" in css
     assert ".cost-view:not([hidden])" in css
     assert ".document-view:not([hidden])" in css
@@ -310,6 +331,69 @@ def test_cost_page_keeps_required_controls() -> None:
     assert ".reference-quantity-input" in css
 
 
+def test_home_sync_progress_and_cost_load_progress_are_separate() -> None:
+    index = (ROOT / "web" / "templates" / "index.html").read_text(encoding="utf-8")
+    costs = (ROOT / "web" / "templates" / "costs.html").read_text(encoding="utf-8")
+    index_js = (ROOT / "web" / "static" / "js" / "page-index.js").read_text(encoding="utf-8")
+    costs_js = (ROOT / "web" / "static" / "js" / "page-costs.js").read_text(encoding="utf-8")
+    css = (ROOT / "web" / "static" / "css" / "app.css").read_text(encoding="utf-8")
+    animal_island = (ROOT / "web" / "static" / "skins" / "animal-island" / "skin.css").read_text(encoding="utf-8")
+    ink_pulse = (ROOT / "web" / "static" / "skins" / "ink-pulse" / "skin.css").read_text(encoding="utf-8")
+
+    assert 'id="syncProgress" class="sync-progress sync-progress--idle" title="等待汇总" hidden' in index
+    assert 'id="syncProgressTrack" class="sync-progress__track" role="progressbar"' in index
+    assert 'id="syncProgressPercent" class="sync-progress__percent">0%</strong>' in index
+    assert 'id="syncProgressDetail" class="sync-progress__detail" aria-live="polite"' in index
+    assert 'id="costLoadProgress" class="sync-progress sync-progress--title sync-progress--idle" title="正在读取成本汇总数据" hidden' in costs
+    assert 'id="costLoadProgressTrack" class="sync-progress__track" role="progressbar" aria-label="成本汇总读取进度"' in costs
+    assert 'id="costLoadProgressPercent" class="sync-progress__percent">0%</strong>' in costs
+    assert 'id="costLoadProgressDetail" class="sync-progress__detail" aria-live="polite"' in costs
+    for html in (index, costs):
+        assert 'class="sync-progress__check" aria-hidden="true"' in html
+    assert index.index('id="stopBtn"') < index.index('id="syncProgress"')
+    assert costs.index('class="page-title__heading"') < costs.index('id="costLoadProgress"') < costs.index('id="costPath"')
+
+    assert 'app.api("/api/v1/bridge/progress")' in index_js
+    assert "SYNC_PROGRESS_POLL_INTERVAL_MS = 650" in index_js
+    assert "function renderSyncProgress(payload)" in index_js
+    assert "stopSyncProgressPolling" in index_js
+    assert 'app.api("/api/v1/bridge/progress")' not in costs_js
+    assert "refreshSyncProgress" not in costs_js
+    assert "stopSyncProgressPolling" not in costs_js
+    assert "const COST_LOAD_PROGRESS_SUCCESS_VISIBLE_MS = 900" in costs_js
+    assert 'app.api("/api/v1/cost-analysis")' in costs_js
+    assert 'await app.api("/api/v1/bridge/rebuild", { method: "POST", body: {} });' in costs_js
+    assert "function beginCostLoadProgress()" in costs_js
+    assert "function advanceCostLoadProgress(percent, detail)" in costs_js
+    assert "function completeCostLoadProgress()" in costs_js
+    assert "function failCostLoadProgress(message)" in costs_js
+    assert 'refs.costLoadProgressTrack.setAttribute("aria-valuetext", detail);' in costs_js
+    assert 'style.transform = `scaleX(${displayedPercent / 100})`' in costs_js
+    assert "正在读取成本汇总数据" in costs_js
+    assert "正在初始化成本视图" in costs_js
+    assert "sync-progress--success" in costs_js
+    assert "refs.costLoadProgress.hidden = true;" in costs_js
+    assert ".sync-progress {" in css
+    assert ".page-title { flex: 1 1 auto; min-width: 0; max-width: 100%; }" in css
+    assert ".page-title__heading > h2 { flex: 0 0 auto; white-space: nowrap; }" in css
+    assert ".toolbar .sync-progress { flex: 0 0 var(--sync-progress-block-size); }" in css
+    assert "--sync-progress-inline-size: 184px" in css
+    assert "min-inline-size: 156px" in css
+    assert "border-radius: 999px" in css
+    assert ".sync-progress__percent" in css
+    assert ".sync-progress__check" in css
+    assert ".sync-progress--success .sync-progress__track" in css
+    assert ".sync-progress--failed .sync-progress__fill" in css
+    assert "transform: scaleX(0);" in css
+    assert "@keyframes sync-progress-sheen" in css
+    assert "@media (prefers-reduced-motion: reduce)" in css
+    assert "--sync-progress-accent: #2f9d83" in animal_island
+    assert "--sync-progress-accent: var(--ink-cyan)" in ink_pulse
+    for skin_css in (animal_island, ink_pulse):
+        assert ".sync-progress__track" in skin_css
+        assert ".sync-progress__check" in skin_css
+
+
 def test_main_pages_keep_user_visible_controls() -> None:
     index = (ROOT / "web" / "templates" / "index.html").read_text(encoding="utf-8")
     ocr = (ROOT / "web" / "templates" / "ocr.html").read_text(encoding="utf-8")
@@ -331,10 +415,12 @@ def test_main_pages_keep_user_visible_controls() -> None:
     assert "过去保存" in index
     assert 'class="inline-panel path-inline" hidden' not in index
     assert 'id="watchDirDraft" class="watch-dir-draft" hidden' in index
-    assert "app.css?v=20260802-release-update-v1" in index
-    assert "settings-actions.css?v=20260720-shutdown-monitor-choice" in index
-    assert "common.js?v=20260729-main-macos-sync" in index
-    assert "page-index.js?v=20260803-external-monitor-guard" in index
+    assert "app.css?v=20260907-desktop-integrated-2" in index
+    assert "settings-actions.css?v=20260907-desktop-integrated-2" in index
+    assert "common.js?v=20260907-desktop-integrated-2" in index
+    assert "page-index.js?v=20260907-large-list-1" in index
+    assert 'select name="search_scope"' in index
+    assert '<option value="invoice" selected>销售方 / 发票号</option>' in index
     assert 'select name="invoice_type"' in index
     assert 'select name="business_type"' in index
     assert 'select name="classification_status"' in index
@@ -538,8 +624,8 @@ def test_main_pages_keep_user_visible_controls() -> None:
     assert "特定业务类型" in page_detail
     assert "类型识别状态" in page_detail
     assert "类型识别说明" in page_detail
-    assert "common.js?v=20260729-main-macos-sync" in detail
-    assert "app.css?v=20260802-release-update-v1" in detail
+    assert "common.js?v=20260907-desktop-integrated-2" in detail
+    assert "app.css?v=20260907-desktop-integrated-2" in detail
     assert ".panel__head .detail-file-actions" in css
     assert ".detail-grid" in css
     assert ".detail-grid .stat-card strong { min-width: 0; overflow-wrap: anywhere; word-break: break-word; }" in css
@@ -756,8 +842,8 @@ def test_selected_invoice_summary_frontend_contract() -> None:
 
     for template_name in ("backend.html", "base_head.html", "consistency.html", "costs.html", "detail.html", "documents.html", "index.html", "ocr.html", "settings.html", "skins.html"):
         template = (ROOT / "web" / "templates" / template_name).read_text(encoding="utf-8")
-        assert "app.css?v=20260802-release-update-v1" in template
-    assert "page-index.js?v=20260803-external-monitor-guard" in index
+        assert "app.css?v=20260907-desktop-integrated-2" in template
+    assert "page-index.js?v=20260907-large-list-1" in index
 
 
 def test_consistency_page_is_user_facing_not_raw_json() -> None:
@@ -820,9 +906,12 @@ def test_documents_page_contract() -> None:
     assert ">是</button>" in html
     assert ">否</button>" in html
     assert ">打开该文件</button>" in html
-    assert "app.css?v=20260802-release-update-v1" in html
-    assert "common.js?v=20260729-main-macos-sync" in html
-    assert "page-documents.js?v=20260729-main-macos-sync" in html
+    assert "app.css?v=20260907-desktop-integrated-2" in html
+    assert "common.js?v=20260907-desktop-integrated-2" in html
+    assert "page-documents.js?v=20260907-large-list-1" in html
+    assert "large-lists.css?v=20260907-large-list-1" in html
+    assert 'id="documentIndexStop"' in html
+    assert 'id="documentIndexResume"' in html
     assert "loadDocumentPreferences" in js
     assert "document_export_existing_strategy" in js
     assert "settings.preferences_updated" in js
@@ -921,7 +1010,7 @@ def test_bookkeeping_page_static_contract() -> None:
     assert 'body data-page="bookkeeping"' in html
     assert "{{BASE_HEAD}}" in html
     assert "{{BOOTSTRAP_JSON}}" in html
-    assert "app.css?v=20260802-release-update-v1" in base_head
+    assert "app.css?v=20260907-desktop-integrated-2" in base_head
     assert "page-bookkeeping.js?v=20260711-w9-ledger-review-v3" in html
     assert 'id="voucherBlockers"' in html
     assert "item.can_approve === true" in js
@@ -1056,7 +1145,7 @@ def test_bookkeeping_page_static_contract() -> None:
     assert '<option value="manual_confirmed">manual_confirmed</option>' in html
 
     assert ".bookkeeping-table" in css
-    assert ".page-title { min-width: 0; max-width: 100%; }" in css
+    assert ".page-title { flex: 1 1 auto; min-width: 0; max-width: 100%; }" in css
     assert ".bookkeeping-row-actions" in css
     assert ".review-tier-badge--auto" in css
     assert ".review-tier-badge--ai_suggested" in css
@@ -1098,7 +1187,9 @@ def test_settings_nav_entry_is_rightmost_on_normal_pages() -> None:
 
 def test_settings_page_contract() -> None:
     html = (ROOT / "web" / "templates" / "settings.html").read_text(encoding="utf-8")
+    html = html.replace("{{system_controls}}", (ROOT / "web/templates/system_controls.html").read_text(encoding="utf-8"))
     js = (ROOT / "web" / "static" / "js" / "page-settings.js").read_text(encoding="utf-8")
+    js += (ROOT / "web/static/js/system-controls.js").read_text(encoding="utf-8")
     css = (ROOT / "web" / "static" / "css" / "app.css").read_text(encoding="utf-8")
     settings_actions_css = (ROOT / "web" / "static" / "css" / "settings-actions.css").read_text(encoding="utf-8")
     api_app = (ROOT / "src" / "invoice_hub" / "api" / "app.py").read_text(encoding="utf-8")
@@ -1124,10 +1215,20 @@ def test_settings_page_contract() -> None:
     assert 'class="settings-edit-card settings-defaults-card"' in html
     assert 'href="/skins"' in html
     assert 'href="/backend"' in html
-    assert "app.css?v=20260802-release-update-v1" in html
-    assert "settings-actions.css?v=20260720-shutdown-monitor-choice" in html
-    assert "common.js?v=20260729-main-macos-sync" in html
-    assert "page-settings.js?v=20260803-external-monitor-guard" in html
+    assert "app.css?v=20260907-desktop-integrated-2" in html
+    assert "settings-actions.css?v=20260907-desktop-integrated-2" in html
+    assert "common.js?v=20260907-desktop-integrated-2" in html
+    assert "page-settings.js?v=20260907-desktop-integrated-2" in html
+    assert 'id="settingsAboutWebsiteLink" class="btn btn--ghost" href="/website/"' in html
+    assert 'refs.website.href = safeWebsiteHref(payload?.links?.website)' in js
+    assert "可选择桌面窗口或系统默认浏览器；下次启动生效。" in js
+    assert "当前运行入口仅支持系统默认浏览器。" in js
+    assert "macOS 支持桌面窗口或系统默认浏览器" not in js
+    assert "settingsPrintPopupTitle" in html
+    assert 'id="settingsAllowPrintPopups" type="checkbox" checked' in html
+    assert "发票打印弹窗许可" in html
+    assert "allow_print_popups" in js
+    assert "settings-preference-toggle" in css
     assert "/api/v1/settings/rename-invoice-files" in api_app
     assert '@app.get("/settings", response_class=HTMLResponse)' in api_app
     assert 'render_page(request, "settings.html"' in api_app
@@ -1402,9 +1503,9 @@ def test_skin_page_contract_and_common_skin_loader() -> None:
     assert "disabled>替换" in html
     assert "skinList" in html
     assert 'role="radiogroup"' in html
-    assert "app.css?v=20260802-release-update-v1" in html
-    assert "common.js?v=20260729-main-macos-sync" in html
-    assert "page-skins.js?v=20260717-settings-macos-sync" in html
+    assert "app.css?v=20260907-desktop-integrated-2" in html
+    assert "common.js?v=20260907-desktop-integrated-2" in html
+    assert "page-skins.js?v=20260907-desktop-integrated-2" in html
     assert '@app.get("/skins", response_class=HTMLResponse)' in api_app
     assert 'render_page(request, "skins.html"' in api_app
     assert "activeSkinStylesheet" in api_app
@@ -1529,7 +1630,7 @@ def test_animal_island_skin_is_css_only_and_token_driven() -> None:
     assert "https://" not in skin_css.lower()
     assert "nintendo" not in skin_css.lower()
     assert "animal crossing" not in skin_css.lower()
-    assert "2.0.8" in manifest
+    assert "2.1.0" in manifest
 
     urls = re.findall(r"url\(\s*['\"]?([^'\")]+)['\"]?\s*\)", skin_css)
     assert urls
@@ -1631,11 +1732,11 @@ def test_home_invoice_list_centers_content_and_uses_one_status_badge() -> None:
         html = template_path.read_text(encoding="utf-8")
         if "app.css?v=" not in html:
             continue
-        assert "app.css?v=20260802-release-update-v1" in html
+        assert "app.css?v=20260907-desktop-integrated-2" in html
         assert "app.css?v=20260727-invoice-list-status-layout" not in html
         assert "app.css?v=20260726-invoice-taxonomy" not in html
     index = (templates_dir / "index.html").read_text(encoding="utf-8")
-    assert "page-index.js?v=20260803-external-monitor-guard" in index
+    assert "page-index.js?v=20260907-large-list-1" in index
 
 
 def test_ink_pulse_body_page_entry_never_creates_fixed_modal_containing_block() -> None:
@@ -1789,8 +1890,11 @@ def test_ink_pulse_skin_is_original_css_only_and_token_driven() -> None:
     assert "@keyframes ink-pulse-page-in" in skin_css
     assert "animation: ink-pulse-page-in 190ms ease-out both;" in skin_css
     assert "@media (prefers-reduced-motion: reduce)" in skin_css
-    assert "1.3.0" in manifest
-    assert '"version": "1.3.0"' in sources
+    assert "1.4.0" in manifest
+    assert '"version": "1.4.0"' in sources
+    assert 'body[data-page] .topbar :is(.appearance-toggle, .system-power)' in skin_css
+    assert '.document-batch__scroll' in skin_css
+    assert '.settings-shutdown-dialog .settings-shutdown-choice--stop:has(input:checked)' in skin_css
     assert 'body[data-page="settings"] .watch-dir-option' in skin_css
     assert 'body[data-page="costs"] .reference-markup-input[readonly]' in skin_css
     assert "color: var(--ink-white);" in skin_css[skin_css.index('body[data-page="costs"] .markup-rate-percent'):]

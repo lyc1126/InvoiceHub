@@ -5,7 +5,7 @@ import os
 import re
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from invoice_hub.domain import CostAnalysisSnapshot, CostSyncStatus
 from invoice_hub.domain.models import utc_now_text
@@ -266,12 +266,13 @@ class CostProjectionService:
         self.status_json = self.watch_dir / COST_REFERENCE_STATUS_NAME
         self.summary_csv = self.workspace_dir / "发票汇总.csv"
 
-    def rebuild(self) -> dict:
+    def rebuild(self, progress: Callable[[int, int], None] | None = None) -> dict:
         result = build_cost_analysis_outputs(
             self.watch_dir,
             self.watch_dir,
             invoice_metadata=self._summary_metadata(),
             reference_markup_rate=self._markup_meta()["rate"],
+            progress=progress,
         )
         return result
 

@@ -47,6 +47,7 @@ SOURCE_COPY_ALLOWLIST = (
 STAGED_TOP_LEVEL_NAMES = {
     "src",
     "web",
+    "website",
     "docs",
     "scripts",
     "pyproject.toml",
@@ -425,6 +426,7 @@ def stage(
         core_root = temporary_dir / CORE_DIRECTORY_NAME
         for relative in SOURCE_COPY_ALLOWLIST:
             _copy_allowlisted_path(resolved_root, core_root, relative)
+        runpy.run_path(str(resolved_root / "src/invoice_hub/website.py"))["copy_website"](resolved_root, core_root)
         build_manifest = _generate_build_manifest(
             resolved_root,
             validated_python,

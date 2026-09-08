@@ -19,6 +19,7 @@ import json
 import os
 import platform
 import re
+import runpy
 import shutil
 import stat
 import subprocess
@@ -226,6 +227,7 @@ def _extract_clean_snapshot(root: Path, commit: str, destination: Path) -> None:
 
 
 def _copy_allowlisted_snapshot(snapshot: Path, core: Path) -> None:
+    runpy.run_path(str(snapshot / "src/invoice_hub/website.py"))["copy_website"](snapshot, core)
     for relative in SOURCE_COPY_ALLOWLIST:
         source = snapshot / relative
         if not source.exists() or source.is_symlink():

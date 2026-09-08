@@ -16,6 +16,7 @@ from invoice_hub.release.build_manifest import (
     load_build_manifest,
     write_build_manifest,
 )
+from invoice_hub.website import WEBSITE_BUILD_INPUTS
 
 
 def test_current_macos_contract_and_protocol_are_locked() -> None:
@@ -35,6 +36,10 @@ def test_current_macos_contract_and_protocol_are_locked() -> None:
 
 
 def _build_root(tmp_path: Path) -> Path:
+    for name in WEBSITE_BUILD_INPUTS:
+        path = tmp_path / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"fixture: {name}\n", encoding="utf-8")
     (tmp_path / "src").mkdir()
     (tmp_path / "web").mkdir()
     (tmp_path / "scripts" / "tools").mkdir(parents=True)
@@ -67,6 +72,18 @@ def test_build_id_tracks_jierui_facts_and_runner(tmp_path: Path) -> None:
 
     assert facts_changed != original
     assert deterministic_build_id(root) != facts_changed
+
+
+def test_build_id_tracks_website_assets_but_not_maintenance_files(tmp_path: Path) -> None:
+    root = _build_root(tmp_path)
+    original = deterministic_build_id(root)
+    (root / "website/README.md").write_text("Maintenance notes\n", encoding="utf-8")
+    assert deterministic_build_id(root) == original
+    (root / "website/app.js").write_text("console.log('updated site');\n", encoding="utf-8")
+    assert deterministic_build_id(root) != original
+    (root / "website/assets/display.woff").unlink()
+    with pytest.raises(FileNotFoundError):
+        deterministic_build_id(root)
 
 
 def test_build_id_ignores_local_python_and_finder_caches(tmp_path: Path) -> None:

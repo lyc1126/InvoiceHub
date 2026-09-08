@@ -1,11 +1,23 @@
 # InvoiceHub 注释与设计原因地图
 
+2026-09-08 `MonitorState.read_status` 不得持完整 sync 锁，否则 `MonitorBridge.stop` 在请求停止与开始超时前就被长汇总阻断；改为独立状态文件短锁，写入固定 sync -> status 顺序，保留 Windows 原子替换互斥。`test_monitoring.py` 覆盖长锁下状态读取、停止请求与超时可达，以及原有跨进程同步写入串行化。
+
+2026-09-08 `document_index.py::_write_cache_json` 只对 Windows 5/32/33 短暂替换拒绝最多尝试 20 次、累计等待 0.95 秒，保证后台先发布目录快照再发布 ready；持续拒绝和其它错误继续抛出，不能把已完成索引误报失败或无限等待。`test_document_index.py` 以最终状态写入共享冲突与持续错误守护。
+
+2026-09-07 `document_index.py` 注释说明独立进程隔离原生解析 GIL、逐文件提交与 WAL/NORMAL 的断电边界、Windows 原子替换瞬时读失败保留状态。`documents.py::build_outbound_preview` 明确缓存仅定位，当前目录/号码仍是授权边界；`page-documents.js::renderInvoiceChoices` 保留跨页选择且限制 DOM。守护为 `test_document_index.py`、单据预览/导出、Node 大列表及真实浏览器皮肤检查。
+
+2026-09-07 `_filter_invoice_items` 的搜索范围注释解释首页可见字段与旧 API 文件名兼容边界；不能为减少空销售方结果删除源记录或改变识别字段。keyword 必须逐字段匹配，避免字段拼接误命中。守护为 `test_invoice_search_scope_with_large_snapshot`、旧字段契约与 Node 迟到响应检查。
+
+2026-09-07 整合约束：图标是包内固定枚举，Rust 解码只接受已编译 8-bit RGBA；窗口更新失败先恢复托盘，Python 收到成功后才保存，防止界面和状态分离。白底 hi. 从同一母版生成 exe 与选择预览。共用关闭控制器后必须换设置脚本缓存版本，否则旧脚本重复声明会使整页初始化失败。Windows marker 使用对齐的重命名缓冲区和 NT 相对路径操作；目录 flush 只忽略明确不支持的错误。守护测试见 app_icon、frontend、tauri_host_rpc、Windows marker 和 lifecycle 契约。
+
 > 本轮状态：只登记注释债，不批量修改生产源码。
 > 公共权威基线：单一脱敏根提交；旧私有提交、Tag、包和验证材料不在公开图中。
 > 当前边界：`v0.3` Tauri 已有 Host RPC/updater 的专门边界说明，但不能借机重写共享业务核心。
 > 原则：注释解释“为什么必须这样做”和“破坏后会发生什么”，不复述 Python/JavaScript/PowerShell 语法；跨功能交接还必须说明上游、下游与顺序。
 
 ## 1. 为什么先做地图而不是批量加注释
+
+2026-09-07：`backend.rs` watcher 必须在 owned child 结束后请求 host 退出，否则页面关闭会留下占据单实例的宿主；主动退出先撤销 ownership 避免重入，由两项 Rust 单测和生命周期契约守护。Windows child 无控制台时将 stdout/stderr 写入 owned runtime，避免丢失启动诊断；`WindowsHandle` 的唯一所有权只允许 Send，不增加 Clone/Sync 或放宽 no-reparse。皮肤新工具按钮禁止沿用通用位移动效，全局关闭弹窗不能再只用 settings 页面选择器；Ink Pulse 深色单据预览是用户明确保留的显示选择，不影响 Excel 与真实源票面。组包沿用官网精确白名单，禁止引入网站维护文件，由 portable 验包负向测试守护。
 
 当前复杂逻辑主要由测试和 CHANGELOG 保护，源码中的解释性注释很少。直接按行批量生成注释有三类风险：
 
@@ -118,13 +130,24 @@
 | `_validate_css` | CSS 可通过 import/url 加载远程或可执行内容 | 只允许包内存在的相对静态资源 | CSS 安全测试 |
 | `SkinService.import_skin` | 导入替换应以临时目录完成，内置皮肤只读 | imported 仅在 runtime；同 id 内置不覆盖 | 导入、替换、存储隔离测试 |
 | `ink-pulse/skin.css::ink-pulse-page-in` | Chromium 可在 transform 动画终止帧为 `none` 时仍保留 identity matrix，让 `body` 成为 fixed containing block | `body` 入场 keyframes 只允许 opacity，不得使用 transform/filter/perspective/will-change 等可建立 containing block 的属性 | Ink Pulse CSS 完整 keyframes 属性契约；滚动后真实浏览器验收 |
-| `documents.py::_ensure_detail_rows` | 插行会打乱模板合并区域和 footer 样式 | 先移动后续合并区域，再插行并复制模板行样式 | 超模板行数导出测试 |
+| `documents.py::_ensure_detail_rows/_finish_document_layout/document_layout` | 插行不会自动移动行高和打印范围；合并单元格不能按 nth-child 分配列宽 | 移动合并与行高、复制行样式、扩展打印范围；预览消费模板真实列宽 | 5/15 行双单据布局测试 |
+| `documents.py::_inbound_detail_rows` | 同票副本不能重复增加入库数量；相同来源内重复行仍是真实明细 | 仅折叠完整明细一致的不同来源，冲突阻断且不重写 CSV | 重复来源与冲突导出测试 |
+| `AppState.document_inbound_selection/export_inbound_document` | 页面草稿可能跨目录或列表身份已变化 | 同一锁内验证 target、key/path、真实源文件到逐票写出；已有文件跳过/副本 | 批量身份、缺明细、已有文件保护测试 |
+| `page-documents.js::exportBatchInbound/loadPreview` | 写请求结果不确定时重试可能重复生成；旧预览可能迟到 | 不确定结果停止剩余且保留；请求序号拒绝迟到预览 | Node 停止、断网与预览竞态检查 |
 | `documents.py::rmb_uppercase` | “零”的跨四位组规则非直觉，普通数字格式化不能替代 | HALF_UP 到分；万/亿跨组零正确 | RMB 零位测试 |
 | `documents.py::_save_workbook` | 直接保存目标可能留下半写工作簿 | 同目录临时文件后 replace；占用错误上抛给用例层 | 单据导出/占用测试 |
 | `AppState._path_is_under_root` 与 open/export 方法 | 客户端不能提交任意本机路径让服务打开/覆盖 | 路径由服务端计算且必须位于入/出库受控根 | 任意路径拒绝、出库范围测试 |
 | `storage/files.py::atomic_write_json/write_csv_rows` | 状态和投影被并发读取，半写正文会造成错误恢复 | 同目录临时文件 + `os.replace`；保持 CSV BOM | monitoring/cost/API 相邻测试 |
 
 ## 9. P0：Windows 启停和发布
+
+`main.rs` 的 setup 错误必须在 setup 闭包内部消费并提示：Tauri 将该闭包推迟到事件循环，直接返回 `Err` 会触发 panic，无法被 `Builder::build` 的错误分支捕获。清理 owned backend 后记录失败标记、展示诊断并请求退出；`--no-startup-dialog` 仅用于自动化且不能吞掉日志/退出码。守护为 `test_gui_setup_failure_is_presented_before_requesting_exit` 和实际冲突成品运行。
+
+单实例路径必须在 runtime 尚不存在时解析最近的现存父目录，并统一 Windows extended path 前缀；否则首次启动与目录建好后的第二次启动会派生不同锁标识。守护为 `first_launch_and_existing_runtime_have_the_same_instance_key` 及全新隔离状态的重复启动验收。
+
+启动冲突诊断：GUI host 没有可见 stderr，BAT 退出也会带走控制台，失败必须进入独立日志与原生提示；BAT 弹窗前释放 startup mutex，避免用户未关弹窗而阻挡重试。`startup_diagnostics.rs` 的监听查询不依赖 CIM；进程快照/health 自报只作线索，不能授予 ownership。官方单实例锁按 EXE/runtime 区分，防止测试包静默唤回另一个目录的正式包。`api/main.py` 在 app import 前检查端口，避免已知失败仍构造 AppState 并安排同步。守护为 Windows 真实监听与 PS7/PS5.1 冲突测试、Rust 路径锁隔离/监听 PID/字段白名单测试及 CLI 零业务初始化回归。
+
+`InvoiceHub.Windows.psm1::Test-IHProcessIdentity`：Windows venv 转发到基础 executable 后会保留 venv 的 argv 首项。两者分别属于启动上下文的可信 Python 集合才允许继续匹配精确模块/root/config；不能以二者字符串相同作为前提，也不能省略任一匹配。守护为 `test_process_identity_accepts_venv_redirect_without_loosening_scope`（PS7/PS5.1、直接 Python、venv、release 单候选与外来 executable/命令/模块/目录/配置/额外参数负向）和正式根 BAT 启停。
 
 | 文件与位置 | 应说明的原因 | 不能破坏的不变量 | 守护验收 |
 |---|---|---|---|
@@ -182,9 +205,15 @@
 
 | 文件与符号 | 建议解释 | 关联测试 |
 |---|---|---|
+| `common.js::api/beginActivity/setBusy` | 并发读取必须等最后一个响应 JSON 完成才收回提示；失败必须清理；轻量续租不能周期闪动；按钮原节点/尺寸/禁用态需要完整恢复 | frontend_interactions 的并发、JSON 失败、续租静默、重复 busy 与按钮恢复 |
+| `common.js::bindNavigationTransitions/bindStickyControls` 与 app.css | 原生导航不额外延时或先清空页面；浏览器返回/取消要清理状态；皮肤 overflow-x:hidden 可能制造错误的 sticky 滚动容器，必须由 clip 和实测顶栏高度保护；预览、合计与关闭弹窗的 html/body 滚动锁必须高于这些全局 overflow 规则 | Node 导航恢复、预览/前端静态契约；真实桌面/窄屏、内置皮肤和 no-skin 滚动与弹窗 |
+| `system-controls.js` 与 `common.js::connectEvents` | 全局电源总要确认，设置入口保留记住偏好；后端必须明确接受同一行为才结束 SSE，避免把正常关闭报告成断线；失败保留 WebUI 与选择 | Node 确认/取消/重试/归属/SSE、shutdown API、共享模板 HTTP 契约 |
+| `api/app.py::_template` | 关闭片段只读取固定本地文件并在普通模板标记处注入，不能从 URL 接受模板路径；保持每页唯一弹窗与同一控制器 | business_pages_share_power_dialog_and_versioned_controls |
 | `api/app.py::_resolve_event_stream_cursor` | 显式 `after`、`Last-Event-ID`、默认最新游标的优先级用于避免历史回放请求风暴 | SSE cursor 两项测试 |
 | `api/app.py::cache_versioned_assets` | 只有带 `?v=` 的成功静态/皮肤资源才能 immutable；无版本资源不能长缓存 | 前端/API 静态契约 |
-| `api/app.py::active_skin_link` | 服务端首屏注入避免每页额外皮肤列表请求；backend/no_skin 必须跳过 | 皮肤页面注入测试 |
+| `api/app.py::active_skin_link` | 服务端在 body 首次绘制前写入校验后的皮肤身份并加载 CSS，防止暗色换页闪白；backend/no_skin 必须跳过 | 皮肤页面注入、持久化与恢复 API 测试 |
+| `appearance.js::prepareStylesheet` 与切换处理 | CSS 必须先成功加载才写入 skin 状态，失败不能持久化坏外观；切换已加载 link 保留业务 DOM 与未保存草稿；保存响应未确认不自动重试 | frontend_interactions 的加载顺序、双击、失败恢复和草稿测试；真实默认/深色/恢复入口 |
+| `generate_desktop_icon.py` | 本地 OFL 字体和固定坐标避免主机字体造成图标漂移；纸白母版、Windows 多尺寸和 macOS 容器必须来自同一设计，tray 保持 8-bit RGBA | test_desktop_icon 的生成一致性、容器、透明度和小尺寸对比；Tauri IHDR 契约 |
 | `web/static/css/app.css` 的设置移动端规则、做账和勾选合计基础规则 | 缺失媒体查询结束大括号不会删除选择器，却会让桌面端完全丢失基础布局并被皮肤通用规则覆盖 | 共享基础规则必须位于顶层；透明金额卡点击层、三列金额卡和弹窗网格不能只在窄屏生效 | 前端 CSS 大括号层级契约；Ink Pulse、无皮肤和真实桌面浏览器验收 |
 | `web/static/css/app.css::.detail-cost-body` | 有界 Grid 会把多个隐式 `auto` 行压到容器高度内；项目卡又用 `overflow:hidden` 收圆角，结果是汇总卡占满项目、规格表被静默裁掉且外层没有可滚动溢出 | 隐式项目行使用 `max-content` 并从顶部排布；单项目表格保留自身有界滚动，多项目高度交给外层 `overflow-y:auto`，纵向滚动链仍为 `auto` | 前端静态契约；Ink Pulse、Animal Island、`?no_skin=1` 多项目真实浏览器尺寸与滚动验收 |
 | `invoice_print.html::waitForImage/waitForPrintableFrame/requestBrowserPrint` | `load` 早于图片解码/首次绘制时会让首次打印预览抓到空票面；固定 A4 会覆盖 A5，打印态 `100vw/100vh` 又会随预览页框重算形成反馈，表现为持续加载/跳动或额外空白页；浏览器仍只暴露打印对话框近似生命周期 | 首印等待 `decode()` 与两次渲染帧；命名页只声明方向；票面使用页框百分比且只在后续票面前分页；文案不得把对话框打开写成打印成功 | 打印前端契约 + Chrome/Edge A4/A5 真实验收 |
@@ -281,6 +310,16 @@
 - 是否包含会很快漂移的数字、路径、分支状态或样本规模？
 - 行为变化时，关联测试会失败并提醒更新注释吗？
 - 它是否意外承诺了未启用能力，例如正式 OCR、云部署或 SQLite 发票主存储？
+
+## 14.1 独立官网交接约束
+
+`version.py` 将 `LOCAL_WEBSITE_PATH` 与远端 `WEBSITE_URL` 分开，防止官网本地化把更新 Feed 一起改成本机地址；设置 JS 仅为官网放行固定相对路径，下载仍要求 HTTPS。`website.py` 的资源清单被 HTTP 与各组装器共同消费，防止漏带离线字体/图标或公开维护目录；路由跟随选定 Web bundle，返回脱敏缺失提示。导航同窗口进入官网，只在 localhost 的 `/website/` 下提供返回设置，避免依赖桌面壳弹窗，也不影响未来公网导航。守护包括 Node 导航脚本、官网资源 unittest、API 与 build manifest 契约。
+
+`website/demo-data.js` 的入口注释限定合成数据与业务 API 隔离；`website/app.js` 在筛选、合计和 CSV 导出交接处解释可见选择重验与合成来源边界，并在 dialog 打开处说明双滚动根锁定。`website/paper-scene.js` 在动画调度处说明 30 fps、屏外和后台停止，以免官网占用持续业务处理资源。`website/scripts/preview.cjs` 只服务官网目录，不能把仓库或发票目录当静态根。对应守护为 Node 演示/资源契约，真实滚动、焦点与画布验收需浏览器；本轮未获访问许可，不声称已覆盖。
+
+内容补充在 `summarizeDetails` 说明票头与明细独立口径，在 `printPlan` 说明缺 PDF 整批阻断且官网仅动画；五层 Canvas 缓存处说明独立移动与文字清晰度，命中区/键盘/触屏交接注释说明不影响标题操作且减少动态效果直接切换。相邻守护为明细多维分组、PDF 回退/阻断、税额分位守恒和动画收敛测试。做账和 OCR 状态文案依据当前源码；独立税率计算器只称概念预览。
+
+触屏 `pointerleave` 先于 click，不得像鼠标离开那样提前清除 pinned 状态，否则第二次轻点无法归拢；最近分支注释与 Node VM 连续轻点断言共同守护。
 
 ## 15. 相关入口
 

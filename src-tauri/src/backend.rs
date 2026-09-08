@@ -5,9 +5,15 @@ use std::env;
 use std::error::Error;
 use std::fmt;
 use std::fs;
+#[cfg(windows)]
+use std::fs::OpenOptions;
 use std::io::{Read, Write};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, TcpStream};
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
 use std::path::{Component, Path, PathBuf};
+#[cfg(windows)]
+use std::process::Stdio;
 use std::process::{Child, Command};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -51,8 +57,11 @@ const OWNERSHIP_SECRET_BYTES: usize = 32;
 const DESKTOP_STATE_DIRECTORY: &str = "InvoiceHub";
 const DESKTOP_CONFIG_RELATIVE_PATH: &str = "config/app.local.json";
 const DESKTOP_RUNTIME_RELATIVE_PATH: &str = "runtime";
+const DESKTOP_WEBVIEW_DATA_RELATIVE_PATH: &str = "webview";
 const BUILD_MANIFEST_FILE: &str = "invoice-hub-build.json";
 const PACKAGE_MANIFEST_FILE: &str = "invoice-hub-package.json";
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 // The packager sets this while compiling the signed desktop host from the staged manifest.
 // A checkout intentionally has no value and therefore remains non-runnable.
 const BUNDLE_MANIFEST_SHA256: Option<&str> = option_env!("INVOICE_HUB_BUNDLE_MANIFEST_SHA256");
@@ -300,6 +309,7 @@ pub struct BackendBundleManifest {
     program: PathBuf,
     backend_root: PathBuf,
     args: Vec<String>,
+    webview_data_directory: PathBuf,
     expected_identity: ExpectedBackendIdentity,
     updater: UpdaterBundleConfig,
 }
@@ -315,6 +325,10 @@ impl BackendBundleManifest {
 
     pub fn updater(&self) -> &UpdaterBundleConfig {
         &self.updater
+    }
+
+    pub fn webview_data_directory(&self) -> &Path {
+        &self.webview_data_directory
     }
 }
 
@@ -336,6 +350,12 @@ pub struct DesktopStatePaths {
     pub root: PathBuf,
     pub config_path: PathBuf,
     pub runtime_dir: PathBuf,
+}
+
+impl DesktopStatePaths {
+    pub fn webview_data_directory(&self) -> PathBuf {
+        self.root.join(DESKTOP_WEBVIEW_DATA_RELATIVE_PATH)
+    }
 }
 
 impl UpdaterBundleConfig {
@@ -510,6 +530,7 @@ fn load_bundle_manifest_for_state(
         program,
         backend_root,
         args,
+        webview_data_directory: state_paths.webview_data_directory(),
         expected_identity,
         updater,
     })
@@ -570,17 +591,31 @@ pub fn probe_backend_with_retry(
     )
 }
 
-pub fn load_startup_surface() -> Result<StartupSurface, BackendError> {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct StartupPreferences {
+    pub startup_surface: StartupSurface,
+    pub allow_print_popups: bool,
+}
+
+pub fn load_startup_preferences() -> Result<StartupPreferences, BackendError> {
     let response = local_get(PREFERENCES_PATH)?;
     if response.status != 200 {
         return Err(BackendError::StartupSurfaceInvalid);
     }
     let value: Value =
         serde_json::from_slice(&response.body).map_err(|_| BackendError::StartupSurfaceInvalid)?;
-    parse_startup_surface(&value)
+    parse_startup_preferences(&value)
+}
+
+pub fn load_startup_surface() -> Result<StartupSurface, BackendError> {
+    Ok(load_startup_preferences()?.startup_surface)
 }
 
 pub fn parse_startup_surface(value: &Value) -> Result<StartupSurface, BackendError> {
+    Ok(parse_startup_preferences(value)?.startup_surface)
+}
+
+pub fn parse_startup_preferences(value: &Value) -> Result<StartupPreferences, BackendError> {
     let fields = value
         .as_object()
         .ok_or(BackendError::StartupSurfaceInvalid)?;
@@ -600,11 +635,19 @@ pub fn parse_startup_surface(value: &Value) -> Result<StartupSurface, BackendErr
         Some(false) => return Err(BackendError::DesktopSurfaceUnavailable),
         None => return Err(BackendError::StartupSurfaceInvalid),
     }
-    match preferences.get("startup_surface").and_then(Value::as_str) {
-        Some("desktop") => Ok(StartupSurface::Desktop),
-        Some("browser") => Ok(StartupSurface::Browser),
-        _ => Err(BackendError::StartupSurfaceInvalid),
-    }
+    let startup_surface = match preferences.get("startup_surface").and_then(Value::as_str) {
+        Some("desktop") => StartupSurface::Desktop,
+        Some("browser") => StartupSurface::Browser,
+        _ => return Err(BackendError::StartupSurfaceInvalid),
+    };
+    let allow_print_popups = preferences
+        .get("allow_print_popups")
+        .and_then(Value::as_bool)
+        .ok_or(BackendError::StartupSurfaceInvalid)?;
+    Ok(StartupPreferences {
+        startup_surface,
+        allow_print_popups,
+    })
 }
 
 pub fn validate_openapi_routes(openapi: &Value) -> Result<(), HandshakeError> {
@@ -628,12 +671,14 @@ pub struct BackendHost {
     child: Arc<Mutex<Child>>,
     child_pid: u32,
     expected_identity: ExpectedBackendIdentity,
+    webview_data_directory: PathBuf,
     ownership_secret: [u8; OWNERSHIP_SECRET_BYTES],
     ownership_verified: Arc<AtomicBool>,
     lifecycle: Arc<Mutex<BackendLifecycleState>>,
     liveness_shutdown: Arc<AtomicBool>,
     liveness_worker: Mutex<Option<JoinHandle<()>>>,
     startup_surface: StartupSurface,
+    allow_print_popups: bool,
     host_rpc: HostRpcServer,
 }
 
@@ -649,6 +694,29 @@ pub struct BackendLifecycleAuthority {
 pub enum BackendShutdownOutcome {
     Graceful,
     Forced,
+}
+
+#[cfg(windows)]
+fn configure_windows_backend_process(
+    command: &mut Command,
+    runtime_dir: &Path,
+) -> Result<(), BackendError> {
+    fs::create_dir_all(runtime_dir).map_err(|_| BackendError::DesktopStateUnavailable)?;
+    let stdout = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(runtime_dir.join("server_stdout.log"))
+        .map_err(|_| BackendError::DesktopStateUnavailable)?;
+    let stderr = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(runtime_dir.join("server_stderr.log"))
+        .map_err(|_| BackendError::DesktopStateUnavailable)?;
+    command
+        .stdout(Stdio::from(stdout))
+        .stderr(Stdio::from(stderr))
+        .creation_flags(CREATE_NO_WINDOW);
+    Ok(())
 }
 
 #[derive(Clone, Debug)]
@@ -698,6 +766,10 @@ impl BackendLifecycleState {
 }
 
 impl BackendHost {
+    pub fn runtime_dir(&self) -> &Path {
+        &self.expected_identity.runtime_dir
+    }
+
     pub fn lifecycle_authority(&self) -> BackendLifecycleAuthority {
         BackendLifecycleAuthority {
             child: Arc::clone(&self.child),
@@ -712,9 +784,12 @@ impl BackendHost {
         app_handle: tauri::AppHandle<tauri::Wry>,
     ) -> Result<Self, BackendError> {
         assert_fixed_backend_port_available()?;
+        let webview_data_directory = manifest.webview_data_directory().to_path_buf();
+        fs::create_dir_all(&webview_data_directory)
+            .map_err(|_| BackendError::DesktopStateUnavailable)?;
         let ownership_verified = Arc::new(AtomicBool::new(false));
         let host_rpc = HostRpcServer::start(
-            app_handle,
+            app_handle.clone(),
             Arc::clone(&ownership_verified),
             manifest.updater.endpoint().map(str::to_owned),
         )?;
@@ -736,6 +811,9 @@ impl BackendHost {
             DESKTOP_UPDATER_ENABLED_ENV,
             if manifest.updater.enabled() { "1" } else { "0" },
         );
+        // The GUI host keeps backend diagnostics in runtime files instead of inheriting a console.
+        #[cfg(windows)]
+        configure_windows_backend_process(&mut command, &manifest.expected_identity.runtime_dir)?;
         let child = command
             .spawn()
             .map_err(|_| BackendError::BackendSpawnFailed)?;
@@ -751,8 +829,8 @@ impl BackendHost {
             }
             return Err(error);
         }
-        let startup_surface = match load_startup_surface() {
-            Ok(surface) => surface,
+        let startup_preferences = match load_startup_preferences() {
+            Ok(preferences) => preferences,
             Err(error) => {
                 if let Ok(mut child) = child.lock() {
                     let _ = child.kill();
@@ -771,6 +849,7 @@ impl BackendHost {
             }
             return Err(error);
         }
+        let startup_surface = startup_preferences.startup_surface;
         let liveness_shutdown = Arc::new(AtomicBool::new(false));
         let lifecycle = Arc::new(Mutex::new(BackendLifecycleState::new(
             child_pid,
@@ -783,17 +862,20 @@ impl BackendHost {
             Arc::clone(&ownership_verified),
             Arc::clone(&lifecycle),
             Arc::clone(&liveness_shutdown),
+            move || app_handle.exit(0),
         );
         Ok(Self {
             child,
             child_pid,
             expected_identity: manifest.expected_identity,
+            webview_data_directory,
             ownership_secret,
             ownership_verified,
             lifecycle,
             liveness_shutdown,
             liveness_worker: Mutex::new(Some(liveness_worker)),
             startup_surface,
+            allow_print_popups: startup_preferences.allow_print_popups,
             host_rpc,
         })
     }
@@ -813,6 +895,14 @@ impl BackendHost {
 
     pub fn owns_backend(&self) -> bool {
         self.ownership_verified.load(Ordering::Acquire)
+    }
+
+    pub fn allow_print_popups(&self) -> bool {
+        self.allow_print_popups
+    }
+
+    pub fn webview_data_directory(&self) -> &Path {
+        &self.webview_data_directory
     }
 
     pub fn release_startup_gate(&self) -> Result<(), BackendError> {
@@ -1007,18 +1097,30 @@ impl Drop for BackendHost {
     }
 }
 
-fn spawn_backend_liveness_watcher(
+fn spawn_backend_liveness_watcher<F>(
     child: Arc<Mutex<Child>>,
     ownership_verified: Arc<AtomicBool>,
     lifecycle: Arc<Mutex<BackendLifecycleState>>,
     shutdown: Arc<AtomicBool>,
-) -> JoinHandle<()> {
+    on_owned_backend_exit: F,
+) -> JoinHandle<()>
+where
+    F: FnOnce() + Send + 'static,
+{
     thread::spawn(move || {
+        let mut on_owned_backend_exit = Some(on_owned_backend_exit);
         while !shutdown.load(Ordering::Acquire) {
             if !child_is_running(&child) {
-                ownership_verified.store(false, Ordering::Release);
+                let was_owned = ownership_verified.swap(false, Ordering::AcqRel);
                 if let Ok(mut lifecycle) = lifecycle.lock() {
                     lifecycle.invalidate(LifecyclePhase::Invalid);
+                }
+                // localhost is the only UI source. Leaving the tray and single-instance
+                // host alive after its owned child exits makes every later launch inert.
+                if was_owned {
+                    if let Some(on_exit) = on_owned_backend_exit.take() {
+                        on_exit();
+                    }
                 }
                 return;
             }
@@ -1662,7 +1764,9 @@ fn thread_sleep_until(deadline: Instant) {
 mod tests {
     use std::fs;
     use std::path::Path;
+    use std::process::{Child, Command};
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::sync::mpsc;
     use std::sync::{Arc, Mutex};
 
     use serde_json::{Map, Value};
@@ -1673,11 +1777,29 @@ mod tests {
         desktop_state_paths_for, fixed_backend_arguments, generate_ownership_challenge,
         generate_ownership_secret, identity_from_json, is_keep_monitor_shutdown_ack,
         ownership_response_for_test, ownership_response_matches, retry_probe,
-        revalidate_backend_after_preferences, state_paths_for_bundle_profile, updater_from_json,
-        BackendError, BackendHealth, BackendLifecycleAuthority, BackendLifecycleState,
-        BundleProfile, DesktopStatePaths, DesktopStatePlatform, HandshakeError, LifecycleAuthority,
-        LifecyclePhase, RecoveryError, RECOVERY_SMOKE_ENDPOINT, RECOVERY_SMOKE_PUBLIC_KEY,
+        revalidate_backend_after_preferences, spawn_backend_liveness_watcher,
+        state_paths_for_bundle_profile, updater_from_json, BackendError, BackendHealth,
+        BackendLifecycleState, BundleProfile, DesktopStatePaths, DesktopStatePlatform,
+        HandshakeError, LifecyclePhase, RECOVERY_SMOKE_ENDPOINT, RECOVERY_SMOKE_PUBLIC_KEY,
     };
+    #[cfg(unix)]
+    use super::{BackendLifecycleAuthority, LifecycleAuthority, RecoveryError};
+
+    #[cfg(windows)]
+    fn quick_exit_child() -> Child {
+        Command::new("cmd.exe")
+            .args(["/D", "/C", "exit", "0"])
+            .spawn()
+            .expect("spawn a short-lived Windows test child")
+    }
+
+    #[cfg(unix)]
+    fn quick_exit_child() -> Child {
+        Command::new("sh")
+            .args(["-c", "exit 0"])
+            .spawn()
+            .expect("spawn a short-lived Unix test child")
+    }
 
     #[cfg(unix)]
     struct TestAuthority {
@@ -1739,6 +1861,72 @@ mod tests {
             config_path: "/config".into(),
             runtime_dir: "/runtime".into(),
         }
+    }
+
+    #[test]
+    fn liveness_watcher_exits_the_host_after_its_owned_backend_ends() {
+        let child = quick_exit_child();
+        let child_pid = child.id();
+        let ownership_verified = Arc::new(AtomicBool::new(true));
+        let lifecycle = Arc::new(Mutex::new(BackendLifecycleState {
+            generation: 3,
+            phase: LifecyclePhase::OwnedRunning,
+            health_pid: child_pid,
+            owned_pid: child_pid,
+            process_pid: child_pid,
+            startup_gate_released: true,
+            state_scope: "b".repeat(64),
+        }));
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let (exit_tx, exit_rx) = mpsc::channel();
+
+        let worker = spawn_backend_liveness_watcher(
+            Arc::new(Mutex::new(child)),
+            Arc::clone(&ownership_verified),
+            Arc::clone(&lifecycle),
+            Arc::clone(&shutdown),
+            move || exit_tx.send(()).expect("report host exit request"),
+        );
+
+        exit_rx
+            .recv_timeout(std::time::Duration::from_secs(3))
+            .expect("owned backend exit requests host exit");
+        worker.join().expect("liveness watcher exits cleanly");
+        assert!(!ownership_verified.load(Ordering::Acquire));
+        let lifecycle = lifecycle.lock().expect("lifecycle lock");
+        assert_eq!(lifecycle.phase, LifecyclePhase::Invalid);
+        assert!(!lifecycle.startup_gate_released);
+    }
+
+    #[test]
+    fn liveness_watcher_does_not_reenter_an_intentional_host_exit() {
+        let child = quick_exit_child();
+        let child_pid = child.id();
+        let ownership_verified = Arc::new(AtomicBool::new(false));
+        let lifecycle = Arc::new(Mutex::new(BackendLifecycleState {
+            generation: 4,
+            phase: LifecyclePhase::Terminating,
+            health_pid: child_pid,
+            owned_pid: child_pid,
+            process_pid: child_pid,
+            startup_gate_released: false,
+            state_scope: "c".repeat(64),
+        }));
+        let exit_requests = Arc::new(AtomicUsize::new(0));
+        let exit_requests_for_watcher = Arc::clone(&exit_requests);
+
+        let worker = spawn_backend_liveness_watcher(
+            Arc::new(Mutex::new(child)),
+            ownership_verified,
+            lifecycle,
+            Arc::new(AtomicBool::new(false)),
+            move || {
+                exit_requests_for_watcher.fetch_add(1, Ordering::AcqRel);
+            },
+        );
+
+        worker.join().expect("liveness watcher exits cleanly");
+        assert_eq!(exit_requests.load(Ordering::Acquire), 0);
     }
 
     #[cfg(unix)]
@@ -1892,44 +2080,33 @@ mod tests {
 
     #[test]
     fn desktop_state_paths_are_derived_from_platform_user_roots() {
-        let windows = desktop_state_paths_for(
-            DesktopStatePlatform::Windows,
-            Some(Path::new("/users/example/local-app-data")),
-            None,
-        )
-        .expect("Windows state paths");
-        assert_eq!(
-            windows.root,
-            Path::new("/users/example/local-app-data/InvoiceHub")
-        );
+        // Path::is_absolute follows the host platform, so use one host-valid
+        // absolute root while exercising both target layout branches.
+        let user_root = std::env::temp_dir().join("invoicehub-desktop-state-test");
+        assert!(user_root.is_absolute());
+        let windows =
+            desktop_state_paths_for(DesktopStatePlatform::Windows, Some(&user_root), None)
+                .expect("Windows state paths");
+        assert_eq!(windows.root, user_root.join("InvoiceHub"));
         assert_eq!(
             windows.config_path,
-            Path::new("/users/example/local-app-data/InvoiceHub/config/app.local.json")
+            user_root.join("InvoiceHub/config/app.local.json")
         );
-        assert_eq!(
-            windows.runtime_dir,
-            Path::new("/users/example/local-app-data/InvoiceHub/runtime")
-        );
+        assert_eq!(windows.runtime_dir, user_root.join("InvoiceHub/runtime"));
 
-        let macos = desktop_state_paths_for(
-            DesktopStatePlatform::Macos,
-            None,
-            Some(Path::new("/Users/example")),
-        )
-        .expect("macOS state paths");
+        let macos = desktop_state_paths_for(DesktopStatePlatform::Macos, None, Some(&user_root))
+            .expect("macOS state paths");
         assert_eq!(
             macos.root,
-            Path::new("/Users/example/Library/Application Support/InvoiceHub")
+            user_root.join("Library/Application Support/InvoiceHub")
         );
         assert_eq!(
             macos.config_path,
-            Path::new(
-                "/Users/example/Library/Application Support/InvoiceHub/config/app.local.json"
-            )
+            user_root.join("Library/Application Support/InvoiceHub/config/app.local.json")
         );
         assert_eq!(
             macos.runtime_dir,
-            Path::new("/Users/example/Library/Application Support/InvoiceHub/runtime")
+            user_root.join("Library/Application Support/InvoiceHub/runtime")
         );
         assert!(matches!(
             desktop_state_paths_for(
@@ -2188,7 +2365,10 @@ mod tests {
         assert!(!updater.enabled());
 
         for (name, value) in [
-            ("endpoint", Value::String("https://example.invalid/latest.json".to_owned())),
+            (
+                "endpoint",
+                Value::String("https://example.invalid/latest.json".to_owned()),
+            ),
             ("public_key", Value::String("unexpected-key".to_owned())),
         ] {
             let mut extra = disabled.clone();

@@ -30,6 +30,7 @@ def test_import_settings_copies_only_the_allowlist_and_preserves_backups(tmp_pat
         {
             "startup_surface": "desktop",
             "auto_check_updates": False,
+            "allow_print_popups": False,
             "cost_row_limit": 100,
             "private_extension": "must-not-cross-package-boundary",
         },
@@ -61,6 +62,7 @@ def test_import_settings_copies_only_the_allowlist_and_preserves_backups(tmp_pat
     )
     assert preferences == {
         "auto_check_updates": False,
+        "allow_print_popups": False,
         "cost_row_limit": 100,
         "long_path_display": "marquee",
         "new_package_only": True,

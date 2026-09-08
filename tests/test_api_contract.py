@@ -25,6 +25,8 @@ from invoice_hub.services.app_state import AppState
 from invoice_hub.services.skins import MAX_SKIN_FILE_BYTES, MAX_SKIN_FILES
 from invoice_hub.storage.files import write_csv_rows
 from invoice_hub.targets import target_profile_for
+from invoice_hub.website import WEBSITE_ASSETS, copy_website
+from invoice_hub.version import CHANGELOG_URL, PUBLIC_SOURCE_URL, WEBSITE_URL
 
 
 def _slow_background_sync_worker(
@@ -76,7 +78,7 @@ def fake_run(app, **kwargs):
     }))
 
 uvicorn.run = fake_run
-sys.argv = ["invoice-hub", "--root", sys.argv[1], "--config", sys.argv[2]]
+sys.argv = ["invoice-hub", "--root", sys.argv[1], "--config", sys.argv[2], "--port", "0"]
 from invoice_hub.api.main import main
 raise SystemExit(main())
 """
@@ -124,6 +126,7 @@ sys.argv = [
     "--root", sys.argv[1],
     "--config", sys.argv[2],
     "--initial-state-dir", sys.argv[3],
+    "--port", "0",
 ]
 from invoice_hub.api.main import main
 raise SystemExit(main())
@@ -413,6 +416,7 @@ def test_preferences_api_defaults_and_persistence(tmp_path: Path, monkeypatch) -
         "system_shutdown_behavior": "ask",
         "ocr_candidate_dir": "",
         "auto_check_updates": True,
+        "allow_print_popups": True,
         "startup_surface": "desktop" if sys.platform == "darwin" else "browser",
     }
     assert payload["allowed"]["cost_row_limit"] == [30, 60, 100]
@@ -421,6 +425,7 @@ def test_preferences_api_defaults_and_persistence(tmp_path: Path, monkeypatch) -
     assert payload["allowed"]["system_shutdown_behavior"] == ["ask", "keep_monitor", "stop_monitor"]
     assert payload["allowed"]["startup_surface"] == ["browser", "desktop"]
     assert payload["allowed"]["desktop_available"] is (sys.platform == "darwin")
+    assert payload["allowed"]["allow_print_popups"] == [False, True]
 
     preferences_path = Path(payload["preferences_path"]).resolve()
     assert preferences_path == (tmp_path / "runtime" / "local_state" / "preferences.json").resolve()
@@ -438,6 +443,7 @@ def test_preferences_api_defaults_and_persistence(tmp_path: Path, monkeypatch) -
             "system_shutdown_behavior": "stop_monitor",
             "ocr_candidate_dir": "ocr候选",
             "auto_check_updates": False,
+            "allow_print_popups": False,
             "startup_surface": "browser",
         },
     )
@@ -449,6 +455,7 @@ def test_preferences_api_defaults_and_persistence(tmp_path: Path, monkeypatch) -
     assert preferences["system_shutdown_behavior"] == "stop_monitor"
     assert preferences["ocr_candidate_dir"] == str((tmp_path / "ocr候选").resolve())
     assert preferences["auto_check_updates"] is False
+    assert preferences["allow_print_popups"] is False
     assert preferences["startup_surface"] == "browser"
     assert json.loads(preferences_path.read_text(encoding="utf-8")) == preferences
 
@@ -470,6 +477,10 @@ def test_preferences_api_defaults_and_persistence(tmp_path: Path, monkeypatch) -
     invalid_shutdown = client.put("/api/v1/preferences", json={"system_shutdown_behavior": "close_everything"})
     assert invalid_shutdown.status_code == 400
     assert "系统关闭方式" in invalid_shutdown.json()["detail"]
+
+    invalid_print_popup = client.put("/api/v1/preferences", json={"allow_print_popups": "enabled"})
+    assert invalid_print_popup.status_code == 400
+    assert "发票打印弹窗许可" in invalid_print_popup.json()["detail"]
 
     app.state.invoice_hub._package_manifest["platform"] = "windows"
     unsupported_desktop = client.put("/api/v1/preferences", json={"startup_surface": "desktop"})
@@ -535,9 +546,100 @@ def test_about_api_is_local_only_and_update_check_payload_is_strict(tmp_path: Pa
     assert payload["product"]["version"] == "0.3.0-alpha.2"
     assert payload["package"]["manifest_status"] == "missing"
     assert payload["update"]["status"] == "idle"
+    assert payload["links"]["website"] == "/website/"
 
     assert client.post("/api/v1/update/check", json={"force": "yes"}).status_code == 400
     assert client.post("/api/v1/update/check", json={"force": True, "url": "https://example.com"}).status_code == 400
+
+    update_calls: list[str] = []
+
+    def missing_feed_transport(url, *_args):
+        update_calls.append(url)
+        from invoice_hub.services.update_service import UpdateFetchResult
+
+        return UpdateFetchResult(404, b"", "", url)
+
+    app.state.invoice_hub._update_service.transport = missing_feed_transport
+    unavailable = client.post("/api/v1/update/check", json={"force": True})
+    assert unavailable.status_code == 200
+    assert unavailable.json()["update"]["status"] == "unsupported"
+    assert unavailable.json()["update"]["error_code"] == "UPDATE_FEED_UNAVAILABLE"
+    assert update_calls
+
+    opened_urls: list[str] = []
+    monkeypatch.setattr("invoice_hub.services.app_state.open_external_url", opened_urls.append)
+    assert client.post("/api/v1/about/links/github", json={}).json() == {"ok": True, "link_key": "github"}
+    assert client.post("/api/v1/about/links/changelog", json={}).json() == {"ok": True, "link_key": "changelog"}
+    assert opened_urls == [PUBLIC_SOURCE_URL, CHANGELOG_URL]
+    assert client.post("/api/v1/about/links/website", json={}).status_code == 400
+    assert client.post("/api/v1/about/links/github", json={"url": "https://example.com"}).status_code == 400
+    assert client.post(
+        "/api/v1/about/links/github",
+        headers={"Origin": "https://attacker.example"},
+        json={},
+    ).status_code == 403
+
+    def unavailable_browser(_url: str) -> None:
+        raise OSError("shell unavailable")
+
+    monkeypatch.setattr("invoice_hub.services.app_state.open_external_url", unavailable_browser)
+    failed = client.post("/api/v1/about/links/github", json={})
+    assert failed.status_code == 503
+    assert failed.json() == {"detail": "无法打开系统默认浏览器"}
+
+
+def test_business_pages_share_power_dialog_and_versioned_controls(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr("invoice_hub.services.app_state.AppState.run_background_diagnostics", lambda self, trigger="startup_sync": None)
+    client = TestClient(create_app(tmp_path))
+    for route in ("/", "/costs", "/documents", "/bookkeeping", "/ocr", "/consistency", "/settings", "/skins"):
+        for suffix in ("", "?no_skin=1"):
+            response = client.get(route + suffix)
+            assert response.status_code == 200
+            assert response.text.count('id="systemPowerBtn"') == 1
+            assert response.text.count('id="settingsShutdownDialog"') == 1
+            assert "{{system_controls}}" not in response.text
+            assert "system-controls.js?v=20260907-desktop-integrated-2" in response.text
+            assert "settings-actions.css?v=20260907-desktop-integrated-2" in response.text
+            assert '>hi<span>.</span></span>' in response.text
+    assert "systemPowerBtn" not in client.get("/backend").text
+    assert client.get("/static/icons/power.svg").status_code == 200
+
+
+def test_bundled_website_serves_only_packaged_assets_and_keeps_settings_navigation(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr("invoice_hub.services.app_state.AppState.run_background_diagnostics", lambda self, trigger="startup_sync": None)
+    app = create_app(tmp_path)
+    client = TestClient(app)
+    root = Path(__file__).resolve().parents[1]
+    assert client.get("/website", follow_redirects=False).headers["location"] == "/website/"
+    for name in ("", *WEBSITE_ASSETS):
+        response = client.get("/website/" + name)
+        assert response.status_code == 200
+        assert response.content == (root / "website" / (name or "index.html")).read_bytes()
+        assert response.headers["cache-control"] == "no-cache"
+    assert client.head("/website/").status_code == 200
+    for name in ("README.md", "scripts/preview.cjs", "tests/demo.test.cjs", "assets/", "%2e%2e/config/app.local.json"):
+        assert client.get("/website/" + name).status_code == 404
+    for route in ("/settings", "/settings?no_skin=1"):
+        response = client.get(route)
+        assert response.status_code == 200
+        assert 'id="settingsAboutWebsiteLink" class="btn btn--ghost" href="/website/"' in response.text
+        assert "page-settings.js?v=20260907-desktop-integrated-2" in response.text
+    assert "activeSkinStylesheet" not in client.get("/website/").text
+
+
+def test_bundled_website_uses_packaged_web_root_and_diagnoses_missing_assets(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr("invoice_hub.services.app_state.AppState.run_background_diagnostics", lambda self, trigger="startup_sync": None)
+    (tmp_path / "web/templates").mkdir(parents=True)
+    (tmp_path / "web/static").mkdir()
+    copy_website(Path(__file__).resolve().parents[1], tmp_path)
+    (tmp_path / "website/index.html").write_text("<h1>Bundled site</h1>", encoding="utf-8")
+    client = TestClient(create_app(tmp_path))
+    assert client.get("/website/").text == "<h1>Bundled site</h1>"
+    (tmp_path / "website/style.css").unlink()
+    response = client.get("/website/style.css")
+    assert response.status_code == 503
+    assert "官网资源缺失" in response.json()["detail"]
+    assert str(tmp_path) not in response.text
 
 
 def test_host_delegated_update_install_requires_an_empty_body_and_redacts_failures(tmp_path: Path, monkeypatch) -> None:
@@ -831,6 +933,7 @@ def test_events_stream_last_event_id_reads_only_following_events(tmp_path: Path,
 
 
 def test_health_reads_packaged_build_manifest(tmp_path: Path) -> None:
+    copy_website(Path(__file__).resolve().parents[1], tmp_path)
     (tmp_path / "src").mkdir()
     (tmp_path / "web").mkdir()
     (tmp_path / "scripts" / "tools").mkdir(parents=True)
@@ -858,6 +961,7 @@ def test_health_reads_packaged_build_manifest(tmp_path: Path) -> None:
 
 
 def test_health_uses_capabilities_from_present_build_manifest(tmp_path: Path) -> None:
+    copy_website(Path(__file__).resolve().parents[1], tmp_path)
     (tmp_path / "src").mkdir()
     (tmp_path / "web").mkdir()
     (tmp_path / "scripts" / "tools").mkdir(parents=True)
@@ -1100,8 +1204,8 @@ def test_skin_api_defaults_to_no_skin_and_enables_builtin(tmp_path: Path, monkey
     assert skins["skins"]
     assert all(item["read_only"] is True for item in skins["skins"] if item["builtin"])
     builtins = {item["id"]: item for item in skins["skins"] if item["builtin"]}
-    assert set(builtins) == {"animal-island", "ink-pulse"}
-    assert builtins["ink-pulse"]["version"] == "1.3.0"
+    assert set(builtins) == {"animal-island", "ink-pulse", "website-dark"}
+    assert builtins["ink-pulse"]["version"] == "1.4.0"
     builtin = builtins["animal-island"]
 
     css = client.get(builtin["stylesheet_url"])
@@ -1278,6 +1382,34 @@ def test_skin_page_injects_active_skin_and_no_skin_bypasses(tmp_path: Path, monk
 
     backend = client.get("/backend").text
     assert 'id="activeSkinStylesheet"' not in backend
+
+
+def test_website_dark_persists_and_recovery_keeps_white_without_changing_saved_skin(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr("invoice_hub.services.app_state.AppState.run_background_diagnostics", lambda self, trigger="startup_sync": None)
+    client = TestClient(create_app(tmp_path))
+    assert client.get("/api/v1/skins").json()["default_skin_id"] is None
+    enabled = client.post("/api/v1/skins/website-dark/enable").json()
+    assert enabled["enabled_skin_id"] == "website-dark"
+    css = client.get(enabled["active_skin"]["stylesheet_url"])
+    assert css.status_code == 200
+    assert "color-scheme: dark" in css.text
+    assert "--surface: #242520" in css.text
+    assert "immutable" in css.headers["cache-control"]
+
+    restarted = TestClient(create_app(tmp_path))
+    for route in ("/", "/costs", "/documents", "/bookkeeping", "/ocr", "/settings", "/skins", "/consistency"):
+        page = restarted.get(route).text
+        assert 'id="appearanceToggle"' in page
+        assert "{{appearance_toggle}}" not in page
+        assert 'appearance.js?v=20260907-desktop-integrated-2' in page
+        assert page.index('dataset.activeSkin = "website-dark"') < page.index("</head>")
+        recovery = restarted.get(route + "?no_skin=1").text
+        assert 'id="activeSkinStylesheet"' not in recovery
+        assert "dataset.activeSkin =" not in recovery
+    assert restarted.get("/api/v1/skins").json()["enabled_skin_id"] == "website-dark"
+    assert "dataset.activeSkin =" not in restarted.get("/backend").text
+    assert restarted.post("/api/v1/skins/reset").json()["enabled_skin_id"] is None
+    assert 'id="activeSkinStylesheet"' not in restarted.get("/").text
 
 
 def test_reference_status_api_rejects_quantity_over_total(tmp_path: Path) -> None:
@@ -1713,7 +1845,11 @@ def test_cost_analysis_schema_refresh_waits_for_profile_lock_without_blocking_he
     assert (watch / "成本发票汇总.xlsx").exists()
 
 
-def test_bridge_rebuild_and_events(tmp_path: Path) -> None:
+def test_bridge_rebuild_and_events(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(
+        "invoice_hub.services.app_state.AppState.run_background_diagnostics",
+        lambda self, trigger="startup_sync": None,
+    )
     watch = tmp_path / "发票文件"
     watch.mkdir()
     (watch / "sample.xml").write_text((Path(__file__).parent / "fixtures" / "sample_invoice.xml").read_text(encoding="utf-8"), encoding="utf-8")
@@ -1725,6 +1861,78 @@ def test_bridge_rebuild_and_events(tmp_path: Path) -> None:
     assert client.get("/api/v1/invoices").json()["count"] == 1
     task = client.get(f"/api/v1/tasks/{result['task_id']}").json()
     assert task["status"] == "success"
+    progress = client.get("/api/v1/bridge/progress").json()
+    assert progress["trigger"] == "manual_rebuild"
+    assert progress["status"] == "success"
+    assert progress["percent"] == 100
+
+
+def test_bridge_progress_api_filters_to_active_profile_and_safe_fields(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(
+        "invoice_hub.services.app_state.AppState.run_background_diagnostics",
+        lambda self, trigger="startup_sync": None,
+    )
+    app = create_app(tmp_path)
+    state = app.state.invoice_hub
+    client = TestClient(app)
+
+    idle = client.get("/api/v1/bridge/progress").json()
+    assert idle["status"] == "idle"
+    assert idle["target_id"] == state.active_profile.id
+    assert idle["percent"] == 0
+    assert idle["background_sync_status"] == "initializing"
+
+    with state._lock:
+        state._background_status = "running"
+
+    monitor_state = MonitorState(state.active_profile, state.layout.db_path)
+    monitor_state.write_sync_progress(
+        {
+            "version": 99,
+            "operation_id": "operation-1",
+            "task_id": "task-1",
+            "target_id": state.active_profile.id,
+            "trigger": "manual_rebuild",
+            "status": "running",
+            "phase": "cost",
+            "message": "正在解析成本发票",
+            "percent": 101,
+            "processed_count": 9,
+            "total_count": 3,
+            "started_at": "2026-09-03T00:00:00Z",
+            "updated_at": "2026-09-03T00:00:01Z",
+            "error": "internal diagnostics must not be returned",
+        }
+    )
+
+    payload = client.get("/api/v1/bridge/progress").json()
+    assert payload["status"] == "running"
+    assert payload["percent"] == 100
+    assert payload["processed_count"] == 3
+    assert payload["total_count"] == 3
+    assert payload["message"] == "正在解析成本发票"
+    assert payload["background_sync_status"] == "running"
+    assert "error" not in payload
+    assert set(payload) == {
+        "version",
+        "operation_id",
+        "task_id",
+        "target_id",
+        "trigger",
+        "status",
+        "phase",
+        "message",
+        "percent",
+        "processed_count",
+        "total_count",
+        "started_at",
+        "updated_at",
+        "finished_at",
+        "background_sync_status",
+    }
+
+    monitor_state.write_sync_progress({"target_id": "another-profile", "status": "running", "percent": 50})
+    assert client.get("/api/v1/bridge/progress").json()["status"] == "idle"
 
 
 def test_bridge_rebuild_reports_empty_archive_only_directory(tmp_path: Path) -> None:
@@ -1790,6 +1998,71 @@ def test_bridge_rebuild_builds_xml_cost_analysis_details(tmp_path: Path) -> None
     assert cost["sync"]["parsed_invoice_count"] == 1
     assert cost["sync"]["review_count"] == 0
     assert cost["sync"]["sync_state"] == "fresh"
+
+
+def test_invoice_keyword_filter_matches_only_advertised_fields(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr("invoice_hub.services.app_state.AppState.run_background_diagnostics", lambda self, trigger="startup_sync": None)
+    app = create_app(tmp_path)
+    state = app.state.invoice_hub
+    watch = Path(state.active_profile.watch_dir)
+    watch.mkdir(exist_ok=True)
+    sources = [
+        watch / "seller-match.xml",
+        watch / "invoice-number-match.xml",
+        watch / "keyword-file-match.xml",
+        watch / "buyer-only-match.xml",
+        watch / "classification-only-match.xml",
+    ]
+    for source in sources:
+        source.write_text("<invoice />", encoding="utf-8")
+
+    rows = [
+        _summary_invoice_row(source, invoice_number=f"1000000000000000000{index}")
+        for index, source in enumerate(sources, start=1)
+    ]
+    rows[0]["销售方"] = "目标关键字销售方"
+    rows[1]["发票号码"] = "目标关键字发票号"
+    rows[2]["文件名"] = "目标关键字文件.xml"
+    rows[3]["购买方"] = "目标关键字购买方"
+    rows[4]["类型识别说明"] = "目标关键字仅在识别说明"
+    write_csv_rows(Path(state.active_profile.workspace_dir) / "发票汇总.csv", SUMMARY_HEADERS, rows)
+
+    response = TestClient(app).get("/api/v1/invoices", params={"keyword": "目标关键字"})
+
+    assert response.status_code == 200
+    assert {item["source_file"] for item in response.json()["items"]} == {
+        "seller-match.xml",
+        "invoice-number-match.xml",
+        "目标关键字文件.xml",
+    }
+
+
+def test_invoice_search_scope_with_large_snapshot(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(AppState, "run_background_diagnostics", lambda self, trigger="startup_sync": None)
+    app = create_app(tmp_path)
+    state = app.state.invoice_hub
+    rows = [{"文件名": f"SYNTHETIC-backup-{index}.pdf"} for index in range(6000)]
+    rows += [{"文件名": f"other-{index}.pdf", "购买方": "SYNTHETIC"} for index in range(1000)]
+    rows += [
+        {"文件名": "seller.xml", "销售方": "Synthetic Supplier", "开票金额": "12.00"},
+        {"文件名": "number.pdf", "发票号码": "SYNTHETIC-123", "开票金额": "8.00"},
+        {"文件名": "boundary.pdf", "销售方": "syn", "发票号码": "thetic"},
+    ]
+    monkeypatch.setattr(state, "_summary_rows", lambda: rows)
+    client = TestClient(app)
+    invoice = client.get("/api/v1/invoices", params={"keyword": " synthetic ", "search_scope": "invoice"}).json()
+    assert invoice["count"] == 2
+    assert {item["source_file"] for item in invoice["items"]} == {"seller.xml", "number.pdf"}
+    assert invoice["stats"]["filtered"]["total_amount"] == 20
+    assert invoice["stats"]["all"]["total"] == 7003
+    assert client.get("/api/v1/invoices", params={"keyword": "synthetic", "search_scope": "filename"}).json()["count"] == 6000
+    for scope in ({}, {"search_scope": "all"}):
+        assert client.get("/api/v1/invoices", params={"keyword": "synthetic", **scope}).json()["count"] == 6002
+    assert client.get("/api/v1/invoices", params={"keyword": "synthetic", "search_scope": "invoice", "file_ext": ".xml"}).json()["count"] == 1
+    assert client.get("/api/v1/invoices", params={"keyword": "syn thetic", "search_scope": "invoice"}).json()["count"] == 0
+    assert client.get("/api/v1/invoices", params={"keyword": "absent", "search_scope": "invoice"}).json()["count"] == 0
+    assert client.get("/api/v1/invoices", params={"search_scope": "invoice"}).json()["count"] == 7003
+    assert client.get("/api/v1/invoices", params={"keyword": "synthetic", "search_scope": "unknown"}).status_code == 422
 
 
 def test_server_startup_background_sync_builds_invoice_summary(tmp_path: Path) -> None:

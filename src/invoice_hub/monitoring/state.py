@@ -7,11 +7,12 @@ import shutil
 import subprocess
 import threading
 import time
+import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Callable, Iterator
 
 from openpyxl import load_workbook
 
@@ -24,9 +25,11 @@ from invoice_hub.storage.files import atomic_write_json, read_csv_rows, read_jso
 STOP_FLAG_NAME = ".invoice_stop"
 LOCK_FILE_NAME = ".invoice_monitor.lock"
 SYNC_WRITE_LOCK_FILE_NAME = ".invoice_sync.lock"
+STATUS_LOCK_FILE_NAME = ".invoice_monitor_status.lock"
 PROCESSED_FILE_NAME = "processed_files.json"
 MANUAL_OVERRIDES_FILE_NAME = "manual_overrides.json"
 STATUS_FILE_NAME = "monitor_status.json"
+SYNC_PROGRESS_FILE_NAME = "sync_progress.json"
 BUSINESS_LOG_NAME = "文件变化监控日志.txt"
 EDITABLE_FIELDS = ("销售方", "开票金额", "发票号码")
 SYNC_WRITE_LOCK_POLL_SECONDS = 0.1
@@ -167,6 +170,122 @@ class SourceChangeSet:
         return {"added": len(self.added), "updated": len(self.updated), "deleted": len(self.deleted)}
 
 
+class SyncProgress:
+    """Publish one active synchronization's user-facing progress snapshot."""
+
+    def __init__(self, state: "MonitorState", trigger: str, task_id: str = ""):
+        self.state = state
+        self.trigger = str(trigger or "sync")
+        self.task_id = str(task_id or "")
+        self.operation_id = uuid.uuid4().hex
+        self.started_at = utc_now_text()
+        self.percent = 0
+        self.processed_count = 0
+        self.total_count = 0
+
+    @staticmethod
+    def _count(value: object) -> int:
+        try:
+            return max(0, int(value or 0))
+        except (TypeError, ValueError):
+            return 0
+
+    def _publish(
+        self,
+        *,
+        status: str,
+        phase: str,
+        message: str,
+        percent: int,
+        processed_count: int | None = None,
+        total_count: int | None = None,
+        error: str = "",
+    ) -> None:
+        if processed_count is not None:
+            self.processed_count = self._count(processed_count)
+        if total_count is not None:
+            self.total_count = self._count(total_count)
+        if self.total_count:
+            self.processed_count = min(self.processed_count, self.total_count)
+
+        requested_percent = min(100, self._count(percent))
+        # The page represents one continuous operation. A later phase must never
+        # move the visible bar backwards merely because its own file count resets.
+        self.percent = max(self.percent, requested_percent)
+        payload = {
+            "version": 1,
+            "operation_id": self.operation_id,
+            "task_id": self.task_id,
+            "target_id": self.state.profile.id,
+            "trigger": self.trigger,
+            "status": status,
+            "phase": phase,
+            "message": str(message or ""),
+            "percent": self.percent,
+            "processed_count": self.processed_count,
+            "total_count": self.total_count,
+            "started_at": self.started_at,
+            "updated_at": utc_now_text(),
+            "error": str(error or ""),
+        }
+        if status != "running":
+            payload["finished_at"] = utc_now_text()
+        try:
+            self.state.write_sync_progress(payload)
+        except OSError:
+            # Progress is diagnostic UI state. A transient state-dir write error
+            # must not make a source-of-truth rebuild fail after it has started.
+            pass
+
+    def start(self, message: str = "正在准备汇总") -> None:
+        self._publish(status="running", phase="preparing", message=message, percent=0)
+
+    def report(
+        self,
+        phase: str,
+        message: str,
+        *,
+        percent: int,
+        processed_count: int | None = None,
+        total_count: int | None = None,
+    ) -> None:
+        self._publish(
+            status="running",
+            phase=phase,
+            message=message,
+            percent=percent,
+            processed_count=processed_count,
+            total_count=total_count,
+        )
+
+    def report_fraction(
+        self,
+        phase: str,
+        message: str,
+        processed_count: int,
+        total_count: int,
+        start_percent: int,
+        end_percent: int,
+    ) -> None:
+        completed = self._count(processed_count)
+        total = self._count(total_count)
+        fraction = 1.0 if total == 0 else min(1.0, completed / total)
+        percent = int(round(start_percent + (end_percent - start_percent) * fraction))
+        self.report(
+            phase,
+            message,
+            percent=percent,
+            processed_count=completed,
+            total_count=total,
+        )
+
+    def complete(self, message: str) -> None:
+        self._publish(status="success", phase="complete", message=message, percent=100)
+
+    def fail(self, message: str) -> None:
+        self._publish(status="failed", phase="failed", message="汇总失败", percent=self.percent, error=message)
+
+
 class MonitorState:
     def __init__(self, profile: TargetProfile, db_path: Path | None = None, sync_interval_seconds: int = 60):
         self.profile = profile
@@ -182,9 +301,11 @@ class MonitorState:
         self.stop_file = self.workspace_dir / STOP_FLAG_NAME
         self.lock_file = self.state_dir / LOCK_FILE_NAME
         self.sync_write_lock_file = self.state_dir / SYNC_WRITE_LOCK_FILE_NAME
+        self.status_lock_file = self.state_dir / STATUS_LOCK_FILE_NAME
         self.processed_file = self.state_dir / PROCESSED_FILE_NAME
         self.manual_overrides_file = self.state_dir / MANUAL_OVERRIDES_FILE_NAME
         self.status_file = self.state_dir / STATUS_FILE_NAME
+        self.sync_progress_file = self.state_dir / SYNC_PROGRESS_FILE_NAME
         self.stdout_path = self.state_dir / "bridge_stdout.log"
         self.stderr_path = self.state_dir / "bridge_stderr.log"
         self._lock_acquired = False
@@ -197,7 +318,12 @@ class MonitorState:
     @contextmanager
     def sync_write_lock(self) -> Iterator[None]:
         """Serialize projection and monitor-state writes for this TargetProfile."""
-        key = canonical_path(self.state_dir)
+        with self._file_lock(self.sync_write_lock_file):
+            yield
+
+    @contextmanager
+    def _file_lock(self, path: Path) -> Iterator[None]:
+        key = canonical_path(path)
         thread_lock = _sync_thread_lock(key)
         with thread_lock:
             held = getattr(_SYNC_HELD_LOCKS, "counts", {})
@@ -211,7 +337,7 @@ class MonitorState:
                 return
 
             self.state_dir.mkdir(parents=True, exist_ok=True)
-            with self.sync_write_lock_file.open("a+b") as handle:
+            with path.open("a+b") as handle:
                 _acquire_sync_os_lock(handle)
                 held[key] = 1
                 _SYNC_HELD_LOCKS.counts = held
@@ -312,7 +438,7 @@ class MonitorState:
     def update_status(self, **updates: Any) -> dict:
         # status_file is a read/modify/write projection shared by the daemon,
         # startup child, and manual rebuild. Its whole transaction is locked.
-        with self.sync_write_lock():
+        with self.sync_write_lock(), self._file_lock(self.status_lock_file):
             payload = read_json_object(self.status_file, {})
             payload.update(updates)
             payload.update(
@@ -330,7 +456,23 @@ class MonitorState:
             return payload
 
     def read_status(self) -> dict:
-        return read_json_object(self.status_file, {})
+        # Stop/health polling must not wait for a full rebuild before its timeout
+        # starts. Only serialize the short status I/O to retain Windows replace sharing;
+        # writers acquire sync then status, and readers never acquire sync.
+        with self._file_lock(self.status_lock_file):
+            return read_json_object(self.status_file, {})
+
+    def new_sync_progress(self, trigger: str, task_id: str = "") -> SyncProgress:
+        return SyncProgress(self, trigger, task_id=task_id)
+
+    def write_sync_progress(self, payload: dict) -> None:
+        # The synchronizer owns writes while holding the profile lock. Polling UI
+        # reads must stay outside that lock or a long rebuild could never show its
+        # intermediate percentages. Atomic replacement keeps every read a snapshot.
+        atomic_write_json(self.sync_progress_file, payload)
+
+    def read_sync_progress(self) -> dict:
+        return read_json_object(self.sync_progress_file, {})
 
     def load_processed(self) -> dict[str, dict]:
         if not self.processed_file.exists():
@@ -359,9 +501,13 @@ class MonitorState:
     def save_processed(self, files: dict[str, dict]) -> None:
         atomic_write_json(self.processed_file, {"version": 1, "files": files, "updated_at": utc_now_text()})
 
-    def source_snapshot(self) -> dict[str, dict]:
+    def source_snapshot(self, progress: Callable[[int, int], None] | None = None) -> dict[str, dict]:
         result: dict[str, dict] = {}
-        for path in supported_invoice_files(self.watch_dir):
+        files = supported_invoice_files(self.watch_dir)
+        total = len(files)
+        if progress:
+            progress(0, total)
+        for index, path in enumerate(files, start=1):
             key = canonical_path(path)
             sig = file_signature(path)
             result[key] = {
@@ -371,11 +517,13 @@ class MonitorState:
                 "mtime_ns": sig["mtime_ns"],
                 "size": sig["size"],
             }
+            if progress:
+                progress(index, total)
         return result
 
-    def detect_source_changes(self) -> SourceChangeSet:
+    def detect_source_changes(self, progress: Callable[[int, int], None] | None = None) -> SourceChangeSet:
         previous = self.load_processed()
-        current = self.source_snapshot()
+        current = self.source_snapshot(progress=progress)
         added: list[str] = []
         updated: list[str] = []
         deleted: list[str] = []
@@ -390,9 +538,9 @@ class MonitorState:
                 deleted.append(key)
         return SourceChangeSet(added=sorted(added), updated=sorted(updated), deleted=sorted(deleted))
 
-    def rebuild_processed_from_summary(self) -> dict[str, dict]:
+    def rebuild_processed_from_summary(self, progress: Callable[[int, int], None] | None = None) -> dict[str, dict]:
         rows = read_csv_rows(self.summary_csv)
-        current = self.source_snapshot()
+        current = self.source_snapshot(progress=progress)
         rebuilt: dict[str, dict] = {}
         for row in rows:
             key = canonical_path(row.get("文件路径") or "")

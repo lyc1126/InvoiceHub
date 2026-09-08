@@ -32,6 +32,15 @@ the license text shipped by each upstream project remains authoritative.
 | watchdog | 6.0.0 (Windows only) | Apache-2.0 | <https://github.com/gorakhargosh/watchdog> |
 | Sparkle | 2.9.2 (macOS only) | MIT | <https://github.com/sparkle-project/Sparkle> |
 | python-build-standalone | 20260623 artifacts (macOS runtime) | project and bundled component licenses | <https://github.com/astral-sh/python-build-standalone> |
+| Lucide (website, application power and appearance icons) | 1.8.0 selected nodes | ISC / MIT for Feather-derived icons | <https://github.com/lucide-icons/lucide> |
+| Dela Gothic One (website, default application mark and desktop icon 04) | vendored Latin subset | SIL Open Font License 1.1 | <https://github.com/google/fonts/tree/main/ofl/delagothicone> |
+
+The bundled website includes the license texts at
+`website/assets/LICENSE-lucide` and `website/assets/OFL-DelaGothicOne.txt`.
+Both accompany the offline site in Windows and macOS packages.
+The default application reuses this local font through the bundled website route.
+Its power icon is vendored from `lucide-static@1.8.0/icons/power.svg`;
+`web/static/icons/LICENSE-lucide` includes the ISC and Feather MIT notices.
 
 Release-only tools (`pytest`, `httpx2`, `pip-tools`, and `cyclonedx-bom`) are
 not placed in the end-user runtime unless a package manifest explicitly lists

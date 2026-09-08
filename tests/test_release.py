@@ -28,6 +28,7 @@ from invoice_hub.release.content_scan import ReleaseContentError, scan_release_t
 from invoice_hub.release.package_manifest import PackageManifestError
 from invoice_hub.release.runtime_manifest import (
     RuntimeManifestError,
+    _probe_runtime,
     normalize_windows_runtime,
     write_runtime_manifest,
 )
@@ -211,6 +212,11 @@ def test_normalize_windows_runtime_removes_console_scripts_and_record_rows(tmp_p
     (scripts / "sample.exe").write_bytes(b"absolute launcher payload")
     (site_packages / "sample").mkdir()
     (site_packages / "sample" / "__init__.py").write_text("VALUE = 1\n", encoding="utf-8")
+    cached_bytecode = site_packages / "sample" / "__pycache__" / "__init__.cpython-314.pyc"
+    cached_bytecode.parent.mkdir()
+    cached_bytecode.write_bytes(b"cached")
+    legacy_bytecode = runtime / "Lib" / "legacy.pyo"
+    legacy_bytecode.write_bytes(b"legacy")
     rows = [
         ["../../SCRIPTS/sample.exe", "sha256=unstable", "25"],
         ["sample/__init__.py", "sha256=stable", "10"],
@@ -230,17 +236,79 @@ def test_normalize_windows_runtime_removes_console_scripts_and_record_rows(tmp_p
     assert not scripts.exists()
     assert result == {
         "removed_script_files": ["sCrIpTs/sample.exe"],
+        "removed_stdlib_script_files": [],
         "removed_record_entries": ["sample-1.0.dist-info:../../SCRIPTS/sample.exe"],
         "rewritten_records": ["Lib/site-packages/sample-1.0.dist-info/RECORD"],
+        "removed_bytecode_files": [
+            "Lib/legacy.pyo",
+            "Lib/site-packages/sample/__pycache__/__init__.cpython-314.pyc",
+        ],
     }
+    assert not cached_bytecode.exists()
+    assert not legacy_bytecode.exists()
     with record.open("r", encoding="utf-8", newline="") as handle:
         assert list(csv.reader(handle)) == rows[1:]
     assert other_record.read_bytes() == other_before
     assert normalize_windows_runtime(runtime) == {
         "removed_script_files": [],
+        "removed_stdlib_script_files": [],
         "removed_record_entries": [],
         "rewritten_records": [],
+        "removed_bytecode_files": [],
     }
+
+
+def test_runtime_probe_uses_bytecode_suppression(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    executable = tmp_path / "python.exe"
+    executable.write_bytes(b"synthetic-python")
+    commands: list[list[str]] = []
+
+    def fake_run(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        commands.append(command)
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            stdout=json.dumps(
+                {
+                    "version": RELEASE_PYTHON_VERSION,
+                    "architecture": "AMD64",
+                    "implementation": "CPython",
+                    "modules": ["fitz"],
+                }
+            ),
+        )
+
+    monkeypatch.setattr("invoice_hub.release.runtime_manifest.subprocess.run", fake_run)
+    _probe_runtime(executable, ("fitz",))
+
+    assert commands[0][:3] == [str(executable), "-B", "-I"]
+
+
+def test_normalize_windows_runtime_removes_known_stdlib_helpers_and_rejects_unknown_scripts(tmp_path: Path) -> None:
+    runtime = tmp_path / "python"
+    (runtime / "Lib" / "site-packages").mkdir(parents=True)
+    helpers = [
+        "Lib/ctypes/macholib/fetch_macholib.bat",
+        "Lib/idlelib/idle.bat",
+        "Lib/venv/scripts/common/Activate.ps1",
+        "Lib/venv/scripts/nt/activate.bat",
+        "Lib/venv/scripts/nt/deactivate.bat",
+    ]
+    for relative in helpers:
+        path = runtime / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("@echo off\n", encoding="ascii")
+
+    result = normalize_windows_runtime(runtime)
+
+    assert result["removed_stdlib_script_files"] == helpers
+    assert all(not (runtime / relative).exists() for relative in helpers)
+
+    unknown = runtime / "Lib" / "unsafe-helper.cmd"
+    unknown.write_text("@echo off\n", encoding="ascii")
+    with pytest.raises(RuntimeManifestError, match="unexpected script files: Lib/unsafe-helper.cmd"):
+        normalize_windows_runtime(runtime)
+    assert unknown.is_file()
 
 
 def test_normalize_windows_runtime_rejects_record_escape_before_removing_scripts(tmp_path: Path) -> None:

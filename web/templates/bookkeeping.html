@@ -3,11 +3,12 @@
 <head>
   <title>做账</title>
   {{BASE_HEAD}}
+  <link rel="stylesheet" href="/static/css/settings-actions.css?v=20260907-desktop-integrated-2">
 </head>
 <body data-page="bookkeeping">
   <script id="bootstrapJson" type="application/json">{{BOOTSTRAP_JSON}}</script>
   <header class="topbar">
-    <a class="brand" href="/"><span class="brand-mark">票</span><span><h1>一站式发票汇总系统</h1><p>捷锐凭证草稿人审</p></span></a>
+    <div class="brand"><a href="/" aria-label="返回发票汇总首页"><span class="brand-mark" aria-hidden="true">hi<span>.</span></span></a><div class="brand-copy"><div class="brand-title"><a href="/"><h1>InvoiceHub</h1></a>{{appearance_toggle}}</div><p>捷锐凭证草稿人审</p></div></div>
     <nav aria-label="主导航">
       <a class="nav-link" href="/">首页</a>
       <a class="nav-link" href="/costs">成本分析</a>
@@ -17,6 +18,7 @@
       <a class="nav-link" href="/consistency">一致性</a>
       <a class="nav-link" href="/settings">设置</a>
     </nav>
+    <button id="systemPowerBtn" class="system-power" type="button" title="关闭系统" aria-label="关闭系统" aria-haspopup="dialog" aria-controls="settingsShutdownDialog" aria-expanded="false"><span class="system-power__icon" aria-hidden="true"></span></button>
   </header>
   <main class="shell bookkeeping-shell">
     <section class="page-head">
@@ -40,7 +42,7 @@
       <div><span>导出</span><strong id="exportReadinessState">阻断</strong></div>
     </section>
 
-    <div class="view-tabs bookkeeping-tabs" role="tablist" aria-label="做账视图">
+    <div class="view-tabs bookkeeping-tabs sticky-controls" role="tablist" aria-label="做账视图">
       <button id="bookkeepingReviewTab" class="view-tab is-active" type="button" role="tab" aria-selected="true" aria-controls="bookkeepingReviewView" data-bookkeeping-tab="review">凭证人审</button>
       <button id="bookkeepingMappingTab" class="view-tab" type="button" role="tab" aria-selected="false" aria-controls="bookkeepingMappingView" data-bookkeeping-tab="mapping">映射规则</button>
       <button id="bookkeepingSetupTab" class="view-tab" type="button" role="tab" aria-selected="false" aria-controls="bookkeepingSetupView" data-bookkeeping-tab="setup">账套设置</button>
@@ -276,7 +278,9 @@
       </form>
     </section>
   </main>
-  <script src="/static/js/common.js?v=20260729-main-macos-sync"></script>
+  {{system_controls}}
+  <script src="/static/js/common.js?v=20260907-desktop-integrated-2"></script>
+  <script src="/static/js/system-controls.js?v=20260907-desktop-integrated-2"></script>
   <script src="/static/js/page-bookkeeping.js?v=20260711-w9-ledger-review-v3"></script>
 </body>
 </html>

@@ -15,29 +15,57 @@ window.app = {
   },
   async api(url, options = {}) {
     const normalized = { ...options };
-    if (normalized.body && typeof normalized.body !== "string") {
-      normalized.body = JSON.stringify(normalized.body);
-    }
-    const response = await fetch(url, {
-      headers: { "Content-Type": "application/json", ...(options.headers || {}) },
-      ...normalized,
-    });
-    if (!response.ok) {
-      let message = `${response.status} ${response.statusText}`;
-      let payload = null;
-      try {
-        payload = await response.json();
-        const detail = payload?.detail || payload?.message;
-        message = typeof detail === "string" ? detail : (detail?.message || message);
-      } catch (_error) {
-        // Keep HTTP status as the fallback.
+    const finishActivity = normalized.activity === false || /\/keep-alive$/.test(url)
+      ? () => {} : this.beginActivity();
+    delete normalized.activity;
+    try {
+      if (normalized.body && typeof normalized.body !== "string") {
+        normalized.body = JSON.stringify(normalized.body);
       }
-      const error = new Error(message);
-      error.status = response.status;
-      error.payload = payload;
-      throw error;
+      const response = await fetch(url, {
+        headers: { "Content-Type": "application/json", ...(options.headers || {}) },
+        ...normalized,
+      });
+      if (!response.ok) {
+        let message = `${response.status} ${response.statusText}`;
+        let payload = null;
+        try {
+          payload = await response.json();
+          const detail = payload?.detail || payload?.message;
+          message = typeof detail === "string" ? detail : (detail?.message || message);
+        } catch (_error) {
+          // Keep HTTP status as the fallback.
+        }
+        const error = new Error(message);
+        error.status = response.status;
+        error.payload = payload;
+        throw error;
+      }
+      return await response.json();
+    } finally {
+      // Concurrent requests share feedback until the last response body is consumed.
+      finishActivity();
     }
-    return response.json();
+  },
+  beginActivity() {
+    this._activeRequests = (this._activeRequests || 0) + 1;
+    if (this._activeRequests === 1) {
+      this._activityTimer = window.setTimeout(() => {
+        const indicator = document.getElementById("pageActivity");
+        if (indicator && this._activeRequests > 0) indicator.hidden = false;
+      }, 180);
+    }
+    let finished = false;
+    return () => {
+      if (finished) return;
+      finished = true;
+      this._activeRequests -= 1;
+      if (this._activeRequests === 0) {
+        window.clearTimeout(this._activityTimer);
+        const indicator = document.getElementById("pageActivity");
+        if (indicator) indicator.hidden = true;
+      }
+    };
   },
   requestData(url, options = {}) {
     return this.api(url, options);
@@ -83,18 +111,35 @@ window.app = {
   setBusy(button, busy, label) {
     if (!button) return;
     if (busy) {
+      if (button.dataset.busy === "true") return;
+      this._busyButtons ||= new WeakMap();
+      this._busyButtons.set(button, {
+        disabled: button.disabled,
+        inlineSize: button.style.inlineSize,
+        blockSize: button.style.blockSize,
+        nodes: [...button.childNodes],
+      });
+      const bounds = button.getBoundingClientRect();
+      if (bounds.width && bounds.height) {
+        button.style.inlineSize = `${Math.ceil(bounds.width)}px`;
+        button.style.blockSize = `${Math.ceil(bounds.height)}px`;
+      }
       button.dataset.busy = "true";
       button.setAttribute("aria-busy", "true");
       button.disabled = true;
       if (label) button.dataset.originalText = button.textContent || "";
       if (label) button.textContent = label;
     } else {
+      const saved = this._busyButtons?.get(button);
       button.dataset.busy = "false";
       button.removeAttribute("aria-busy");
-      button.disabled = false;
-      if (button.dataset.originalText) {
-        button.textContent = button.dataset.originalText;
+      if (saved) {
+        button.disabled = saved.disabled;
+        button.style.inlineSize = saved.inlineSize;
+        button.style.blockSize = saved.blockSize;
+        button.replaceChildren(...saved.nodes);
         delete button.dataset.originalText;
+        this._busyButtons.delete(button);
       }
     }
   },
@@ -164,6 +209,7 @@ window.app = {
       }
       body.dataset.activeSkin = id;
     }
+    document.dispatchEvent(new CustomEvent("app:skin-applied"));
     return { id, stylesheet_url: href };
   },
   clearSkin() {
@@ -176,6 +222,7 @@ window.app = {
       delete body.dataset.activeSkin;
     }
     delete document.documentElement.dataset.activeSkin;
+    document.dispatchEvent(new CustomEvent("app:skin-applied"));
   },
   applySkinPayload(payload) {
     if (document.body?.dataset.page === "backend") return null;
@@ -217,6 +264,7 @@ window.app = {
       }
       body.dataset.activeSkin = id;
     }
+    document.dispatchEvent(new CustomEvent("app:skin-applied"));
     return active;
   },
   async loadCurrentSkin(options = {}) {
@@ -270,6 +318,7 @@ window.app = {
       if (shouldRefresh && onRefresh) onRefresh("eventsource.open");
     };
     source.onerror = () => {
+      if (document.body?.dataset.systemShutdownSubmitted === "true") return;
       sawError = true;
       this.setServiceStatus(labelEl, "warning", "系统服务连接状态：重连中");
     };
@@ -283,6 +332,11 @@ window.app = {
     source.addEventListener("invoice.changed", () => onRefresh && onRefresh("invoice.changed"));
     source.addEventListener("cost_analysis.updated", () => onRefresh && onRefresh("cost_analysis.updated"));
     source.addEventListener("manual_edit.synced", () => onRefresh && onRefresh("manual_edit.synced"));
+    // A confirmed shutdown is intentional; do not report its SSE closure as a reconnect failure.
+    document.addEventListener("app:shutdown-accepted", () => {
+      source.close();
+      this.setServiceStatus(labelEl, "muted", "系统服务连接状态：关闭中");
+    }, { once: true });
     return source;
   },
   debounce(fn, wait = 300) {
@@ -295,19 +349,34 @@ window.app = {
   bindNavigationTransitions() {
     if (this._navigationTransitionsBound) return;
     this._navigationTransitionsBound = true;
-    let navigating = false;
+    let resetTimer = 0;
+    const reset = () => {
+      window.clearTimeout(resetTimer);
+      document.body?.classList.remove("is-page-navigating");
+      document.querySelectorAll("a[aria-busy]").forEach((link) => link.removeAttribute("aria-busy"));
+    };
+    // Native navigation preserves downloads and browser history. Reset on bfcache restore
+    // and cancelled navigation so a failed destination cannot leave the current page inert.
+    window.addEventListener("pageshow", reset);
+    window.addEventListener("pagehide", reset);
     document.addEventListener("click", (event) => {
       const link = event.target.closest?.("a[href]");
       if (!link || !this.shouldAnimateNavigation(event, link)) return;
-      event.preventDefault();
-      if (navigating) return;
-      navigating = true;
-      document.body?.classList.add("is-page-exiting");
-      const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
-      window.setTimeout(() => {
-        window.location.href = link.href;
-      }, reduceMotion ? 0 : 90);
+      reset();
+      document.body?.classList.add("is-page-navigating");
+      link.setAttribute("aria-busy", "true");
+      resetTimer = window.setTimeout(reset, 8000);
     });
+  },
+  bindStickyControls() {
+    const topbar = document.querySelector(".topbar");
+    if (!topbar) return;
+    const update = () => {
+      document.documentElement.style.setProperty("--topbar-height", `${Math.ceil(topbar.getBoundingClientRect().height)}px`);
+    };
+    update();
+    if (typeof ResizeObserver === "function") new ResizeObserver(update).observe(topbar);
+    window.addEventListener("resize", update, { passive: true });
   },
   shouldAnimateNavigation(event, link) {
     if (event.defaultPrevented || event.button !== 0) return false;
@@ -334,6 +403,7 @@ window.app = {
   const load = () => {
     if (window.app?.loadCurrentSkin) void window.app.loadCurrentSkin({ fetchIfMissing: false });
     if (window.app?.bindNavigationTransitions) window.app.bindNavigationTransitions();
+    if (window.app?.bindStickyControls) window.app.bindStickyControls();
   };
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", load, { once: true });

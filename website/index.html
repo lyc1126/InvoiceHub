@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#d9fb5c">
+  <meta name="description" content="InvoiceHub，开源、本地优先的发票工作台。整理 PDF、OFD、XML，自动汇总、持续监控、分析成本，让发票归位，让时间归你。">
+  <meta property="og:title" content="InvoiceHub · 发票归位，时间归你。">
+  <meta property="og:description" content="和繁琐说再见。和自己的发票工作台，说 Hi。开源、本地优先，支持 PDF / OFD / XML。">
+  <meta property="og:type" content="website">
+  <title>InvoiceHub · 发票归位，时间归你。</title>
+  <link rel="icon" href="assets/mark.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="style.css?v=20260905-3">
+  <script defer src="assets/icons.js?v=20260905-3"></script>
+  <script defer src="demo-data.js?v=20260905-3"></script>
+  <script defer src="app.js?v=20260905-3"></script>
+  <script defer src="paper-scene.js?v=20260905-3"></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">跳到主要内容</a>
+  <header class="site-header">
+    <div class="nav-inner">
+      <a class="brand" href="#top" aria-label="InvoiceHub 首页"><span class="brand-mark" aria-hidden="true">hi<span>.</span></span><span>InvoiceHub</span></a>
+      <nav class="main-nav" id="main-nav" aria-label="主要导航">
+        <a href="#experience">产品体验</a><a href="#workflow">工作方式</a><a href="#principles">为你而建</a>
+      </nav>
+      <div class="nav-actions"><a class="github-link" href="https://github.com/lyc1126/InvoiceHub" target="_blank" rel="noopener noreferrer"><i data-icon="github"></i><span>GitHub</span><i class="external-arrow" data-icon="arrow-up-right"></i></a><a class="button button-small button-dark" href="#start">开始使用<i data-icon="arrow-up-right"></i></a><button class="icon-button menu-button" id="menu-button" aria-label="打开导航" aria-controls="main-nav" aria-expanded="false"><i data-icon="menu"></i></button></div>
+    </div>
+  </header>
+
+  <main id="main">
+    <section class="hero" id="top" aria-labelledby="hero-title">
+      <div class="hero-art" aria-hidden="true"><div class="art-fallback">hi<span>.</span></div><canvas id="paper-canvas"></canvas></div>
+      <div class="hero-inner">
+        <button class="scene-hit-area" id="scene-expand" aria-label="展开票据与标签" aria-pressed="false" title="展开 / 归拢票据"></button>
+        <div class="hero-copy">
+          <div class="eyebrow"><span class="status-dot"></span> OPEN SOURCE. ON YOUR SIDE.</div>
+          <h1 id="hero-title">InvoiceHub</h1>
+          <p class="hero-promise">发票归位。<br>时间归你。</p>
+          <p class="hero-description">散落的发票，清楚的账。<br>一个开源、本地优先的发票工作台。</p>
+          <div class="hero-actions"><a class="button button-dark" href="#experience">和高效说 Hi<i data-icon="arrow-down-right"></i></a><a class="text-link" href="https://github.com/lyc1126/InvoiceHub" target="_blank" rel="noopener noreferrer">探索源代码<i data-icon="arrow-up-right"></i></a></div>
+          <div class="hero-footnote"><span><i data-icon="hard-drive"></i>本地处理</span><span><i data-icon="code-xml"></i>开放源码</span><span><i data-icon="file-check-2"></i>原始文件，始终在手</span></div>
+        </div>
+        <div class="art-caption" aria-hidden="true"><span>LESS PAPERWORK.<br>MORE POSSIBILITY.</span><span class="edition">IH—001<br>A LITTLE HI. A LOT OF ORDER.</span></div>
+        <a class="scroll-cue" href="#experience" aria-label="向下查看产品体验"><span>往下，发现井井有条</span><i data-icon="arrow-down"></i></a>
+        <button id="motion-toggle" class="icon-button motion-button" aria-label="暂停品牌动画" aria-pressed="false" title="暂停品牌动画"><i data-icon="pause"></i></button>
+      </div>
+    </section>
+
+    <div class="format-strip" aria-label="支持的输入与输出格式"><div class="container strip-inner"><span class="strip-label">各有格式，<strong>终归有序。</strong></span><div class="format-set"><span><i data-icon="file-text"></i>PDF</span><span><i data-icon="file-text"></i>OFD</span><span><i data-icon="code-xml"></i>XML</span></div><span class="strip-arrow" aria-hidden="true">→</span><div class="format-set output-formats"><span><i data-icon="table-2"></i>CSV</span><span><i data-icon="sheet"></i>Excel</span></div><span class="strip-end">你的文件。你的工作流。</span></div></div>
+
+    <section class="experience section" id="experience" aria-labelledby="experience-title">
+      <div class="container">
+        <div class="section-eyebrow"><span>01 / MEET YOUR WORKSPACE</span><span class="tiny-label">LESS MESS. MORE YES.</span></div>
+        <div class="section-heading"><h2 id="experience-title">从一堆文件，<br><span>到一目了然。</span></h2><p>从发票汇总、成本分析，到自适应单据。<br>把来回切换的日常，收进一个工作台。</p></div>
+        <div class="experience-tabs" role="tablist" aria-label="产品演示"><button id="tab-invoices" role="tab" aria-selected="true" aria-controls="panel-invoices" data-view="invoices"><span>01</span>发票汇总<i data-icon="arrow-up-right"></i></button><button id="tab-costs" role="tab" aria-selected="false" aria-controls="panel-costs" data-view="costs" tabindex="-1"><span>02</span>成本分析<i data-icon="arrow-up-right"></i></button><button id="tab-documents" role="tab" aria-selected="false" aria-controls="panel-documents" data-view="documents" tabindex="-1"><span>03</span>自适应单据<i data-icon="arrow-up-right"></i></button><button id="tab-tools" role="tab" aria-selected="false" aria-controls="panel-tools" data-view="tools" tabindex="-1"><span>04</span>更多可能<i data-icon="arrow-up-right"></i></button></div>
+
+        <div class="workspace">
+          <div class="workspace-top"><span class="workspace-brand"><span class="mini-hi">hi.</span> InvoiceHub <span class="workspace-divider">/</span> <span id="workspace-title">发票汇总</span></span><span class="demo-label"><span class="status-dot"></span>交互演示 · 合成数据</span></div>
+          <div class="workspace-body">
+            <div id="panel-invoices" role="tabpanel" aria-labelledby="tab-invoices">
+              <div class="workspace-heading"><div><div class="workspace-path"><i data-icon="folder"></i>示例项目 / 发票</div><h3>每一张，都心中有数。</h3></div><button class="button button-outlined button-small" id="export-demo"><i data-icon="download"></i>下载演示 CSV</button></div>
+              <div class="demo-metrics"><div><span>源文件</span><strong>6<small>份</small></strong></div><div><span>同票家族</span><strong>5<small>组</small></strong></div><div><span>需要核对</span><strong class="metric-warning">1<small>项</small></strong></div><div class="selection-metric"><span>勾选价税合计 · <span id="selected-count">3</span> 张</span><strong id="selected-total">¥23,300.00</strong></div></div>
+              <div class="demo-toolbar"><label class="search-input"><i data-icon="search"></i><span class="sr-only">筛选演示发票</span><input id="invoice-search" type="search" placeholder="搜索销售方、发票号、文件名" autocomplete="off"></label><label class="check-label"><input type="checkbox" id="issues-only">仅待核对</label><button class="icon-button" id="reset-demo" aria-label="重置演示" title="重置演示"><i data-icon="rotate-ccw"></i></button></div>
+              <div class="selection-actions" aria-label="勾选发票操作"><span>勾选之后，还可以</span><button class="utility-button" id="preview-selected"><i data-icon="eye"></i>预览</button><button class="utility-button" id="print-selected"><i data-icon="printer"></i>打印演示</button><button class="utility-button" id="summarize-selected"><i data-icon="layers"></i>项目明细</button></div>
+              <div class="table-scroll"><table class="invoice-table"><thead><tr><th class="checkbox-cell"><input type="checkbox" id="select-all" aria-label="选择全部可见演示发票"></th><th>源文件</th><th>销售方</th><th>开票日期</th><th class="number-cell"><button id="sort-amount" class="table-sort" aria-label="按金额升序排列">价税合计<i data-icon="arrow-down-up"></i></button></th><th>状态</th><th><span class="sr-only">详情</span></th></tr></thead><tbody id="invoice-rows"></tbody></table></div>
+              <div class="workspace-bottom"><span id="table-count">6 份源文件</span><span><i data-icon="copy-check"></i>同一张票，多种格式，合计只算一次。</span></div>
+            </div>
+            <div id="panel-costs" role="tabpanel" aria-labelledby="tab-costs" hidden>
+              <div class="workspace-heading"><div><div class="workspace-path"><i data-icon="folder"></i>示例项目 / 成本分析</div><h3>看清成本，也看清下一步。</h3></div><span class="subtle-tag">开票参考</span></div>
+              <div class="cost-overview"><span>未开参考金额<strong id="reference-total">¥15,120.00</strong></span><p>按项目与规格归集。<br>每行加价率独立调整，已开部分保持快照。</p></div>
+              <div class="table-scroll"><table class="cost-table"><thead><tr><th>内部项目名称</th><th>规格 / 单位</th><th>未开数量</th><th>成本单价</th><th>加价率</th><th class="number-cell">未开参考金额</th></tr></thead><tbody id="cost-rows"></tbody></table></div>
+              <div class="workspace-bottom"><span>演示金额为除税金额</span><span><i data-icon="file-check-2"></i>明细、汇总、开票状态，各有所归。</span></div>
+            </div>
+            <div id="panel-documents" role="tabpanel" aria-labelledby="tab-documents" hidden>
+              <div class="workspace-heading"><div><div class="workspace-path"><i data-icon="file-spreadsheet"></i>示例项目 / 单据</div><h3>明细有多少，单据就有多长。</h3></div><span class="subtle-tag">已有功能</span></div>
+              <div class="documents-demo">
+                <div class="document-controls"><div class="segmented" role="group" aria-label="单据类型"><button data-document-type="inbound" aria-pressed="true">入库单</button><button data-document-type="outbound" aria-pressed="false">出库单</button></div><h4>从发票，接上出入库。</h4><p>入库沿用成本明细，出库读取开具发票。默认信息复用，明细行随内容展开。</p><label class="document-size" for="document-lines"><span>明细行数 <output id="document-line-count">3</output></span><input id="document-lines" type="range" min="1" max="8" step="1" value="3"></label><div class="document-benefits"><span><i data-icon="rows-3"></i>模板动态扩行</span><span><i data-icon="type"></i>金额大小写</span><span><i data-icon="sheet"></i>Excel 模板导出</span></div></div>
+                <div class="document-stage"><div class="adaptive-sheet" id="adaptive-sheet"><div class="document-sheet-meta"><span>INVOICEHUB / SAMPLE</span><span id="document-sheet-code">IN / 001</span></div><h4 id="document-sheet-title">入库单</h4><div class="document-party"><span id="document-party-label">供货单位：示例材料公司</span><span>2026.08.21</span></div><table class="document-table"><thead><tr><th>品名 / 规格</th><th>数量</th><th class="number-cell">金额</th></tr></thead><tbody id="document-rows"></tbody></table><div class="document-total"><span>合计</span><strong id="document-total"></strong></div><div class="document-signatures"><span>经办人 __________</span><span>复核人 __________</span></div><span class="document-watermark">合成单据 · 产品演示</span></div></div>
+              </div>
+              <div class="workspace-bottom"><span>入库 / 出库，各有来源</span><span><i data-icon="file-check-2"></i>预览确认，再导出到自己的文件夹。</span></div>
+            </div>
+            <div id="panel-tools" role="tabpanel" aria-labelledby="tab-tools" hidden>
+              <div class="workspace-heading"><div><div class="workspace-path"><i data-icon="panels-top-left"></i>工作台 / 更多可能</div><h3>把下一步，也想在前面。</h3></div><span class="subtle-tag">持续生长中</span></div>
+              <div class="tools-grid">
+                <article class="tool-column"><div class="tool-title"><i data-icon="scan-text"></i><span class="badge badge-neutral">已有入口 · 需配置</span></div><h4>OCR 识别</h4><p>为扫描件留一个入口。识别环境、服务配置与探测状态，在一处管理。</p><div class="ocr-scene" aria-hidden="true"><div class="ocr-paper"><span>INVOICE / SCAN</span><b>¥ 1,580.00</b><div class="ocr-text-lines"></div><div class="scan-beam"></div></div><span class="ocr-corner"></span><span class="ocr-corner last"></span><span class="ocr-result"><i data-icon="scan-line"></i>OCR</span></div><details class="tool-details"><summary>当前支持范围<i data-icon="plus"></i></summary><p>已有配置与探测入口。core 未内置正式 OCR 运行包，识别能力取决于配置的引擎。</p></details></article>
+                <article class="tool-column"><div class="tool-title"><i data-icon="notebook-pen"></i><span class="badge badge-neutral">本地流程 · 开发中</span></div><h4>做账流程</h4><p>从凭证预览，到人工复核，再到批次导出。每一次推进，都保留依据。</p><div class="bookkeeping-stages" role="group" aria-label="做账流程阶段"><button data-bookkeeping-stage="preview" aria-pressed="true"><span>01</span><i data-icon="file-text"></i>预览</button><i data-icon="arrow-right"></i><button data-bookkeeping-stage="review" aria-pressed="false"><span>02</span><i data-icon="user-check"></i>人审</button><i data-icon="arrow-right"></i><button data-bookkeeping-stage="export" aria-pressed="false"><span>03</span><i data-icon="package-check"></i>导出</button></div><p class="bookkeeping-detail" id="bookkeeping-detail" role="status">由来源证据生成凭证提案，先看分录与阻断项。</p><span class="tool-footnote">正式账套操作需另行核对与授权。</span></article>
+                <article class="tool-column calculator-column"><div class="tool-title"><i data-icon="calculator"></i><span class="badge badge-warning">概念预览</span></div><h4>税率计算器</h4><p>含税、未税与税额，换个角度看同一个数。</p><div class="tax-calculator"><div class="segmented" role="group" aria-label="金额换算方式"><button data-tax-mode="gross" aria-pressed="true">含税转未税</button><button data-tax-mode="net" aria-pressed="false">未税转含税</button></div><label class="calculator-field"><span id="tax-amount-label">含税金额</span><span class="calculator-input"><span>¥</span><input id="tax-amount" type="text" inputmode="decimal" value="1130.00" aria-labelledby="tax-amount-label" autocomplete="off"></span></label><label class="calculator-field"><span>税率</span><select id="tax-rate" aria-label="换算税率"><option value="13">13%</option><option value="9">9%</option><option value="6">6%</option><option value="3">3%</option><option value="1">1%</option><option value="0">0%</option></select></label><div class="tax-result" aria-live="polite"><span><span id="tax-result-label">未税金额</span><strong id="tax-result">¥1,000.00</strong></span><span>税额<strong id="tax-component">¥130.00</strong></span></div></div><span class="tool-footnote">官网换算示例 · 软件独立工具待实现</span></article>
+              </div>
+              <div class="workspace-bottom"><span>小工具，长流程，都有位置</span><span><i data-icon="code-xml"></i>功能状态，以当前仓库为准。</span></div>
+            </div>
+          </div>
+        </div>
+        <div class="experience-note"><p id="experience-note">PDF、OFD、XML 放在一起。按同票家族核对，保留每一份来源。</p><span>真实能力的轻量演示，非真实业务数据。</span></div>
+      </div>
+    </section>
+
+    <section class="paperwork section" aria-labelledby="paperwork-title">
+      <div class="container"><div class="section-eyebrow"><span>A CLOSER LOOK / BEYOND THE TOTAL</span><span class="tiny-label">SEE IT. PRINT IT. BRING IT TOGETHER.</span></div><div class="section-heading"><h2 id="paperwork-title">汇总之后，<br><span>还有顺手的下一步。</span></h2><p>一张票看仔细，一批票理清楚。<br>从屏幕到纸面，让资料接着流动。</p></div>
+        <div class="paperwork-grid">
+          <article class="paperwork-feature"><button class="feature-art preview-art" id="feature-preview" aria-label="打开源文件预览示例" title="打开预览示例"><span class="mini-receipt" aria-hidden="true"><span class="micro-label">INVOICE / 001</span><strong>¥15,820.00</strong><span class="receipt-rules"></span><span class="micro-label">PDF / OFD / XML</span></span><span class="magnifier" aria-hidden="true"><span><small>TOTAL</small><b>15,820<span>.00</span></b></span></span><span class="art-open" aria-hidden="true"><i data-icon="arrow-up-right"></i></span></button><span class="feature-index">01 / LOOK CLOSER</span><h3>原票，就在眼前。</h3><p>选中即可预览源文件。PDF、OFD 看票面，XML 看原文；多份来源逐一翻阅，细节放大看。</p><button class="text-link" data-feature-action="preview">查看预览示例<i data-icon="arrow-up-right"></i></button></article>
+          <article class="paperwork-feature"><button class="feature-art printer-art" id="feature-print" aria-label="打开批量打印演示" title="查看批量打印演示"><span class="printer-feed" aria-hidden="true"><span>INVOICEHUB</span></span><span class="printer-machine" aria-hidden="true"><span class="printer-light"></span><span class="printer-brand">hi.</span><span class="printer-slot"></span></span><span class="printer-output" aria-hidden="true"><span>INVOICE / 001</span><b>¥15,820.00</b><span class="receipt-rules"></span><small>ALL IN ORDER.</small></span><span class="art-open" aria-hidden="true"><i data-icon="arrow-up-right"></i></span></button><span class="feature-index">02 / READY FOR PAPER</span><h3>一批选好，一次打印。</h3><p>按同票家族去重，沿用原 PDF 票面。同一张票只准备一次，多页内容完整保留。</p><button class="text-link" data-feature-action="print">查看打印演示<i data-icon="arrow-up-right"></i></button></article>
+          <article class="paperwork-feature"><button class="feature-art gather-art" id="feature-summary" aria-label="打开批量项目明细汇总示例" title="查看项目明细汇总"><span class="gather-source" aria-hidden="true"><span>采购明细 <b>2 吨</b></span><span>项目明细 <b>10 吨</b></span><span>费用明细 <b>1 批</b></span></span><span class="gather-result" aria-hidden="true"><i data-icon="layers"></i><span>项目 / 税率 / 规格</span><b>明细，归到一起。</b></span><span class="art-open" aria-hidden="true"><i data-icon="arrow-up-right"></i></span></button><span class="feature-index">03 / BRING IT TOGETHER</span><h3>不只总额，明细也清楚。</h3><p>批量勾选发票，按项目、明细税率、规格与单位汇总。数量和金额，一次看全。</p><button class="text-link" data-feature-action="summary">查看明细示例<i data-icon="arrow-up-right"></i></button></article>
+        </div>
+      </div>
+    </section>
+
+    <section class="workflow section" id="workflow" aria-labelledby="workflow-title">
+      <div class="container"><div class="section-eyebrow"><span>02 / A SMALLER TO-DO LIST</span><span class="tiny-label">FROM FILES TO FLOW.</span></div><div class="section-heading"><h2 id="workflow-title">少一点操作。<br><span>多一点自动。</span></h2><p>沿用你熟悉的文件夹与表格。<br>新的工作方式，不必从头学习。</p></div>
+        <div class="workflow-grid">
+          <article class="workflow-step"><div class="step-top"><span>01</span><i data-icon="arrow-right"></i></div><div class="step-art folder-art" aria-hidden="true"><div class="folder-paper"><span>PDF</span><span>OFD</span><span>XML</span></div><div class="folder-face"><i data-icon="folder-open"></i><span>你的发票</span><span class="folder-plus">+</span></div></div><h3>给发票一个家。</h3><p>选择当前发票目录。不同目录独立保存档案，切换项目，资料各自清楚。</p></article>
+          <article class="workflow-step"><div class="step-top"><span>02</span><i data-icon="arrow-right"></i></div><div class="step-art monitor-art" aria-hidden="true"><div class="monitor-line"><span class="monitor-node"></span><span class="line-label">文件变化</span><span class="monitor-wave"></span><span class="monitor-node last"></span></div><div class="monitor-readout"><span class="status-dot"></span>MONITOR ACTIVE<span>01:00</span></div></div><h3>放进去，然后继续生活。</h3><p>启动独立监控，新增与变更自动同步。关闭浏览器，监控仍可继续运行。</p></article>
+          <article class="workflow-step"><div class="step-top"><span>03</span><i data-icon="check"></i></div><div class="step-art output-art" aria-hidden="true"><div><i data-icon="sheet"></i><span>发票汇总.xlsx</span><i data-icon="check"></i></div><div><i data-icon="table-2"></i><span>成本发票明细.csv</span><i data-icon="check"></i></div><div><i data-icon="braces"></i><span>成本开票状态.json</span><i data-icon="check"></i></div></div><h3>把清晰，带到下一步。</h3><p>汇总、核对、预览和批量打印。标准表格继续交给 Excel / WPS，接上你的日常。</p></article>
+        </div>
+      </div>
+    </section>
+
+    <section class="principles section" id="principles" aria-labelledby="principles-title">
+      <div class="container"><div class="section-eyebrow"><span>03 / BUILT ON YOUR TERMS</span><span class="tiny-label">LOCAL FIRST. PEOPLE FIRST.</span></div>
+        <div class="principles-layout"><div class="principles-heading"><h2 id="principles-title">你的文件。<br>你的电脑。<br><span>你的主动权。</span></h2><p>财务工具的信任，来自清楚的边界。<br>InvoiceHub 把这件事写进设计，也写进源码。</p><div class="ownership-stamp" aria-hidden="true"><span class="stamp-hi">hi.</span><span>YOURS.<br>BY DESIGN.</span><i data-icon="arrow-up-right"></i></div></div>
+          <div class="principle-list"><article><span class="principle-icon"><i data-icon="hard-drive"></i></span><div><h3>本地优先，资料在手。</h3><p>发票处理与投影生成在本机完成，无需把发票上传到在线服务。更新检查是独立的联网行为。</p><span class="principle-detail">YOUR DATA STAYS YOURS</span></div></article><article><span class="principle-icon"><i data-icon="scan-line"></i></span><div><h3>宁可留空，也不猜一个数。</h3><p>金额格式、同票来源与算术关系一起核对。证据不足或冲突会明确提示，用户修订受到保护。</p><span class="principle-detail">EVIDENCE OVER GUESSWORK</span></div></article><article><span class="principle-icon"><i data-icon="files"></i></span><div><h3>源文件是事实，表格能重建。</h3><p>普通汇总与成本产物都是可重建的投影。删除同步只清理投影记录，不删除你的源发票。</p><span class="principle-detail">FILES FIRST. ALWAYS.</span></div></article></div></div>
+      </div>
+    </section>
+
+    <section class="open-source section" id="start" aria-labelledby="start-title">
+      <div class="container"><div class="section-eyebrow"><span>04 / OPEN BY NATURE</span><span class="tiny-label">AGPL-3.0-OR-LATER</span></div><div class="start-layout"><div><span class="hello-label">Say hi to better days.</span><h2 id="start-title">好工具，<br>值得一起做好。</h2><p>InvoiceHub 是一个持续生长的开源项目。<br>从使用开始，或从一行代码开始。</p><div class="start-actions"><button class="button button-dark" data-open-start>开始使用 InvoiceHub<i data-icon="arrow-up-right"></i></button><a class="text-link" href="https://github.com/lyc1126/InvoiceHub" target="_blank" rel="noopener noreferrer"><i data-icon="github"></i>前往 GitHub<i data-icon="arrow-up-right"></i></a></div><span class="development-note"><span class="status-dot"></span>开发预览阶段 · 以仓库文档与 Releases 为准</span></div><div class="community-links"><a href="https://github.com/lyc1126/InvoiceHub/blob/main/README.md" target="_blank" rel="noopener noreferrer"><span><small>GET STARTED</small>阅读使用文档</span><i data-icon="arrow-up-right"></i></a><a href="https://github.com/lyc1126/InvoiceHub/blob/main/CONTRIBUTING.md" target="_blank" rel="noopener noreferrer"><span><small>BUILD TOGETHER</small>参与开源贡献</span><i data-icon="arrow-up-right"></i></a><a href="https://github.com/lyc1126/InvoiceHub/issues" target="_blank" rel="noopener noreferrer"><span><small>MAKE IT BETTER</small>反馈问题与想法</span><i data-icon="arrow-up-right"></i></a></div></div></div>
+    </section>
+
+    <section class="faq section" aria-labelledby="faq-title"><div class="container faq-layout"><div><div class="section-eyebrow">A FEW GOOD QUESTIONS</div><h2 id="faq-title">开始前，<br>你可能想知道。</h2></div><div class="faq-list"><details><summary>发票需要上传到云端吗？<i data-icon="plus"></i></summary><p>核心发票识别、汇总和成本分析在本机运行。官网演示不会读取你的本机文件。软件的更新检查会联网；如另行配置 OCR 服务，其数据处理范围需按该服务配置确认。</p></details><details><summary>支持哪些文件和系统？<i data-icon="plus"></i></summary><p>共享核心支持 PDF、OFD 和 XML。项目面向 Windows x64 与 macOS Apple Silicon 开发，当前处于开发预览阶段；可下载产物、运行前提与平台验证状态，以公开仓库 README 和 Releases 为准。</p></details><details><summary>关闭窗口后，还会继续整理吗？<i data-icon="plus"></i></summary><p>启动独立监控后，关闭浏览器不会停止监控。停止页面服务与停止监控是两个独立动作，可按需要选择。</p></details><details><summary>它能自动完成正式做账吗？<i data-icon="plus"></i></summary><p>项目已有本地凭证预览、人审与批次协议的开发基础。真实账套操作仍有独立的资料核对与授权要求，不能把演示或代码测试理解为自动完成正式入账。</p></details><details><summary>可以参与开发或自己部署吗？<i data-icon="plus"></i></summary><p>可以按 AGPL-3.0-or-later 许可证使用和修改源码。当前产品是单用户本地工作台；开发、运行和贡献步骤见仓库文档。分享反馈时请勿附带真实发票、公司资料或凭据。</p></details></div></div></section>
+  </main>
+
+  <footer class="site-footer"><div class="container"><div class="footer-top"><a class="brand" href="#top"><span class="brand-mark" aria-hidden="true">hi<span>.</span></span><span>InvoiceHub</span></a><p>Less paperwork. More possibility.</p><a class="back-to-top icon-button" href="#top" aria-label="回到顶部" title="回到顶部"><i data-icon="arrow-up"></i></a></div><div class="footer-bottom"><span>© 2026 InvoiceHub contributors.</span><span>Made open. Made for you.</span><div><a href="https://github.com/lyc1126/InvoiceHub/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">开源许可</a><a href="https://github.com/lyc1126/InvoiceHub/blob/main/PRIVACY.md" target="_blank" rel="noopener noreferrer">隐私说明</a></div></div><div class="footer-wordmark" aria-hidden="true">InvoiceHub<span>↗</span></div></div></footer>
+
+  <dialog id="start-dialog" aria-labelledby="start-dialog-title"><div class="dialog-top"><span class="mini-hi">hi.</span><button class="icon-button" data-close-dialog aria-label="关闭开始使用窗口"><i data-icon="x"></i></button></div><div class="dialog-content"><div class="eyebrow">YOUR NEXT GOOD WORKDAY.</div><h2 id="start-dialog-title">从这里，说 Hi。</h2><p>当前处于开发预览阶段。先核对运行文档，选择适合自己的方式。</p><a class="start-option" href="https://github.com/lyc1126/InvoiceHub/blob/main/README.md#快速启动" target="_blank" rel="noopener noreferrer"><i data-icon="terminal"></i><span><strong>从源码开始</strong><small>环境准备、启动方式与当前产品边界</small></span><i data-icon="arrow-up-right"></i></a><a class="start-option" href="https://github.com/lyc1126/InvoiceHub/releases" target="_blank" rel="noopener noreferrer"><i data-icon="package"></i><span><strong>查看发布状态</strong><small>可用安装包与平台说明，以 Releases 为准</small></span><i data-icon="arrow-up-right"></i></a><div class="clone-command"><code>git clone https://github.com/lyc1126/InvoiceHub.git</code><button class="icon-button" id="copy-clone" aria-label="复制克隆命令" title="复制克隆命令"><i data-icon="copy"></i></button></div></div></dialog>
+  <dialog id="invoice-dialog" aria-labelledby="invoice-dialog-title"><div class="dialog-top"><span>源文件预览 · 合成数据</span><button class="icon-button" data-close-dialog aria-label="关闭发票预览"><i data-icon="x"></i></button></div><div class="dialog-content"><h2 id="invoice-dialog-title">演示发票</h2><div class="preview-controls"><div><button class="icon-button" id="preview-prev" aria-label="上一份源文件" title="上一份源文件"><i data-icon="chevron-left"></i></button><span id="preview-position">1 / 1</span><button class="icon-button" id="preview-next" aria-label="下一份源文件" title="下一份源文件"><i data-icon="chevron-right"></i></button></div><button class="icon-button" id="preview-zoom" aria-label="放大预览" aria-pressed="false" title="放大 / 还原预览"><i data-icon="zoom-in"></i></button></div><div class="receipt-viewport"><div class="invoice-receipt" id="invoice-receipt"></div></div><p class="preview-note">合成字段示例，非原始票面；软件内预览显示所选源文件内容。</p></div></dialog>
+  <dialog id="batch-dialog" class="batch-dialog" aria-labelledby="batch-dialog-title"><div class="dialog-top"><span>InvoiceHub · 合成数据</span><button class="icon-button" data-close-dialog aria-label="关闭批量操作演示"><i data-icon="x"></i></button></div><div class="dialog-content"><h2 id="batch-dialog-title">批量操作</h2><div id="batch-content"></div></div></dialog>
+  <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+</body>
+</html>

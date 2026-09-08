@@ -1,4 +1,4 @@
-Set-StrictMode -Version 2.0
+﻿Set-StrictMode -Version 2.0
 $ErrorActionPreference = "Stop"
 
 function Get-IHRoot {
@@ -107,6 +107,96 @@ function Get-IHJsonObject {
     }
 }
 
+function Test-IHPythonExecutable {
+    param([Parameter(Mandatory = $true)][string]$Path)
+    if (-not [System.IO.File]::Exists($Path)) { return $false }
+    $probeMarker = "invoice-hub-python-probe-ok"
+    $probeProcess = $null
+    try {
+        # A broken venv launcher can write directly to cmd.exe or return zero without
+        # starting Python. Capture both streams and require a marker before its fallback.
+        $probeInfo = New-Object System.Diagnostics.ProcessStartInfo
+        $probeInfo.FileName = [System.IO.Path]::GetFullPath($Path)
+        $probeInfo.Arguments = '-c "import sys; print(''invoice-hub-python-probe-ok'')"'
+        $probeInfo.UseShellExecute = $false
+        $probeInfo.CreateNoWindow = $true
+        $probeInfo.RedirectStandardOutput = $true
+        $probeInfo.RedirectStandardError = $true
+        $probeProcess = New-Object System.Diagnostics.Process
+        $probeProcess.StartInfo = $probeInfo
+        if (-not $probeProcess.Start()) { return $false }
+        $stdoutTask = $probeProcess.StandardOutput.ReadToEndAsync()
+        $stderrTask = $probeProcess.StandardError.ReadToEndAsync()
+        if (-not $probeProcess.WaitForExit(5000)) { return $false }
+        $stdout = $stdoutTask.GetAwaiter().GetResult()
+        $stderr = $stderrTask.GetAwaiter().GetResult()
+        $probeSucceeded = $probeProcess.ExitCode -eq 0 -and
+            $stdout.Trim().Equals($probeMarker, [System.StringComparison]::Ordinal) -and
+            [string]::IsNullOrWhiteSpace($stderr)
+        return $probeSucceeded
+    } catch {
+        return $false
+    } finally {
+        if ($null -ne $probeProcess) {
+            try {
+                if (-not $probeProcess.HasExited) {
+                    $probeProcess.Kill()
+                    $probeProcess.WaitForExit()
+                }
+            } catch {}
+            $probeProcess.Dispose()
+        }
+    }
+}
+
+function Get-IHVenvDeclaredPython {
+    param([Parameter(Mandatory = $true)][string]$Root)
+    $venvConfig = Join-Path $Root ".venv\pyvenv.cfg"
+    if (-not [System.IO.File]::Exists($venvConfig)) { return @() }
+
+    try {
+        $executable = ""
+        $home = ""
+        foreach ($line in Get-Content -LiteralPath $venvConfig -Encoding UTF8) {
+            if ($line -match '^\s*executable\s*=\s*(.+?)\s*$') {
+                $executable = $Matches[1].Trim()
+            } elseif ($line -match '^\s*home\s*=\s*(.+?)\s*$') {
+                $home = $Matches[1].Trim()
+            }
+        }
+
+        $candidates = @()
+        if (-not [string]::IsNullOrWhiteSpace($executable)) { $candidates += $executable }
+        if (-not [string]::IsNullOrWhiteSpace($home)) { $candidates += (Join-Path $home "python.exe") }
+        $resolved = New-Object System.Collections.Generic.List[string]
+        $seen = New-Object System.Collections.Generic.HashSet[string] ([System.StringComparer]::OrdinalIgnoreCase)
+        foreach ($candidate in $candidates) {
+            if (-not [System.IO.Path]::IsPathRooted($candidate)) { continue }
+            try {
+                $fullCandidate = [System.IO.Path]::GetFullPath($candidate)
+                if ($seen.Add($fullCandidate)) {
+                    $resolved.Add($fullCandidate)
+                }
+            } catch {
+                continue
+            }
+        }
+        return $resolved.ToArray()
+    } catch {
+        return @()
+    }
+}
+
+function Get-IHVenvBasePython {
+    param([Parameter(Mandatory = $true)][string]$Root)
+    foreach ($candidate in @(Get-IHVenvDeclaredPython -Root $Root)) {
+        if (Test-IHPythonExecutable -Path $candidate) {
+            return $candidate
+        }
+    }
+    return ""
+}
+
 function Resolve-IHPython {
     param(
         [Parameter(Mandatory = $true)][string]$Root,
@@ -119,16 +209,27 @@ function Resolve-IHPython {
         }
         return [System.IO.Path]::GetFullPath($portablePython)
     }
+    $venvPython = Join-Path $Root ".venv\Scripts\python.exe"
+    if (Test-IHPythonExecutable -Path $venvPython) {
+        return [System.IO.Path]::GetFullPath($venvPython)
+    }
+
+    # Do not turn a broken source venv into an arbitrary system-Python launch.
+    # Its own pyvenv.cfg is the only fallback allowed before normal dev discovery.
+    $venvBasePython = Get-IHVenvBasePython -Root $Root
+    if (-not [string]::IsNullOrWhiteSpace($venvBasePython)) {
+        return $venvBasePython
+    }
+
     $candidates = @(
-        (Join-Path $Root ".venv\Scripts\python.exe"),
         $portablePython,
         (Join-Path $Root "python\Scripts\python.exe")
     )
     foreach ($candidate in $candidates) {
-        if ([System.IO.File]::Exists($candidate)) { return [System.IO.Path]::GetFullPath($candidate) }
+        if (Test-IHPythonExecutable -Path $candidate) { return [System.IO.Path]::GetFullPath($candidate) }
     }
     $pythonCommand = Get-Command python -ErrorAction SilentlyContinue
-    if ($null -ne $pythonCommand -and -not [string]::IsNullOrWhiteSpace([string]$pythonCommand.Source)) {
+    if ($null -ne $pythonCommand -and -not [string]::IsNullOrWhiteSpace([string]$pythonCommand.Source) -and (Test-IHPythonExecutable -Path ([string]$pythonCommand.Source))) {
         return [System.IO.Path]::GetFullPath([string]$pythonCommand.Source)
     }
     try {
@@ -136,10 +237,25 @@ function Resolve-IHPython {
     } catch {
         $resolved = $null
     }
-    if (-not [string]::IsNullOrWhiteSpace([string]$resolved)) {
+    if (-not [string]::IsNullOrWhiteSpace([string]$resolved) -and (Test-IHPythonExecutable -Path ([string]$resolved))) {
         return [System.IO.Path]::GetFullPath([string]$resolved)
     }
     throw "No development Python was found. Create .venv or install Python."
+}
+
+function Test-IHSourceCheckout {
+    param([Parameter(Mandatory = $true)][string]$Root)
+    $gitMetadata = Join-Path $Root ".git"
+    $sourceEntrypoint = Join-Path $Root "src\invoice_hub\api\main.py"
+    if (-not (Test-Path -LiteralPath $gitMetadata) -or -not [System.IO.File]::Exists($sourceEntrypoint)) {
+        return $false
+    }
+
+    # A damaged portable package must never turn into a system-Python source launch.
+    foreach ($releaseMarker in @("invoice-hub-build.json", "invoice-hub-package.json", "python\python.exe")) {
+        if ([System.IO.File]::Exists((Join-Path $Root $releaseMarker))) { return $false }
+    }
+    return $true
 }
 
 function Set-IHProcessEnvironment {
@@ -218,36 +334,143 @@ function Open-IHBrowser {
 function Get-IHProcess {
     param([Parameter(Mandatory = $true)][int]$ProcessId)
     try {
+        return Get-Process -Id $ProcessId -ErrorAction Stop
+    } catch {
+        return $null
+    }
+}
+
+function Get-IHProcessMetadata {
+    param([Parameter(Mandatory = $true)][int]$ProcessId)
+    try {
         return Get-CimInstance Win32_Process -Filter ("ProcessId = {0}" -f $ProcessId) -ErrorAction Stop
     } catch {
         return $null
     }
 }
 
+function Test-IHProcessMetadataHasFullIdentity {
+    param([AllowNull()]$Metadata)
+    if ($null -eq $Metadata) { return $false }
+    return -not [string]::IsNullOrWhiteSpace([string]$Metadata.ExecutablePath) -and
+        -not [string]::IsNullOrWhiteSpace([string]$Metadata.CommandLine)
+}
+
 function Test-IHProcessIdentity {
     param(
         [Parameter(Mandatory = $true)][int]$ProcessId,
-        [Parameter(Mandatory = $true)][string]$Python,
+        [Parameter(Mandatory = $true)][string[]]$Python,
         [Parameter(Mandatory = $true)][string]$Root,
         [Parameter(Mandatory = $true)][string]$ConfigPath
     )
-    $process = Get-IHProcess -ProcessId $ProcessId
+    $process = Get-IHProcessMetadata -ProcessId $ProcessId
     if ($null -eq $process) { return $false }
     $actualExecutable = [string]$process.ExecutablePath
     if ([string]::IsNullOrWhiteSpace($actualExecutable)) { return $false }
+    $escapedRoot = [regex]::Escape([System.IO.Path]::GetFullPath($Root))
+    $escapedConfig = [regex]::Escape([System.IO.Path]::GetFullPath($ConfigPath))
+    $matchesExecutable = $false
+    foreach ($expectedPython in $Python) {
+        try {
+            if ([System.IO.Path]::GetFullPath($actualExecutable).Equals(
+                [System.IO.Path]::GetFullPath($expectedPython),
+                [System.StringComparison]::OrdinalIgnoreCase
+            )) { $matchesExecutable = $true; break }
+        } catch { continue }
+    }
+    if (-not $matchesExecutable) { return $false }
+
+    # Windows venv redirects to its base executable but preserves the venv path in argv[0].
+    # Both paths must belong to this launch context; module/root/config remain exact so
+    # startup reuse and PID-based stopping cannot accept an unrelated Python process.
+    foreach ($expectedPython in $Python) {
+        try {
+            $escapedPython = [regex]::Escape([System.IO.Path]::GetFullPath($expectedPython))
+            $pattern = '^"?' + $escapedPython + '"?\s+-m\s+invoice_hub\.api\.main\s+--root\s+"' + $escapedRoot + '"\s+--config\s+"' + $escapedConfig + '"\s*$'
+            if ([regex]::IsMatch([string]$process.CommandLine, $pattern, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)) { return $true }
+        } catch {
+            continue
+        }
+    }
+    return $false
+}
+
+function Test-IHHealthBackedProcessIdentity {
+    param(
+        [Parameter(Mandatory = $true)][int]$ProcessId,
+        [Parameter(Mandatory = $true)][string[]]$Python,
+        [Parameter(Mandatory = $true)][string]$ConfigPath,
+        [Parameter(Mandatory = $true)][string]$RuntimeDir,
+        [Parameter(Mandatory = $true)]$BuildManifest,
+        [Parameter(Mandatory = $true)]$PackageManifest,
+        [switch]$Development,
+        [AllowNull()]$Health
+    )
+    # CIM is the normal proof. A returned record with either required field redacted is
+    # not usable proof, so retain the same bounded health-backed fallback as a CIM denial.
+    $metadata = Get-IHProcessMetadata -ProcessId $ProcessId
+    if (Test-IHProcessMetadataHasFullIdentity -Metadata $metadata) { return $false }
+    if ($null -eq $Health) { return $false }
+    $process = Get-IHProcess -ProcessId $ProcessId
+    if ($null -eq $process) { return $false }
+    $matchesPython = $false
+    foreach ($expectedPython in $Python) {
+        try {
+            $actualExecutable = [string]$process.Path
+            if ([string]::IsNullOrWhiteSpace($actualExecutable)) { continue }
+            if ([System.IO.Path]::GetFullPath($actualExecutable).Equals(
+                [System.IO.Path]::GetFullPath($expectedPython),
+                [System.StringComparison]::OrdinalIgnoreCase
+            )) {
+                $matchesPython = $true
+                break
+            }
+        } catch {
+            continue
+        }
+    }
+    if (-not $matchesPython) { return $false }
+    return Test-IHHealthIdentity -Health $Health -ProcessId $ProcessId -ConfigPath $ConfigPath -RuntimeDir $RuntimeDir -BuildManifest $BuildManifest -PackageManifest $PackageManifest -Development:$Development
+}
+
+function Test-IHVerifiedProcessIdentity {
+    param(
+        [Parameter(Mandatory = $true)][int]$ProcessId,
+        [Parameter(Mandatory = $true)][string[]]$Python,
+        [Parameter(Mandatory = $true)][string]$Root,
+        [Parameter(Mandatory = $true)][string]$ConfigPath,
+        [Parameter(Mandatory = $true)][string]$RuntimeDir,
+        [Parameter(Mandatory = $true)]$BuildManifest,
+        [Parameter(Mandatory = $true)]$PackageManifest,
+        [switch]$Development,
+        [AllowNull()]$Health
+    )
+    if (Test-IHProcessIdentity -ProcessId $ProcessId -Python $Python -Root $Root -ConfigPath $ConfigPath) {
+        return $true
+    }
+    return Test-IHHealthBackedProcessIdentity -ProcessId $ProcessId -Python $Python -ConfigPath $ConfigPath -RuntimeDir $RuntimeDir -BuildManifest $BuildManifest -PackageManifest $PackageManifest -Development:$Development -Health $Health
+}
+
+function Test-IHLaunchedProcessIdentity {
+    param(
+        [Parameter(Mandatory = $true)][System.Diagnostics.Process]$Process,
+        [Parameter(Mandatory = $true)][string]$Python
+    )
+    # The Start-Process handle is only used for its own short-lived cleanup path.
+    # Persisted PID files still require Test-IHVerifiedProcessIdentity before a stop.
     try {
-        if (-not [System.IO.Path]::GetFullPath($actualExecutable).Equals(
+        if ($Process.HasExited) { return $false }
+        $current = Get-IHProcess -ProcessId $Process.Id
+        if ($null -eq $current -or $current.HasExited) { return $false }
+        if ($current.StartTime.ToUniversalTime().Ticks -ne $Process.StartTime.ToUniversalTime().Ticks) { return $false }
+        $actualExecutable = [string]$current.Path
+        return [System.IO.Path]::GetFullPath($actualExecutable).Equals(
             [System.IO.Path]::GetFullPath($Python),
             [System.StringComparison]::OrdinalIgnoreCase
-        )) { return $false }
+        )
     } catch {
         return $false
     }
-    $escapedPython = [regex]::Escape([System.IO.Path]::GetFullPath($Python))
-    $escapedRoot = [regex]::Escape([System.IO.Path]::GetFullPath($Root))
-    $escapedConfig = [regex]::Escape([System.IO.Path]::GetFullPath($ConfigPath))
-    $pattern = '^"?' + $escapedPython + '"?\s+-m\s+invoice_hub\.api\.main\s+--root\s+"' + $escapedRoot + '"\s+--config\s+"' + $escapedConfig + '"\s*$'
-    return [regex]::IsMatch([string]$process.CommandLine, $pattern, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
 }
 
 function Test-IHTcpPort {
@@ -308,7 +531,8 @@ function Test-IHHealthIdentity {
         [Parameter(Mandatory = $true)][string]$ConfigPath,
         [Parameter(Mandatory = $true)][string]$RuntimeDir,
         [Parameter(Mandatory = $true)]$BuildManifest,
-        [Parameter(Mandatory = $true)]$PackageManifest
+        [Parameter(Mandatory = $true)]$PackageManifest,
+        [switch]$Development
     )
     if ($null -eq $Health -or $Health.ok -ne $true) { return $false }
     if ([int]$Health.pid -ne $ProcessId) { return $false }
@@ -331,7 +555,9 @@ function Test-IHHealthIdentity {
     if ([string]$Health.package_id -ne [string]$PackageManifest.package_id) { return $false }
     if ([string]$Health.product_version -ne [string]$PackageManifest.product_version) { return $false }
     if ([string]$Health.platform -ne "windows" -or [string]$Health.architecture -ne "x86_64") { return $false }
-    if ($Health.build_manifest_valid -ne $true -or $Health.package_manifest_valid -ne $true) { return $false }
+    # Source health deliberately has no release manifests; its development identity is
+    # already bound above. Portable launches must still require both valid manifests.
+    if (-not $Development -and ($Health.build_manifest_valid -ne $true -or $Health.package_manifest_valid -ne $true)) { return $false }
     return $true
 }
 
@@ -367,6 +593,10 @@ function Get-IHLaunchContext {
         [string]$ConfigPath = "",
         [switch]$Development
     )
+    $launchDevelopment = [bool]$Development
+    if (-not $launchDevelopment -and (Test-IHSourceCheckout -Root $Root)) {
+        $launchDevelopment = $true
+    }
     $resolvedConfig = Initialize-IHConfig -Root $Root -ConfigPath $ConfigPath
     $config = Get-IHConfig -Root $Root -ConfigPath $resolvedConfig
     Ensure-IHDirectory -Path $config.RuntimeDir
@@ -379,12 +609,25 @@ function Get-IHLaunchContext {
         (Join-Path $config.RuntimeDir "startup_preflight.log")
     )
     foreach ($slot in $slots) { Ensure-IHFileSlot -Path $slot }
-    $python = Resolve-IHPython -Root $Root -Development:$Development
-    if ($Development) {
+    $python = Resolve-IHPython -Root $Root -Development:$launchDevelopment
+    $identityPython = @([System.IO.Path]::GetFullPath($python))
+    if ($launchDevelopment) {
+        # A restricted caller may not be allowed to probe a venv base executable that
+        # already hosts localhost. This identity candidate is never selected to launch.
+        foreach ($declaredPython in @(Get-IHVenvDeclaredPython -Root $Root)) {
+            if ($identityPython -notcontains $declaredPython) { $identityPython += $declaredPython }
+        }
         Set-IHProcessEnvironment -Root $Root -ConfigPath $resolvedConfig -Development
-        $identityJson = & $python -c "import json; from invoice_hub.release.build_manifest import API_CONTRACT_VERSION; from invoice_hub.version import PRODUCT_VERSION; print(json.dumps({'build_id':'development','api_contract_version':API_CONTRACT_VERSION,'package_id':'development','product_version':PRODUCT_VERSION}))"
+        $identityJson = & $python -c "import json, sys; from invoice_hub.release.build_manifest import API_CONTRACT_VERSION; from invoice_hub.version import PRODUCT_VERSION; print(json.dumps({'build_id':'development','api_contract_version':API_CONTRACT_VERSION,'package_id':'development','product_version':PRODUCT_VERSION,'base_executable':getattr(sys,'_base_executable','')}))"
         if ($LASTEXITCODE -ne 0) { throw "Cannot read development identity from the source tree." }
         $identity = $identityJson | ConvertFrom-Json
+        $basePython = [string]$identity.base_executable
+        if (-not [string]::IsNullOrWhiteSpace($basePython) -and [System.IO.Path]::IsPathRooted($basePython)) {
+            try {
+                $resolvedBasePython = [System.IO.Path]::GetFullPath($basePython)
+                if ($identityPython -notcontains $resolvedBasePython) { $identityPython += $resolvedBasePython }
+            } catch {}
+        }
         $build = [pscustomobject]@{
             build_id = [string]$identity.build_id
             api_contract_version = [string]$identity.api_contract_version
@@ -417,6 +660,7 @@ function Get-IHLaunchContext {
         ConfigPath = [System.IO.Path]::GetFullPath($resolvedConfig)
         Config = $config
         Python = $python
+        IdentityPython = [string[]]$identityPython
         Build = $build
         Package = $package
         PidFile = Join-Path $config.RuntimeDir "server.pid"
@@ -425,7 +669,7 @@ function Get-IHLaunchContext {
         StderrLog = Join-Path $config.RuntimeDir "server_stderr.log"
         BrowserLog = Join-Path $config.RuntimeDir "browser_launch.log"
         PreflightLog = Join-Path $config.RuntimeDir "startup_preflight.log"
-        Development = [bool]$Development
+        Development = [bool]$launchDevelopment
     }
 }
 
@@ -448,12 +692,100 @@ function Invoke-IHPythonModule {
         [Parameter(Mandatory = $true)][string[]]$Arguments,
         [switch]$Development
     )
-    Set-IHProcessEnvironment -Root $Context.Root -ConfigPath $Context.ConfigPath -Development:$Development
+    Set-IHProcessEnvironment -Root $Context.Root -ConfigPath $Context.ConfigPath -Development:$Context.Development
     & $Context.Python @Arguments
     return $LASTEXITCODE
 }
 
+function Get-IHStartupDiagnostic {
+    param([string]$Root, [string]$ConfigPath, [string]$Reason, [int]$Port = 8766)
+    $lines = New-Object System.Collections.Generic.List[string]
+    $lines.Add("InvoiceHub 启动环境诊断")
+    $lines.Add("原因：$Reason")
+    $lines.Add("本次程序目录：$Root")
+    $lines.Add("本次配置：$ConfigPath")
+    $lines.Add("端口：$Port")
+    $lines.Add("启动器 PID：$PID / PowerShell $($PSVersionTable.PSVersion)")
+    # netstat does not depend on CIM/WMI permissions. Only collect listener PIDs;
+    # command lines and environment may contain private host credentials and are never logged.
+    $probe = New-Object System.Diagnostics.Process
+    $probe.StartInfo.FileName = Join-Path $env:SystemRoot 'System32\netstat.exe'
+    $probe.StartInfo.Arguments = '-ano -p tcp'
+    $probe.StartInfo.UseShellExecute = $false
+    $probe.StartInfo.CreateNoWindow = $true
+    $probe.StartInfo.RedirectStandardOutput = $true
+    $probe.StartInfo.RedirectStandardError = $true
+    try {
+        [void]$probe.Start()
+        $output = $probe.StandardOutput.ReadToEndAsync()
+        $errors = $probe.StandardError.ReadToEndAsync()
+        if (-not $probe.WaitForExit(3000)) { $probe.Kill(); throw 'Port lookup timed out.' }
+        if ($probe.ExitCode -ne 0) { throw 'Port lookup failed.' }
+        $seen = New-Object 'System.Collections.Generic.HashSet[int]'
+        foreach ($line in ($output.Result -split '\r?\n')) {
+            $fields = $line.Trim() -split '\s+'
+            if ($fields.Count -ne 5 -or $fields[0] -ne 'TCP') { continue }
+            # Remote port zero identifies listeners independently of the OS display language.
+            if ($fields[1] -notin @("127.0.0.1:$Port", "0.0.0.0:$Port", "[::]:$Port") -or $fields[2] -notmatch ':0$') { continue }
+            $ownerId = 0
+            if (-not [int]::TryParse($fields[4], [ref]$ownerId) -or -not $seen.Add($ownerId)) { continue }
+            $lines.Add("占用 PID：$ownerId")
+            $owner = Get-IHProcess -ProcessId $ownerId
+            if ($null -ne $owner) {
+                $lines.Add("程序名称：$($owner.ProcessName)")
+                try {
+                    $ownerPath = [string]$owner.Path
+                    if ([string]::IsNullOrWhiteSpace($ownerPath)) { $ownerPath = '权限受限，无法读取路径' }
+                    $lines.Add("程序路径：$ownerPath")
+                } catch { $lines.Add('程序路径：权限受限，无法读取路径') }
+            } else { $lines.Add('程序名称：进程已退出或权限受限') }
+        }
+        if ($seen.Count -eq 0) { $lines.Add('未发现监听者；端口保留或安全软件仍可能阻止绑定。') }
+    } catch { $lines.Add("Listener lookup unavailable: $($_.Exception.Message)") }
+    finally { $probe.Dispose() }
+    try {
+        $service = Get-IHHealth -Url "http://127.0.0.1:$Port/" -TimeoutSeconds 1
+        if ($null -ne $service -and $service.ok -eq $true) {
+            $lines.Add('服务自报信息（仅供诊断，不作为所有权证明）：')
+            foreach ($key in @('pid', 'package_type', 'product_version', 'config_path', 'runtime_dir')) {
+                $property = $service.PSObject.Properties[$key]
+                if ($null -ne $property) {
+                    $value = ([string]$property.Value) -replace '[\x00-\x1f\x7f]', ''
+                    if ($value.Length -gt 600) { $value = $value.Substring(0, 600) }
+                    $lines.Add("${key}: $value")
+                }
+            }
+        }
+    } catch {}
+    $lines.Add('任务管理器：搜索 InvoiceHub；后台 Python 请在“详细信息”按上述 PID 定位。')
+    $lines.Add('请先从占用端口的 InvoiceHub 页面或托盘完整退出，再重试。诊断不会结束任何进程。')
+    return $lines -join [Environment]::NewLine
+}
+
+function Show-IHStartupDiagnostic {
+    param([string]$Text)
+    # A failed Explorer launch loses its console. A native foreground dialog keeps the
+    # diagnostic visible without requiring a working backend or an elevation prompt.
+    try {
+        if (-not ('InvoiceHub.StartupMessage' -as [type])) {
+            Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+namespace InvoiceHub {
+    public static class StartupMessage {
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+        public static extern int MessageBoxW(IntPtr window, string text, string title, uint flags);
+    }
+}
+'@
+        }
+        [void][InvoiceHub.StartupMessage]::MessageBoxW([IntPtr]::Zero, $Text, 'InvoiceHub 启动环境诊断', 0x00050040)
+    } catch { Write-Warning "Could not display startup diagnostic: $($_.Exception.Message)" }
+}
+
 Export-ModuleMember -Function @(
+    "Get-IHStartupDiagnostic",
+    "Show-IHStartupDiagnostic",
     "Ensure-IHDirectory",
     "Ensure-IHFileSlot",
     "Get-IHConfig",
@@ -462,7 +794,9 @@ Export-ModuleMember -Function @(
     "Get-IHLaunchContext",
     "Get-IHMutexName",
     "Get-IHProcess",
+    "Get-IHProcessMetadata",
     "Get-IHRoot",
+    "Get-IHVenvDeclaredPython",
     "Initialize-IHConfig",
     "Invoke-IHPythonModule",
     "Move-IHConflict",
@@ -472,6 +806,10 @@ Export-ModuleMember -Function @(
     "Resolve-IHPython",
     "Set-IHProcessEnvironment",
     "Test-IHHealthIdentity",
+    "Test-IHHealthBackedProcessIdentity",
+    "Test-IHLaunchedProcessIdentity",
+    "Test-IHProcessMetadataHasFullIdentity",
     "Test-IHProcessIdentity",
+    "Test-IHVerifiedProcessIdentity",
     "Test-IHTcpPort"
 )

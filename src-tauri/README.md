@@ -4,6 +4,19 @@ This directory hosts the Tauri 2 adapter for the existing InvoiceHub Python,
 FastAPI, Web, and independent-monitor core. It contains no invoice,
 projection, bookkeeping, or monitor business logic.
 
+Windows local ZIP builds use `scripts/dev/tauri_windows_portable.py` with a clean
+snapshot of the current workspace, including the exact bundled website list.
+Desktop and browser modes share this package. A page shutdown also exits the
+owned host so the next launch can apply a changed startup preference. Closing
+the desktop window only hides it. The Windows GUI host writes child diagnostics
+to its owned runtime and does not open a console. Build receipts are local
+unsigned evidence, not a signed installer or public update authorization.
+
+The default desktop icon is [design 04](icons/README.md): website paper white,
+ink `hi.` and a lime paper fold. `tauri.conf.json` explicitly binds its PNG,
+Windows ICO and macOS ICNS; build overlays inherit these resources. Existing
+installed applications only receive this design in a new desktop build.
+
 ## Development app
 
 A bare source checkout is intentionally not runnable: `main.rs` requires an

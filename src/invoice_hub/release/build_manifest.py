@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from invoice_hub.version import API_CONTRACT_VERSION
+from invoice_hub.website import WEBSITE_BUILD_INPUTS
 
 
 BUILD_MANIFEST_NAME = "invoice-hub-build.json"
@@ -50,6 +51,7 @@ BUILD_INPUTS = (
     "scripts/tools/jierui_voucher_import.py",
     "docs/jierui",
     "pyproject.toml",
+    *WEBSITE_BUILD_INPUTS,
 )
 
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 from collections import defaultdict
 from pathlib import Path
+from typing import Callable
 
 from openpyxl import Workbook, load_workbook
 
@@ -104,9 +105,20 @@ def write_summary_xlsx(path: Path, rows: list[dict[str, str]]) -> None:
     wb.save(path)
 
 
-def build_summary(watch_dir: Path, workspace_dir: Path) -> dict:
+def build_summary(
+    watch_dir: Path,
+    workspace_dir: Path,
+    progress: Callable[[int, int], None] | None = None,
+) -> dict:
     files = supported_invoice_files(watch_dir)
-    records = [extract_invoice_record(path) for path in files]
+    total = len(files)
+    if progress:
+        progress(0, total)
+    records = []
+    for index, path in enumerate(files, start=1):
+        records.append(extract_invoice_record(path))
+        if progress:
+            progress(index, total)
     records = apply_invoice_family_corrections(records, files)
     records = mark_duplicates(records)
     rows = [_row(record) for record in records]
