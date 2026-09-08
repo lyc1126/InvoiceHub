@@ -2,6 +2,12 @@
 
 ## 未发布
 
+### 2026-09-08 Desktop 推送重试与分支整理完成
+
+- 从 `codex/desktop-latest@f35d314` 继续用户已授权的推送；GitHub 成功接收完整整合提交，分支已跟踪同名远端，`git ls-remote` 核对一致。稳定 `main` 仍为 `eb425bc`，未创建 PR、Release 或 Feed，也未上传本机配置、业务数据与 ZIP。
+- 远端接收后，重新核对七个冗余本地引用均只指向稳定基线、没有独立提交或工作树绑定，使用 `git branch -d` 删除；有独立历史的开发线和构建快照继续保留，完成状态见 `docs/BRANCH_STATUS.md`。
+- 本轮只涉及 Git 操作及文档同步，复核远端 SHA、提交范围、工作区分类和文档 diff，不重复已通过的产品测试、BAT 或成品验收；`runtime/desktop-push-check/` 保留供源码整合审计回溯，无需复现时可按精确目录清理。
+
 ### 2026-09-07 最新 Desktop 源码整合与分支整理
 
 - 用户授权整理分支，并提交、推送最新版 Desktop 的全部更新。实时 fetch 后稳定 `origin/main` 仍为 `eb425bc`；从该基线建立 `codex/desktop-latest`，保留当前所有已验源码、资源、测试与文档，恢复同基线的本地 main 跟踪分支。
