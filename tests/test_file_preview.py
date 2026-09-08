@@ -1,12 +1,13 @@
 import io
 import json
 import time
-import zipfile
 from pathlib import Path
 
 import fitz
 from fastapi.testclient import TestClient
 from PIL import Image
+
+from ofd_preview_fixture import write_ofd as _write_renderable_ofd
 
 from invoice_hub.api.app import create_app
 from invoice_hub.projections.summary import SUMMARY_HEADERS
@@ -62,17 +63,6 @@ def _png_bytes(color: tuple[int, int, int], size: tuple[int, int] = (80, 60)) ->
     return output.getvalue()
 
 
-def _write_renderable_ofd(path: Path) -> None:
-    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as archive:
-        archive.writestr(
-            "OFD.xml",
-            '<?xml version="1.0" encoding="UTF-8"?>'
-            '<ofd:OFD xmlns:ofd="http://www.ofdspec.org/2016" DocType="OFD" Version="1.0">'
-            "<ofd:DocBody><ofd:DocInfo><ofd:DocID>preview-fixture</ofd:DocID></ofd:DocInfo>"
-            "<ofd:DocRoot>Doc_0/Document.xml</ofd:DocRoot></ofd:DocBody></ofd:OFD>",
-        )
-        archive.writestr("Doc_0/Res/page-1.png", _png_bytes((220, 235, 255), (120, 180)))
-        archive.writestr("Doc_0/Res/page-2.png", _png_bytes((230, 250, 235), (180, 120)))
 
 
 def _selection(item: dict) -> dict[str, str]:
@@ -104,6 +94,10 @@ def test_preview_job_preserves_source_order_and_renders_pdf_ofd_xml(tmp_path: Pa
     xml = watch / "same-family.xml"
     _write_pdf(pdf, [(842, 595), (595, 842)])
     _write_renderable_ofd(ofd)
+    monkeypatch.setattr(state._file_preview_service._ofd_renderer, "_component", lambda: (None, []))
+    from invoice_hub.services.document_rendering import MuPDFPageImage
+    monkeypatch.setattr(state._file_preview_service._ofd_renderer, "render",
+                        lambda path, page: MuPDFPageImage(_png_bytes((230, 250, 235)), 80, 60, "landscape"))
     xml.write_text('<?xml version="1.0" encoding="UTF-8"?><invoice><seller>安全文本&lt;tag&gt;</seller></invoice>', encoding="utf-8")
     invoice_number = "10000000000000000003"
     write_csv_rows(

@@ -50,3 +50,15 @@ PyMuPDF requires special attention: this release plan uses the AGPL route and
 therefore requires complete corresponding source availability. A qualified
 person must complete the legal and license review before public distribution;
 this file is not legal advice.
+
+
+## Optional OFD preview component
+
+The development OFD preview component uses OFDRW 2.4.0 and a trimmed Java 21 runtime.
+Its complete dependency coordinates, artifact hashes and runtime source are listed in
+`tools/ofd-preview/dependencies.lock.json`, `tools/ofd-preview/toolchains.lock.json`
+and [component notices](tools/ofd-preview/NOTICE.md). Retained iText libraries use the
+AGPL licensing option; OFDRW's Apache-2.0 license does not cover all its dependencies.
+Generated components include their own CycloneDX SBOM, notices and Java legal directory.
+No fonts or invoice samples from customers are redistributed. The published alpha.2
+artifacts do not contain this new component.

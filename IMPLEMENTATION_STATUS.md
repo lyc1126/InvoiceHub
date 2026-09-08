@@ -5,10 +5,19 @@
 
 更新时间：2026-09-08
 
+## OFD 预览开发
+
+- 后续已在固定 localhost 的源码开发服务中，通过真实浏览器“列表勾选 → 预览”显示该 OFD 票面；默认浅色弹窗可见，health/background ready。当前 localhost 为隔离临时单票运行态，已发布 App 文件和用户设置未改动。
+
+- 2026-09-08：已用新组件直接渲染一份真实单页 OFD，并在系统 Preview 展示；用户已确认该票面效果。真实文件及图片均未进入公开工作树，此结果不扩大为产品弹窗或成品验收。
+
+- OFD 专用预览以 main 为统一源码集成基线，功能来源 `codex/ofd-preview-renderer`，精确身份见分支记录：OFD 独立使用 OFDRW 2.4.0 → PNG，已接入既有原票预览服务；MuPDF 仅用于 PDF/安全 SVG。真实 OFD 页面树、字体/图形/图片、逐文件失败和独立 worker 边界见 [OFD 预览说明](docs/OFD_PREVIEW.md)。
+- 组件以 SHA 锁定的 Java 21 和依赖构建，源码开发产物位于 ignored runtime，正式分发应嵌入 Python runtime 并重新生成外层清单。本功能尚未进入已发布 alpha.2；用户问题票、Windows 真机及双平台成品仍需验收。
+
 ## 主线基线
 
-- 本轮文档分支 `codex/macos-desktop-main-sync` 从已同步的公开 `main` 开始维护；本轮提交仅作文档收尾，产品代码仍沿用已合入 `main` 的 Desktop 基线。开工前的税费/Mac 脏改动保存在不进入公开输入的 stash，精确引用见[分支整理记录](docs/BRANCH_STATUS.md)。
-- 本轮已清理六个只指向已合并历史的本地 alpha2 分支，并删除唯一旧 Mac alpha baseline 的远端引用；`codex/desktop-latest`、`codex/desktop-main-docs`、图标/搜索/税费/更新恢复和 Dependabot 引用继续保留，旧 dirty release-prep worktree 不执行 prune。详细引用状态见 [`docs/BRANCH_STATUS.md`](docs/BRANCH_STATUS.md)。
+- alpha.2 发布阶段的文档分支 `codex/macos-desktop-main-sync` 已合并并清理，当前源码统一维护在 main；OFD 集成继续复用既有 Desktop 基线。开工前的税费/Mac 脏改动保存在不进入公开输入的 stash，精确引用见[分支整理记录](docs/BRANCH_STATUS.md)。
+- 已按用户要求分轮清理已合并的 alpha2、Desktop 与文档同步引用；图标/搜索等仍有独立提交的分支、Dependabot、原 stash 和旧 dirty release-prep worktree 保留，不执行全局 prune。详细引用状态见 [`docs/BRANCH_STATUS.md`](docs/BRANCH_STATUS.md)。
 - 合并检查修复监控状态读取等待整轮汇总锁的问题：状态短锁独立，写入仍按 sync -> status 串行；停止请求及原有超时可在汇总过程中执行。旧 ZIP 尚未包含这项补充。
 - 最新 Desktop 全量更新已通过 PR #20 合入 `main`，开发实现与后续发行源码统一以该合并提交及其主线后代为准。最终功能提交的 Windows/macOS CI 与 DCO 均通过，原独立提交和构建快照保留回溯；不发布新包。精确提交身份见 `docs/BRANCH_STATUS.md`，下文日期和旧分支名仅记录实现来源。
 - 从当前 `main` 构建的 macOS arm64 alpha.2 preview 候选目录与 source 身份见[分支整理记录](docs/BRANCH_STATUS.md)，core build ID 为 `c081eb0348cc3f1d8192b5e243b65877ca7650147dad86bd480468838716c2bf`，DMG SHA-256 为 `21715661a3bffa48e8afd0034a81eb975758280f3a6ed6d2356d982ec5607298`、大小 `109535179` bytes。该候选为 ad-hoc、未公证、host updater disabled，finalized receipt verifier 已通过；Mac 包内源码与 runtime 离线核验通过，隔离 HOME smoke 尚未通过，已观察到新包后端及后台同步 ready，但该实例使用真实 Application Support，未满足隔离 HOME 验收条件。

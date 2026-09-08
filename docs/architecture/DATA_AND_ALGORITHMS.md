@@ -499,6 +499,10 @@ CycloneDX 1.6 SBOM 由平台哈希锁确定性生成，组件版本和 lock SHA 
 
 ### 12.5 源文件预览与批量打印短期作业
 
+OFD 从 `OFD.xml/DocRoot → Document.xml/Pages` 读取真实页数，仅接受单文档容器，不枚举内嵌图片充当页面。原票 ZIP 上限 64 MiB，最多 2048 项、单成员 32 MiB、解包合计 128 MiB、XML 8 MiB；拒绝危险路径、大小写重复、符号链接、加密、文件/目录冲突及 DTD/实体。Java 21 worker 只接收有界临时副本及页号，150 DPI、3000 万像素/页、PNG 32 MiB、堆 384 MiB；预检查页面/模板的非显式 CGTransform 字形，渲染告警阻断部分失败。后端原 PNG job、源文件签名、TTL 和缓存限制继续有效；临时解包不是持久预览缓存。
+
+`component.json` 包含 Java/平台、锁定源码指纹、逐文件 SHA 和独立 SBOM；源码指纹绑定 Python 核心，防止旧组件误配新适配器。部署读取 `sys.prefix/components/ofd-preview`，源码开发读取仓库 `runtime/components/ofd-preview`；带发布身份时不退回源码运行态或 PATH Java。字体映射只影响预览，不能更改普通/成本字段；嵌入字体优先，Mac 缺少常见 Windows 宋体/仿宋时尝试系统 Songti，具体兼容样式仍须视觉验收。
+
 预览与打印不是新的发票投影，也不是 SQLite 表。它们是 AppState 进程内的短期 job，均有最大作业数、选中记录数、页数、单页像素和总缓存字节上限；目录切换时清空，过期后返回明确的过期错误。print 保持从创建时起算的 15 分钟 TTL；preview 的 15 分钟改为闲置超时，成功的内容/打开访问与专用 keep-alive 均会滑动续租。弹窗关闭后前端停止续租，因此无人使用的票面仍会自动释放。
 
 - preview 先复核 `invoice_key + source_path`，再按用户选择顺序保存 `FilePreviewEntry`；PDF/OFD/图片以 PNG 分页缓存，XML 作为受限文本读取。SVG 仅在拒绝 DTD、实体、脚本、外链、外部 `url()` 和事件属性后才允许渲染。前端保留打开弹窗时的勾选快照，只在 job `404/410` 时自动重建并恢复同名展示路径/文件序号和页码；`409 source_changed` 不属于可透明恢复错误。

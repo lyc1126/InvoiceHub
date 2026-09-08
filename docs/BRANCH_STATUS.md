@@ -2,7 +2,21 @@
 
 更新时间：2026-09-08。此页记录本轮本地/远端引用整理、`main` 同步和 macOS 候选构建；精确远端状态仍以 Git 查询为准。
 
-## 当前主线与保留引用
+## OFD 主线集成（2026-09-08）
+
+用户在真实 OFD 的独立预览和 InvoiceHub 浏览器弹窗展示后，明确授权提交、推送并合并 main。本次集成来源为 `codex/ofd-preview-renderer`；采用签署 DCO 的普通提交、功能分支推送和受保护主线 PR merge，不重排原历史。开发实现与稳定源码统一跟随 main；精确 feature/merge/main 身份以该 PR 和实时 Git 为准。已发布 alpha.2 未重新打包，不将新源码与旧制品混称同一份二进制能力。
+
+提交只包含组件适配/构建源码、锁、许可证、合成测试和脱敏文档。真实 OFD 及临时演示状态留在公开工作树外，组件二进制与合成 QA 包留在 ignored runtime；本机配置、旧工作树和其它独立开发资料不作为提交输入。双平台 CI/DCO 与本机真实组件检查分别记录，不将 hosted CI 的原生组件 skip 记为 Windows 引擎验证。
+
+## OFD 开工前分支清理（2026-09-08）
+
+当前开发为 `codex/ofd-preview-renderer`，从 `main@fda171dbb7deb4e01731c5a72ec8102f11d3c03d` 新建。开工时主工作区无 modified/deleted/untracked，本机配置、运行态、构建产物和投影均为既有 ignored。远端 main 同 SHA。
+
+按用户明确要求，先以 main 祖先关系确认，再普通删除本地 `codex/app-icon-windows`、`codex/macos-desktop-main-sync`、`codex/tauri2-update-recovery`、`codex/tax-calculator-mvp` 四个旧分支。远端 `codex/desktop-latest`、`codex/desktop-main-docs`、`codex/macos-desktop-main-sync` 三个已合并分支也已删除，并重新查询确认；仅删除分支引用，没有改写提交或 Tag。
+
+仍有独立提交的图标/搜索分支、Dependabot、含未提交改动的旧 release-prep 工作树及原 stash 保留；失效 worktree 登记不在本轮执行全局 prune。新 OFD 功能没有推送、PR 或主线合并。下方为 alpha.2 发布阶段的历史记录，不作为当前分支存活清单。
+
+## alpha.2 发布阶段引用快照（历史）
 
 本轮双端发布源码固定为 `55a59870630198b7b8b055b85decfaa5bb360db6`，即包含 Desktop 整合及文档收尾的公开 main 基线。后续 README、截图和发布记录提交不改变已发布制品身份；当前 main 与文档分支的精确 tip 通过实时 Git 查询核对，不将本次构建 SHA 误当未来始终不变的主线值。
 

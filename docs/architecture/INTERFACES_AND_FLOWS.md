@@ -532,17 +532,21 @@ flowchart TD
     Request --> Validate["逐条复核当前列表\nresolve 仍在 watch_dir"]
     Validate --> Signature["保留每条源文件和顺序\n记录 size + mtime_ns"]
     Signature --> Type{"受控格式"}
-    Type -->|"PDF/OFD/安全 SVG"| MuPDF["MuPDF 按需 PNG"]
+    Type -->|"PDF/安全 SVG"| MuPDF["MuPDF 按需 PNG"]
+    Type -->|"OFD"| OFD["校验页面树/组件 → 独立 Java 21 OFDRW → PNG"]
     Type -->|"常见图片"| Pillow["Pillow 按帧 PNG"]
     Type -->|"XML"| Text["最多 2 MiB 安全纯文本"]
     Type -->|"其它"| Metadata["只返回元信息和打开入口"]
     MuPDF --> Modal["同一弹窗逐文件/逐页"]
+    OFD --> Modal
     Pillow --> Modal
     Text --> Modal
     Metadata --> Modal
 ```
 
 浏览器只得到不透明作业、文件序号、相对显示名和同源内容 URL，不得到绝对路径。每次内容/打开请求都会检查作业时限和文件签名；单文件失败不阻止用户切换其它文件。切换活动 `watch_dir` 会清空预览与打印缓存。
+
+OFD 逐文件失败沿用 `preview_type=error/reason/error_code`，页面现有 `textContent` 错误展示与系统打开按钮消费，无新增路由或客户端路径参数。组件缺失/校验失败、忙碌、超时、字体缺失等使用 `ofd_*` 错误码；页请求失败为中文 HTTP 422，过期和源文件变化仍沿用 404/410 与 409。创建作业在既有 threadpool 中做有界 ZIP/页面树检查；PNG 请求启动最多一个 worker，25 秒超时回收，管道返回四个大端整数（IHO1/宽/高/字节数）及 PNG。后端复核 PNG 签名/IHDR、来源签名、作业存活和缓存上限后才交付。更多限制见 [OFD 预览说明](../OFD_PREVIEW.md)。
 
 ### 6.7.2 浏览器批量打印
 

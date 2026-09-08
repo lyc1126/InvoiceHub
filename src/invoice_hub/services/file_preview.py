@@ -17,6 +17,7 @@ from invoice_hub.services.document_rendering import (
     open_mupdf_document,
     render_mupdf_page,
 )
+from invoice_hub.services.ofd_rendering import OFDPreviewError, OFDRenderer
 
 
 PREVIEW_DPI = 150
@@ -29,7 +30,7 @@ MAX_PREVIEW_CACHE_BYTES = 256 * 1024 * 1024
 MAX_PREVIEW_XML_BYTES = 2 * 1024 * 1024
 MAX_PREVIEW_JOBS = 8
 
-DOCUMENT_EXTENSIONS = {".pdf", ".ofd"}
+DOCUMENT_EXTENSIONS = {".pdf"}
 RASTER_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".webp", ".gif"}
 PREVIEW_IMAGE_EXTENSIONS = {*RASTER_IMAGE_EXTENSIONS, ".svg"}
 
@@ -45,6 +46,23 @@ class FilePreviewError(Exception):
         super().__init__(message)
         self.code = code
         self.status_code = status_code
+
+
+def _ofd_preview_error(error: OFDPreviewError) -> FilePreviewError:
+    messages = {
+        "ofd_renderer_unavailable": "OFD 预览组件未安装或校验失败，请使用包含 OFD 组件的版本；也可使用系统打开原文件。",
+        "ofd_renderer_busy": "正在生成另一张 OFD 票面，请稍后重试。",
+        "ofd_render_timeout": "OFD 票面生成超时，请重试或使用系统打开原文件。",
+        "ofd_font_unavailable": "OFD 票面所需字体或字形不可用，为避免显示缺字票面，请使用系统打开原文件。",
+        "ofd_unsafe_document": "OFD 包含不安全的路径或 XML 内容，已拒绝预览。",
+        "ofd_source_too_large": "OFD 文件超过预览容量上限，请使用系统打开原文件。",
+        "ofd_unsupported_document": "暂不支持含多个文档的 OFD，请使用系统打开原文件。",
+        "ofd_invalid_document": "OFD 页面结构无效或文件已损坏，请使用系统打开原文件。",
+        "page_not_found": "预览页面不存在。",
+    }
+    # A missing OFD component is a per-file failure: PDF/XML selections remain usable.
+    return FilePreviewError(messages.get(error.code, "OFD 票面生成失败，请使用系统打开原文件。"),
+                            code=error.code, status_code=404 if error.code == "page_not_found" else 422)
 
 
 @dataclass(frozen=True)
@@ -386,6 +404,7 @@ class FilePreviewService:
         self._lock = threading.RLock()
         self._jobs: dict[str, FilePreviewJob] = {}
         self._tombstones: dict[str, float] = {}
+        self._ofd_renderer = OFDRenderer()
 
     def _mark_expired_locked(self, job_id: str, now: float) -> None:
         self._jobs.pop(job_id, None)
@@ -430,8 +449,7 @@ class FilePreviewService:
                 status_code=400,
             )
 
-    @staticmethod
-    def _entry_for_source(source: FilePreviewSource, file_number: int) -> FilePreviewEntry:
+    def _entry_for_source(self, source: FilePreviewSource, file_number: int) -> FilePreviewEntry:
         path = source.path
         signature = _source_signature(path)
         extension = path.suffix.casefold()
@@ -441,7 +459,15 @@ class FilePreviewService:
         error_code = ""
         text_truncated = extension == ".xml" and signature.size > MAX_PREVIEW_XML_BYTES
         try:
-            if extension in DOCUMENT_EXTENSIONS or extension == ".svg":
+            if extension == ".ofd":
+                # OFD is a ZIP-based page description, not a MuPDF document or
+                # a bag of embedded images. Preserve its own page tree and source.
+                preview_type = "pages"
+                try:
+                    page_count = self._ofd_renderer.page_count(path)
+                except OFDPreviewError as exc:
+                    raise _ofd_preview_error(exc) from exc
+            elif extension in DOCUMENT_EXTENSIONS or extension == ".svg":
                 preview_type = "pages"
                 page_count = _mupdf_page_count(path, extension)
             elif extension in RASTER_IMAGE_EXTENSIONS:
@@ -573,7 +599,13 @@ class FilePreviewService:
             cached = entry.pages.get(page_number)
         if cached is not None:
             return cached
-        if entry.path.suffix.casefold() in RASTER_IMAGE_EXTENSIONS:
+        if entry.path.suffix.casefold() == ".ofd":
+            try:
+                rendered = self._ofd_renderer.render(entry.path, page_number)
+                page = FilePreviewPage(rendered.content, rendered.width_pixels, rendered.height_pixels, rendered.orientation)
+            except OFDPreviewError as exc:
+                raise _ofd_preview_error(exc) from exc
+        elif entry.path.suffix.casefold() in RASTER_IMAGE_EXTENSIONS:
             page = _render_image_frame(entry.path, page_number)
         else:
             page = _render_mupdf_source(entry.path, entry.path.suffix.casefold(), page_number)

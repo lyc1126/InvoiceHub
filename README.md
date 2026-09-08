@@ -90,6 +90,8 @@ InvoiceHub 是一个开源的本地发票工作台。选好发票文件夹，识
 <details>
 <summary><b>开发者文档与源码运行</b></summary>
 
+当前源码支持独立 OFD 原票预览组件：首次构建运行 `python scripts/dev/build_ofd_preview.py --fetch`，后端按页输出 PNG。此能力尚未包含在上方 alpha.2 下载包中；构建、体积及验收范围见 [OFD 预览说明](docs/OFD_PREVIEW.md)。
+
 - [开发架构总入口](docs/DEVELOPMENT_ARCHITECTURE.md) · [Agent 任务导航](docs/architecture/AGENT_TASK_MAP.md)
 - [文件地图](docs/architecture/FILE_MAP.md) · [接口与流程](docs/architecture/INTERFACES_AND_FLOWS.md) · [数据与算法](docs/architecture/DATA_AND_ALGORITHMS.md)
 - [实现状态](IMPLEMENTATION_STATUS.md) · [迁移清单](docs/MIGRATION_GAP_CHECKLIST.md) · [平台工作流](docs/MAC_WINDOWS_WORKFLOW.md)
