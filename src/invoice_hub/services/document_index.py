@@ -20,6 +20,19 @@ from invoice_hub.storage.files import atomic_write_json, read_csv_rows, read_jso
 CACHE_VERSION = 1
 
 
+def _write_cache_json(path: Path, payload: dict) -> None:
+    # Windows readers/virus scanners can briefly deny replacement. The worker must
+    # publish its catalog before ready; retry sharing failures without hiding a lasting error.
+    for attempt in range(20):
+        try:
+            atomic_write_json(path, payload)
+            return
+        except PermissionError as error:
+            if getattr(error, "winerror", None) not in {5, 32, 33} or attempt == 19:
+                raise
+            time.sleep(0.05)
+
+
 def signature(path: Path) -> list[int] | None:
     try:
         stat = path.stat()
@@ -52,7 +65,7 @@ def build_index(cache: str, outbound: str, detail: str, job_id: str) -> None:
     def report(force: bool = False) -> None:
         nonlocal last_report
         if force or time.monotonic() - last_report >= 0.25:
-            atomic_write_json(folder / "status.json", status)
+            _write_cache_json(folder / "status.json", status)
             last_report = time.monotonic()
 
     try:
@@ -65,7 +78,7 @@ def build_index(cache: str, outbound: str, detail: str, job_id: str) -> None:
                            items=inbound_invoice_options(read_csv_rows(csv)))
             if signature(csv) != before:
                 raise RuntimeError("Cost details changed during indexing; refresh to retry")
-            atomic_write_json(folder / "inbound.json", inbound)
+            _write_cache_json(folder / "inbound.json", inbound)
         status["phase"] = "discovering"
         report(True)
         files = []
@@ -125,7 +138,7 @@ def build_index(cache: str, outbound: str, detail: str, job_id: str) -> None:
             db.execute("DELETE FROM files WHERE seen != ?", (job_id,))
             db.commit()
         items = outbound_invoice_options(Path(outbound) if outbound else None, records=records)
-        atomic_write_json(folder / "outbound.json", dict(job_id=job_id, items=items))
+        _write_cache_json(folder / "outbound.json", dict(job_id=job_id, items=items))
         status.update(state="ready", phase="complete", completed_at=time.time())
         report(True)
     except Exception as error:
@@ -197,7 +210,7 @@ class DocumentIndex:
                 self.last_status = dict(job_id=self.job_id, state="running", phase="starting")
                 self.input_signature = signature(detail)
                 self.last_check = time.monotonic()
-                atomic_write_json(self.folder / "status.json", dict(job_id=self.job_id, state="running",
+                _write_cache_json(self.folder / "status.json", dict(job_id=self.job_id, state="running",
                                   phase="starting", processed=0, total=0, reused=0, errors=0))
                 self.process = multiprocessing.get_context("spawn").Process(
                     target=build_index, args=(str(self.folder), outbound, str(detail), self.job_id), daemon=True,
@@ -206,7 +219,7 @@ class DocumentIndex:
                     self.process.start()
                 except Exception:
                     self.process = None
-                    atomic_write_json(self.folder / "status.json", dict(job_id=self.job_id, state="failed",
+                    _write_cache_json(self.folder / "status.json", dict(job_id=self.job_id, state="failed",
                                       message="Unable to start document index worker"))
                     raise
             result = self.status()
@@ -232,5 +245,5 @@ class DocumentIndex:
             self._stop()
             result = self.status()
             result.update(state="cancelled", running=False)
-            atomic_write_json(self.folder / "status.json", result)
+            _write_cache_json(self.folder / "status.json", result)
             return {"ok": True, "index": result}

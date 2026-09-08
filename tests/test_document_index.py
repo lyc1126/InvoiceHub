@@ -131,3 +131,45 @@ def test_transient_progress_read_does_not_turn_running_job_into_idle(tmp_path, m
     assert index.status()["running"] is True
     index.process = None
     assert index.status()["state"] == "interrupted"
+
+
+def test_final_progress_publication_retries_windows_sharing_violation(tmp_path, monkeypatch):
+    original = module.atomic_write_json
+    attempts = []
+
+    def sharing_violation(path, payload):
+        if path.name == "status.json" and payload["state"] == "ready":
+            # The final status write races with the parent's polling reader on Windows.
+            assert read_json_object(tmp_path / "outbound.json")["job_id"] == "job"
+            attempts.append(payload.copy())
+            if len(attempts) == 1:
+                error = PermissionError("Synthetic Windows sharing violation")
+                error.winerror = 32
+                raise error
+        original(path, payload)
+
+    monkeypatch.setattr(module, "atomic_write_json", sharing_violation)
+    build_index(str(tmp_path), "", str(tmp_path / "missing.csv"), "job")
+    assert len(attempts) == 2
+    assert read_json_object(tmp_path / "status.json")["state"] == "ready"
+
+
+@pytest.mark.parametrize("winerror,expected_attempts", [(5, 20), (32, 20), (33, 20), (None, 1)])
+def test_cache_publication_does_not_hide_persistent_or_unrelated_errors(tmp_path, monkeypatch, winerror, expected_attempts):
+    attempts = []
+    delays = []
+
+    def denied(*args):
+        attempts.append(1)
+        error = PermissionError("Synthetic permanent write denial")
+        if winerror is not None:
+            error.winerror = winerror
+        raise error
+
+    monkeypatch.setattr(module, "atomic_write_json", denied)
+    monkeypatch.setattr(module.time, "sleep", delays.append)
+    with pytest.raises(PermissionError, match="permanent"):
+        module._write_cache_json(tmp_path / "status.json", {"state": "ready"})
+    assert len(attempts) == expected_attempts
+    assert len(delays) == expected_attempts - 1
+    assert sum(delays) < 1

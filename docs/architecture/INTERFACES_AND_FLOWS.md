@@ -1,5 +1,7 @@
 # InvoiceHub 接口与运行流程
 
+2026-09-08 单据索引缓存/状态发布遇 Windows 5/32/33 短暂替换拒绝时最多重试 20 次，累计等待不超过 0.95 秒；先写目录快照、再写 ready 的顺序保持，持续写入错误仍进入失败/中断诊断，不改变 API 字段或缓存身份。重试不在 API 事件循环中执行。
+
 2026-09-07 单据大目录：`GET /api/v1/documents/state` 和保存/删除最近开具目录快速返回及 `index`；加载中的出库列表为空，必须结合 index 区分，不能当零发票。`GET /api/v1/documents/index` 仅读进度；`POST /api/v1/documents/index/resume` 重新核对/继续；`POST /api/v1/documents/index/cancel` 接收 `job_id`，只停止当前匹配 worker，过期返回 `ok=false`。index 包含 `state/phase/processed/total/reused/errors/job_id/running`、PID 及最多十项失败诊断，状态为 idle/running/ready/cancelled/interrupted/failed。
 
 目录访问校验成功时 `supported_count=null`，真实计数由后台 index 统计。页面每 700ms 安静轮询，网络失败提示并重试，暂停不被普通 SSE/刷新重启。完成后读取候选并每页显示 100 项；首页也每页 100 行，统计/搜索/全选保留完整结果。出库预览及导出只重读定位来源并实时校验目录/号码，未就绪返回业务错误；后端关闭结束自身索引，不改变 monitor 语义。
