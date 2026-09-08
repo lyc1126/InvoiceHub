@@ -499,7 +499,7 @@ CycloneDX 1.6 SBOM 由平台哈希锁确定性生成，组件版本和 lock SHA 
 
 ### 12.5 源文件预览与批量打印短期作业
 
-OFD 从 `OFD.xml/DocRoot → Document.xml/Pages` 读取真实页数，仅接受单文档容器，不枚举内嵌图片充当页面。原票 ZIP 上限 64 MiB，最多 2048 项、单成员 32 MiB、解包合计 128 MiB、XML 8 MiB；拒绝危险路径、大小写重复、符号链接、加密、文件/目录冲突及 DTD/实体。Java 21 worker 只接收有界临时副本及页号，150 DPI、3000 万像素/页、PNG 32 MiB、堆 384 MiB；预检查页面/模板的非显式 CGTransform 字形，渲染告警阻断部分失败。后端原 PNG job、源文件签名、TTL 和缓存限制继续有效；临时解包不是持久预览缓存。
+OFD 从 `OFD.xml/DocRoot → Document.xml/Pages` 读取真实页数，仅接受单文档容器，不枚举内嵌图片充当页面。原票 ZIP 上限 64 MiB，最多 2048 项、单成员 32 MiB、解包合计 128 MiB、XML 8 MiB；以 `ZipInfo.orig_filename` 校验原始成员名，拒绝危险路径、NUL、大小写重复、符号链接、加密、文件/目录冲突及 DTD/实体，不能先使用经过平台归一化的 `filename`。Java 21 worker 只接收有界临时副本及页号，150 DPI、3000 万像素/页、PNG 32 MiB、堆 384 MiB；预检查页面/模板的非显式 CGTransform 字形，渲染告警阻断部分失败。后端原 PNG job、源文件签名、TTL 和缓存限制继续有效；临时解包不是持久预览缓存。
 
 `component.json` 包含 Java/平台、锁定源码指纹、逐文件 SHA 和独立 SBOM；源码指纹绑定 Python 核心，防止旧组件误配新适配器。部署读取 `sys.prefix/components/ofd-preview`，源码开发读取仓库 `runtime/components/ofd-preview`；带发布身份时不退回源码运行态或 PATH Java。字体映射只影响预览，不能更改普通/成本字段；嵌入字体优先，Mac 缺少常见 Windows 宋体/仿宋时尝试系统 Songti，具体兼容样式仍须视觉验收。
 

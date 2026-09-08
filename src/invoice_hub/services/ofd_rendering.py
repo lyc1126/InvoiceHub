@@ -74,7 +74,10 @@ def _read_package(path: Path) -> tuple[dict[str, bytes], int]:
             if len(archive.infolist()) > MAX_FILES:
                 raise OFDPreviewError("ofd_source_too_large")
             for info in archive.infolist():
-                name = _member_name(info.filename)
+                # ZipInfo normalizes Windows separators and truncates NULs in
+                # filename. Validate the original ZIP name before that can hide
+                # unsafe input from the extraction boundary.
+                name = _member_name(info.orig_filename)
                 mode = info.external_attr >> 16
                 if name.casefold() in names or stat.S_ISLNK(mode) or info.flag_bits & 1:
                     raise OFDPreviewError("ofd_unsafe_document")

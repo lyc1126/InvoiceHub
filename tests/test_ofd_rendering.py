@@ -28,14 +28,38 @@ def test_real_page_tree_counts_pages_not_embedded_images(tmp_path):
         ofd._read_package(tmp_path / "fake.ofd")
 
 
-@pytest.mark.parametrize("name", ["../outside.xml", "/outside.xml", "C:/outside.xml", "a\\b.xml", "a/../b.xml"])
+def _write_raw_member(path: Path, name: str) -> None:
+    placeholder = "x" * len(name.encode("utf-8"))
+    with zipfile.ZipFile(path, "w") as archive:
+        archive.writestr(placeholder, "bad")
+    content = path.read_bytes()
+    assert content.count(placeholder.encode()) == 2
+    # Preserve hostile bytes in both ZIP headers: writestr normalizes names on
+    # Windows, which would otherwise turn this negative fixture into a safe path.
+    path.write_bytes(content.replace(placeholder.encode(), name.encode("utf-8")))
+
+
+@pytest.mark.parametrize("name", ["../outside.xml", "/outside.xml", "C:/outside.xml", "a\\b.xml", "a/../b.xml", "a\x00b.xml"])
 def test_zip_paths_rejected_before_extraction(tmp_path, name):
     source = tmp_path / "bad.ofd"
-    with zipfile.ZipFile(source, "w") as archive:
-        archive.writestr(name, "bad")
+    _write_raw_member(source, name)
+    with zipfile.ZipFile(source) as archive:
+        assert archive.infolist()[0].orig_filename == name
     with pytest.raises(ofd.OFDPreviewError, match="ofd_unsafe_document"):
         ofd._read_package(source)
     assert sorted(p.name for p in tmp_path.iterdir()) == ["bad.ofd"]
+
+
+def test_original_zip_name_is_checked_after_windows_normalization(tmp_path, monkeypatch):
+    source = tmp_path / "bad.ofd"
+    _write_raw_member(source, "a\\b.xml")
+    class WindowsZipInfo(zipfile.ZipInfo):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.filename = self.filename.replace("\\", "/")
+    monkeypatch.setattr(zipfile, "ZipInfo", WindowsZipInfo)
+    with pytest.raises(ofd.OFDPreviewError, match="ofd_unsafe_document"):
+        ofd._read_package(source)
 
 
 @pytest.mark.parametrize("encoding", ["utf-8", "utf-16", "utf-32"])
