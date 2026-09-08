@@ -75,3 +75,12 @@ Windows PowerShell 使用 `$env:INVOICE_HUB_TEST_OFD_COMPONENT = "runtime/compon
 用户随后明确要求在 InvoiceHub 内查看。已通过 keep-monitor 协议关闭经过身份核对的旧 localhost，并从当前源码在固定端口启动开发服务；原 monitor 为未运行。单票副本、配置、普通/成本投影和运行态都隔离在系统临时目录，未修改原发票、用户设置或已发布 App。
 
 已在真实浏览器的发票列表勾选 OFD，经“更多勾选操作 → 预览”显示产品的源文件预览弹窗，截图确认票面加载；health 为 development 且 backend/background ready。此结果补充了默认浅色浏览器的单票 UI → API → renderer 验收，不覆盖原生桌面壳、Windows、其它皮肤或 `?no_skin=1`。开发服务和临时演示目录暂留供查看，关闭后可清理；已安装 alpha.2 的文件不变，当前 localhost 由开发服务提供。
+
+
+## 评审核对与组件校验缓存
+
+OFDRW 2.4.0 的 `PageInfo.getAllLayer()` 通过 `getOrderRelatedPageList()` 收集模板页和正文页的全部图层，现有预检查已经覆盖引用模板。模板独占内容回归进一步验证正常 PNG 不变，模板缺字形会阻断。源码依据为 Maven Central 同版本 reader sources JAR，不把方法名推测当作证据。
+
+同版本 `AWTMaker` 使用 `charAt` 与 UTF-16 单元偏移，预检查保持相同的 `CGTransform` 索引语义。未提供显式映射的补充平面字符会被拒绝；只放宽预检查不能赋予上游渲染器 code-point 支持，可能产生已知不完整票面。完整罕见字支持需要同时改变绘制链，当前不作该能力承诺。
+
+组件首次访问完整核对哈希；此后只读取组件及清单元数据，root、成员路径/inode、文件类型/权限、大小、mtime/ctime 任一变化即失效并重新完整校验。缓存仅在内存存在，失效或失败不会回退旧结果。该策略针对受信本地组件的常规更新、替换、删除和损坏，不把元数据缓存宣称为可对抗同用户刻意隐藏文件变化的防篡改系统。平台正式包还需要外层签名与 runtime 清单。

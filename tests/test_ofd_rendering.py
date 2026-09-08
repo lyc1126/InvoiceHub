@@ -123,6 +123,41 @@ def test_component_integrity_rejects_tampered_jar(tmp_path, monkeypatch):
         ofd.OFDRenderer(component)._component()
 
 
+def test_component_verification_cache_invalidates_on_file_changes(tmp_path, monkeypatch):
+    component = tmp_path / "component"
+    java_name = "java/bin/java.exe" if os.name == "nt" else "java/bin/java"
+    files = {java_name: b"java", "lib/ofd-preview.jar": b"jar"}
+    for name, content in files.items():
+        path = component / name; path.parent.mkdir(parents=True, exist_ok=True); path.write_bytes(content)
+    manifest = {"schema_version": 1, "engine": "ofdrw-2.4.0", "java_major": 21,
+                "platform": "macos-arm64", "source_fingerprint": ofd.COMPONENT_SOURCE_FINGERPRINT,
+                "files": {name: hashlib.sha256(content).hexdigest() for name, content in files.items()}}
+    (component / "component.json").write_text(json.dumps(manifest))
+    monkeypatch.setattr(ofd, "_platform_id", lambda: "macos-arm64")
+    original_read = Path.read_bytes
+    reads = []
+    def read_bytes(path):
+        if path.is_relative_to(component): reads.append(path)
+        return original_read(path)
+    monkeypatch.setattr(Path, "read_bytes", read_bytes)
+    renderer = ofd.OFDRenderer(component)
+    expected = renderer._component()
+    initial_reads = len(reads)
+    assert initial_reads > 0
+    assert renderer._component() == expected
+    assert len(reads) == initial_reads
+    jar = component / "lib/ofd-preview.jar"
+    jar.write_bytes(b"modified jar")
+    with pytest.raises(ofd.OFDPreviewError, match="ofd_renderer_unavailable"):
+        renderer._component()
+    jar.write_bytes(b"jar")
+    assert renderer._component() == expected
+    manifest["source_fingerprint"] = "wrong"
+    (component / "component.json").write_text(json.dumps(manifest))
+    with pytest.raises(ofd.OFDPreviewError, match="ofd_renderer_unavailable"):
+        renderer._component()
+
+
 def test_worker_timeout_cleans_temp_and_does_not_inherit_secrets(tmp_path, monkeypatch):
     source = tmp_path / "sample.ofd"; write_ofd(source)
     before = source.read_bytes()
@@ -211,6 +246,45 @@ def test_native_engine_rejects_missing_glyph_instead_of_partial_png(tmp_path):
     files[name] = files[name].replace("预览测试".encode(), "\u0378览测试".encode())
     with zipfile.ZipFile(source, "w", zipfile.ZIP_DEFLATED) as archive:
         for name, content in files.items(): archive.writestr(name, content)
+    with pytest.raises(ofd.OFDPreviewError, match="ofd_font_unavailable"):
+        ofd.OFDRenderer(Path(COMPONENT)).render(source, 1)
+
+
+@pytest.mark.skipif(not COMPONENT, reason="requires explicitly built native OFD component")
+def test_native_template_layers_are_rendered_and_checked_for_missing_glyphs(tmp_path):
+    source = tmp_path / "template.ofd"; write_ofd(source)
+    renderer = ofd.OFDRenderer(Path(COMPONENT))
+    original = renderer.render(source, 1)
+    with zipfile.ZipFile(source) as archive:
+        files = {name: archive.read(name) for name in archive.namelist()}
+    page = "Doc_0/Pages/Page_0/Content.xml"
+    template = "Doc_0/Templates/Content.xml"
+    files[template] = files[page]
+    files[page] = b'<ofd:Page xmlns:ofd="http://www.ofdspec.org/2016"><ofd:Template TemplateID="90" ZOrder="Background"/></ofd:Page>'
+    files["Doc_0/Document.xml"] = files["Doc_0/Document.xml"].replace(
+        b"</ofd:CommonData>", b'<ofd:TemplatePage ID="90" BaseLoc="Templates/Content.xml"/></ofd:CommonData>')
+    def save():
+        with zipfile.ZipFile(source, "w", zipfile.ZIP_DEFLATED) as archive:
+            for name, content in files.items(): archive.writestr(name, content)
+    save()
+    assert renderer.render(source, 1).content == original.content
+    files[template] = files[template].replace("预览测试".encode(), "\u0378览测试".encode())
+    save()
+    with pytest.raises(ofd.OFDPreviewError, match="ofd_font_unavailable"):
+        renderer.render(source, 1)
+
+
+@pytest.mark.skipif(not COMPONENT, reason="requires explicitly built native OFD component")
+def test_native_unmapped_supplementary_text_fails_closed(tmp_path):
+    source = tmp_path / "supplementary.ofd"; write_ofd(source)
+    with zipfile.ZipFile(source) as archive:
+        files = {name: archive.read(name) for name in archive.namelist()}
+    name = "Doc_0/Pages/Page_0/Content.xml"
+    files[name] = files[name].replace("预览测试".encode(), "\U00020bb7览测试".encode())
+    with zipfile.ZipFile(source, "w", zipfile.ZIP_DEFLATED) as archive:
+        for name, content in files.items(): archive.writestr(name, content)
+    # OFDRW 2.4.0 AWTMaker itself uses charAt/UTF-16 offsets. Relaxing only
+    # our preflight would permit blank surrogate glyphs in a successful PNG.
     with pytest.raises(ofd.OFDPreviewError, match="ofd_font_unavailable"):
         ofd.OFDRenderer(Path(COMPONENT)).render(source, 1)
 

@@ -6,7 +6,8 @@
 |---|---|---|
 | `file_preview.py::_entry_for_source/get_page/_ofd_preview_error` | MuPDF 的压缩包图片读取不能还原 OFD 页面；专用渲染必须逐文件失败，混选 PDF/XML 与系统打开继续可用 | 原预览回归、真实组件混选 API |
 | `ofd_rendering.py::_read_package/OFDRenderer.render` | 第三方解析器可能跟随资源引用；先校验 `ZipInfo.orig_filename`（避免 Windows 分隔符归一化/NUL 截断隐藏原始危险路径），限制 ZIP/XML 后再在 Java 21 权限策略下处理临时副本，不继承主机令牌，超时必须回收 worker，PNG 不落盘 | 不安全路径/XML、容量、超时清理/环境隔离、真实 PNG |
-| `Preview.java::checkGlyphs`、`StaticLoggerBinder` | OFDRW 会吞掉局部绘制异常或省略 null cmap 字形；预检查页面/模板文字并阻断绘制告警，避免已知残缺 PNG 冒充成功 | 缺失字形负向、分区中文/金额/图形像素检查 |
+| `ofd_rendering.py::_checked_component/_component_signature` | 多文件/多页不能反复读取约 75 MiB 组件；缓存只在全部路径/清单/文件元数据未变时复用，变化须重新哈希，失败清空 | 缓存无重复读取、JAR/清单变更失效测试 |
+| `Preview.java::checkGlyphs`、`StaticLoggerBinder` | OFDRW 会吞掉局部绘制异常或省略 null cmap 字形；`getAllLayer()` 已含模板；预检查使用与上游 AWTMaker 相同的 UTF-16/CGTransform 索引，拒绝未映射补充平面字符并阻断绘制告警，避免已知残缺 PNG 冒充成功 | 缺失字形负向、分区中文/金额/图形像素检查 |
 | `build_ofd_preview.py`、`COMPONENT_SOURCE_FINGERPRINT` | Java 代码/依赖不在 Python wheel 内，但需要进入核心构建身份；固定输入 SHA、核心源码指纹、组件文件哈希与外层 runtime manifest 分层绑定 | 源码指纹与篡改 JAR 契约，完整/精简 PNG 对比 |
 
 2026-09-08 本附录与开发架构总入口统一以 `main` 的 PR #20 合并提交为产品实现及后续发行源码基线，精确身份见 [分支记录](../BRANCH_STATUS.md)；下文旧分支名只记录来源，不能再作为并行真值。源码 CI 不替代平台成品验收。

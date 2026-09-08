@@ -124,6 +124,19 @@ def _policy_path(path: Path) -> str:
     return str(path.resolve()).replace("\\", "/").replace('"', '\\"')
 
 
+def _component_signature(root: Path, names: tuple[str, ...]) -> tuple[tuple, ...]:
+    signatures = []
+    for name in names:
+        item = root / name
+        resolved = item.resolve()
+        info = item.stat()
+        if item.is_symlink() or not resolved.is_relative_to(root) or not stat.S_ISREG(info.st_mode):
+            raise ValueError("component path")
+        signatures.append((name, str(resolved), info.st_ino, info.st_mode, info.st_size,
+                           info.st_mtime_ns, info.st_ctime_ns))
+    return tuple(signatures)
+
+
 class OFDRenderer:
     def __init__(self, component_dir: Path | None = None):
         root = Path(__file__).resolve().parents[3]
@@ -133,10 +146,26 @@ class OFDRenderer:
             packaged if (root / "invoice-hub-build.json").exists() or os.environ.get("INVOICE_HUB_RELEASE_MODE") == "1" or packaged.exists()
             else root / "runtime" / "components" / "ofd-preview"
         )
+        self._component_lock = threading.Lock()
+        self._verified_component: tuple | None = None
 
     def _component(self) -> tuple[Path, list[Path]]:
+        with self._component_lock:
+            return self._checked_component()
+
+    def _checked_component(self) -> tuple[Path, list[Path]]:
         root = self.component_dir.resolve()
         try:
+            cached = self._verified_component
+            # Page navigation must not reread the entire Java tree. Reuse hashes
+            # only while root, manifest and every member's metadata are unchanged;
+            # replacement, removal or permission changes invalidate the whole cache.
+            if cached is not None:
+                cached_root, names, signature, java, jars = cached
+                if root == cached_root and _component_signature(root, names) == signature:
+                    return java, list(jars)
+            self._verified_component = None
+            manifest_signature = _component_signature(root, ("component.json",))
             manifest = json.loads((root / "component.json").read_text(encoding="utf-8"))
             if (manifest["schema_version"] != 1 or manifest["engine"] != "ofdrw-2.4.0"
                     or manifest["java_major"] != 21 or manifest["platform"] != _platform_id()
@@ -145,6 +174,10 @@ class OFDRenderer:
             files = manifest["files"]
             if not isinstance(files, dict) or not files:
                 raise ValueError("empty component")
+            names = ("component.json", *sorted(_member_name(name) for name in files))
+            signature = _component_signature(root, names)
+            if signature[0] != manifest_signature[0]:
+                raise ValueError("component changed")
             for name, digest in files.items():
                 item = root / _member_name(name)
                 if item.is_symlink() or not item.resolve().is_relative_to(root):
@@ -155,8 +188,13 @@ class OFDRenderer:
             jars = [root / name for name in sorted(files) if name.startswith("lib/") and name.endswith(".jar")]
             if java_name not in files or "lib/ofd-preview.jar" not in files or not jars:
                 raise ValueError("component missing")
-            return root / java_name, jars
+            if _component_signature(root, names) != signature:
+                raise ValueError("component changed")
+            java = root / java_name
+            self._verified_component = (root, names, signature, java, tuple(jars))
+            return java, jars
         except (OSError, ValueError, KeyError, TypeError, OFDPreviewError) as exc:
+            self._verified_component = None
             raise OFDPreviewError("ofd_renderer_unavailable") from exc
 
     def page_count(self, path: Path) -> int:
