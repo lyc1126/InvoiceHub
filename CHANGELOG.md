@@ -4,6 +4,8 @@
 
 ### 2026-09-08 Desktop 主线合并检查
 
+- 结果：最终功能提交 `f9eebca` 的 Windows/macOS push 与 PR CI、DCO 全部通过，审查意见修复并解决后，以普通 merge 合入 PR #20，主线产品基线为 `53544e3c96ba01906520637fae60cbc215b7808b`。本地主线同步，随后用纯文档分支同步 README、实现状态、分支记录及全部架构附录的统一基线；保留完整提交历史，不创建 Release/Feed。
+- 本地聚焦检查分别为 40 项前端契约、59 项缓存/单据相关回归和 38 项监控/索引/文档回归，源码 compileall 通过。CI 覆盖完整双平台 Python 回归、Windows 发布契约/PowerShell 解析和 macOS Swift 测试；本轮没有新增 BAT、原生选择器、实体打印或平台成品验收。审计脚本、远端 CI 日志和合成测试文件保留在 ignored 的 `runtime/desktop-merge-check/` 供回溯，无需复现后可清理；业务数据与本机配置未提交。
 - 用户授权将 `codex/desktop-latest` 合入 `main`，从已推送的 `482dff6` 开始复核。首次远端 CI 在 Windows/macOS 各有两项失败，均为预览/打印前端契约仍引用旧首页脚本版本；分别已有 661/652 项 Python 测试通过。
 - 将两处测试版本预期同步为页面已使用的 `20260907-large-list-1`，保留现有产品源码、缓存参数及已验 Desktop 包；继续运行聚焦回归与远端 CI，合并结果以本节后续记录为准。
 - PR #20 的首轮 CI/DCO 已通过，但同提交 push 场景出现索引 phase=complete 后状态写入失败。为单据缓存发布增加仅针对 Windows 5/32/33 的有界重试，最多 20 次、累计等待 0.95 秒；持续拒绝仍抛错。新增最终 ready 写入共享冲突和持续/非 Windows 错误的确定性测试。该源码修复尚未进入此前的本地 ZIP，不将旧包宣称为本次精确成品。

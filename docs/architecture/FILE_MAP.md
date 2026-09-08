@@ -1,5 +1,7 @@
 # InvoiceHub 完整文件地图
 
+2026-09-08 本附录与开发架构总入口统一以 `main` 的 PR #20 合并提交为产品实现及后续发行源码基线，精确身份见 [分支记录](../BRANCH_STATUS.md)；下文旧分支名只记录来源，不能再作为并行真值。源码 CI 不替代平台成品验收。
+
 - `docs/BRANCH_STATUS.md`：当前 Desktop 整合分支、稳定主线、历史来源与本地构建快照分类，以及提交/推送范围。
 
 `state_dir/.invoice_monitor_status.lock` 是 `monitoring/state.py` 生成的短状态读写锁，与完整汇总锁分离；仅运行态使用，不作为 daemon 存活真值或发行输入。

@@ -1,5 +1,7 @@
 # InvoiceHub 数据结构与算法
 
+2026-09-08 本附录与开发架构总入口统一以 `main` 的 PR #20 合并提交为产品实现及后续发行源码基线，精确身份见 [分支记录](../BRANCH_STATUS.md)；下文旧分支名只记录来源，不能再作为并行真值。源码 CI 不替代平台成品验收。
+
 2026-09-08 监控状态采用独立 `state_dir/.invoice_monitor_status.lock` 保护短读写，状态更新仍在完整 sync 锁内按 sync -> status 顺序执行；状态读取不取 sync 锁。锁文件不是运行真值，PID 与 `.invoice_monitor.lock` 的判定保持不变。
 
 2026-09-07 单据缓存 scope 为缓存版本、TargetProfile ID、开具目录、成本 CSV 路径的 SHA256。逐文件键为路径及大小/mtime_ns/ctime_ns，只缓存派生 InvoiceRecord。spawn worker 完成解析后提交 SQLite WAL/NORMAL，恢复核对签名，变化/失败项重解析，完整扫描后删失效缓存行。入库选项绑定成本 CSV 签名，读取前后不一致则失败，不写成本真值。出库快照绑定 job_id，未完成不得作为完整结果；预览仍实时核对目录/号码。60 秒后下一次列表读取会重核目录，预览本身不触发定时全量检查。进程重启先重新核对，暂停保留已完成工作；断电不保证最近缓存进度。

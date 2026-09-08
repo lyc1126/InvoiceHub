@@ -1,6 +1,6 @@
 # InvoiceHub 开发架构与工程导航
 
-2026-09-07 当前完整开发实现归集到 `codex/desktop-latest`；下文各功能分支名记录实现来源，最新维护以该整合分支为入口。稳定 `main` 未合并变更，分支分类与保留策略见 [分支整理记录](BRANCH_STATUS.md)。
+2026-09-08 当前开发实现与稳定发行源码统一基于 `main` 的 PR #20 合并提交，包括 Desktop 全量更新、单据缓存发布重试与监控状态短锁。后续纯文档提交不改变该产品代码基线；新功能从当前 main 建分支。精确提交身份见 [分支整理记录](BRANCH_STATUS.md)，下文日期及旧分支名为演进记录，不再表示独立开发基线。本次不生成 Release/Feed，旧 ZIP 尚未包含合并检查新增的两项运行修复。
 
 2026-09-07 大列表实现在 `codex/fix-large-list-responsiveness`：`services/document_index.py` 用单个 spawn 进程建立单据索引，runtime 保存逐文件缓存、入库选项及进度，API 安排/读取/停止。出库预览经索引定位仍实时校验文件；首页和单据候选每页 100 条，既有提取/投影业务规则保持。
 
@@ -9,10 +9,10 @@
 2026-09-07 当前实现整合公开 main 上的最新前端与既有 Windows Desktop 分支：图标选择经 `app_icons.py → app_state → host_rpc → app_icon.rs` 后保存运行态；默认 `website` 为白底 hi.，另外三款兼容既有状态。保留打印弹窗偏好、WebView 独立目录、picker 插件调度、monitor 状态串行化和同步进度。当前公共资源 `20260907-desktop-integrated-2`；源码工作区不以单独旧分支作为打包输入，必须形成含两边功能的干净快照。
 
 > 文档状态：当前开发实现的权威架构入口
-> 更新日期：2026-08-28
+> 更新日期：2026-09-08
 > 公共权威基线：经过审计的单一脱敏根提交；旧私有提交、Tag、二进制和验证材料不在公开图中
 > 公开状态：候选树、保留 Git 对象和托管面已完成一次内容与凭据审计；公开图从脱敏根提交开始，详见 `docs/release/HISTORY_SANITIZATION_EXECUTION.md`
-> 当前开发基线：`0.3.0-alpha.2` 的 public-preview 组装、独立 package identity、LaunchServices/quarantine smoke、SSE 关闭修复与 receipt finalization 门禁均已合入公开 `main`：只有组包器内部可验证精确 pending record，发布入口必须验证与实际 DMG SHA-256 绑定的 finalized record。远端同名 Tag 仍指向此前基线，必须在干净 `main` 上经新的明确授权重建。没有 GitHub Release、资产、SignPath 请求或 Feed；最终 macOS 成品必须从 DMG 挂载复制、以隔离 `HOME` 经 LaunchServices 启动并保留 quarantine 验收；internal-alpha 与 L10-E 结果仅作为历史上下文。
+> 发行边界：沿用 `0.3.0-alpha.2` public-preview 的独立 package identity、LaunchServices/quarantine smoke、SSE 关闭和 finalized receipt 门禁；后续构建须使用上述统一 main 产品基线或其后代，不能复用旧 Tag/快照冒充新成品。本次不创建 Release、签名请求或 Feed；macOS 成品、签名和 updater 仍需独立验收，源码 CI 不替代这些门槛。
 > 校验规则：精确的本地与 GitHub HEAD 以实时 `git rev-parse`、`git ls-remote` 和双向差异为准；发行源码候选不等于双平台成品 RC 或 GitHub 已发布版本
 
 ## 1. 这套文档解决什么问题
@@ -25,7 +25,7 @@
 
 2026-09-06 的明暗外观继续位于 `codex/default-ui-polish`：`appearance_toggle.html` 与 `appearance.js` 复用 skin enable/reset，`website-dark` 为 CSS-only 内置外观；默认仍无皮肤，恢复入口强制浅色。第四款 desktop 图标以官网纸白底、墨黑 `hi.` 与荧光折角为准，由本地字体和 Pillow 确定性生成，Tauri 默认图标清单包含 PNG/ICO/ICNS。未构建新桌面成品，稳定发布基线不变。
 
-当前前端工作分支为 `codex/default-ui-polish`，从公开 `origin/main` 建立并保留既有官网集成修改，尚未合并。共享控件由 `system_controls.html` 和 `system-controls.js` 复用设置关闭协议；`common.js` 管理请求反馈、原生导航状态与顶栏高度，`app.css` 承载官网风格的默认工作界面与 `hi.`。新增首页到单据页的批量入库交接、逐票身份复核与导出反馈；`projections/documents.py` 统一预览/导出的模板布局和无前缀大写金额。发票提取、成本产物生成与做账核心不变。
+前端原来自 `codex/default-ui-polish`，现已合入上述 main。共享控件由 `system_controls.html` 和 `system-controls.js` 复用设置关闭协议；`common.js` 管理请求反馈、原生导航状态与顶栏高度，`app.css` 承载官网风格的默认工作界面与 `hi.`。首页到单据页的批量入库交接保留逐票身份复核与导出反馈；`projections/documents.py` 统一预览/导出的模板布局和无前缀大写金额。发票提取、成本产物生成与做账核心保持原业务边界。
 
 `website/` 是公开产品介绍站点，可直接打开 HTML，也由现有 localhost 在 `/website/` 提供随包资源，运行方式见 [官网维护说明](../website/README.md)。设置页「官方网站」同窗口进入该路径，并可返回「设置 → 关于」。发票、成本、单据和工具四视图只消费本地合成演示数据，打印仅为动画，税率换算仅为官网概念示例；它不进入下方业务数据链，也不替换 `web/` 的 localhost 应用。`src/invoice_hub/website.py` 的精确白名单联动 HTTP、共享 Build ID、源码快照与双平台组装；公网部署及更新 Feed 独立，源码和静态检查不构成平台成品或浏览器视觉验收。
 
@@ -63,7 +63,7 @@ InvoiceHub 不是只有一个 FastAPI 页面。它同时包含发票提取、文
 
 文中使用四种状态：
 
-- **当前实现**：已存在于当前脱敏源码快照，或明确标注为当前 `codex/tauri2-update-recovery` 开发候选，并有源码或测试证据。
+- **当前实现**：已存在于上述统一 main 产品基线，并有源码或测试证据；旧开发分支只用于解释演进来源。
 - **历史原因**：用于解释设计形成过程，不表示旧实现仍然存在。
 - **未启用能力**：保留接口或页面，但当前正式产品明确禁用。
 - **架构债务**：当前可以运行，但结构、重复或测试覆盖仍有维护风险。

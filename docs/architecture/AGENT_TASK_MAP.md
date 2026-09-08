@@ -1,5 +1,7 @@
 # InvoiceHub Agent 工程任务导航
 
+2026-09-08 本附录与开发架构总入口统一以 `main` 的 PR #20 合并提交为产品实现及后续发行源码基线，精确身份见 [分支记录](../BRANCH_STATUS.md)；下文旧分支名只记录来源，不能再作为并行真值。源码 CI 不替代平台成品验收。
+
 大列表/单据缓存入口：`services/document_index.py`、`AppState.document_state/document_outbound_preview`、documents index API、`page-documents.js/page-index.js`、`large-lists.css`。最低验收 `tests/test_document_index.py`、`tests/test_documents.py`、前端/Node 及 7,003 条浏览器场景：停止/恢复、变更/删除、目录隔离、旧任务拒绝、健康接口、两款皮肤和恢复入口。解析字段语义变化需递增缓存版本。
 
 首页搜索范围任务：`AppState._filter_invoice_items`、`api/app.py::invoices`、`index.html` 与 `page-index.js` 联动；最低覆盖大量合成记录的 invoice/filename/all、缺省兼容、非法枚举、组合筛选、统计/空结果、重置及旧响应拒绝，并复验默认外观、两款皮肤和 `no_skin=1`。修改脚本必须更新首页版本参数与静态契约。

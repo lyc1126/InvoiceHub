@@ -1,5 +1,7 @@
 # InvoiceHub 注释与设计原因地图
 
+2026-09-08 本附录与开发架构总入口统一以 `main` 的 PR #20 合并提交为产品实现及后续发行源码基线，精确身份见 [分支记录](../BRANCH_STATUS.md)；下文旧分支名只记录来源，不能再作为并行真值。源码 CI 不替代平台成品验收。
+
 2026-09-08 `MonitorState.read_status` 不得持完整 sync 锁，否则 `MonitorBridge.stop` 在请求停止与开始超时前就被长汇总阻断；改为独立状态文件短锁，写入固定 sync -> status 顺序，保留 Windows 原子替换互斥。`test_monitoring.py` 覆盖长锁下状态读取、停止请求与超时可达，以及原有跨进程同步写入串行化。
 
 2026-09-08 `document_index.py::_write_cache_json` 只对 Windows 5/32/33 短暂替换拒绝最多尝试 20 次、累计等待 0.95 秒，保证后台先发布目录快照再发布 ready；持续拒绝和其它错误继续抛出，不能把已完成索引误报失败或无限等待。`test_document_index.py` 以最终状态写入共享冲突与持续错误守护。
