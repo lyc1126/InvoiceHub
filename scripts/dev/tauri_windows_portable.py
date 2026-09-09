@@ -25,6 +25,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import time
 import zipfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -361,7 +362,16 @@ def _replace_staging(staging: Path, replacement: Path) -> None:
         if not staging.is_dir():
             raise TauriWindowsPortableError("Windows staging path is not a directory")
         shutil.rmtree(staging)
-    replacement.rename(staging)
+    # Windows scanners can hold a newly copied EXE/DLL briefly. Only retry the
+    # final publish on sharing/access errors; never bypass validation or copy a partial stage.
+    for attempt in range(20):
+        try:
+            replacement.rename(staging)
+            return
+        except OSError as exc:
+            if sys.platform != "win32" or getattr(exc, "winerror", None) not in {5, 32, 33} or attempt == 19:
+                raise
+            time.sleep(0.1)
 
 
 def stage(

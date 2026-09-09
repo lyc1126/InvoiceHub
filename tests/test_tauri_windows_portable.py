@@ -1,5 +1,51 @@
 from __future__ import annotations
 
+
+def test_stage_publish_retries_only_bounded_windows_sharing_errors(monkeypatch, tmp_path):
+    import runpy
+    from pathlib import Path
+    import pytest
+
+    module = runpy.run_path(str(Path(__file__).resolve().parents[1] / "scripts/dev/tauri_windows_portable.py"))
+    publish = module["_replace_staging"]
+    monkeypatch.setattr(module["sys"], "platform", "win32")
+    monkeypatch.setattr(module["time"], "sleep", lambda _: None)
+    original = Path.rename
+    calls = []
+
+    def busy_then_success(path, target):
+        calls.append(1)
+        if len(calls) < 3:
+            error = OSError("synthetic sharing conflict")
+            error.winerror = 32
+            raise error
+        return original(path, target)
+
+    source, target = tmp_path / "payload", tmp_path / "stage"
+    source.mkdir()
+    (source / "proof.txt").write_text("complete")
+    monkeypatch.setattr(Path, "rename", busy_then_success)
+    publish(target, source)
+    assert len(calls) == 3
+    assert (target / "proof.txt").read_text() == "complete"
+
+    for code, expected in [(5, 20), (87, 1)]:
+        calls.clear()
+        source = tmp_path / str(code)
+        source.mkdir()
+
+        def fail(path, target):
+            calls.append(1)
+            error = OSError("synthetic failure")
+            error.winerror = code
+            raise error
+
+        monkeypatch.setattr(Path, "rename", fail)
+        with pytest.raises(OSError):
+            publish(tmp_path / (str(code) + "-stage"), source)
+        assert len(calls) == expected
+        assert source.is_dir()
+
 import hashlib
 import json
 import zipfile

@@ -227,6 +227,8 @@ Windows Tauri 双启动任务定位 `main.rs`、`backend.rs::spawn_backend_liven
 
 ## 13. 公开基线与新平台构建
 
+Windows portable 目录发布重试需覆盖短暂 5/32/33 成功、持续失败达到上限和无关错误立即失败；不得把目录拒绝当作验包通过，测试入口为 test_stage_publish_retries_only_bounded_windows_sharing_errors。
+
 | 导航项 | 内容 |
 |---|---|
 | 首先阅读 | 历史净化执行记录；AGENTS 开源冻结/Tauri 规则；接口流程第 6.11 至 6.13 节 |
