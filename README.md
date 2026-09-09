@@ -122,6 +122,8 @@ py -3 -m venv .venv
 
 ## 接下来
 
+Windows alpha.2 修复优化候选包含启动响应分帧、失败阶段诊断、单次 `--browser`/`--desktop` 与内置 Python 环境隔离。候选与已发布下载包分别记录，精确身份和验收范围见 [变更日志](CHANGELOG.md)；故障收集见 [启动排障](docs/STARTUP_TROUBLESHOOTING.md)。
+
 官网里还有三件正在继续做的事：
 
 - **OCR 识别更好配。** 已有引擎配置和探测入口，继续完善扫描件识别体验；当前工具包不内置正式 OCR 运行环境。

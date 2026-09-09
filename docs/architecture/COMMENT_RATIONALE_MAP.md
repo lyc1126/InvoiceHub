@@ -1,5 +1,7 @@
 # InvoiceHub 注释与设计原因地图
 
+2026-09-09 `BackendHost::launch` 清除 PYTHONHOME，避免用户 Python/Conda 的标准库路径使随包解释器在 encodings 初始化时退出；spawn 前重置诊断、只输出 OS 错误码，避免旧握手记录和敏感环境值进入新诊断。Windows 随包 Python 污染/清理实验及新包启动验收守护；`windows_abortive_close_preserves_framing_and_reports_truncation` 使用真实 Winsock SO_LINGER 验证完整 200/204 与截断 10054 的区别。
+
 ## OFD 原票预览（2026-09-08）
 
 | 文件与符号 | 设计原因与不变量 | 守护测试 |

@@ -1,5 +1,7 @@
 # InvoiceHub 开发架构与工程导航
 
+2026-09-09 本地 main 已同步 PR #24，Windows 加固在 `codex/windows-alpha2-startup-hardening`：保留 HTTP framing 与浏览器兜底，增加内置 Python 的 PYTHONHOME 隔离、spawn 阶段诊断与真实 Winsock 回归。稳定源码仍为 main；alpha.2 新候选的身份和验证范围见本轮 CHANGELOG，公开资产不变。
+
 2026-09-09 启动修复的功能来源为 `codex/fix-backend-startup-probe`，开发实现与稳定源码统一随 main 维护：`backend.rs → local_http.rs` 以有界 HTTP framing 读取后端响应；诊断与启动共享读取规则。`main.rs` 在已验证后端上处理单次启动方式覆盖和 Windows 窗口失败后的浏览器确认，不能绕过 ownership。已发布 alpha.2 尚未包含这些改动；主线精确集成身份见[分支记录](BRANCH_STATUS.md)及实时 Git，细节见[启动排障](STARTUP_TROUBLESHOOTING.md)。
 
 2026-09-08 OFD 专用预览纳入 main 统一源码基线，功能来源为 `codex/ofd-preview-renderer`，精确集成身份见 [分支记录](BRANCH_STATUS.md) 与实时 Git。`file_preview.py → ofd_rendering.py → Java 21/OFDRW → PNG` 独立于发票提取；短期 PNG 继续留在原预览 job 内存，组件构建、边界与验收见 [OFD 预览说明](OFD_PREVIEW.md)。稳定源码随 main 维护，已发布的 alpha.2 制品身份与未覆盖项保持原记录，本次源码集成不代表发布新包。
