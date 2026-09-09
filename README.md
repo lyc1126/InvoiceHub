@@ -72,6 +72,8 @@ InvoiceHub 是一个开源的本地发票工作台。选好发票文件夹，识
 
 桌面窗口和系统浏览器都能使用，在设置中选择启动方式，完整退出后下次生效。关掉桌面窗口只是隐藏；关闭系统时，可以选择是否保留监控。[完整操作说明 →](docs/USER_GUIDE.md)
 
+> 源码修复进展（尚未进入下载包）：启动探测已增加 HTTP 完整性判断和分阶段诊断；Windows 桌面窗口创建失败时可选择浏览器兜底。操作与验收边界见[启动排障说明](docs/STARTUP_TROUBLESHOOTING.md)。
+
 > 当前为 **alpha.2 预览版**。Windows 包未签名；Mac 使用 ad-hoc 签名，未经 Apple 公证，首次打开可能需要系统确认。校验和、构建收据及具体已测/未测范围均在[发布页](https://github.com/lyc1126/InvoiceHub/releases/tag/v0.3.0-alpha.2)。
 
 ## 表格可以重建，原票始终保留

@@ -193,6 +193,8 @@ OFD 专用入口为 `services/ofd_rendering.py`、`tools/ofd-preview/` 与 `scri
 
 ## 12. Windows 正式入口与平台交互
 
+启动探测/浏览器兜底定位 `local_http.rs`、`backend.rs`、`startup_diagnostics.rs` 与 `main.rs`。最低执行 `cargo test --locked --tests` 的 framing、lifecycle、ownership/updater 相邻测试及 `test_tauri_lifecycle_contract.py/test_tauri_host_rpc.py/test_development_documentation.py`。传输须覆盖完整后 reset、204、分片/chunked、连接不关闭、截断、超限、重复 proof、总超时和错误脱敏；surface 须覆盖成功不询问、接受/拒绝、等待时身份失效和浏览器失败。Windows 真机/成品/BAT/原生弹窗与真实浏览器另行验收，合成测试不得替代。
+
 启动诊断任务联动 `api/main.py::check_startup_port`、根 `检查启动环境.bat`、Windows 模块和 `run_start_localhost.ps1`、Tauri `startup_diagnostics.rs/main.rs`。最低验证真实监听 PID、未知/其他环境占用保持存活、无 Python/坏配置仍可诊断、PS7/PS5.1、GUI 原生提示、跨目录单实例、同实例唤回、PE 产品描述和当前成品；不得把插件无法截图计为视觉验收通过。
 
 源码 venv 握手修改定位 `Test-IHProcessIdentity`，最低增加 PS7/PS5.1 的 venv/base 分离身份正向与未知 Python、错误模块/root/config 负向回归，并复验启动复用和 PID 停止两个消费者。

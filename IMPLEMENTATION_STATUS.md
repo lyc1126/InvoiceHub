@@ -38,6 +38,8 @@
 
 ## 启动环境诊断
 
+- 2026-09-09 启动修复（功能来源 `codex/fix-backend-startup-probe`，源码基线统一 main）：新增有界 HTTP framing，避免完整响应后 EOF/reset 导致误报；分阶段日志保留清理前 Python 状态，提前退出快速失败。Windows WebView 创建失败时可确认浏览器兜底，`--browser/--desktop` 为本次覆盖；始终重验 ownership，不修改保存偏好。验证与未覆盖项见当日 Changelog 和[启动排障](docs/STARTUP_TROUBLESHOOTING.md)，已发布 alpha.2 未替换。
+
 - `codex/startup-conflict-diagnostics` 保留前序修复，Windows BAT 默认以原生弹窗呈现启动失败，`-NoDialog` 供自动化使用；根 `检查启动环境.bat` 为不依赖 Python 成功启动的只读入口。PID 来源为 OS 监听表，CIM/程序路径不可读时明确降级，公开 health 的白名单身份字段仅作诊断。
 - Windows Desktop 继续保留 InvoiceHub 产品名/文件描述，新增原生失败提示、托盘诊断及 `--diagnose-startup`；启动日志写到本次 runtime 或用户 diagnostics 目录。单实例沿用官方插件，但按真实程序路径与运行目录派生锁标识，开发/测试/不同包之间不再静默唤回；固定端口和 ownership 保护保留。
 - 直接 Python CLI 在构造 AppState 和安排后台发票同步前检查绑定条件，端口冲突打印诊断并非零退出；Uvicorn 仍执行最终绑定。真机与新包验证结果见同日变更日志。

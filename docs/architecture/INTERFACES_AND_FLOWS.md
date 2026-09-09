@@ -161,6 +161,12 @@ preview 和 print 都以短期内存 job 输出，不能把 PNG、XML 文本或�
 
 ### 3.4.1 Tauri 私有握手与原生选择器
 
+2026-09-09 当前源码的启动顺序：固定端口检查 → spawn → 有界重试（检查 child 存活，单轮共享 5 秒总预算、整体 20 秒）→ proof/health/首页/OpenAPI → 偏好 → fresh ownership 重验 → arm → tray → surface → release gate/manage。`local_http.rs` 按 Content-Length、无正文状态或 chunked 完成响应；仅 close-delimited 响应等待正常 EOF，截断/reset 前未完整的响应继续失败。总响应 128 KiB、响应头 16 KiB，私有字段不进错误信息。
+
+`runtime/startup_probe.log` 每次初始握手覆盖写入 host_pid/backend_pid/attempts/elapsed_ms/child_before_cleanup，后续追加 preferences/ownership 阶段。错误仅包含固定接口、阶段、字节计数、状态码与系统错误码；诊断提示同时给出 stdout/stderr 路径。该日志与失败清理后的监听观察都只是诊断，不参与授权。
+
+`--browser/--desktop` 只覆盖当前进程，冲突退出 64；已有进程的第二实例仍唤回已有 surface，需完整退出后才生效。Windows 桌面窗口创建失败可通过原生 Yes/No 确认改用浏览器，`--no-startup-dialog` 不弹窗。确认后重新验证 child、fresh proof 与完整 identity/首页/OpenAPI，成功才打开固定 origin，托盘/单实例随后按实际 Browser surface 工作。后端握手失败、取消或浏览器打开失败均不能留下未经验证的可用状态，沿用既有清理；不改偏好、不自动重启或重新导入数据。该能力处理窗口创建错误，不承诺捕获 WebView 建好后的白屏或运行中崩溃。
+
 2026-09-07 当前语义：Windows Tauri 支持 desktop/browser，非 Tauri BAT/core 仍禁用 desktop。保存偏好不切换当前 host 的 `StartupSurface`，完整退出再启动才生效。页面结束 owned backend 后，watcher 原子撤销授权、使 lifecycle 失效并请求 host 退出释放单实例；host 主动退出先撤销 ownership，避免重入。下方早期 source-only 记录不替代当日 Windows ZIP 验收。
 
 Portable builder 从干净工作区快照复制共享核心、Web 与官网精确白名单，编译绑定 manifest 后生成 GUI host ZIP、逐文件 SHA 和 receipt；不含本机 config/runtime/业务文件。皮肤更新仍由动态模板注入内容版本 URL，恢复入口跳过皮肤。Ink Pulse 单据 HTML 预览保留用户要求的深色，导出与源票面内容不变。

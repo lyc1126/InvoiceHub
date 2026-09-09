@@ -1,6 +1,7 @@
 pub mod app_icon;
 pub mod backend;
 pub mod host_rpc;
+mod local_http;
 pub mod monitor_bridge;
 pub mod monitor_recovery;
 pub mod startup_diagnostics;
