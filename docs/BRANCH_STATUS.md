@@ -1,5 +1,9 @@
 # 分支整理、main 同步与双平台候选准备
 
+## Windows 启动加固（2026-09-09）
+
+本轮 main 从 `f71323b` 快进到 `b3d69f6`（PR #24），开发分支为 `codex/windows-alpha2-startup-hardening`。原七份 OFD 打包文档保存在 stash `474bdd8aab5379ed2653fad01b9c9e4a48c3842c`；未跟踪压缩包、旧包及本机配置保留。本轮只产出本地 Windows alpha.2 修复优化候选，不修改 GitHub Tag/Release/Feed。精确构建身份和验收范围见 CHANGELOG 与候选 receipt。
+
 更新时间：2026-09-08。此页记录本轮本地/远端引用整理、`main` 同步和 macOS 候选构建；精确远端状态仍以 Git 查询为准。
 
 ## 启动探测主线集成（2026-09-09）

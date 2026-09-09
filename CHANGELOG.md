@@ -2,6 +2,14 @@
 
 ## 未发布
 
+### 2026-09-09 Windows alpha.2 启动加固与修复优化包
+
+- 从 `codex/repackage-ofd-main@f71323b` 开工，七份既有 OFD 打包文档保存在 stash `474bdd8aab5379ed2653fad01b9c9e4a48c3842c`；首次 GitHub TLS 失败，原地址重试成功。main 快进到 PR #24 的 `b3d69f6`，新建 `codex/windows-alpha2-startup-hardening`。保留本机配置、旧包、ignored 运行态及未跟踪压缩包，不推送或修改 Release/Feed。
+- 核对新增内容为 HTTP 响应分帧、阶段诊断、单次启动方式与 Windows 浏览器兜底；原 OFD 专用渲染继续保留。实验以真实 Winsock abortive close 检验完整 200/204 与截断响应，并以随包 Python 的错误 PYTHONHOME 检验初始化隔离，结果决定加固范围；不冒充公测原机复现。
+- 内置 Python 在错误 PYTHONHOME 下出现 encodings 初始化失败，清除后成功；host 在创建子进程前移除该变量，monitor/worker 继承清理后的环境。spawn 前重置本次探测日志，spawn 失败保留脱敏系统错误码，不记录环境值或凭据；不改变用户全局环境、配置或严格 ownership。
+- 验证与新包身份在成品验收后补齐；产品版本保持 `0.3.0-alpha.2`，修复优化包以独立候选目录、源码提交、receipt 和 SHA-256 区分，不覆盖旧公开资产。
+- Windows 原主线 Rust 97 项通过；改动后库回归除新增夹具外通过，新增 Winsock 夹具最初在 read 前 reset，系统直接丢弃未读数据（10054），不属于完整响应后错误的假设。将真实 abort 调度在 read 交付字节之后，新回归通过，且证明截断仍返回 10054；没有放宽生产响应检查。Python 启动/Host RPC/文档/portable 聚焦 56 项通过；新增文档中的固定 SHA 被文档契约拒绝，改为 PR 来源导航后 15 项通过。compileall 与 diff 检查通过；完整 Python 回归、成品与原生验收仍待下方记录。
+
 ### 2026-09-09 提交并整合启动修复
 
 - 用户明确授权提交、推送和合并。按精确文件清单提交 HTTP framing、诊断、浏览器兜底、合成回归及文档，使用 DCO sign-off 和普通 PR merge；没有上传外部日志/附件、本机配置、真实业务文件、运行态或构建产物。

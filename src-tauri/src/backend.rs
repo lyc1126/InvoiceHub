@@ -168,7 +168,9 @@ pub enum BackendError {
     DesktopStateUnavailable,
     BundleManifestMissing,
     BundleManifestInvalid,
-    BackendSpawnFailed,
+    BackendSpawnFailed {
+        os_code: Option<i32>,
+    },
     RandomUnavailable,
     ProbeFailed,
     ProbeStage(&'static str, Box<BackendError>),
@@ -200,7 +202,12 @@ impl fmt::Display for BackendError {
             Self::DesktopStateUnavailable => "InvoiceHub user state directory is unavailable",
             Self::BundleManifestMissing => "InvoiceHub desktop bundle manifest is missing",
             Self::BundleManifestInvalid => "InvoiceHub desktop bundle manifest is invalid",
-            Self::BackendSpawnFailed => "InvoiceHub backend could not be started",
+            Self::BackendSpawnFailed { os_code } => {
+                return write!(
+                    formatter,
+                    "无法启动内置 Python：os_code={os_code:?}，请检查解压完整性与安全软件隔离记录"
+                )
+            }
             Self::RandomUnavailable => {
                 "InvoiceHub could not create private backend ownership material"
             }
@@ -838,6 +845,9 @@ impl BackendHost {
         command.args(&manifest.args);
         command.current_dir(&manifest.backend_root);
         command.env_remove(DEVELOPMENT_STATE_ROOT_ENV);
+        // The bundled interpreter must locate its own stdlib, not a user's Python/Conda
+        // installation. Descendant monitor/workers inherit this cleaned environment too.
+        command.env_remove("PYTHONHOME");
         command.env_remove("PYTHONPATH");
         command.env("PYTHONPATH", manifest.backend_root.join("src"));
         command.env("PYTHONNOUSERSITE", "1");
@@ -853,9 +863,26 @@ impl BackendHost {
         // The GUI host keeps backend diagnostics in runtime files instead of inheriting a console.
         #[cfg(windows)]
         configure_windows_backend_process(&mut command, &manifest.expected_identity.runtime_dir)?;
-        let child = command
-            .spawn()
-            .map_err(|_| BackendError::BackendSpawnFailed)?;
+        // Reset before spawn so an OS launch failure cannot leave a previous successful
+        // handshake as the apparent diagnosis for this host. Never write environment values.
+        let _ = fs::write(
+            manifest
+                .expected_identity
+                .runtime_dir
+                .join("startup_probe.log"),
+            format!("host_pid={} stage=spawn_pending\n", std::process::id()),
+        );
+        let child = command.spawn().map_err(|error| {
+            let failure = BackendError::BackendSpawnFailed {
+                os_code: error.raw_os_error(),
+            };
+            append_startup_stage(
+                &manifest.expected_identity.runtime_dir,
+                "spawn",
+                &failure.to_string(),
+            );
+            failure
+        })?;
         let child_pid = child.id();
         let child = Arc::new(Mutex::new(child));
 
