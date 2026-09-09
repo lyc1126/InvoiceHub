@@ -32,7 +32,7 @@ fn identity_path(path: &Path) -> String {
 }
 
 fn service_claim() -> Option<String> {
-    use std::io::{Read, Write};
+    use std::io::Write;
     use std::net::TcpStream;
     use std::time::{Duration, Instant};
     let budget = Duration::from_secs(1);
@@ -45,26 +45,11 @@ fn service_claim() -> Option<String> {
             b"GET /api/v1/health HTTP/1.1\r\nHost: 127.0.0.1:8766\r\nConnection: close\r\n\r\n",
         )
         .ok()?;
-    let mut raw = Vec::new();
-    loop {
-        stream
-            .set_read_timeout(Some(deadline.checked_duration_since(Instant::now())?))
-            .ok()?;
-        let mut chunk = [0u8; 4096];
-        let count = stream.read(&mut chunk).ok()?;
-        if count == 0 {
-            break;
-        }
-        if raw.len() + count > 32 * 1024 {
-            return None;
-        }
-        raw.extend_from_slice(&chunk[..count]);
-    }
-    let separator = raw.windows(4).position(|part| part == b"\r\n\r\n")?;
-    if !raw.starts_with(b"HTTP/1.1 200 ") && !raw.starts_with(b"HTTP/1.0 200 ") {
+    let response = crate::local_http::read_response(&mut stream, deadline, 32 * 1024).ok()?;
+    if response.status != 200 {
         return None;
     }
-    let payload: serde_json::Value = serde_json::from_slice(&raw[separator + 4..]).ok()?;
+    let payload: serde_json::Value = serde_json::from_slice(&response.body).ok()?;
     summarize_claim(&payload)
 }
 
@@ -108,7 +93,7 @@ pub fn instance_identifier(base: &str, executable: &Path, runtime: &Path) -> Str
 pub fn report(reason: &str, runtime: Option<&Path>, config: Option<&Path>) -> String {
     let executable = std::env::current_exe().unwrap_or_default();
     let mut text = format!(
-        "InvoiceHub\n{reason}\n\n本次程序：{}\n本次进程 PID：{}\n服务地址：{}\n",
+        "InvoiceHub\n{reason}\n\n本次程序：{}\n桌面宿主 PID（不是 Python PID）：{}\n服务地址：{}\n",
         executable.display(),
         std::process::id(),
         crate::backend_origin()
@@ -118,17 +103,24 @@ pub fn report(reason: &str, runtime: Option<&Path>, config: Option<&Path>) -> St
     }
     if let Some(runtime) = runtime {
         text.push_str(&format!("本次运行目录：{}\n", runtime.display()));
+        for name in [
+            "startup_probe.log",
+            "server_stderr.log",
+            "server_stdout.log",
+        ] {
+            text.push_str(&format!("日志：{}\n", runtime.join(name).display()));
+        }
     }
     #[cfg(windows)]
     text.push_str(&windows::listener_report(crate::FIXED_BACKEND_PORT));
     if let Some(claim) = service_claim() {
         text.push_str(&claim);
     }
-    text.push_str("\n如被其他环境占用，请先从对应 InvoiceHub 的页面或托盘完整退出，再重试。\n任务管理器可搜索 InvoiceHub；后台 Python 请在“详细信息”按上述 PID 定位。\n程序路径不可读表示权限受限或进程已退出，不表示没有占用。诊断不会结束其他进程。\n");
+    text.push_str("\n监听检查仅表示此刻状态。启动探测失败后，本次 Python 可能已被清理；不能据此判断端口曾被占用。\n若上方列出占用 PID，请从对应程序正常退出；路径不可读可能是权限受限或进程已退出。诊断不会结束其他进程。\n后端探测失败请查看 startup_probe.log 中的失败阶段与 Python PID，以及 server_stderr.log。\n若仅桌面窗口无法创建，可完整退出后以 InvoiceHub.exe --browser 启动；浏览器模式同样要求后端通过身份检查。\n");
     text
 }
 
-pub fn present(reason: &str, runtime: Option<&Path>, config: Option<&Path>) {
+pub fn save(reason: &str, runtime: Option<&Path>, config: Option<&Path>) -> String {
     let mut text = report(reason, runtime, config);
     let directory = runtime.map(Path::to_path_buf).or_else(|| {
         std::env::var_os("LOCALAPPDATA")
@@ -144,11 +136,24 @@ pub fn present(reason: &str, runtime: Option<&Path>, config: Option<&Path>) {
             text.push_str("诊断文件写入失败，可在此对话框按 Ctrl+C 复制。\n");
         }
     }
+    text
+}
+
+pub fn present(reason: &str, runtime: Option<&Path>, config: Option<&Path>) {
+    let text = save(reason, runtime, config);
     eprintln!("{text}");
     #[cfg(windows)]
     if !std::env::args().any(|argument| argument == "--no-startup-dialog") {
         windows::show_message(&text);
     }
+}
+
+pub fn offer_browser_fallback() -> bool {
+    #[cfg(windows)]
+    if !std::env::args().any(|argument| argument == "--no-startup-dialog") {
+        return windows::offer_browser_fallback();
+    }
+    false
 }
 
 #[cfg(windows)]
@@ -171,7 +176,8 @@ mod windows {
             },
         },
         UI::WindowsAndMessaging::{
-            MessageBoxW, MB_ICONINFORMATION, MB_OK, MB_SETFOREGROUND, MB_TOPMOST,
+            MessageBoxW, IDYES, MB_DEFBUTTON2, MB_ICONINFORMATION, MB_OK, MB_SETFOREGROUND,
+            MB_TOPMOST, MB_YESNO,
         },
     };
 
@@ -278,7 +284,7 @@ mod windows {
         }
         let mut text = format!("\n端口 {port} 监听检查：\n");
         if pids.is_empty() {
-            text.push_str("未发现监听者；若仍无法绑定，请检查端口保留或安全软件。\n");
+            text.push_str("当前未发现监听者。这不是端口占用的证明，也不能还原启动失败前的状态。\n");
         }
         for pid in pids.iter().take(8) {
             let (name, parent) = process(*pid);
@@ -309,6 +315,23 @@ mod windows {
                 title.as_ptr(),
                 MB_OK | MB_ICONINFORMATION | MB_SETFOREGROUND | MB_TOPMOST,
             );
+        }
+    }
+
+    pub fn offer_browser_fallback() -> bool {
+        let text: Vec<u16> = "桌面窗口无法创建。是否改用系统浏览器继续使用？\n\n选择“是”打开浏览器；选择“否”退出。\n本次选择不改写启动偏好，失败详情已保存到启动诊断文件。"
+            .encode_utf16().chain(Some(0)).collect();
+        let title: Vec<u16> = "InvoiceHub 启动方式"
+            .encode_utf16()
+            .chain(Some(0))
+            .collect();
+        unsafe {
+            MessageBoxW(
+                std::ptr::null_mut(),
+                text.as_ptr(),
+                title.as_ptr(),
+                MB_YESNO | MB_DEFBUTTON2 | MB_ICONINFORMATION | MB_SETFOREGROUND | MB_TOPMOST,
+            ) == IDYES
         }
     }
 

@@ -164,6 +164,13 @@ fn main() -> ExitCode {
         startup_diagnostics::present("启动环境检查", None, None);
         return ExitCode::SUCCESS;
     }
+    let surface_override = match parse_surface_override(std::env::args().skip(1)) {
+        Ok(surface) => surface,
+        Err(error) => {
+            startup_diagnostics::present(&error.to_string(), None, None);
+            return ExitCode::from(64);
+        }
+    };
     // A checkout has no signed bundle manifest, so it cannot attach to a listener or start a host.
     let bundle_root = match default_bundle_root() {
         Ok(root) => root,
@@ -239,19 +246,26 @@ fn main() -> ExitCode {
             // reaching Builder::build's error arm. Present and request an orderly exit here.
             let outcome = (|| -> Result<(), Box<dyn Error>> {
             let backend = BackendHost::launch(manifest, app.handle().clone())?;
-            let startup_surface = backend.startup_surface();
+            let mut startup_surface = surface_override.unwrap_or(backend.startup_surface());
             let app_icon_id = app_icon::load_selected(backend.runtime_dir());
             let setup_result = (|| -> Result<(), Box<dyn Error>> {
                 install_tray(app, app_icon_id)?;
-                match startup_surface {
-                    StartupSurface::Desktop => create_desktop_window(
+                startup_surface = start_surface(
+                    startup_surface,
+                    || create_desktop_window(
                         app,
                         app_icon_id,
                         backend.webview_data_directory(),
                         backend.allow_print_popups(),
-                    )?,
-                    StartupSurface::Browser => open_backend_in_browser(&app.handle())?,
-                }
+                    ),
+                    |error| {
+                        startup_diagnostics::save(&format!("桌面窗口创建失败：{error}"),
+                            Some(&setup_diagnostic_runtime), Some(&setup_diagnostic_config));
+                        startup_diagnostics::offer_browser_fallback()
+                    },
+                    || backend.verify_surface_ownership().map_err(Into::into),
+                    || { open_backend_in_browser(&app.handle())?; Ok(()) },
+                )?;
                 Ok(())
             })();
             if let Err(error) = setup_result {
@@ -310,6 +324,48 @@ fn main() -> ExitCode {
     } else {
         ExitCode::SUCCESS
     }
+}
+
+fn parse_surface_override(
+    args: impl Iterator<Item = String>,
+) -> Result<Option<StartupSurface>, Box<dyn Error>> {
+    let mut selected = None;
+    for arg in args {
+        let surface = match arg.as_str() {
+            "--browser" => StartupSurface::Browser,
+            "--desktop" => StartupSurface::Desktop,
+            _ => continue,
+        };
+        if selected.is_some_and(|previous| previous != surface) {
+            return Err("启动参数冲突：--browser 与 --desktop 只能选择一个".into());
+        }
+        selected = Some(surface);
+    }
+    Ok(selected)
+}
+
+fn start_surface(
+    preferred: StartupSurface,
+    desktop: impl FnOnce() -> Result<(), Box<dyn Error>>,
+    offer_fallback: impl FnOnce(&dyn Error) -> bool,
+    verify: impl FnOnce() -> Result<(), Box<dyn Error>>,
+    browser: impl FnOnce() -> Result<(), Box<dyn Error>>,
+) -> Result<StartupSurface, Box<dyn Error>> {
+    if preferred == StartupSurface::Desktop {
+        match desktop() {
+            Ok(()) => return Ok(StartupSurface::Desktop),
+            Err(error) => {
+                if !offer_fallback(error.as_ref()) {
+                    return Err(error);
+                }
+            }
+        }
+    }
+    // Only a window-creation failure can offer fallback. Backend/identity failures never
+    // reach here, and acceptance rechecks ownership after the potentially long native prompt.
+    verify()?;
+    browser()?;
+    Ok(StartupSurface::Browser)
 }
 
 fn create_desktop_window(
@@ -378,4 +434,107 @@ fn is_print_popup_navigation_url(url: &str) -> bool {
         && job_id
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+}
+
+#[cfg(test)]
+mod startup_tests {
+    use super::*;
+    use std::cell::{Cell, RefCell};
+
+    #[test]
+    fn successful_desktop_never_prompts_or_opens_browser() {
+        assert_eq!(
+            start_surface(
+                StartupSurface::Desktop,
+                || Ok(()),
+                |_| panic!("unexpected prompt"),
+                || panic!("unexpected retry"),
+                || panic!("unexpected browser")
+            )
+            .unwrap(),
+            StartupSurface::Desktop
+        );
+    }
+
+    #[test]
+    fn accepted_fallback_revalidates_before_opening_browser_once() {
+        let order = RefCell::new(Vec::new());
+        let result = start_surface(
+            StartupSurface::Desktop,
+            || {
+                order.borrow_mut().push("desktop");
+                Err("window unavailable".into())
+            },
+            |_| {
+                order.borrow_mut().push("prompt");
+                true
+            },
+            || {
+                order.borrow_mut().push("verify");
+                Ok(())
+            },
+            || {
+                order.borrow_mut().push("browser");
+                Ok(())
+            },
+        );
+        assert_eq!(result.unwrap(), StartupSurface::Browser);
+        assert_eq!(*order.borrow(), ["desktop", "prompt", "verify", "browser"]);
+    }
+
+    #[test]
+    fn declined_fallback_preserves_window_error_without_opening_browser() {
+        let result = start_surface(
+            StartupSurface::Desktop,
+            || Err("window unavailable".into()),
+            |_| false,
+            || panic!("unexpected verification"),
+            || panic!("unexpected browser"),
+        );
+        assert_eq!(result.unwrap_err().to_string(), "window unavailable");
+    }
+
+    #[test]
+    fn ownership_lost_during_prompt_blocks_fallback() {
+        let opened = Cell::new(false);
+        let result = start_surface(
+            StartupSurface::Desktop,
+            || Err("window unavailable".into()),
+            |_| true,
+            || Err("ownership lost".into()),
+            || {
+                opened.set(true);
+                Ok(())
+            },
+        );
+        assert_eq!(result.unwrap_err().to_string(), "ownership lost");
+        assert!(!opened.get());
+    }
+
+    #[test]
+    fn browser_override_skips_webview_and_propagates_browser_failure() {
+        let result = start_surface(
+            StartupSurface::Browser,
+            || panic!("unexpected WebView"),
+            |_| panic!("unexpected prompt"),
+            || Ok(()),
+            || Err("browser launch failed".into()),
+        );
+        assert_eq!(result.unwrap_err().to_string(), "browser launch failed");
+    }
+
+    #[test]
+    fn launch_flags_are_optional_and_conflicting_modes_are_rejected() {
+        let parse = |args: &[&str]| parse_surface_override(args.iter().map(|arg| arg.to_string()));
+        assert_eq!(parse(&[]).unwrap(), None);
+        assert_eq!(
+            parse(&["--browser"]).unwrap(),
+            Some(StartupSurface::Browser)
+        );
+        assert_eq!(
+            parse(&["--desktop"]).unwrap(),
+            Some(StartupSurface::Desktop)
+        );
+        assert!(parse(&["--browser", "--desktop"]).is_err());
+    }
 }

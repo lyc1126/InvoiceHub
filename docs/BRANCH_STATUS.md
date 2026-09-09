@@ -2,6 +2,12 @@
 
 更新时间：2026-09-08。此页记录本轮本地/远端引用整理、`main` 同步和 macOS 候选构建；精确远端状态仍以 Git 查询为准。
 
+## 启动探测主线集成（2026-09-09）
+
+用户在源码修复和验证范围说明后明确授权提交、推送并合并 main。功能来源为 `codex/fix-backend-startup-probe`，从 `f71323b1e560a2e75653d847b069552cee84c18f` 开工；采用 DCO sign-off、功能分支 PR 和普通 merge，不重排历史。开发实现与稳定源码统一跟随 main，精确提交/合并身份以对应 PR 与实时 Git 为准；Windows/macOS CI、DCO 和本机 Rust 回归分别记录，不能把 Python CI 称为 Windows Rust 或原生桌面验收。
+
+本次只提交后端 HTTP framing、脱敏启动诊断、浏览器兜底及其合成测试/文档。外部日志、压缩附件、本机配置、运行态、编译缓存和无关 HTML 不纳入提交。已发布 alpha.2 ZIP/DMG、Tag 与 Feed 保持既有身份；新成品和 Windows 原生验收仍须单独执行。
+
 ## OFD 主线集成（2026-09-08）
 
 用户在真实 OFD 的独立预览和 InvoiceHub 浏览器弹窗展示后，明确授权提交、推送并合并 main。本次集成来源为 `codex/ofd-preview-renderer`；采用签署 DCO 的普通提交、功能分支推送和受保护主线 PR merge，不重排原历史。开发实现与稳定源码统一跟随 main；精确 feature/merge/main 身份以该 PR 和实时 Git 为准。已发布 alpha.2 未重新打包，不将新源码与旧制品混称同一份二进制能力。

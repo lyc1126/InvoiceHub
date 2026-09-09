@@ -1,6 +1,6 @@
 //! Fixed-port backend ownership and strict identity checks for the desktop host.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::env;
 use std::error::Error;
 use std::fmt;
@@ -25,6 +25,7 @@ use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
 
 use crate::host_rpc::{HostRpcServer, HostRpcServerError};
+use crate::local_http::{self, HttpError, Response as HttpResponse};
 use crate::monitor_recovery::{LifecycleAuthority, LifecycleLease, LifecyclePhase, RecoveryError};
 use crate::{FIXED_BACKEND_HOST, FIXED_BACKEND_PORT};
 
@@ -170,6 +171,15 @@ pub enum BackendError {
     BackendSpawnFailed,
     RandomUnavailable,
     ProbeFailed,
+    ProbeStage(&'static str, Box<BackendError>),
+    HttpProbe {
+        path: &'static str,
+        error: HttpError,
+    },
+    BackendExited {
+        pid: u32,
+        code: Option<i32>,
+    },
     DesktopSurfaceUnavailable,
     StartupSurfaceInvalid,
     GracefulShutdownFailed,
@@ -195,6 +205,18 @@ impl fmt::Display for BackendError {
                 "InvoiceHub could not create private backend ownership material"
             }
             Self::ProbeFailed => "InvoiceHub backend probe failed",
+            Self::ProbeStage(stage, error) => {
+                return write!(formatter, "后端启动检查失败（{stage}）：{error}")
+            }
+            Self::HttpProbe { path, error } => {
+                return write!(formatter, "后端响应读取失败 {path}: {error}")
+            }
+            Self::BackendExited { pid, code } => {
+                return write!(
+                    formatter,
+                    "后端提前退出：Python PID={pid} exit_code={code:?}，请检查 server_stderr.log"
+                )
+            }
             Self::DesktopSurfaceUnavailable => {
                 "InvoiceHub desktop surface is unavailable for this backend"
             }
@@ -541,11 +563,26 @@ pub fn probe_backend(
     expected_pid: u32,
     ownership_secret: &[u8; OWNERSHIP_SECRET_BYTES],
 ) -> Result<BackendHealth, BackendError> {
+    probe_backend_until(
+        expected_identity,
+        expected_pid,
+        ownership_secret,
+        Instant::now() + HTTP_TIMEOUT,
+    )
+}
+
+fn probe_backend_until(
+    expected_identity: &ExpectedBackendIdentity,
+    expected_pid: u32,
+    ownership_secret: &[u8; OWNERSHIP_SECRET_BYTES],
+    deadline: Instant,
+) -> Result<BackendHealth, BackendError> {
     let challenge = generate_ownership_challenge()?;
     let proof_response = local_get_with_header(
         DESKTOP_HOST_PROOF_PATH,
         DESKTOP_HOST_CHALLENGE_HEADER,
         &challenge,
+        deadline,
     )?;
     let response = proof_response
         .headers
@@ -557,25 +594,22 @@ pub fn probe_backend(
     {
         return Err(HandshakeError::OwnershipProofMismatch.into());
     }
-    let health_response = local_get(HEALTH_PATH)?;
-    if health_response.status != 200 {
-        return Err(BackendError::ProbeFailed);
-    }
-    let health_value: Value =
-        serde_json::from_slice(&health_response.body).map_err(|_| BackendError::ProbeFailed)?;
-    let health = BackendHealth::from_json(&health_value)?;
+    let health_response = local_get_until(HEALTH_PATH, deadline)?;
+    require_status(&health_response, HEALTH_PATH, 200)?;
+    let health_value: Value = serde_json::from_slice(&health_response.body).map_err(|_| {
+        BackendError::ProbeStage("health JSON", Box::new(BackendError::ProbeFailed))
+    })?;
+    let health = BackendHealth::from_json(&health_value)
+        .map_err(|error| BackendError::ProbeStage("health 字段", Box::new(error)))?;
     expected_identity.validate_health(&health, expected_pid)?;
 
-    let index_response = local_get("/")?;
-    if index_response.status != 200 {
-        return Err(BackendError::ProbeFailed);
-    }
-    let openapi_response = local_get(OPENAPI_PATH)?;
-    if openapi_response.status != 200 {
-        return Err(BackendError::ProbeFailed);
-    }
-    let openapi: Value =
-        serde_json::from_slice(&openapi_response.body).map_err(|_| BackendError::ProbeFailed)?;
+    let index_response = local_get_until("/", deadline)?;
+    require_status(&index_response, "/", 200)?;
+    let openapi_response = local_get_until(OPENAPI_PATH, deadline)?;
+    require_status(&openapi_response, OPENAPI_PATH, 200)?;
+    let openapi: Value = serde_json::from_slice(&openapi_response.body).map_err(|_| {
+        BackendError::ProbeStage("OpenAPI JSON", Box::new(BackendError::ProbeFailed))
+    })?;
     validate_openapi_routes(&openapi)?;
     Ok(health)
 }
@@ -586,7 +620,14 @@ pub fn probe_backend_with_retry(
     ownership_secret: &[u8; OWNERSHIP_SECRET_BYTES],
 ) -> Result<BackendHealth, BackendError> {
     retry_probe(
-        || probe_backend(expected_identity, expected_pid, ownership_secret),
+        |deadline| {
+            probe_backend_until(
+                expected_identity,
+                expected_pid,
+                ownership_secret,
+                deadline.min(Instant::now() + HTTP_TIMEOUT),
+            )
+        },
         BACKEND_STARTUP_TIMEOUT,
     )
 }
@@ -599,9 +640,7 @@ pub struct StartupPreferences {
 
 pub fn load_startup_preferences() -> Result<StartupPreferences, BackendError> {
     let response = local_get(PREFERENCES_PATH)?;
-    if response.status != 200 {
-        return Err(BackendError::StartupSurfaceInvalid);
-    }
+    require_status(&response, PREFERENCES_PATH, 200)?;
     let value: Value =
         serde_json::from_slice(&response.body).map_err(|_| BackendError::StartupSurfaceInvalid)?;
     parse_startup_preferences(&value)
@@ -820,9 +859,41 @@ impl BackendHost {
         let child_pid = child.id();
         let child = Arc::new(Mutex::new(child));
 
-        if let Err(error) =
-            probe_backend_with_retry(&manifest.expected_identity, child_pid, &ownership_secret)
+        let started = Instant::now();
+        let mut attempts = 0;
+        let probe_result = retry_probe(
+            |deadline| {
+                attempts += 1;
+                check_starting_child(&child, child_pid)?;
+                probe_backend_until(
+                    &manifest.expected_identity,
+                    child_pid,
+                    &ownership_secret,
+                    deadline.min(Instant::now() + HTTP_TIMEOUT),
+                )
+            },
+            BACKEND_STARTUP_TIMEOUT,
+        );
+        let child_state = match child
+            .lock()
+            .ok()
+            .and_then(|mut child| child.try_wait().ok())
         {
+            Some(Some(status)) => format!("exited code={:?}", status.code()),
+            Some(None) => "running".to_owned(),
+            None => "unavailable".to_owned(),
+        };
+        // Capture the child before cleanup. The later listener snapshot cannot explain a
+        // backend that this host has already terminated; never log challenge/headers/body.
+        let detail = match &probe_result {
+            Ok(_) => "handshake_ready".to_owned(),
+            Err(error) => error.to_string(),
+        };
+        let _ = fs::write(manifest.expected_identity.runtime_dir.join("startup_probe.log"), format!(
+            "host_pid={} backend_pid={} attempts={} elapsed_ms={} child_before_cleanup={}\n{}\n",
+            std::process::id(), child_pid, attempts, started.elapsed().as_millis(), child_state, detail,
+        ));
+        if let Err(error) = probe_result {
             if let Ok(mut child) = child.lock() {
                 let _ = child.kill();
                 let _ = child.wait();
@@ -832,6 +903,11 @@ impl BackendHost {
         let startup_preferences = match load_startup_preferences() {
             Ok(preferences) => preferences,
             Err(error) => {
+                append_startup_stage(
+                    &manifest.expected_identity.runtime_dir,
+                    "preferences",
+                    &error.to_string(),
+                );
                 if let Ok(mut child) = child.lock() {
                     let _ = child.kill();
                     let _ = child.wait();
@@ -843,6 +919,11 @@ impl BackendHost {
             || child_is_running(&child),
             || probe_backend(&manifest.expected_identity, child_pid, &ownership_secret).map(|_| ()),
         ) {
+            append_startup_stage(
+                &manifest.expected_identity.runtime_dir,
+                "ownership_revalidation",
+                &error.to_string(),
+            );
             if let Ok(mut child) = child.lock() {
                 let _ = child.kill();
                 let _ = child.wait();
@@ -857,6 +938,11 @@ impl BackendHost {
         )));
         // Arm before the watcher starts so an already-exited child cannot re-enable Host RPC.
         ownership_verified.store(true, Ordering::Release);
+        append_startup_stage(
+            &manifest.expected_identity.runtime_dir,
+            "ownership",
+            "verified",
+        );
         let liveness_worker = spawn_backend_liveness_watcher(
             Arc::clone(&child),
             Arc::clone(&ownership_verified),
@@ -994,6 +1080,25 @@ impl BackendHost {
 
     pub fn startup_surface(&self) -> StartupSurface {
         self.startup_surface
+    }
+
+    pub fn verify_surface_ownership(&self) -> Result<(), BackendError> {
+        // A fallback prompt can outlive the backend. Recheck the child and a fresh signed
+        // response before opening a browser, so a replacement listener is never exposed.
+        if !self.owns_backend() {
+            return Err(BackendError::LifecycleUnavailable);
+        }
+        check_starting_child(&self.child, self.child_pid)?;
+        probe_backend(
+            &self.expected_identity,
+            self.child_pid,
+            &self.ownership_secret,
+        )?;
+        check_starting_child(&self.child, self.child_pid)?;
+        if !self.owns_backend() {
+            return Err(BackendError::LifecycleUnavailable);
+        }
+        Ok(())
     }
 
     fn stop_liveness_worker(&self) {
@@ -1557,14 +1662,12 @@ fn required_string_list(
         .collect()
 }
 
-struct HttpResponse {
-    status: u16,
-    headers: BTreeMap<String, String>,
-    body: Vec<u8>,
+fn local_get(path: &'static str) -> Result<HttpResponse, BackendError> {
+    local_get_until(path, Instant::now() + HTTP_TIMEOUT)
 }
 
-fn local_get(path: &str) -> Result<HttpResponse, BackendError> {
-    local_get_with_header(path, "", "")
+fn local_get_until(path: &'static str, deadline: Instant) -> Result<HttpResponse, BackendError> {
+    local_get_with_header(path, "", "", deadline)
 }
 
 fn is_keep_monitor_shutdown_ack(value: &Value) -> bool {
@@ -1577,41 +1680,21 @@ fn is_keep_monitor_shutdown_ack(value: &Value) -> bool {
             || fields.get("idempotent").and_then(Value::as_bool) == Some(true))
 }
 
-fn local_post_json(path: &str, body: &[u8]) -> Result<HttpResponse, BackendError> {
-    let mut stream = TcpStream::connect_timeout(&fixed_backend_socket_addr(), HTTP_TIMEOUT)
-        .map_err(|_| BackendError::ProbeFailed)?;
-    stream
-        .set_read_timeout(Some(HTTP_TIMEOUT))
-        .map_err(|_| BackendError::ProbeFailed)?;
-    stream
-        .set_write_timeout(Some(HTTP_TIMEOUT))
-        .map_err(|_| BackendError::ProbeFailed)?;
+fn local_post_json(path: &'static str, body: &[u8]) -> Result<HttpResponse, BackendError> {
+    let deadline = Instant::now() + HTTP_TIMEOUT;
     let request = format!(
         "POST {path} HTTP/1.1\r\nHost: {FIXED_BACKEND_HOST}:{FIXED_BACKEND_PORT}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
         body.len(),
     );
-    stream
-        .write_all(request.as_bytes())
-        .map_err(|_| BackendError::ProbeFailed)?;
-    stream
-        .write_all(body)
-        .map_err(|_| BackendError::ProbeFailed)?;
-    read_http_response(&mut stream)
+    local_request(path, request.as_bytes(), body, deadline)
 }
 
 fn local_get_with_header(
-    path: &str,
+    path: &'static str,
     header_name: &str,
     header_value: &str,
+    deadline: Instant,
 ) -> Result<HttpResponse, BackendError> {
-    let mut stream = TcpStream::connect_timeout(&fixed_backend_socket_addr(), HTTP_TIMEOUT)
-        .map_err(|_| BackendError::ProbeFailed)?;
-    stream
-        .set_read_timeout(Some(HTTP_TIMEOUT))
-        .map_err(|_| BackendError::ProbeFailed)?;
-    stream
-        .set_write_timeout(Some(HTTP_TIMEOUT))
-        .map_err(|_| BackendError::ProbeFailed)?;
     let extra_header = if header_name.is_empty() {
         String::new()
     } else {
@@ -1620,10 +1703,60 @@ fn local_get_with_header(
     let request = format!(
         "GET {path} HTTP/1.1\r\nHost: {FIXED_BACKEND_HOST}:{FIXED_BACKEND_PORT}\r\n{extra_header}Connection: close\r\n\r\n"
     );
-    stream
-        .write_all(request.as_bytes())
-        .map_err(|_| BackendError::ProbeFailed)?;
-    read_http_response(&mut stream)
+    local_request(path, request.as_bytes(), &[], deadline)
+}
+
+fn local_request(
+    path: &'static str,
+    request: &[u8],
+    body: &[u8],
+    deadline: Instant,
+) -> Result<HttpResponse, BackendError> {
+    let remaining = || {
+        deadline
+            .checked_duration_since(Instant::now())
+            .filter(|duration| !duration.is_zero())
+            .ok_or_else(|| BackendError::HttpProbe {
+                path,
+                error: HttpError::new("deadline", "timeout"),
+            })
+    };
+    let map_io = |stage, error| BackendError::HttpProbe {
+        path,
+        error: HttpError::io(stage, error),
+    };
+    // Always connect directly to the fixed loopback address. Proxy settings cannot redirect
+    // ownership challenges; the same total deadline covers connect, write and framed read.
+    let mut stream = TcpStream::connect_timeout(&fixed_backend_socket_addr(), remaining()?)
+        .map_err(|error| map_io("connect", error))?;
+    for mut bytes in [request, body] {
+        while !bytes.is_empty() {
+            stream
+                .set_write_timeout(Some(remaining()?))
+                .map_err(|error| map_io("write_timeout", error))?;
+            match stream.write(bytes) {
+                Ok(0) => return Err(map_io("write", std::io::ErrorKind::WriteZero.into())),
+                Ok(count) => bytes = &bytes[count..],
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(error) => return Err(map_io("write", error)),
+            }
+        }
+    }
+    local_http::read_response(&mut stream, deadline, MAX_HTTP_RESPONSE_BYTES)
+        .map_err(|error| BackendError::HttpProbe { path, error })
+}
+
+fn require_status(
+    response: &HttpResponse,
+    path: &'static str,
+    status: u16,
+) -> Result<(), BackendError> {
+    if response.status == status {
+        return Ok(());
+    }
+    let mut error = HttpError::new("status", "unexpected_http_status");
+    error.status = Some(response.status);
+    Err(BackendError::HttpProbe { path, error })
 }
 
 fn generate_ownership_secret() -> Result<[u8; OWNERSHIP_SECRET_BYTES], BackendError> {
@@ -1691,65 +1824,43 @@ fn hex_value(value: u8) -> Option<u8> {
     }
 }
 
-fn read_http_response(stream: &mut TcpStream) -> Result<HttpResponse, BackendError> {
-    let mut raw = Vec::new();
-    let mut chunk = [0_u8; 4096];
-    loop {
-        let read = stream
-            .read(&mut chunk)
-            .map_err(|_| BackendError::ProbeFailed)?;
-        if read == 0 {
-            break;
-        }
-        if raw.len().saturating_add(read) > MAX_HTTP_RESPONSE_BYTES {
-            return Err(BackendError::ProbeFailed);
-        }
-        raw.extend_from_slice(&chunk[..read]);
-    }
-    let header_end = raw
-        .windows(4)
-        .position(|window| window == b"\r\n\r\n")
-        .ok_or(BackendError::ProbeFailed)?;
-    let header = std::str::from_utf8(&raw[..header_end]).map_err(|_| BackendError::ProbeFailed)?;
-    let mut lines = header.lines();
-    let status = lines
-        .next()
-        .and_then(|line| line.split_whitespace().nth(1))
-        .and_then(|status| status.parse::<u16>().ok())
-        .ok_or(BackendError::ProbeFailed)?;
-    let mut headers = BTreeMap::new();
-    for line in lines {
-        let Some((name, value)) = line.split_once(':') else {
-            return Err(BackendError::ProbeFailed);
-        };
-        let name = name.trim().to_ascii_lowercase();
-        let value = value.trim().to_owned();
-        if name.is_empty() || headers.insert(name, value).is_some() {
-            return Err(BackendError::ProbeFailed);
-        }
-    }
-    let body_start = header_end + 4;
-    if raw.len() < body_start {
-        return Err(BackendError::ProbeFailed);
-    }
-    Ok(HttpResponse {
-        status,
-        headers,
-        body: raw[body_start..].to_vec(),
-    })
-}
-
 fn retry_probe<F>(mut probe: F, timeout: Duration) -> Result<BackendHealth, BackendError>
 where
-    F: FnMut() -> Result<BackendHealth, BackendError>,
+    F: FnMut(Instant) -> Result<BackendHealth, BackendError>,
 {
     let deadline = Instant::now() + timeout;
     loop {
-        match probe() {
+        match probe(deadline) {
             Ok(health) => return Ok(health),
+            Err(error @ BackendError::BackendExited { .. }) => return Err(error),
             Err(error) if Instant::now() >= deadline => return Err(error),
             Err(_) => thread_sleep_until(deadline),
         }
+    }
+}
+
+fn check_starting_child(child: &Arc<Mutex<Child>>, pid: u32) -> Result<(), BackendError> {
+    let status = child
+        .lock()
+        .map_err(|_| BackendError::LifecycleUnavailable)?
+        .try_wait()
+        .map_err(|_| BackendError::LifecycleUnavailable)?;
+    if let Some(status) = status {
+        return Err(BackendError::BackendExited {
+            pid,
+            code: status.code(),
+        });
+    }
+    Ok(())
+}
+
+fn append_startup_stage(runtime_dir: &Path, stage: &'static str, detail: &str) {
+    if let Ok(mut log) = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(runtime_dir.join("startup_probe.log"))
+    {
+        let _ = writeln!(log, "stage={stage} {detail}");
     }
 }
 
@@ -2001,7 +2112,7 @@ mod tests {
     fn retry_probe_allows_a_transient_unready_backend() {
         let attempts = AtomicUsize::new(0);
         let result = retry_probe(
-            || {
+            |_| {
                 if attempts.fetch_add(1, Ordering::AcqRel) == 0 {
                     Err(BackendError::ProbeFailed)
                 } else {
@@ -2018,7 +2129,7 @@ mod tests {
     #[test]
     fn retry_probe_preserves_the_final_handshake_failure() {
         let result = retry_probe(
-            || Err(BackendError::Handshake(HandshakeError::PidMismatch)),
+            |_| Err(BackendError::Handshake(HandshakeError::PidMismatch)),
             std::time::Duration::ZERO,
         );
 
@@ -2026,6 +2137,29 @@ mod tests {
             result,
             Err(BackendError::Handshake(HandshakeError::PidMismatch))
         ));
+    }
+
+    #[test]
+    fn exited_child_stops_startup_retry_immediately() {
+        let attempts = AtomicUsize::new(0);
+        let result = retry_probe(
+            |_| {
+                attempts.fetch_add(1, Ordering::Relaxed);
+                Err(BackendError::BackendExited {
+                    pid: 42,
+                    code: Some(1),
+                })
+            },
+            std::time::Duration::from_secs(20),
+        );
+        assert!(matches!(
+            result,
+            Err(BackendError::BackendExited {
+                pid: 42,
+                code: Some(1)
+            })
+        ));
+        assert_eq!(attempts.load(Ordering::Relaxed), 1);
     }
 
     #[test]

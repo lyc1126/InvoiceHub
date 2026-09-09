@@ -17,6 +17,22 @@ ink `hi.` and a lime paper fold. `tauri.conf.json` explicitly binds its PNG,
 Windows ICO and macOS ICNS; build overlays inherit these resources. Existing
 installed applications only receive this design in a new desktop build.
 
+## Startup recovery (source change, not in the published alpha.2)
+
+`local_http.rs` bounds and frames loopback responses instead of waiting for EOF
+for every reply. `startup_probe.log` records the host/child IDs, attempts, elapsed
+time, pre-cleanup child state and sanitized HTTP failure details. The reader is
+shared by startup, structured shutdown and the diagnostic health observation.
+
+`InvoiceHub.exe --browser` and `--desktop` override the saved surface for one
+launch; fully quit any existing instance first. Windows offers a native browser
+fallback only when WebView creation fails after a verified backend launch. The
+confirmation revalidates ownership before opening the fixed URL. It cannot
+recover an unverified backend or a WebView that crashes after successful creation.
+Native Windows dialogs, browser foreground activation and a rebuilt ZIP still
+require platform acceptance; protocol tests do not prove the external user's
+specific machine failure. See [startup troubleshooting](../docs/STARTUP_TROUBLESHOOTING.md).
+
 ## Development app
 
 A bare source checkout is intentionally not runnable: `main.rs` requires an
