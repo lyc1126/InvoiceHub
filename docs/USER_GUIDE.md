@@ -1,6 +1,6 @@
 # InvoiceHub 使用指南
 
-从[发布页](https://github.com/lyc1126/InvoiceHub/releases/tag/v0.3.0-alpha.2)下载对应系统的预览包。Windows x64 版解压使用；macOS 13+ Apple Silicon 版从 DMG 复制 App 后启动。当前预览的签名及验证限制见发布说明。
+从[发布页](https://github.com/lyc1126/InvoiceHub/releases/tag/v0.3.0-alpha.2-opt.1)下载对应系统的预览包。Windows x64 版解压使用；macOS 13+ Apple Silicon 版从 DMG 复制 App 后启动。当前预览的签名及验证限制见发布说明。
 
 ## 选择发票目录
 

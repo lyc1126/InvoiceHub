@@ -1,5 +1,7 @@
 # 迁移与公开缺口清单
 
+2026-09-10：alpha.2 优化版 1 已完成同源 Mac 构建并发布，内置平台 Python/Java/OFD 组件；离线、包内两页 OFD 和实际正常配置的 ready/页面/monitor 验收通过。隔离 HOME 自动样本未通过，其他平台原生与签名限制仍保留。精确身份、发布状态与来源见[分支记录](BRANCH_STATUS.md)；后续开发以 main 为准，制品身份由优化批次 Tag 固定。
+
 2026-09-09 Windows alpha.2 加固候选继承 main PR #24 的响应分帧和浏览器兜底，补充 PYTHONHOME 隔离、spawn 系统错误诊断及真实 Winsock 回归。公测原机与 macOS 新包仍需独立验证；本轮 Windows 成品范围见 CHANGELOG。
 
 2026-09-08：[`v0.3.0-alpha.2` 双平台预览](https://github.com/lyc1126/InvoiceHub/releases/tag/v0.3.0-alpha.2) 已按所有者确认的验收范围发布。Windows x64 portable ZIP 与 macOS arm64 preview DMG 同源，包含校验和、收据和平台 Python SBOM；Mac 离线核验与实际默认配置验收通过，隔离 HOME 自动烟测仍未通过，未启用安装 updater 或更新 Feed。精确发布身份和限制见[分支与发布记录](BRANCH_STATUS.md)。
