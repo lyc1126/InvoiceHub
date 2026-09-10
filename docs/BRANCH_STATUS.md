@@ -1,5 +1,21 @@
 # 分支整理、main 同步与双平台候选准备
 
+## 优化版 1 来源与发布（2026-09-10）
+
+Windows 来源分支 `codex/windows-alpha2-release-source` 已取得，精确提交 `0d5239f113ac5017174fbbf09dd30817ebeed432`，与两端制品收据一致；此前缺少对象的阻塞已经解除。发布源码固定在 `v0.3.0-alpha.2-opt.1`，内嵌产品版本仍为 alpha.2，核心身份 `0f41b453964c635dc6d0623c98d7abffef8614f6d65709853da877d7733b53b0`。
+
+本机文档维护位于 `codex/alpha2-opt1-release-docs`，原准备分支 `codex/alpha2-optimized-release` 保留。构建时的源码是干净 detached commit，后续文档变更不进入该制品。既有未跟踪文件与本机运行态已恢复保留；Windows 交接文档中的 stash 仅表示交付方历史，不与 Mac 本机状态混同。
+
+Mac DMG 为 `169041824` bytes，SHA-256 `c9076f464e8544391314eda0bd277aee047ba27623f572c265d1d91e8e7cd6da`；Windows ZIP 为 `114288563` bytes，SHA-256 `85284a9d0024da1c50c81fa011b21c802429db3b1ad7c5de0a666de290eec461`。10 项发布输入位于 ignored 的 `dist/candidates/20260910-alpha2-opt1-release/`，Mac 原始 App、离线/原生 OFD/正常启动报告位于 `dist/candidates/20260910-alpha2-opt1-macos-0d5239f/`。这些文件保留供发布复验和回退，不作为源码提交。
+
+[优化批次发布页](https://github.com/lyc1126/InvoiceHub/releases/tag/v0.3.0-alpha.2-opt.1)已公开，10 项资源的服务器哈希核对一致；旧 alpha.2 不覆盖。Mac 已通过离线、包内 OFD 两页及正常配置的 ready/资源/monitor 验收，隔离 HOME 自动验收未通过的限制继续披露。
+
+## 优化版跨平台接收（2026-09-09）
+
+当前同步工作位于 `codex/alpha2-optimized-release`，从公开 main 的 PR #24 基线开始，已接收 Windows 启动加固 patch。Windows receipt 来源为 `0d5239f113ac5017174fbbf09dd30817ebeed432`，远端全分支及精确 SHA 请求均尚未取得该对象；补丁应用后的核心指纹一致，但这不等于 Git 来源身份已闭合。必须取得原始提交后再执行最终同源 Mac 组包和新优化版 Tag 发布，不修改既有已公开 alpha.2 Tag/资产。首页仅新增用户要求的维护约定；未跟踪文件及本机运行态保留。
+
+下方 Windows 分支/stash 是随附 patch 记录的 Windows 主机历史，不表示本 Mac 工作区创建或持有这些 stash。
+
 ## Windows 启动加固（2026-09-09）
 
 本轮 main 从 `f71323b` 快进到 `b3d69f6`（PR #24），开发分支为 `codex/windows-alpha2-startup-hardening`。原七份 OFD 打包文档保存在 stash `474bdd8aab5379ed2653fad01b9c9e4a48c3842c`；未跟踪压缩包、旧包及本机配置保留。本轮只产出本地 Windows alpha.2 修复优化候选，不修改 GitHub Tag/Release/Feed。精确构建身份和验收范围见 CHANGELOG 与候选 receipt。

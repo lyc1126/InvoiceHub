@@ -2,7 +2,25 @@
 
 ## 未发布
 
-### 2026-09-09 Windows alpha.2 启动加固与修复优化包
+### 2026-09-10 alpha.2 优化版 1 同源构建与发布
+
+- Windows 已推送 `codex/windows-alpha2-release-source`，本机 fetch 核实为 `0d5239f113ac5017174fbbf09dd30817ebeed432`；与收据及上一轮同步代码一致，前次缺少原始 Git 提交的阻塞解除。原文档修改与既有未跟踪文件先完整保存，本工作区切到精确 detached commit 完成构建，再恢复文档与原文件；没有把工作树草稿写入制品。
+- 新优化批次 Tag 为 `v0.3.0-alpha.2-opt.1`，程序内版本仍为 `0.3.0-alpha.2`，优化内容为 OFD 原票预览、HTTP 响应分帧、PYTHONHOME 隔离、spawn 诊断和 Windows 暂存发布有界重试。旧 alpha.2 Tag/资产保留；两端共同 core build ID 为 `0f41b453964c635dc6d0623c98d7abffef8614f6d65709853da877d7733b53b0`。
+- Mac 从干净的同一提交构建 App/DMG，包含 Python 3.14.6 与平台专用 Java 21/OFD 组件；DMG 为 `169041824` bytes，SHA-256 `c9076f464e8544391314eda0bd277aee047ba27623f572c265d1d91e8e7cd6da`。中断续作的 pending 收据末尾被写成了字面转义，已只修正 JSON 编码，再真实验包、finalize 并默认复验；App/DMG 字节未因此改变。
+- App/DMG/receipt、包/host/launcher/runtime/OFD 清单和 153 项 Mac 核心源码字节核对通过，Windows 平台载荷为 0；包内解释器和组件完成两页合成 OFD 的文字、矢量、图片分区及横纵方向核验，源文件未改变。实际 App 使用 Application Support 配置达到 health/background ready，两个首页入口各 8 项静态资源匹配，monitor start-ready-stop 后恢复原 false；新 App 保留供使用。
+- 隔离 HOME 自动样本仍未通过，用户手动打开的实例落在真实 Application Support，已单独记录；临时启动实例退出后，从保留目录启动的完整 App 通过上述正常配置验收。此结果不冒称隔离运行、所有业务版式、原生 picker/实体打印、完整浏览器/托盘、公证或 updater 验收。沿用同源码此前的 99 项 Rust、57 项 Python 和 25 项 OFD 结果；交付提交现有 Windows/macOS CI 均通过，不重复累计。
+- 发布资源共 10 项，包含双端程序、SHA-256、receipt 及平台 Python/OFD 两类 SBOM。Mac 与 Windows 的 OFD SBOM 使用明确的平台文件名，避免同名覆盖；优化版 Pre-release 已公开（Release ID `386044541`），10 项服务器大小与 SHA-256 均和本地发布清单匹配。首页只新增用户要求的维护约定，并定点调整优化批次下载入口与 OFD 随包说明，不重做整体布局、话术、截图和未来计划。
+
+### 2026-09-09 接收 Windows 优化包并准备 Mac 同步
+
+- 从 `main@b3d69f636e5dab17aa856630b0a56fa9d9accfab` 创建 `codex/alpha2-optimized-release`；保留既有未跟踪文件和 ignored 配置/运行态。用户要求同步 Windows 启动加固补丁和 OFD 组件至 Mac，完成后发布有明确优化标识的新 Tag。
+- Windows receipt 记录来源 `0d5239f113ac5017174fbbf09dd30817ebeed432`，核心身份 `0f41b453964c635dc6d0623c98d7abffef8614f6d65709853da877d7733b53b0`。全分支 fetch 与精确 SHA fetch 后 GitHub 仍返回 `not our ref`；普通 patch 能恢复内容，不能还原原 Git commit 身份。本轮不伪造来源、不复用旧 alpha.2 Tag。
+- 已核查并应用附带 patch 的代码与技术文档，首页的启动修复流水段落未带入，按用户要求只新增首页维护约定，并将该约定同步到 AGENTS。核心指纹重算与 Windows receipt 一致；完整同源组包需补齐该原始 commit 或包含它的 Git bundle。
+- Windows ZIP 的实际大小和 SHA-256、receipt、静态 verifier 以及外置 Windows/OFD 两份 SBOM 与包内原件逐字节一致，151 项非生成核心文件与当前源码一致。Mac 已有组件的 31 个 JAR、Mac 平台和源码指纹校验通过，Python 3.14.6 + Java 21.0.12.1 组合 runtime 已准备到 ignored 的 `dist/runtime-inputs/20260909-optimized-macos/python`，迁移目录后再次通过 runtime manifest 与导入探针；不复制 Windows 组件或旧 core。
+- Rust 99 项测试通过。首次四项回环绑定被沙箱拒绝，主机权限复验通过；Python 启动/Host RPC/portable/文档 57 项通过，Mac OFD 组件/API 25 项通过。API 初次因测试专用 httpx2 缺失未执行，按哈希锁准备独立测试环境后补验通过；存在上游 PyMuPDF SWIG 弃用提示。格式、文档契约和 diff 检查通过；没有重复全仓 Python、实际默认目录、Windows 真机/BAT、原生面板或最终 Mac DMG 验收。
+- 组合 runtime 和 `dist/candidates/20260909-optimized-preparation/preparation-status.json` 保留供收到源码后继续；临时测试环境另行清理。拟使用独立优化批次 Tag 标识 alpha.2 优化版与 OFD/启动内容，包内产品版本保持 alpha.2；当前未创建 Tag、Release 或替换公开资产。
+
+### 2026-09-09 Windows alpha.2 启动加固与修复优化包（交付方记录）
 
 - 从 `codex/repackage-ofd-main@f71323b` 开工，七份既有 OFD 打包文档保存在 stash `474bdd8aab5379ed2653fad01b9c9e4a48c3842c`；首次 GitHub TLS 失败，原地址重试成功。main 快进到 PR #24 的 `b3d69f6`，新建 `codex/windows-alpha2-startup-hardening`。保留本机配置、旧包、ignored 运行态及未跟踪压缩包，不推送或修改 Release/Feed。
 - 核对新增内容为 HTTP 响应分帧、阶段诊断、单次启动方式与 Windows 浏览器兜底；原 OFD 专用渲染继续保留。实验以真实 Winsock abortive close 检验完整 200/204 与截断响应，并以随包 Python 的错误 PYTHONHOME 检验初始化隔离，结果决定加固范围；不冒充公测原机复现。
