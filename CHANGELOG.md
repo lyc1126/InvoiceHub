@@ -4,6 +4,8 @@
 
 ### 2026-09-10 alpha.2 优化版 1 同源构建与发布
 
+- 主线同步的首个 PR 被 DCO 拒绝：两份 Windows 原始提交缺少 sign-off。为保留已发布来源与 Tag，在新的 `codex/opt1-release-integration` 分支通过带 `-x` 来源记录和 `-s` 签署的 cherry-pick 集成，逐字节确认与已核验树一致；不 rebase、不强推、不改写原提交或制品。
+
 - Windows 已推送 `codex/windows-alpha2-release-source`，本机 fetch 核实为 `0d5239f113ac5017174fbbf09dd30817ebeed432`；与收据及上一轮同步代码一致，前次缺少原始 Git 提交的阻塞解除。原文档修改与既有未跟踪文件先完整保存，本工作区切到精确 detached commit 完成构建，再恢复文档与原文件；没有把工作树草稿写入制品。
 - 新优化批次 Tag 为 `v0.3.0-alpha.2-opt.1`，程序内版本仍为 `0.3.0-alpha.2`，优化内容为 OFD 原票预览、HTTP 响应分帧、PYTHONHOME 隔离、spawn 诊断和 Windows 暂存发布有界重试。旧 alpha.2 Tag/资产保留；两端共同 core build ID 为 `0f41b453964c635dc6d0623c98d7abffef8614f6d65709853da877d7733b53b0`。
 - Mac 从干净的同一提交构建 App/DMG，包含 Python 3.14.6 与平台专用 Java 21/OFD 组件；DMG 为 `169041824` bytes，SHA-256 `c9076f464e8544391314eda0bd277aee047ba27623f572c265d1d91e8e7cd6da`。中断续作的 pending 收据末尾被写成了字面转义，已只修正 JSON 编码，再真实验包、finalize 并默认复验；App/DMG 字节未因此改变。

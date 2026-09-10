@@ -4,7 +4,7 @@
 
 Windows 来源分支 `codex/windows-alpha2-release-source` 已取得，精确提交 `0d5239f113ac5017174fbbf09dd30817ebeed432`，与两端制品收据一致；此前缺少对象的阻塞已经解除。发布源码固定在 `v0.3.0-alpha.2-opt.1`，内嵌产品版本仍为 alpha.2，核心身份 `0f41b453964c635dc6d0623c98d7abffef8614f6d65709853da877d7733b53b0`。
 
-本机文档维护位于 `codex/alpha2-opt1-release-docs`，原准备分支 `codex/alpha2-optimized-release` 保留。构建时的源码是干净 detached commit，后续文档变更不进入该制品。既有未跟踪文件与本机运行态已恢复保留；Windows 交接文档中的 stash 仅表示交付方历史，不与 Mac 本机状态混同。
+主线集成使用 `codex/opt1-release-integration`；原文档分支 `codex/alpha2-opt1-release-docs` 与准备分支 `codex/alpha2-optimized-release` 保留。两份原始 Windows 提交缺少 DCO，集成分支使用带来源记录和签署的新提交，文件树与已核验版本一致，原始提交及已发布 Tag 不改写。构建时的源码是干净 detached commit，后续文档变更不进入该制品。既有未跟踪文件与本机运行态已恢复保留；Windows 交接文档中的 stash 仅表示交付方历史，不与 Mac 本机状态混同。
 
 Mac DMG 为 `169041824` bytes，SHA-256 `c9076f464e8544391314eda0bd277aee047ba27623f572c265d1d91e8e7cd6da`；Windows ZIP 为 `114288563` bytes，SHA-256 `85284a9d0024da1c50c81fa011b21c802429db3b1ad7c5de0a666de290eec461`。10 项发布输入位于 ignored 的 `dist/candidates/20260910-alpha2-opt1-release/`，Mac 原始 App、离线/原生 OFD/正常启动报告位于 `dist/candidates/20260910-alpha2-opt1-macos-0d5239f/`。这些文件保留供发布复验和回退，不作为源码提交。
 
