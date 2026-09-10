@@ -1,5 +1,11 @@
 # InvoiceHub 接口与运行流程
 
+2026-09-10：alpha.2 优化版 1 已完成同源 Mac 构建并发布，内置平台 Python/Java/OFD 组件；离线、包内两页 OFD 和实际正常配置的 ready/页面/monitor 验收通过。隔离 HOME 自动样本未通过，其他平台原生与签名限制仍保留。精确身份、发布状态与来源见[分支记录](../BRANCH_STATUS.md)；后续开发以 main 为准，制品身份由优化批次 Tag 固定。
+
+2026-09-09 Windows portable 完成暂存校验后的目录发布，只对 WinError 5/32/33 最多重试 20 次、累计 1.9 秒；其它错误或持续失败仍停止构建，不生成放行 receipt。
+
+2026-09-09 Windows 启动加固分支基于 main PR #24：host 清除 PYTHONHOME 后创建内置 Python，monitor/worker 继承该环境；spawn 前重置 startup_probe.log 的本次 host PID，创建失败记录 stage=spawn 与系统错误码，后续按原 framing/ownership/gate 顺序执行。配置与业务 API 不变。
+
 2026-09-08：[`v0.3.0-alpha.2` 双平台预览](https://github.com/lyc1126/InvoiceHub/releases/tag/v0.3.0-alpha.2) 已按所有者确认的验收范围发布。Windows x64 portable ZIP 与 macOS arm64 preview DMG 同源，包含校验和、收据和平台 Python SBOM；Mac 离线核验与实际默认配置验收通过，隔离 HOME 自动烟测仍未通过，未启用安装 updater 或更新 Feed。精确发布身份和限制见[分支与发布记录](../BRANCH_STATUS.md)。
 
 

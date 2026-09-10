@@ -193,6 +193,8 @@ OFD 专用入口为 `services/ofd_rendering.py`、`tools/ofd-preview/` 与 `scri
 
 ## 12. Windows 正式入口与平台交互
 
+Windows 环境加固还需用真实 Winsock abortive close 验证完整 200/204 不等 EOF、截断仍保留 10054；随包 Python 与新 EXE 验证错误 PYTHONHOME 不再污染标准库，spawn 失败不得残留旧握手成功日志，OS 错误只输出代码。对应入口为 BackendHost::launch 与 local_http 的 Windows 回归。
+
 启动探测/浏览器兜底定位 `local_http.rs`、`backend.rs`、`startup_diagnostics.rs` 与 `main.rs`。最低执行 `cargo test --locked --tests` 的 framing、lifecycle、ownership/updater 相邻测试及 `test_tauri_lifecycle_contract.py/test_tauri_host_rpc.py/test_development_documentation.py`。传输须覆盖完整后 reset、204、分片/chunked、连接不关闭、截断、超限、重复 proof、总超时和错误脱敏；surface 须覆盖成功不询问、接受/拒绝、等待时身份失效和浏览器失败。Windows 真机/成品/BAT/原生弹窗与真实浏览器另行验收，合成测试不得替代。
 
 启动诊断任务联动 `api/main.py::check_startup_port`、根 `检查启动环境.bat`、Windows 模块和 `run_start_localhost.ps1`、Tauri `startup_diagnostics.rs/main.rs`。最低验证真实监听 PID、未知/其他环境占用保持存活、无 Python/坏配置仍可诊断、PS7/PS5.1、GUI 原生提示、跨目录单实例、同实例唤回、PE 产品描述和当前成品；不得把插件无法截图计为视觉验收通过。
@@ -224,6 +226,8 @@ Windows Tauri 双启动任务定位 `main.rs`、`backend.rs::spawn_backend_liven
 | 高风险提醒 | 不只凭 health.ok 连接；正式 core 无效不得回退 checkout；握手和 recovery 请求都必须有界并重验 generation/phase/PID。Updater activation 晚于 gate release 与 app manage；startup restore 失败保留 marker 和诊断界面。普通 development/internal-alpha 必须 updater-disabled；L10-E development 只接受固定不可达 endpoint、无验签能力 key sentinel 和精确三字段 updater 对象，runner 不得调用 check/install 或 bridge start。完整候选只在 host 内，Web 不接收/返回 URL、signature 或 artifact ID；成功响应必须 flush 后才放行 private commit，writer/spawn/latch loss固定 `CommitLost` 且无副作用。Windows installer callback 必须确认 backend 终止，macOS 必须先停 backend/prepare relaunch 再 restart；外部不得获得安装 bridge。不换端口、杀未知进程或以 smoke 冒充真实升级证据 |
 
 ## 13. 公开基线与新平台构建
+
+Windows portable 目录发布重试需覆盖短暂 5/32/33 成功、持续失败达到上限和无关错误立即失败；不得把目录拒绝当作验包通过，测试入口为 test_stage_publish_retries_only_bounded_windows_sharing_errors。
 
 | 导航项 | 内容 |
 |---|---|

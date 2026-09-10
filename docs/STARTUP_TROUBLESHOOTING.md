@@ -1,7 +1,7 @@
 # 启动失败与浏览器兜底
 
 本文的新诊断和兜底能力随 main 源码维护，功能来源为 `codex/fix-backend-startup-probe`；
-**已发布的 v0.3.0-alpha.2 ZIP 尚不包含这些改动**。Windows 原生弹窗、浏览器前台
+**初始 v0.3.0-alpha.2 ZIP 不含这些改动；alpha.2 优化版 1 已包含**，请按[发布记录](BRANCH_STATUS.md)区分批次与收据。Windows 原生弹窗、浏览器前台
 拉起和新成品仍须真机验收。合成传输测试只能证明代码中的失败机制，不能还原
 每一台公测电脑的系统环境。
 
@@ -25,6 +25,11 @@
 为可用的系统错误码；`child_before_cleanup` 表示宿主清理前的 Python 状态。
 `handshake_ready` 只表示初次握手完成，后续仍有偏好和 ownership 复验。
 文件每次初次握手覆盖，排障时须核对 PID；不得把旧日志当作新一次启动的证据。
+
+Windows 加固版在创建 Python 前先写入本次 `host_pid + spawn_pending`；创建失败
+记录 `stage=spawn` 与系统错误码，避免把上次成功握手误认为本次结果。宿主清除
+继承的 `PYTHONHOME`，保证内置解释器使用自己的标准库；不修改系统环境变量。
+若出现 `encodings` 初始化失败，先确认使用包含这项加固的新包和完整解压目录。
 
 | 观察 | 处理方向 |
 |---|---|

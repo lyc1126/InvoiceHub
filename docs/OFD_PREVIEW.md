@@ -41,7 +41,7 @@ python scripts/dev/build_ofd_preview.py --jdk-archive <锁定的本平台JDK压�
 
 `pom.xml` 仅供维护者解析依赖时对照；正式构建只接受 `dependencies.lock.json` 内的 31 个原始 JAR。`component.json` 记录平台、源码输入、核心绑定指纹与逐文件哈希；组件还携带独立 CycloneDX SBOM、项目/OFDRW 许可证及 JDK legal 文件。修改 Java、构建脚本或锁文件时，必须同步刷新 `COMPONENT_SOURCE_FINGERPRINT` 并通过源码指纹契约。
 
-源码后端会自动读取上述默认组件。正式分发的集成位置是内嵌 Python 的 `components/ofd-preview`（即 `sys.prefix/components/ofd-preview`）；在生成最终 Python runtime manifest、打包/签名之前，将对应平台组件构建至该目录，并重新生成外层 runtime tree、制品文件清单和收据。已有 Windows/macOS staging 会复制整个 Python runtime；不得绕过其平台排除、哈希或签名门禁，也不得直接修改已经签名/发布的旧 App。当前 alpha.2 没有本组件。
+源码后端会自动读取上述默认组件。正式分发的集成位置是内嵌 Python 的 `components/ofd-preview`（即 `sys.prefix/components/ofd-preview`）；在生成最终 Python runtime manifest、打包/签名之前，将对应平台组件构建至该目录，并重新生成外层 runtime tree、制品文件清单和收据。已有 Windows/macOS staging 会复制整个 Python runtime；不得绕过其平台排除、哈希或签名门禁，也不得直接修改已经签名/发布的旧 App。初始 alpha.2 包没有本组件；alpha.2 优化版 1 已在两个平台包内集成，实际构建与验证见[发布记录](BRANCH_STATUS.md)。
 
 本平台原生引擎测试须显式启用，否则相关测试会跳过：
 

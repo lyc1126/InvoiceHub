@@ -8,12 +8,12 @@
 
 把散落的 PDF、OFD、XML，变成看得清、找得到、用得上的账前资料。
 
-[![版本](https://img.shields.io/badge/preview-v0.3.0--alpha.2-d5ff5f?style=flat-square&labelColor=252820)](https://github.com/lyc1126/InvoiceHub/releases/tag/v0.3.0-alpha.2)
-[![平台](https://img.shields.io/badge/platform-Windows_x64_%7C_macOS_ARM64-f8f9f5?style=flat-square&labelColor=252820)](https://github.com/lyc1126/InvoiceHub/releases/tag/v0.3.0-alpha.2)
+[![版本](https://img.shields.io/badge/preview-v0.3.0--alpha.2--opt.1-d5ff5f?style=flat-square&labelColor=252820)](https://github.com/lyc1126/InvoiceHub/releases/tag/v0.3.0-alpha.2-opt.1)
+[![平台](https://img.shields.io/badge/platform-Windows_x64_%7C_macOS_ARM64-f8f9f5?style=flat-square&labelColor=252820)](https://github.com/lyc1126/InvoiceHub/releases/tag/v0.3.0-alpha.2-opt.1)
 [![Tauri](https://img.shields.io/badge/built_with-Tauri_2-ff8b70?style=flat-square&labelColor=252820)](src-tauri/README.md)
 [![许可](https://img.shields.io/badge/license-AGPL--3.0--or--later-d5ff5f?style=flat-square&labelColor=252820)](LICENSE)
 
-**[下载预览版](https://github.com/lyc1126/InvoiceHub/releases/tag/v0.3.0-alpha.2) · [使用指南](docs/USER_GUIDE.md) · [产品介绍](website/README.md) · [更新记录](CHANGELOG.md)**
+**[下载预览版](https://github.com/lyc1126/InvoiceHub/releases/tag/v0.3.0-alpha.2-opt.1) · [使用指南](docs/USER_GUIDE.md) · [产品介绍](website/README.md) · [更新记录](CHANGELOG.md)**
 
 </div>
 
@@ -62,8 +62,8 @@ InvoiceHub 是一个开源的本地发票工作台。选好发票文件夹，识
 
 | 平台 | 下载 | 开始使用 |
 |---|---|---|
-| Windows 10/11 x64 | **[便携工具包 ZIP](https://github.com/lyc1126/InvoiceHub/releases/download/v0.3.0-alpha.2/InvoiceHub-v0.3.0-alpha.2-windows-x64-portable.zip)** | 解压到新目录，运行其中的 InvoiceHub 程序。 |
-| macOS 13+ · Apple Silicon | **[预览版 DMG](https://github.com/lyc1126/InvoiceHub/releases/download/v0.3.0-alpha.2/InvoiceHub-v0.3.0-alpha.2-macos-arm64-preview.dmg)** | 打开 DMG，将 App 拖到 Applications 后启动。 |
+| Windows 10/11 x64 | **[便携工具包 ZIP](https://github.com/lyc1126/InvoiceHub/releases/download/v0.3.0-alpha.2-opt.1/InvoiceHub-v0.3.0-alpha.2-windows-x64-portable.zip)** | 解压到新目录，运行其中的 InvoiceHub 程序。 |
+| macOS 13+ · Apple Silicon | **[预览版 DMG](https://github.com/lyc1126/InvoiceHub/releases/download/v0.3.0-alpha.2-opt.1/InvoiceHub-v0.3.0-alpha.2-macos-arm64-preview.dmg)** | 打开 DMG，将 App 拖到 Applications 后启动。 |
 
 1. **选目录。** 首页选择你的发票文件夹，确认“待保存目录”后点击保存。
 2. **等汇总。** 启动会自动检查当前目录；需要手动重建时点击“重新汇总”。
@@ -72,9 +72,9 @@ InvoiceHub 是一个开源的本地发票工作台。选好发票文件夹，识
 
 桌面窗口和系统浏览器都能使用，在设置中选择启动方式，完整退出后下次生效。关掉桌面窗口只是隐藏；关闭系统时，可以选择是否保留监控。[完整操作说明 →](docs/USER_GUIDE.md)
 
-> 源码修复进展（尚未进入下载包）：启动探测已增加 HTTP 完整性判断和分阶段诊断；Windows 桌面窗口创建失败时可选择浏览器兜底。操作与验收边界见[启动排障说明](docs/STARTUP_TROUBLESHOOTING.md)。
+> 优化版已包含启动响应完整性检查、分阶段诊断和 Windows 浏览器兜底。遇到启动问题时，可查看[启动排障说明](docs/STARTUP_TROUBLESHOOTING.md)。
 
-> 当前为 **alpha.2 预览版**。Windows 包未签名；Mac 使用 ad-hoc 签名，未经 Apple 公证，首次打开可能需要系统确认。校验和、构建收据及具体已测/未测范围均在[发布页](https://github.com/lyc1126/InvoiceHub/releases/tag/v0.3.0-alpha.2)。
+> 当前下载为 **alpha.2 优化版 1（opt.1）**，程序内版本仍为 `0.3.0-alpha.2`。Windows 包未签名；Mac 使用 ad-hoc 签名，未经 Apple 公证，首次打开可能需要系统确认。校验和、构建收据及具体已测/未测范围均在[发布页](https://github.com/lyc1126/InvoiceHub/releases/tag/v0.3.0-alpha.2-opt.1)。
 
 ## 表格可以重建，原票始终保留
 
@@ -92,7 +92,9 @@ InvoiceHub 是一个开源的本地发票工作台。选好发票文件夹，识
 <details>
 <summary><b>开发者文档与源码运行</b></summary>
 
-当前源码支持独立 OFD 原票预览组件：首次构建运行 `python scripts/dev/build_ofd_preview.py --fetch`，后端按页输出 PNG，组件校验结果在文件元数据未变化时复用。此能力尚未包含在上方 alpha.2 下载包中；构建、体积及验收范围见 [OFD 预览说明](docs/OFD_PREVIEW.md)。
+**首页维护约定：** 仅在大型产品内容更新后，定点修改与更新直接相关的部分。日常修复、性能优化和构建验收记录写入 [CHANGELOG](CHANGELOG.md) 与 [Releases](https://github.com/lyc1126/InvoiceHub/releases)，不反复改写首页整体布局、文案和截图。
+
+alpha.2 优化版 1 已内置对应平台的 Java 21/OFD 原票预览组件，按真实页面树输出 PNG，并在组件未变化时复用校验结果。源码开发首次构建运行 `python scripts/dev/build_ofd_preview.py --fetch`；构建、体积及验收范围见 [OFD 预览说明](docs/OFD_PREVIEW.md)。
 
 - [开发架构总入口](docs/DEVELOPMENT_ARCHITECTURE.md) · [Agent 任务导航](docs/architecture/AGENT_TASK_MAP.md)
 - [文件地图](docs/architecture/FILE_MAP.md) · [接口与流程](docs/architecture/INTERFACES_AND_FLOWS.md) · [数据与算法](docs/architecture/DATA_AND_ALGORITHMS.md)

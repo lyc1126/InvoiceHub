@@ -456,6 +456,91 @@ mod tests {
         );
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn windows_abortive_close_preserves_framing_and_reports_truncation() {
+        use std::os::windows::io::AsRawSocket;
+        use windows_sys::Win32::Networking::WinSock::{setsockopt, LINGER, SOL_SOCKET, SO_LINGER};
+
+        struct AbortAfterRead<'a> {
+            client: &'a mut TcpStream,
+            server: Option<TcpStream>,
+            remaining: usize,
+        }
+        impl Read for AbortAfterRead<'_> {
+            fn read(&mut self, out: &mut [u8]) -> io::Result<usize> {
+                let count = self.client.read(out)?;
+                self.remaining -= count;
+                if self.remaining == 0 {
+                    drop(self.server.take());
+                }
+                Ok(count)
+            }
+        }
+
+        for (reply, complete) in [
+            (
+                b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nOK".as_slice(),
+                true,
+            ),
+            (b"HTTP/1.1 204 No Content\r\n\r\n", true),
+            (b"HTTP/1.1 200 OK\r\nContent-Length: 9\r\n\r\nshort", false),
+        ] {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let mut client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+            let (mut server, _) = listener.accept().unwrap();
+            let linger = LINGER {
+                l_onoff: 1,
+                l_linger: 0,
+            };
+            assert_eq!(
+                unsafe {
+                    setsockopt(
+                        server.as_raw_socket() as usize,
+                        SOL_SOCKET,
+                        SO_LINGER,
+                        &linger as *const LINGER as *const u8,
+                        std::mem::size_of::<LINGER>() as i32,
+                    )
+                },
+                0
+            );
+            server.write_all(reply).unwrap();
+            // Windows may discard unread queued bytes on RST. Trigger the real abort only
+            // after read delivers the bytes: the bug is the unnecessary read AFTER completion.
+            client
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .unwrap();
+            let result = read_framed(
+                &mut AbortAfterRead {
+                    client: &mut client,
+                    server: Some(server),
+                    remaining: reply.len(),
+                },
+                4096,
+            );
+            if complete {
+                assert_eq!(
+                    result.unwrap().body,
+                    if reply.starts_with(b"HTTP/1.1 204") {
+                        b"".as_slice()
+                    } else {
+                        b"OK"
+                    }
+                );
+                assert_eq!(
+                    client.read(&mut [0; 1]).unwrap_err().raw_os_error(),
+                    Some(10054)
+                );
+            } else {
+                let error = result.unwrap_err();
+                assert_eq!(error.os_code, Some(10054));
+                assert_eq!(error.status, Some(200));
+                assert!(error.expected.unwrap() > error.received);
+            }
+        }
+    }
+
     #[test]
     fn continuous_slow_body_cannot_extend_the_total_deadline() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
