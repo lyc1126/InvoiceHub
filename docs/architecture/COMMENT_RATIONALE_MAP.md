@@ -7,6 +7,8 @@
 - `generate_desktop_icon.py`：固定hi.拉丁字标原稿采用BASIC布局，可选Raqm不能使跨平台重生成像素漂移；原master逐像素回归保持。
 - `build_manifest.py::_is_build_cache`：editable安装元数据不进入任何core包，不参与core身份；真实源码仍逐文件纳入。身份测试覆盖元数据无影响与源码变化会改变指纹。
 
+Windows验包测试中的假凭据在运行时拼接：保持生成文件的扫描正反例，同时源码归档不携带凭据形状字面量；不降低 `content_scan` 的识别规则。守护为 `test_tauri_windows_portable_verifier_uses_dependency_scope_for_locked_cpython_lib` 与整份源码归档扫描。
+
 ## 2026-10-09 勾选工作流保护
 
 | 判断位置 | 原因与不变量 | 守护测试 |

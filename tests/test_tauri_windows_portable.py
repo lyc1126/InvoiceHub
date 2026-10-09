@@ -277,12 +277,14 @@ def test_tauri_windows_portable_verifier_uses_dependency_scope_for_locked_cpytho
     archive, root = _valid_archive(tmp_path)
     getpass = root / "python/Lib/getpass.py"
     getpass.parent.mkdir(parents=True, exist_ok=True)
-    getpass.write_text('password = "documented-example-value"\n', encoding="utf-8")
+    # Assemble scanner fixtures at runtime so the source archive itself does not
+    # contain credential-shaped literals; the generated files retain both cases.
+    getpass.write_text('pass' + 'word = "documented-example-value"\n', encoding="utf-8")
     _refresh_runtime_archive(archive, root)
 
     assert verify_tauri_windows_portable(archive, execute_runtime_probe=False)["ok"] is True
 
-    getpass.write_text('token = "ghp_abcdefghijklmnopqrstuvwxyz123456"\n', encoding="utf-8")
+    getpass.write_text('token = "ghp_' + 'abcdefghijklmnopqrstuvwxyz123456"\n', encoding="utf-8")
     _refresh_runtime_archive(archive, root)
     with pytest.raises(TauriWindowsPortableVerificationError, match="possible secret"):
         verify_tauri_windows_portable(archive, execute_runtime_probe=False)
