@@ -1,5 +1,43 @@
 # InvoiceHub 接口与运行流程
 
+## 2026-10-09 桌面交接完善
+
+两平台Tauri启动在原有严格build/ownership/静态页验证后，要求OpenAPI存在临时识别pick/drop/sessions、`GET /api/v1/cost-analysis/view`、删除计划POST、状态GET和确认POST；缺方法或路径拒绝接入。原生拖入仅送至固定http://127.0.0.1:8766的首页路径，允许selection_return/no_skin等页面状态查询，不对详情/其它来源开放。Windows删除结果同时要求成功HRESULT、未aborted及回收站目标；结果不明保持停止和核对提示。
+
+## 2026-10-09 勾选操作、来源追溯与按需预览
+
+| 路由 | 契约 |
+|---|---|
+| `POST /api/v1/invoices/trash-jobs` | 同源；必须 `target_id + items[{invoice_key,source_path}]`，最多10000条；核对当前记录、目录、非链接原文件，生成5分钟确认计划，返回不透明 job_id、相对文件名清单，不移动文件 |
+| `GET /api/v1/invoices/trash-jobs/{job_id}` | 只读执行日志，返回 state/trashed_count/files；404表示计划不存在，不能当作删除未执行而重发 |
+| `POST /api/v1/invoices/trash-jobs/{job_id}/confirm` | 同源，必须 `confirmed:true`；活动目录锁与非阻塞同步写锁内复核全部源签名，再逐项复核并调用原生废纸篓；409表示校验或同步占用失败，prepared仍未执行；非prepared只返回旧结果、不重复移动 |
+
+删除计划状态为 prepared/running/completed/partial，逐文件为 pending/moving/trashed/failed/unknown。原生操作前记录 moving、完成后记录 trashed；系统不确认或进程中断时不得自动重试，页面“读取执行结果”只发 GET。没有永久删除回退。成功或部分执行后清理预览缓存，发送 `invoices.trashed` 诊断事件并沿既有后台同步重建投影，`monitor.sync_completed` 刷新消费者；不启动 monitor，不删除手改覆盖。上述API均 private/no-store。
+
+勾选合计每个 project 新增 `source_invoices`，带已校验的 invoice_key/source_path/file_name/invoice_number/target_id；搜索与税率过滤仅作用明细，顶部金额口径不变。来源链接在同标签 sessionStorage 保存30分钟的勾选、首页筛选、分页、汇总搜索/税率，URL只带返回 token；`GET /api/v1/invoices/{invoice_key}` 可携带 target_id/source_path 并在读取前验证，过期位置返回409。详情左上角返回后重读汇总，目录切换或临时投影禁止恢复勾选。
+
+首页预览保留完整选择作为导航队列，创建 `/api/v1/invoices/preview-jobs` 时仅发送当前1条和捕获的 target_id；后端原有100条上限继续约束直接批量API，不再成为全选预览的门槛。前后翻阅及序号跳转按需创建当前文件作业；文件名下拉每窗最多100项，PNG/XML、缓存、页数、保活和恢复保护不放宽。删除确认清单也按100项分组。首页与详情脚本、独立 selection-workflow.css 使用 `20261009-selection-6`。
+
+
+## 2026-10-09 临时识别接口与流程
+
+预览新增 `GET /api/v1/temporary-recognition/files/{file_id}/preview`（name/type/pages/reason/size）、同路径 `/text`（JSON 纯文本）和 `/pages/{page_number}`（PNG）。草稿凭不透明选择 id，历史额外传 `session_id` 并校验归属和整个线程的源有效性；未知/过期选择404，源失效409，渲染错误按现有预览服务返回。各次读取前后复核来源，页面每3秒复核，失败清空内容并提供重新读取。缓存回收后自动按原身份重建并保留页码。队列和历史结果各有预览按钮，返回保留队列顺序，操作列不进入 TSV。
+
+`/api/v1/temporary-recognition` 独立于活动 TargetProfile；所有响应 `private, no-store`。写入保持同源检查，原生选择/拖入在 Tauri 中要求固定 origin。
+
+| 路由 | 契约 |
+|---|---|
+| `GET/PUT /api/v1/temporary-recognition/settings` | batch_limit（1–50，默认20）、auto_open（默认true） |
+| `POST /api/v1/temporary-recognition/pick` | 原生多选返回不透明 id、name、size；取消返回空 files |
+| `POST /api/v1/temporary-recognition/drop` | Tauri 同源页面登记原生拖入 paths；非宿主返回409，改用选择器 |
+| `GET/POST /api/v1/temporary-recognition/sessions` | 历史列表 / 按 ids 顺序创建一批识别，已有运行任务时409 |
+| `GET/PATCH/DELETE /api/v1/temporary-recognition/sessions/{session_id}` | 校验源文件并读取 / 改 title / 仅删除缓存记录；运行中禁止改名、删除 |
+
+页面 → picker 或桌面原生 drop → 短期选择 id → 独立 Python worker → 每文件原子发布进度 → 弹窗识别列表。普通浏览器 File 不含可信本机路径，拖入后须在原生多选框确认位置；不把上传副本冒充原文件。Tauri `pick_temporary_files` 是新增固定私有 RPC 枚举，不携带页面提供的任意命令；桌面仅向固定 localhost 首页发送拖入路径事件，不提供 IPC 或 Host RPC token。
+
+原文件缺失、移动、替换或内容变化时返回 unavailable 文件名且省略整个线程 items；查看、自动刷新和复制均重新校验。关闭弹窗保留草稿，识别继续；关闭 backend 收束 worker。关闭自动打开时通过“查看本次识别结果”或历史进入。图片/纯扫描件需 OCR，当前临时功能不启用 OCR。
+
+
 2026-09-10：alpha.2 优化版 1 已完成同源 Mac 构建并发布，内置平台 Python/Java/OFD 组件；离线、包内两页 OFD 和实际正常配置的 ready/页面/monitor 验收通过。隔离 HOME 自动样本未通过，其他平台原生与签名限制仍保留。精确身份、发布状态与来源见[分支记录](../BRANCH_STATUS.md)；后续开发以 main 为准，制品身份由优化批次 Tag 固定。
 
 2026-09-09 Windows portable 完成暂存校验后的目录发布，只对 WinError 5/32/33 最多重试 20 次、累计 1.9 秒；其它错误或持续失败仍停止构建，不生成放行 receipt。
@@ -106,7 +144,7 @@ flowchart LR
 
 | 方法与路径 | AppState 入口 | 主要请求/返回 | 消费者与错误 |
 |---|---|---|---|
-| `GET /api/v1/invoices` | `list_invoices` | 查询筛选；返回 `items/stats/snapshot/target_id/watch_dir` | 首页；读取普通汇总并应用手改覆盖 |
+| `GET /api/v1/invoices` | `list_invoices` | 查询筛选及可选 `page/page_size/date_sort`；返回 `items/count/stats/snapshot/target_id/watch_dir` | 首页；page 从 1 起，page_size 1—200；省略 page 保留完整正式结果 |
 | `POST /api/v1/invoices/selection-summary` | `invoice_selection_summary` | `{items:[{invoice_key,source_path}]}`；返回去重张数、三项金额和成本拆分 | 首页弹窗；JSON/字段错误 `400`，过期选择 `409` |
 | `POST /api/v1/invoices/preview-jobs` | `prepare_invoice_preview` | `{items:[{invoice_key,source_path}]}`；返回短期 job、按所选顺序的文件元数据和页面/text URL | 首页预览；选择过期 `409`，渲染/来源问题返回结构化 `4xx/503`，响应 no-store |
 | `POST /api/v1/invoices/preview-jobs/{job_id}/keep-alive` | `keep_invoice_preview_alive` | 轻量刷新预览 job 的 15 分钟闲置截止时间；返回 `job_id/expires_at/idle_timeout_seconds` | 只在预览弹窗打开期间调用；已过期 `410`、后端重启后未知 job `404`，响应 no-store |
@@ -133,17 +171,20 @@ preview 和 print 都以短期内存 job 输出，不能把 PNG、XML 文本或�
 
 | 方法与路径 | AppState 入口 | 主要请求/返回 | 消费者与错误 |
 |---|---|---|---|
-| `GET /api/v1/cost-analysis` | `cost_snapshot` | 必含 watch/source/target、成本三路径、items/project_summary/invoice_reference/checks、状态统计、兼容 `reference_markup_rate`、`sync` | 成本页、设置页；在线程池读取，旧 schema 修复受 profile 写锁保护 |
+| `GET /api/v1/cost-analysis` | `cost_snapshot` | 必含 watch/source/target、成本三路径、items/project_summary/invoice_reference/checks、状态统计、兼容 `reference_markup_rate`、`sync` | 兼容完整读取与设置页；在线程池读取，旧 schema 修复受 profile 写锁保护 |
+| `GET /api/v1/cost-analysis/view` | `cost_view` | `view=details/project/reference/checks`，page/page_size，可选 revision；返回当前标签行、全局 counts/stats、revision/provisional/editable/updating | 成本页；每页最多 200，旧 revision 返回 409；繁忙时读取缓存而不等待整轮汇总 |
 | `POST /api/v1/cost-analysis/reference-status` | `save_cost_reference_status` | `{items:[{key,invoiced_quantity,reference_markup_rate_percent,reference_markup_locked}]}` | 成本页；JSON 解析后在线程池写状态 JSON/工作簿，非法/超量数量或加价率 `400` |
 | `POST /api/v1/cost-analysis/open-summary` | `open_cost_summary` | 打开当前 `watch_dir/成本发票汇总.xlsx` | 成本页；缺失时返回结构化失败 |
 
 `cost_snapshot` 的 schema 自愈和 `reference-status` 的状态/工作簿写入都使用所捕获 `TargetProfile` 的 monitor 写锁。完成前若活动 profile 改变，只保留旧 profile 自己的落盘结果，不清当前缓存且不发送当前 profile 的事件；这两条文件 I/O 路径不能在事件循环中等待锁。
 
+2026-10-09：成本页面保存额外携带 `target_id/revision`，服务端在原写锁内核对完整快照，过期拒绝（400）；旧消费者省略时保持原契约。页面草稿与勾选跨页保留，遇到代际改变保留草稿并要求重新核对，不静默应用到新结果。复制按当前标签逐页读取同一 revision，并核对 target；不缩小为当前页。`snapshot.provisional` 的首页列表与成本 `provisional` 明细只供查看，失败/终止保持提示；正式 CSV/完整快照就绪后切换。成本首次缓存聚合及初次源文件解析仍有成本，分页不宣称消除全部等待。
+
 ### 3.4 单据
 
 | 方法与路径 | AppState 入口 | 主要请求/返回 | 错误/消费者 |
 |---|---|---|---|
-| `GET /api/v1/documents/state` | `document_state` | 入/出库可选发票、目录、最近目录、默认值 | 单据页、设置页 |
+| `GET /api/v1/documents/state` | `document_state` | 入/出库可选发票、目录、最近目录、默认值；可选 selection_only/revalidate | selection_only 仅返回配置/目录身份及空候选，不启动索引；进度刷新 revalidate=false |
 | `POST /api/v1/documents/pick-outbound-dir` | `pick_outbound_invoice_dir` | 原生选择器结果 | 仅生成待保存草稿 |
 | `POST /api/v1/documents/validate-outbound-dir` | `validate_outbound_invoice_dir` | `{outbound_invoice_dir}` -> 可读性、格式统计和 warning | 单据页/macOS bridge；只检查，不保存 |
 | `PUT /api/v1/documents/outbound-dir` | `update_outbound_invoice_dir` | `{outbound_invoice_dir}` | 保存出库发票来源目录 |
@@ -162,6 +203,8 @@ preview 和 print 都以短期内存 job 输出，不能把 PNG、XML 文本或�
 | `POST /api/v1/documents/outbound/open-location` | `open_outbound_document_location` | `{invoice_number}` | 只打开受控目录 |
 
 首页 `>>` 的“批量开具入库单”通过同标签页 sessionStorage 传递 30 分钟内的勾选草稿，再进入 `/documents?batch=inbound`；URL 不含源路径，`no_skin=1` 保留。单据页只读核对后由用户明确批量导出，每张请求在工作线程执行并返回结果；停止只阻止剩余任务，当前请求仍收尾。缺成本明细/明细冲突逐票展示；断网或服务端 5xx 标为结果未确认并停止队列，同次页面重新核对不会自动重试该票。目标切换使队列失效，已确认导出或跳过的记录保持终态。
+
+2026-10-09：普通索引先发布 `inbound_ready`，出库在首条与后续有界时间间隔发布候选，`index.revision` 变化触发页面更新；运行中的候选可临时预览但导出返回 400，ready 后自动重建所选预览。首页批量入口先用 selection_only 和已有 selection API，只处理勾选票；用户点刷新列表或出库标签才恢复完整索引。export-status 只复用签名有效的目标文件名信息，正式导出仍执行原身份/路径和明细校验。
 
 入/出库预览新增模板 `layout`，网页通过 colgroup 使用真实列宽和最低明细行数。预览请求按递增序号防止迟到响应覆盖新选择。大写金额与工作簿共用无“人民币”前缀的结果；动态行高、合并范围与实际打印范围见数据算法第 10 节。
 
@@ -402,7 +445,7 @@ sequenceDiagram
     end
 ```
 
-`/` 返回 200 不表示后台投影已完成；`health.background_status` 和事件用于区分 `initializing/running/ready/failed`。正式 BAT 不能只把 `%ProgramFiles%\PowerShell\7\pwsh.exe` 当成 PS7 真值：固定路径不可用时继续通过 `where.exe pwsh.exe` 解析 `PATH`/Microsoft Store App Execution Alias，并验证主版本为 7；`INVOICE_HUB_FORCE_PS51=1` 仍直接选择 5.1。当前启动脚本实现以首页 200 为就绪探测，随后 `Get-IHHealth` 必须从原始响应流按 UTF-8 解码再解析 JSON，因为 PS5.1 会在 `application/json` 无 charset 时错误解释 `.Content`；中文空格路径还原后仍执行完整 PID、配置、runtime、build/package 身份校验。长期启动真值约束仍要求同时关注端口、PID 和 stale state，修改启动链时必须按 `AGENTS.md` 做相邻回归。
+`/` 返回 200 不表示后台投影已完成；`health.background_status` 和事件用于区分 `initializing/running/ready/failed`。正式 BAT 不能只把 `%ProgramFiles%\PowerShell\7\pwsh.exe` 当成 PS7 真值：固定路径不可用时继续通过 `where.exe pwsh.exe` 解析 `PATH`/Microsoft Store App Execution Alias，并验证主版本为 7；`INVOICE_HUB_FORCE_PS51=1` 仍直接选择 5.1。当前启动脚本实现以首页 200 为就绪探测，随后 `Get-IHHealth` 必须从原始响应流按 UTF-8 解码再解析 JSON，因为 PS5.1 会在 `application/json` 无 charset 时错误解释 `.Content`；中文空格路径还原后仍执行完整 PID、配置、runtime、build/package 身份校验。长期启动真值约束仍要求同时关注端口、PID 和 stale state，修改启动链时必须按 [Windows 规则](rules/WINDOWS.md) 与 [监控规则](rules/MONITORING.md) 做相邻回归。
 
 startup child、monitor daemon 与手动 `bridge/rebuild` 对同一 TargetProfile 都共用 `state_dir/.invoice_sync.lock` 的 profile 范围 OS 写锁，锁覆盖读取、决策、投影和 monitor 状态的完整写入段。子进程运行时显式关闭普通 sync SSE 与桌面通知；父进程只在 generation 和完整 profile 身份仍匹配时，才重建当前缓存、补发 `invoice.changed/cost_analysis.updated/monitor.sync_*` 与 `server.background_ready/failed`。身份不匹配时不改当前缓存或状态，只写含 captured/active target 的 `server.background_stale`。被替代的子进程和等待结果都有有界终止/等待；无法按时退出仅产生 `server.background_worker_retire_timeout` 诊断，不能把旧结果复活为当前目录状态。
 

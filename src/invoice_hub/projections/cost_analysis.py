@@ -530,6 +530,7 @@ def selection_cost_breakdown(rows: list[dict], invoice_families: list[dict]) -> 
 
     matched_rows: list[dict] = []
     seen_rows: set[int] = set()
+    row_sources: dict[int, dict[str, dict]] = defaultdict(dict)
     matched_invoice_count = 0
     match_strategy_counts = {"invoice_number": 0, "source_file": 0}
 
@@ -547,6 +548,9 @@ def selection_cost_breakdown(rows: list[dict], invoice_families: list[dict]) -> 
             match_strategy_counts[match_strategy] += 1
         for row in family_rows:
             row_identity = id(row)
+            # Provenance follows matched rows, independently of money de-duplication.
+            for source in family.get("source_invoices") or []:
+                row_sources[row_identity][str(source["invoice_key"])] = source
             if row_identity in seen_rows:
                 continue
             seen_rows.add(row_identity)
@@ -564,6 +568,10 @@ def selection_cost_breakdown(rows: list[dict], invoice_families: list[dict]) -> 
         key=lambda item: (item[0][0], item[0][1] or "\uffff"),
     ):
         project = _cost_project_breakdown(project_name, project_rows)
+        sources = {}
+        for row in project_rows:
+            sources.update(row_sources[id(row)])
+        project["source_invoices"] = list(sources.values())
         project.update(
             {
                 "tax_rate": tax_rate,
@@ -2100,6 +2108,7 @@ def build_cost_analysis_outputs(
     invoice_metadata: object = None,
     reference_markup_rate: object = DEFAULT_REFERENCE_MARKUP_RATE,
     progress: Callable[[int, int], None] | None = None,
+    on_rows: Callable | None = None,
 ) -> dict:
     watch_folder = Path(watch_folder)
     output_folder = Path(output_folder)
@@ -2120,17 +2129,23 @@ def build_cost_analysis_outputs(
         source_groups[_cost_family_key(source_path, metadata)].append((source_path, metadata))
 
     total_sources = len(source_groups)
+    if on_rows:
+        on_rows([], 0, total_sources)
     if progress:
         progress(0, total_sources)
     for index, candidates in enumerate(source_groups.values(), start=1):
         analysis, attempts = _select_cost_analysis(candidates)
         all_attempts.extend(attempts)
         if analysis is None:
+            if on_rows:
+                on_rows([], index, total_sources)
             if progress:
                 progress(index, total_sources)
             continue
         analyses.append(analysis)
         detail_rows.extend(analysis.get("rows") or [])
+        if on_rows:
+            on_rows(analysis.get("rows") or [], index, total_sources)
         if progress:
             progress(index, total_sources)
 

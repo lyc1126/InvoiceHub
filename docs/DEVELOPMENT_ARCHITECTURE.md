@@ -1,5 +1,25 @@
 # InvoiceHub 开发架构与工程导航
 
+## 2026-10-09 双平台集成
+
+渐进读取、临时识别与勾选工作流统一在 `codex/selection-workflow`；稳定main和公开Release保持原状态。Windows回收同时检查操作前保护和实际回收目标；Tauri首页拖入允许导航状态查询但仍固定origin/路径。桌面握手覆盖新增临时识别、分页成本和删除API，图标布局及构建指纹在两端一致。仅对应提交的干净源码进入Mac/Windows包，既有未提交的银行、税务和开发工具不属于本轮产品集成。
+
+## 2026-10-09 勾选操作增强
+
+开发分支 `codex/selection-workflow` 基于 本轮开工时核验的稳定 `main`（起点提交记录在 CHANGELOG 与私有检查点），保留此前未提交工作。本轮实现确认移入原生废纸篓、按项目搜索/税率筛选、汇总来源链接与详情返回恢复、超过100份选择的逐文件预览与序号跳转。删除使用当前目标/源签名及monitor互斥锁，日志仅作操作状态，不是发票主存储；自动删除同步不改变原票。
+
+相关实现/接口/算法/最低验收见[勾选工作流任务导航](architecture/AGENT_TASK_MAP.md#task-selection-workflow)。原有临时识别及渐进读取继续保留；后续双平台集成已修正图标像素及egg-info身份差异，提交、构建与最终验收范围统一见本页双平台集成记录及CHANGELOG。正式Windows BAT、默认业务配置、前台拉起和系统选择器仍需独立验收。
+
+
+## 2026-10-09 临时识别工作区
+
+当前新增工作分支 `codex/temporary-recognition`，起点与保留的既有修改见本轮 CHANGELOG；尚未合并或发布。首页增加独立临时识别弹窗：原生选择或桌面拖入 → 有序短期选择 → 独立 worker → runtime 会话缓存 → 来源复核后展示。历史可重命名，日期右对齐；源失效禁止查看。设置可调整批次上限与自动打开。该链不切换目录、不进入普通汇总/成本/monitor，文件及接口详见架构专题同日条目。
+
+
+## 2026-10-09 渐进读取工作分支
+
+本轮起点为 已核验的本地 `main`（精确起点见本轮 CHANGELOG），实现在 `codex/progressive-data-loading`，尚未合并或发布。首页改为服务端分页；成本页按标签分页读取上次完整快照；首次无正式投影时，普通汇总和成本各自在解析阶段发布只读临时批次。`storage/read_views.py` 管理每个 TargetProfile workspace 中的可重建 SQLite 读取缓存，CSV/XLSX/JSON 与源发票的权威关系不变。单据入库候选提前发布，首页批量入库只准备所选票，出库候选增量更新。接口、缓存代际和保护语义见架构专题同日条目。
+
 2026-09-10：alpha.2 优化版 1 已完成同源 Mac 构建并发布，内置平台 Python/Java/OFD 组件；离线、包内两页 OFD 和实际正常配置的 ready/页面/monitor 验收通过。隔离 HOME 自动样本未通过，其他平台原生与签名限制仍保留。精确身份、发布状态与来源见[分支记录](BRANCH_STATUS.md)；后续开发以 main 为准，制品身份由优化批次 Tag 固定。
 
 2026-09-09 本地 main 已同步 PR #24，Windows 加固在 `codex/windows-alpha2-startup-hardening`：保留 HTTP framing 与浏览器兜底，增加内置 Python 的 PYTHONHOME 隔离、spawn 阶段诊断与真实 Winsock 回归。稳定源码仍为 main；alpha.2 新候选的身份和验证范围见本轮 CHANGELOG，公开资产不变。
@@ -64,7 +84,7 @@ InvoiceHub 不是只有一个 FastAPI 页面。它同时包含发票提取、文
 
 | 优先级 | 来源 | 用途 |
 |---|---|---|
-| 1 | `AGENTS.md` | 产品边界、长期规则、不可破坏的不变量 |
+| 1 | `AGENTS.md` 与按任务引用的 `docs/architecture/rules/` | 全局边界与所属功能的强制规则；规则页迁移不降低约束效力 |
 | 2 | 当前基线源码与测试 | 当前真正执行的行为、接口和数据结构 |
 | 3 | `README.md`、`IMPLEMENTATION_STATUS.md` 等真值文档 | 运行方式、完成状态和验收口径 |
 | 4 | `CHANGELOG.md` | 设计如何演进、某个保护逻辑为什么出现 |
@@ -283,7 +303,7 @@ BAT/页面/monitor 触发
 
 ## 9. 新开发者阅读顺序
 
-1. 先读 `AGENTS.md`，理解产品边界和不可破坏规则。
+1. 先完整读取 `AGENTS.md`，再按任务快速索引读取命中的功能规则；下列源码学习路线用于相应模块，不要求每个窄任务遍历全部步骤。
 2. 阅读本页第 3 至第 8 节，建立系统模型。
 3. 阅读 `domain/models.py` 和 `targets/paths.py`，理解契约和路径。
 4. 阅读 `extraction/parsers.py`、`projections/summary.py`，跟一次普通汇总。

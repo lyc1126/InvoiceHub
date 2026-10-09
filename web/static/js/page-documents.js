@@ -5,6 +5,7 @@
     listPages: { inbound: 1, outbound: 1 },
     loadGeneration: 0,
     loadController: null,
+    allInvoicesRequested: false,
     indexTimer: 0,
     previewRequest: { inbound: 0, outbound: 0 },
     exporting: { inbound: false, outbound: false },
@@ -178,7 +179,7 @@
       const { index } = await app.api("/api/v1/documents/index", { activity: false, signal: state.loadController?.signal });
       if (generation !== state.loadGeneration) return;
       renderIndexStatus(index);
-      if (index.state === "ready") await loadState("index.ready");
+      if (index.state === "ready" || index.revision !== state.payload?.index?.revision) await loadState("index.progress");
     } catch (error) {
       if (error.name !== "AbortError" && generation === state.loadGeneration) {
         setBanner("danger", `读取加载进度失败：${error.message}`);
@@ -281,6 +282,7 @@
   }
 
   function renderState(payload) {
+    const finished = state.payload?.index?.state !== "ready" && payload.index?.state === "ready";
     const targetChanged = state.payload && state.payload.target_id !== payload.target_id;
     if (state.payload && (targetChanged || state.payload.outbound_invoice_dir !== payload.outbound_invoice_dir)) {
       state.previewRequest.outbound += 1;
@@ -302,7 +304,9 @@
     }
     state.payload = payload;
     refs.path.textContent = `当前发票目录：${payload.watch_dir || "--"}`;
-    refs.meta.textContent = `入库发票 ${payload.inbound_invoices?.length || 0} 张 · 出库发票 ${payload.outbound_invoices?.length || 0} 张`;
+    refs.meta.textContent = payload.selection_only
+      ? "当前优先处理首页已勾选的发票；点击刷新列表可加载全部发票"
+      : `入库发票 ${payload.inbound_invoices?.length || 0} 张 · 出库发票 ${payload.outbound_invoices?.length || 0} 张`;
     renderInvoiceChoices("inbound");
     renderInvoiceChoices("outbound");
     renderIndexStatus(payload.index);
@@ -320,14 +324,18 @@
     }
     updateOutboundDirDraft();
     updateControls();
+    if (finished && refs.outboundSelect.value && state.outboundPreview?.provisional) void loadPreview("outbound");
   }
 
   async function loadState(reason = "manual") {
+    if (["resume", "outbound.tab"].includes(reason)) state.allInvoicesRequested = true;
     const generation = ++state.loadGeneration;
     state.loadController?.abort();
     state.loadController = new AbortController();
     try {
-      const payload = await app.api(reason === "resume" ? "/api/v1/documents/index/resume" : "/api/v1/documents/state", {
+      const selectionOnly = !state.allInvoicesRequested && new URLSearchParams(window.location.search).get("batch") === "inbound" && state.active !== "outbound";
+      const stateUrl = `/api/v1/documents/state?selection_only=${selectionOnly}&revalidate=${reason !== "index.progress"}`;
+      const payload = await app.api(reason === "resume" ? "/api/v1/documents/index/resume" : stateUrl, {
         ...(reason === "resume" ? { method: "POST", body: {} } : {}), signal: state.loadController.signal,
       });
       if (generation !== state.loadGeneration) return;
@@ -342,6 +350,7 @@
 
   function updateTabs(kind) {
     state.active = kind;
+    if (kind === "outbound" && !state.payload?.outbound_invoices?.length) void loadState("outbound.tab");
     refs.tabs.forEach((tab) => {
       const active = tab.dataset.documentTab === kind;
       tab.classList.toggle("is-active", active);
@@ -358,7 +367,7 @@
     refs.inboundSelect.disabled = state.exporting.inbound;
     refs.openInboundBtn.disabled = !state.lastExport.inbound;
     refs.openInboundLocationBtn.disabled = !state.lastExport.inbound;
-    refs.exportOutboundBtn.disabled = state.exporting.outbound || refs.exportOutboundBtn.dataset.busy === "true" || !refs.outboundSelect.value || !state.outboundPreview;
+    refs.exportOutboundBtn.disabled = state.exporting.outbound || refs.exportOutboundBtn.dataset.busy === "true" || !refs.outboundSelect.value || !state.outboundPreview || state.outboundPreview.provisional;
     refs.outboundSelect.disabled = state.exporting.outbound;
     refs.openOutboundBtn.disabled = !state.lastExport.outbound;
     refs.openOutboundLocationBtn.disabled = !state.lastExport.outbound;
@@ -568,6 +577,7 @@
       } else {
         state.outboundPreview = preview;
         renderOutboundPreview({ ...preview, defaults: formValues(refs.outboundDefaultsForm) });
+        if (preview.provisional) setBanner("warning", "临时预览：出库目录仍在核对，完成后可导出。");
       }
       await refreshExportStatus(kind);
       updateControls();

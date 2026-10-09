@@ -7,6 +7,8 @@
   <link rel="stylesheet" href="/static/css/app.css?v=20260907-desktop-integrated-2">
   <link rel="stylesheet" href="/static/css/settings-actions.css?v=20260907-desktop-integrated-2">
   <link rel="stylesheet" href="/static/css/large-lists.css?v=20260907-large-list-1">
+  <link rel="stylesheet" href="/static/css/temporary-recognition.css?v=20261009-temporary-8">
+  <link rel="stylesheet" href="/static/css/selection-workflow.css?v=20261009-selection-6">
 </head>
 <body data-page="index">
   <header class="topbar">
@@ -55,7 +57,7 @@
             <p>选择当前发票目录，检查后重建活动档案。</p>
           </div>
         </div>
-        <div class="field-row">
+        <div class="field-row temporary-entry-row">
           <label class="field field--wide">
             <span class="field__label">发票监控文件夹</span>
             <input id="watchDirInput" class="input" type="text" autocomplete="off" placeholder="选择要汇总的发票文件夹">
@@ -63,6 +65,7 @@
           <button id="pickWatchDirBtn" class="btn btn--ghost" type="button">选择文件夹</button>
           <button id="validateWatchDirBtn" class="btn btn--ghost" type="button">检查目录</button>
           <button id="saveWatchDirBtn" class="btn btn--primary" type="button">保存目录</button>
+          <button id="temporaryRecognitionBtn" class="btn btn--secondary" type="button" aria-haspopup="dialog" aria-controls="temporaryDialog">临时识别</button>
         </div>
         <div id="watchDirDraft" class="watch-dir-draft" hidden></div>
         <div id="watchDirHistory" class="watch-dir-history" hidden>
@@ -238,6 +241,7 @@
                 <button id="batchInboundDocumentsBtn" class="invoice-action-menu__item" type="button" role="menuitem" tabindex="-1">
                   批量开具入库单
                 </button>
+                <button id="trashSelectedInvoicesBtn" class="invoice-action-menu__item selection-danger" type="button" role="menuitem" tabindex="-1">删除所选文件</button>
               </div>
             </div>
           </div>
@@ -344,6 +348,11 @@
               <h4 id="selectedInvoiceSummaryBreakdownTitle">合计发票明细</h4>
               <span id="selectedInvoiceSummaryBreakdownMeta">等待明细</span>
             </div>
+            <div class="selection-filters">
+              <label>搜索明细<input id="selectionProjectSearch" class="input" type="search" placeholder="项目、规格、单位、发票号或文件名"></label>
+              <label>税率<select id="selectionTaxFilter" class="input"><option value="all">全部税率</option></select></label>
+            </div>
+            <p id="selectionFilterMeta" class="selection-filter-meta" role="status"></p>
             <div id="selectedInvoiceSummaryDetails" class="selection-summary-details" role="region" aria-label="合计发票明细规格列表"></div>
           </section>
         </div>
@@ -380,6 +389,8 @@
           </label>
 
           <div class="file-preview-control-group" role="group" aria-label="文件切换">
+            <label class="selection-file-jump">跳至<input id="filePreviewPosition" class="input" type="number" min="1" step="1" aria-label="跳至第几个文件"></label>
+            <button id="filePreviewJumpBtn" class="btn btn--ghost" type="button">跳转</button>
             <button id="filePreviewPreviousFileBtn" class="btn btn--ghost" type="button">上一文件</button>
             <button id="filePreviewNextFileBtn" class="btn btn--ghost" type="button">下一文件</button>
           </div>
@@ -445,9 +456,23 @@
       </div>
     </section>
   </div>
+  {{temporary_recognition}}
   {{system_controls}}
+  <dialog id="invoiceTrashDialog" class="selection-trash-dialog" aria-labelledby="invoiceTrashTitle">
+    <h3 id="invoiceTrashTitle">删除所选文件</h3>
+    <p id="invoiceTrashDescription">正在核对源文件…</p>
+    <p class="selection-trash-hint">确认后将所列源文件移入系统废纸篓 / 回收站，可从系统恢复。仅处理勾选文件，不连带删除其他格式。</p>
+    <ul id="invoiceTrashFiles" class="selection-trash-files"></ul>
+    <div class="selection-trash-pager"><button id="invoiceTrashPrevious" class="btn btn--ghost" type="button">上一组</button><span id="invoiceTrashPage"></span><button id="invoiceTrashNext" class="btn btn--ghost" type="button">下一组</button></div>
+    <p id="invoiceTrashStatus" role="status" aria-live="polite"></p>
+    <div class="selection-trash-actions">
+      <button id="invoiceTrashCancel" class="btn btn--ghost" type="button">取消</button>
+      <button id="invoiceTrashConfirm" class="btn selection-trash-confirm" type="button" disabled>确认删除</button>
+    </div>
+  </dialog>
   <script src="/static/js/common.js?v=20260907-desktop-integrated-2"></script>
   <script src="/static/js/system-controls.js?v=20260907-desktop-integrated-2"></script>
-  <script src="/static/js/page-index.js?v=20260907-large-list-1"></script>
+  <script src="/static/js/page-index.js?v=20261009-selection-6"></script>
+  <script src="/static/js/temporary-recognition.js?v=20261009-temporary-8"></script>
 </body>
 </html>

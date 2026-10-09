@@ -5,6 +5,7 @@ import os
 import re
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
+from invoice_hub.storage.read_views import ReadViews, ProgressiveRows, file_signature
 from typing import Any, Callable
 
 from invoice_hub.domain import CostAnalysisSnapshot, CostSyncStatus
@@ -267,14 +268,32 @@ class CostProjectionService:
         self.summary_csv = self.workspace_dir / "发票汇总.csv"
 
     def rebuild(self, progress: Callable[[int, int], None] | None = None) -> dict:
-        result = build_cost_analysis_outputs(
-            self.watch_dir,
-            self.watch_dir,
-            invoice_metadata=self._summary_metadata(),
-            reference_markup_rate=self._markup_meta()["rate"],
-            progress=progress,
-        )
+        # Retain a consistent complete generation before replacing any projection.
+        # Read-only pages can use it while the monitor owns the write lock.
+        if self.detail_csv.exists():
+            self.cache_snapshot()
+        with ProgressiveRows(self.workspace_dir, "costs") as preview:
+            result = build_cost_analysis_outputs(
+                self.watch_dir,
+                self.watch_dir,
+                invoice_metadata=self._summary_metadata(),
+                reference_markup_rate=self._markup_meta()["rate"],
+                progress=progress,
+                on_rows=preview.add,
+            )
+        self.cache_snapshot()
         return result
+
+    def read_fingerprint(self):
+        return [str(self.watch_dir.resolve()), self.target_id, str(self.reference_markup_rate),
+                *[file_signature(path) for path in (self.detail_csv, self.summary_xlsx, self.status_json, self.summary_csv)]]
+
+    def cache_snapshot(self):
+        views = ReadViews(self.workspace_dir)
+        meta, _ = views.read("cost:details", page_size=0)
+        if meta.get("fingerprint") != self.read_fingerprint():
+            snapshot = self.snapshot().model_dump(mode="json")
+            views.save_cost(snapshot, self.read_fingerprint())
 
     def _markup_meta(self) -> dict[str, Any]:
         payload = _read_reference_status_payload(self.status_json)

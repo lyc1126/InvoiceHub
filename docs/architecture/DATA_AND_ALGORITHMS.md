@@ -1,5 +1,39 @@
 # InvoiceHub 数据结构与算法
 
+## 2026-10-09 平台结果与构建身份
+
+Windows回收在PreDeleteItem保护后，再检查PostDeleteItem返回的实际回收站目标；成功HRESULT不足以单独证明可恢复。构建指纹继续纳入真实src/web及既定输入，只排除不参与组包的editable `.egg-info`，和既有字节码/cache排除规则一致；源码变化仍改变core build ID。图标生成显式选择BASIC字形布局，避免可选Raqm导致平台差异。
+
+## 2026-10-09 勾选来源与删除执行日志
+
+`selection_cost_breakdown` 在现有发票号优先、源路径回退的匹配上，给每条命中成本行记录所选家族来源；按项目+明细税率分组时并集来源，按 invoice_key 去重。来源记录与金额行去重分离，因此多个格式不会重复增加金额，未命中的票不会挂到其他税率项目。搜索项目/规格/单位/票号/文件名与税率取交集，不重新计算顶部票头合计。
+
+`runtime/local_state/invoice-trash/<job_id>.json` 只保存确认计划、target、相对展示名、私有路径、设备/inode/size/mtime_ns/ctime_ns签名及执行状态；同名源路径去重，不按同票家族扩展删除。`.jsonl` 追加逐文件 intent/outcome 并 fsync，避免大批删除每项重写整份计划造成平方级开销；结束再原子保存结果。读取 running 日志逐项重放有效行，损坏末行不作为成功证据，重启不自动执行。不是发票主数据或源内容备份。
+
+删除的全量预检与逐项预检均拒绝目录外文件、符号链接/junction、非PDF/OFD/XML及变化来源；与 monitor 共用同步写锁，忙时在原生动作前失败。平台层 macOS 使用 NSFileManager trashItemAtURL，Windows 使用 IFileOperation + RECYCLEONDELETE/ADDUNDORECORD/EARLYFAILURE，PreDeleteItem 缺失可回收标志即返回失败；禁止 unlink/永久删除降级。合成 macOS 实测完成移入、核对、恢复；Windows COM ABI/回调测试不能替代实际系统验收。
+
+预览客户端完整队列仅含选中元数据，每次只向后端创建当前1个源文件作业；迟到 metadata/content 分别用请求代次拦截。现有服务作业数/字节/页数/15分钟idle限制保持，跨100项窗口仍可前后翻阅或序号跳转。
+
+
+## 2026-10-09 临时识别会话缓存
+
+临时原文件预览复用 `FilePreviewService` 的内存 PNG/安全文本及页数、字节、15分钟闲置上限；与首页共用同一个有界渲染池，临时来源授权不依赖活动 watch_dir。最多8个身份到 job 的内存映射，失效可重建；草稿首次预览记录 SHA-256，之后读取验证内容，并延长仍在访问的选择有效期。历史预览按原 session/item 身份授权，任何成员失效即禁止整个线程预览，不新增持久票面副本。
+
+`runtime/local_state/temporary-recognition/session-<uuid>.json` 是从用户明确选择的 PDF/OFD/XML 重建的独立缓存，不参与普通汇总、成本三件套或 SQLite 发票主存储。会话含 id、title、created_at、status、completed 和有序 items；item 内部保存源路径、设备/inode/size/mtime_ns 签名及解析后 SHA-256，公开结果剔除 source_path。项目内路径相对 root 保存，外部文件路径保持绝对。
+
+选择 id 内存保存30分钟，最多500个；单文件32 MiB，每批默认20/最大50；历史最多200条，达到上限需用户逐条删除记录。settings.json 仅保存 batch_limit、auto_open。识别采用单独进程逐份解析并发布进度；worker 自带300秒截止计时，父进程管道 EOF 时立即退出；读取时检查失败/超时并收束，backend正常退出同样收束；重启把 running 改为 interrupted，不把半成品误记为完成。ready 行表示已处理，review 行表示未提取到有效票头，用户仍需核对字段。
+
+查看先检查每个原路径及签名，已提取项再比对 SHA-256；任一来源失效即不返回此线程任何缓存明细。解析前后检查来源；删除会话仅删缓存 JSON。识别顺序等于提交 ids 的顺序，不扫描父目录、不切换 watch_dir、不写源文件或正式投影。
+
+
+## 2026-10-09 完整代际与临时批次
+
+- `ReadViews` 的 SQLite 表为 `metadata(name PRIMARY KEY,value JSON)` 与 `rows(name,position,value JSON,PRIMARY KEY(name,position))`。每档案 workspace 独立，WAL/NORMAL；显式读取事务保证元数据与页面行属于同一次提交。成本 `cost:details/project/reference/checks` 在同一事务原子替换，共享随机 `revision`；指纹含目录、target、加价率与成本 CSV/XLSX/状态 JSON/普通汇总的 size、mtime_ns、ctime_ns。
+- 完整成本快照生成仍持 profile 同步写锁。浏览读取非阻塞尝试该锁；忙时读取上次完整代际并禁止编辑，空缓存时读临时明细。初次建立完整缓存仍需执行一次原聚合，后续未变文件不重复聚合。旧完整结果在更新期间保留，不与临时结果拼接。
+- `partial:invoices/costs` 每轮重置 generation/revision、pid、state、processed/total/count；首条可用行立即发布，后续按 0.5 秒或 100 行追加。每轮只有最新临时批次。普通汇总临时数据在同票更正和正式投影完成前仅供查看；成本临时数据仅开放明细，项目汇总/参考/校验等待完整代际。失败、被终止或只完成解析但尚未生成正式投影均不可视为可编辑完整结果。
+- 首页最终列表按 CSV、手改状态和档案指纹复用构造结果；全量筛选/排序/统计后取当前页，位置键不改成页内编号。未传 page 的旧消费者仍只读完整投影，全选明确请求完整筛选结果。
+- `InboundDetails` 按成本 CSV 路径及文件签名缓存分组，选票只展开对应号码；完整一致副本折叠和冲突阻断沿用 documents 规则。出库只缓存目标文件名所需的号码/日期，源文件签名变化即失效，预览前后再次比对；正式导出仍实时解析并要求完整目录索引。
+
 2026-09-08 本附录与开发架构总入口统一以 `main` 的 PR #20 合并提交为产品实现及后续发行源码基线，精确身份见 [分支记录](../BRANCH_STATUS.md)；下文旧分支名只记录来源，不能再作为并行真值。源码 CI 不替代平台成品验收。
 
 2026-09-08 监控状态采用独立 `state_dir/.invoice_monitor_status.lock` 保护短读写，状态更新仍在完整 sync 锁内按 sync -> status 顺序执行；状态读取不取 sync 锁。锁文件不是运行真值，PID 与 `.invoice_monitor.lock` 的判定保持不变。

@@ -1,3 +1,20 @@
+const detailReturnToken = new URLSearchParams(location.search).get("selection_return");
+let detailSource = null;
+try {
+  if (detailReturnToken) {
+    const saved = JSON.parse(sessionStorage.getItem(`invoicehub.summary-return.${detailReturnToken}`) || "null");
+    if (saved && Date.now() - saved.created_at <= 30 * 60 * 1000) detailSource = saved.source;
+    const query = new URLSearchParams({ selection_return: detailReturnToken });
+    if (new URLSearchParams(location.search).get("no_skin") === "1") query.set("no_skin", "1");
+    document.getElementById("detailBackBtn").href = `/?${query}`;
+  }
+} catch (_error) { /* Invalid return state cannot authorize a different source. */ }
+document.getElementById("detailBackBtn")?.addEventListener("click", (event) => {
+  if (!detailReturnToken && document.referrer && new URL(document.referrer).origin === location.origin) {
+    event.preventDefault(); history.back();
+  }
+});
+
 const detailKey = decodeURIComponent(location.pathname.split("/").pop() || "");
 const detailRefs = {
   path: document.getElementById("detailPath"),
@@ -154,7 +171,9 @@ function renderDetail(payload) {
 }
 
 async function loadDetail() {
-  renderDetail(await app.api(`/api/v1/invoices/${encodeURIComponent(detailKey)}`));
+  if (detailReturnToken && !detailSource) throw new Error("返回记录已过期，请返回首页重新选择来源发票。");
+  const query = detailSource ? `?${new URLSearchParams({ target_id: detailSource.target_id, source_path: detailSource.source_path })}` : "";
+  renderDetail(await app.api(`/api/v1/invoices/${encodeURIComponent(detailKey)}${query}`));
 }
 
 detailRefs.form.addEventListener("submit", async (event) => {

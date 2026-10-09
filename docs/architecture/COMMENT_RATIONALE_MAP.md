@@ -1,5 +1,46 @@
 # InvoiceHub 注释与设计原因地图
 
+## 2026-10-09 双平台构建保护
+
+- `trash.py::post_delete`：Microsoft明确规定PostDeleteItem的psiNewlyCreated表示回收站中目标，NULL不能证实可恢复；在前置veto后仍验证结果。守护：COM成功/失败/取消/缺少目标测试。依据：[Microsoft PostDeleteItem](https://learn.microsoft.com/en-us/windows/win32/api/shobjidl_core/nf-shobjidl_core-ifileoperationprogresssink-postdeleteitem)。
+- `lib.rs::accepts_temporary_file_drop`：详情返回token只影响首页状态；按固定origin与路径而非整个URL字符串判断，避免返回后拖入失效，保持其它页面和远端拒绝。Rust正反例守护。
+- `generate_desktop_icon.py`：固定hi.拉丁字标原稿采用BASIC布局，可选Raqm不能使跨平台重生成像素漂移；原master逐像素回归保持。
+- `build_manifest.py::_is_build_cache`：editable安装元数据不进入任何core包，不参与core身份；真实源码仍逐文件纳入。身份测试覆盖元数据无影响与源码变化会改变指纹。
+
+## 2026-10-09 勾选工作流保护
+
+| 判断位置 | 原因与不变量 | 守护测试 |
+|---|---|---|
+| `platform/trash.py::recycle_guard` / `_windows_trash` | 请求回收仍可能遇到磁盘不支持；PreDeleteItem必须阻止永久删除，COM对象及回调活到释放完毕 | `test_windows_guard_vetoes_permanent_delete`、`test_windows_com_contract_fails_closed` |
+| `invoice_trash.py::commit/_record_file` | 原生操作前持久化意图，结果不明只能查询，不能删除同名替换文件；逐项追加避免平方级写入 | `test_trash_confirmation_exact_selection_and_idempotence`、`test_interrupted_journal_is_observed_without_retry` |
+| `AppState.commit_invoice_trash` | 活动目录、monitor写入与确认来源串行；忙锁不等待解析，变动只经既有同步更新投影和保留手改 | `test_confirmation_revalidates_all_before_any_move`、`test_stale_cross_origin_symlink_and_busy_rejected` |
+| `selection_cost_breakdown` | 金额行去重与来源集合分开，确保来源只归属于该项目/税率 | `test_provenance_tracks_project_tax_and_keeps_money_deduplication` |
+| `page-index.js::loadFilePreviewJob/confirmInvoiceTrash` | 全量选择只作导航，当前项按需准备；删除响应丢失只能GET日志，不重发POST | `tests/selection_workflow.test.cjs` |
+
+平台接口依据：[Apple FileManager Trash](https://developer.apple.com/documentation/foundation/filemanager/trashitem(at:resultingitemurl:))、[Microsoft PreDeleteItem](https://learn.microsoft.com/en-us/windows/win32/api/shobjidl_core/nf-shobjidl_core-ifileoperationprogresssink-predeleteitem)。
+
+
+## 2026-10-09 临时识别的来源与异步边界
+
+- `TemporaryRecognitionService.preview/_preview_source`：仅选择授权或历史 item 可访问 watch_dir 外文件；返回缓存前后核验整线程，防止预览绕过源失效限制。守护：历史重启、跨线程 id、同元数据改内容、渲染中删除、缓存回收回归。
+- `temporary-recognition.js` 的预览代际/序号：切换文件、页码或离开后，迟到内容及校验失败不得清除新视图；XML 仅 textContent，blob URL 在离开时释放。守护：Node 迟到响应、源失效清空、纯文本与返回测试。
+
+- `TemporaryRecognitionService._public/get`：历史不是源文件备份，任一来源失效必须省略全部 items；守护：删除、移动、替换和相同元数据下内容变化测试。
+- `recognize_job`：只处理显式选中的来源，进度写 runtime 缓存，禁止扫描所在文件夹或进入正式投影；守护：排序、逐份发布和原文件不变测试。
+- `temporary-recognition.js`：generation 拒绝迟到 picker/历史结果；网络失败先隐藏旧表格，复制前再次核验来源；守护：Node 异步竞态回归。
+- `main.rs`：只有固定 origin 首页消费原生拖入路径，私有 RPC token 不进入事件；多选复用固定枚举、原生线程调度和120秒预算。
+
+
+## 2026-10-09 渐进读取保护
+
+| 位置 | 原因与不变量 | 守护验证 |
+|---|---|---|
+| `ReadViews.read/save_cost` | 同一次读事务绑定页数据与代际；成本四表同事务发布，防止复制跨代际混合 | progressive loading 的分页/过期 revision 回归 |
+| `AppState.cost_view` / `MonitorState.try_sync_write_lock` | 非阻塞读缓存不能取消原投影互斥；锁释放不代表生成成功，失败临时明细永远只读 | 写锁占用时可读、失败后不可编辑 |
+| `AppState.list_invoices` / summary 解析循环 | 临时列表在家族校正前可见但不能用于选择、详情、打印和导出；完整结果仍用原位置身份校验 | 暂停第二张解析、分页全量统计及既有选择身份回归 |
+| `DocumentIndex.build_index` / `document_state` | 入库准备与出库解析分阶段；首页勾选已给出票的身份，无需触发无关出库扫描 | selection_only 无扫描、进程停止/恢复与候选预览回归 |
+| `document_outbound_preview` | 元数据复用仅节省紧随预览的文件状态读取；源文件变化或导出仍需验证 | 状态不重复解析、源文件中途变化拒绝、临时预览导出拒绝 |
+
 2026-09-09 `tauri_windows_portable.py::_replace_staging` 对 Windows 5/32/33 最多重试 20 次、累计 1.9 秒，处理新复制 EXE/DLL 后目录发布的短暂占用；持续拒绝与无关错误仍停止，不复制半成品或放宽清单。`test_stage_publish_retries_only_bounded_windows_sharing_errors` 守护成功、次数上限和错误范围。
 
 2026-09-09 `BackendHost::launch` 清除 PYTHONHOME，避免用户 Python/Conda 的标准库路径使随包解释器在 encodings 初始化时退出；spawn 前重置诊断、只输出 OS 错误码，避免旧握手记录和敏感环境值进入新诊断。Windows 随包 Python 污染/清理实验及新包启动验收守护；`windows_abortive_close_preserves_framing_and_reports_truncation` 使用真实 Winsock SO_LINGER 验证完整 200/204 与截断 10054 的区别。

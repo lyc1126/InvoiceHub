@@ -64,6 +64,17 @@ def pick_file(initial_dir: str = "", title: str = "选择 OCR 识别文件") -> 
         root.destroy()
 
 
+def pick_temporary_files(initial_dir: str = "", title: str = "选择临时识别文件") -> list[str]:
+    from tkinter import filedialog
+
+    root = _tk_root()
+    try:
+        return list(filedialog.askopenfilenames(parent=root, title=title, initialdir=initial_dir,
+                    filetypes=[("发票文件", "*.pdf *.ofd *.xml")]) or [])
+    finally:
+        root.destroy()
+
+
 def main() -> int:
     try:
         sys.stdout.reconfigure(encoding="utf-8")
@@ -72,11 +83,15 @@ def main() -> int:
         pass
 
     parser = argparse.ArgumentParser(description="Native dialogs for invoice hub")
-    parser.add_argument("command", choices=["pick-directory", "pick-file"])
+    parser.add_argument("command", choices=["pick-directory", "pick-file", "pick-temporary-files"])
     parser.add_argument("--initial-dir", default="")
     parser.add_argument("--title", default="选择发票监控文件夹")
     args = parser.parse_args()
 
+    if args.command == "pick-temporary-files":
+        paths = pick_temporary_files(args.initial_dir, args.title)
+        print(json.dumps({"ok": True, "paths": paths}, ensure_ascii=False))
+        return 0
     if args.command == "pick-directory":
         selected = pick_directory(args.initial_dir, args.title)
     else:

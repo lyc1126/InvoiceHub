@@ -6,6 +6,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <link rel="stylesheet" href="/static/css/app.css?v=20260907-desktop-integrated-2">
   <link rel="stylesheet" href="/static/css/settings-actions.css?v=20260907-desktop-integrated-2">
+  <link rel="stylesheet" href="/static/css/temporary-recognition.css?v=20261009-temporary-8">
 </head>
 <body data-page="settings">
   <header class="topbar">
@@ -55,6 +56,7 @@
           <button id="settingsTabDocuments" class="settings-tab" type="button" role="tab" aria-selected="false" aria-controls="settingsPanelDocuments" data-settings-section="documents">单据</button>
           <button id="settingsTabAppearance" class="settings-tab" type="button" role="tab" aria-selected="false" aria-controls="settingsPanelAppearance" data-settings-section="appearance">外观</button>
           <button id="settingsTabPreferences" class="settings-tab" type="button" role="tab" aria-selected="false" aria-controls="settingsPanelPreferences" data-settings-section="preferences">偏好</button>
+          <button id="settingsTabTemporary" class="settings-tab" type="button" role="tab" aria-selected="false" aria-controls="settingsPanelTemporary" data-settings-section="temporary">临时识别</button>
           <button id="settingsTabOcr" class="settings-tab" type="button" role="tab" aria-selected="false" aria-controls="settingsPanelOcr" data-settings-section="ocr">OCR</button>
           <button id="settingsTabDiagnostics" class="settings-tab" type="button" role="tab" aria-selected="false" aria-controls="settingsPanelDiagnostics" data-settings-section="diagnostics">诊断</button>
           <button id="settingsTabAbout" class="settings-tab settings-tab--with-badge" type="button" role="tab" aria-selected="false" aria-controls="settingsPanelAbout" data-settings-section="about">
@@ -407,6 +409,17 @@
             <div id="settingsOcrCandidateDirStatus" class="settings-action-status" role="status">留空时 OCR 候选文件来自当前发票目录。</div>
           </article>
         </section>
+        <section id="settingsPanelTemporary" class="settings-section" role="tabpanel" aria-labelledby="settingsTabTemporary" data-settings-panel="temporary" hidden>
+          <div class="settings-section-head"><h3>临时识别</h3><p>识别少量文件，保持当前发票档案不变。</p></div>
+          <form id="temporarySettingsForm" class="temporary-settings">
+            <label for="temporaryBatchLimit"><span>每批文件上限</span><input id="temporaryBatchLimit" class="input" type="number" min="1" max="50" value="20" required><small>可设置 1–50 个，每个文件不超过 32 MB。</small></label>
+            <label><input id="temporaryAutoOpen" type="checkbox" checked> 识别完成后自动打开结果<small>关闭后仍会保留记录，可从“查看”打开。</small></label>
+            <p class="temporary-help">最多保留 200 条历史，可逐条重命名或删除。删除记录不影响原文件；原文件移动、删除或发生变化后，历史结果不可查看。</p>
+            <button id="temporarySettingsSave" class="btn btn--primary" type="submit" disabled>保存设置</button>
+            <p id="temporarySettingsFeedback" role="status" aria-live="polite"></p>
+          </form>
+        </section>
+
         <section id="settingsPanelOcr" class="settings-section" role="tabpanel" aria-labelledby="settingsTabOcr" data-settings-panel="ocr" hidden>
           <div class="settings-section-head">
             <h3>OCR</h3>
@@ -486,5 +499,6 @@
   <script src="/static/js/common.js?v=20260907-desktop-integrated-2"></script>
   <script src="/static/js/system-controls.js?v=20260907-desktop-integrated-2"></script>
   <script src="/static/js/page-settings.js?v=20260907-desktop-integrated-2"></script>
+  <script src="/static/js/temporary-recognition.js?v=20261009-temporary-8"></script>
 </body>
 </html>

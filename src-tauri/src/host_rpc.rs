@@ -43,6 +43,7 @@ pub enum HostRpcCommand {
     PickOutboundInvoiceDirectory,
     PickOcrDirectory,
     PickOcrFile,
+    PickTemporaryFiles,
     UpdateCheck,
     UpdateInstall,
     SetAppIcon(AppIconId),
@@ -55,6 +56,7 @@ impl HostRpcCommand {
             "pick_outbound_invoice_dir" => Some(Self::PickOutboundInvoiceDirectory),
             "pick_ocr_directory" => Some(Self::PickOcrDirectory),
             "pick_ocr_file" => Some(Self::PickOcrFile),
+            "pick_temporary_files" => Some(Self::PickTemporaryFiles),
             "update_check" => Some(Self::UpdateCheck),
             "update_install" => Some(Self::UpdateInstall),
             _ => None,
@@ -157,6 +159,7 @@ impl HostRpcAuthorizer {
                 | "pick_outbound_invoice_dir"
                 | "pick_ocr_directory"
                 | "pick_ocr_file"
+                | "pick_temporary_files"
                 | "update_check"
                 | "update_install"
                 | "set_app_icon"
@@ -882,6 +885,10 @@ fn handle_request(
             .map(HostRpcResponse::Picker)
             .map(HostRpcReply::immediate)
             .map_err(|_| HostRpcAuthorizationError::CommandRejected),
+        HostRpcCommand::PickTemporaryFiles => select_temporary_files(app_handle.clone())
+            .map(HostRpcResponse::Files)
+            .map(HostRpcReply::immediate)
+            .map_err(|_| HostRpcAuthorizationError::CommandRejected),
         HostRpcCommand::UpdateCheck => updater
             .check()
             .map(HostRpcReply::immediate)
@@ -998,6 +1005,28 @@ fn read_request(stream: &mut TcpStream) -> Result<RpcRequest, HostRpcAuthorizati
     })
 }
 
+fn select_temporary_files(
+    app_handle: tauri::AppHandle<tauri::Wry>,
+) -> Result<Vec<String>, HostRpcServerError> {
+    let (sender, receiver) = mpsc::sync_channel(1);
+    app_handle
+        .dialog()
+        .file()
+        .add_filter("发票文件", &["pdf", "ofd", "xml"])
+        .pick_files(move |selection| {
+            let paths = selection
+                .unwrap_or_default()
+                .into_iter()
+                .filter_map(|path| path.into_path().ok())
+                .map(|path| path.to_string_lossy().into_owned())
+                .collect();
+            let _ = sender.send(paths);
+        });
+    receiver
+        .recv_timeout(PICKER_TIMEOUT)
+        .map_err(|_| HostRpcServerError::PickerUnavailable)
+}
+
 fn select_path(
     app_handle: tauri::AppHandle<tauri::Wry>,
     command: HostRpcCommand,
@@ -1007,7 +1036,8 @@ fn select_path(
         | HostRpcCommand::PickOutboundInvoiceDirectory
         | HostRpcCommand::PickOcrDirectory => false,
         HostRpcCommand::PickOcrFile => true,
-        HostRpcCommand::UpdateCheck
+        HostRpcCommand::PickTemporaryFiles
+        | HostRpcCommand::UpdateCheck
         | HostRpcCommand::UpdateInstall
         | HostRpcCommand::SetAppIcon(_) => return Err(HostRpcServerError::PickerUnavailable),
     };
@@ -1130,6 +1160,7 @@ impl HostRpcReply {
 
 enum HostRpcResponse {
     Picker(Option<String>),
+    Files(Vec<String>),
     UpdateCheck { available: bool, version: String },
     UpdateInstall,
     AppIconUpdated,
@@ -1159,6 +1190,7 @@ fn write_rpc_reply<W: Write>(writer: &mut W, mut reply: HostRpcReply) -> std::io
 
 fn write_response<W: Write>(writer: &mut W, response: HostRpcResponse) -> std::io::Result<()> {
     let body = match response {
+        HostRpcResponse::Files(paths) => json!({"ok": true, "paths": paths}),
         HostRpcResponse::Picker(selected) => json!({
             "ok": true,
             "selected": selected.is_some(),
@@ -1202,6 +1234,7 @@ fn command_name(command: HostRpcCommand) -> &'static str {
         HostRpcCommand::PickOutboundInvoiceDirectory => "pick_outbound_invoice_dir",
         HostRpcCommand::PickOcrDirectory => "pick_ocr_directory",
         HostRpcCommand::PickOcrFile => "pick_ocr_file",
+        HostRpcCommand::PickTemporaryFiles => "pick_temporary_files",
         HostRpcCommand::UpdateCheck => "update_check",
         HostRpcCommand::UpdateInstall => "update_install",
         HostRpcCommand::SetAppIcon(_) => "set_app_icon",
@@ -1409,6 +1442,31 @@ mod tests {
         );
         assert!(clear_candidate_if_current(&candidate, 8).expect("matching expiry clears"));
         assert!(candidate.lock().expect("candidate lock").is_none());
+    }
+
+    #[test]
+    fn temporary_multi_picker_is_a_fixed_command_with_structured_paths() {
+        assert_eq!(
+            super::HostRpcCommand::parse("pick_temporary_files"),
+            Some(super::HostRpcCommand::PickTemporaryFiles)
+        );
+        assert!(super::HostRpcCommand::from_payload(
+            br#"{"command":"pick_temporary_files","path":"untrusted"}"#
+        )
+        .is_err());
+        let mut response = Vec::new();
+        super::write_response(
+            &mut response,
+            super::HostRpcResponse::Files(vec!["synthetic.xml".into()]),
+        )
+        .unwrap();
+        let text = String::from_utf8(response).unwrap();
+        assert!(text.contains(r#""paths":["synthetic.xml"]"#));
+        let mut cancelled = Vec::new();
+        super::write_response(&mut cancelled, super::HostRpcResponse::Files(vec![])).unwrap();
+        assert!(String::from_utf8(cancelled)
+            .unwrap()
+            .contains(r#""paths":[]"#));
     }
 
     #[test]

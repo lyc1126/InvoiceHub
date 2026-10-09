@@ -1,5 +1,36 @@
 # InvoiceHub 完整文件地图
 
+## 2026-10-09 勾选工作流文件
+
+| 文件 | 职责与联动 |
+|---|---|
+| `src/invoice_hub/platform/trash.py` | macOS Foundation / Windows IFileOperation 原生回收站适配；永久删除保护，无新增依赖 |
+| `src/invoice_hub/services/invoice_trash.py` | 确认计划、源签名、逐文件持久意图与结果、幂等查询；由 AppState 活动目录锁及同步锁编排 |
+| `web/static/css/selection-workflow.css` | 首页筛选、来源 disclosure、删除确认与详情返回；index/detail 模板共同加载 |
+| `tests/test_selection_workflow.py` | 删除确认/部分失败/重启/失效/锁/COM契约、来源税率归属及详情身份测试 |
+| `tests/selection_workflow.test.cjs` | 7003项预览、100项名称窗口、迟到响应、筛选口径及不重复删除测试 |
+
+现有 API/app_state/cost_analysis 联动 page-index.js/page-detail.js 与 index/detail 模板。确认日志仅在包外运行态，不能进入源目录或打包输入。首页和详情的新资源版本为 `20261009-selection-6`，成本与单据继续 `20261009-progressive-3`。
+
+
+## 2026-10-09 临时识别文件关系
+
+- `src/invoice_hub/services/temporary_recognition.py`：独立子进程识别、源签名/内容校验、可重建会话缓存与设置。
+- `src/invoice_hub/api/temporary_recognition.py`：选择、拖入登记、会话、重命名、删除和设置路由，由 `api/app.py` 注册并关闭 worker。
+- `web/templates/temporary_recognition.html`、`web/static/css/temporary-recognition.css`、`web/static/js/temporary-recognition.js`：首页弹窗、排序、历史、表格及设置页控制器。
+- `tests/test_temporary_recognition.py`、`tests/temporary_recognition.test.cjs`：独立来源、顺序、失效、重启、渐进进度、选择器和迟到响应回归。
+- 原生链联动 `platform/native_dialogs.py`、`platform/windows.py`、`platform/host_rpc.py` 与 `src-tauri/src/host_rpc.rs`、`src-tauri/src/main.rs`；不新增外部依赖。
+
+
+## 2026-10-09 渐进读取文件关系
+
+| 文件 | 职责与关系 |
+|---|---|
+| `src/invoice_hub/storage/read_views.py` | `ReadViews` 保存成本四标签完整代际；`ProgressiveRows` 追加首次解析的临时批次；供 summary/costs/AppState 使用 |
+| `tests/test_progressive_loading.py` | 暂停第二张解析证明首批可见；分页/全量统计/缓存复用/写锁并发/失败临时数据/过期保存/单据按需预览回归 |
+
+`TargetProfile.workspace_dir/read-views.sqlite3` 及 WAL/SHM 仅为可重建读取缓存，不作为发票主存储或发行输入。现有 `document_index.py` 增加成本 CSV 分组内存缓存与阶段性候选发布；三个 page 脚本继续由各自模板加载；成本与单据版本为 `20261009-progressive-3`，首页后续升级为 `20261009-selection-6`。未改变成本三件套所在目录。
+
 2026-09-08 OFD 预览新增工程文件：
 
 | 文件 | 职责与关系 |
@@ -81,6 +112,28 @@
 
 当前 `services/app_state.py` 是统一业务门面，实际跨越多层。它是导航中心，不代表可以把所有新逻辑继续堆入其中。
 
+<a id="directory-rules"></a>
+
+## 目录规则
+
+- `src/invoice_hub/domain`：领域模型与契约
+- `src/invoice_hub/extraction`：PDF/OFD/XML/OCR 轻量提取
+- `src/invoice_hub/projections`：CSV/XLSX/JSON 投影
+- `src/invoice_hub/targets`：路径解析与运行态自愈
+- `src/invoice_hub/api`：FastAPI 路由与错误模型
+- `src/invoice_hub/services`：业务服务
+- `src/invoice_hub/platform`：Windows 启停、进程、通知、原生选择器、打开文件
+- `src/invoice_hub/storage`：文件真值读写与 SQLite 任务/事件
+- `src/invoice_hub/release`：发布构建与验收辅助
+- `web`：模板与静态资源
+- `scripts/windows`：正式 Windows 用户入口
+- `macos/InvoiceHubMac`：macOS SwiftUI/WKWebView 本地壳与 SwiftPM 工程，负责 macOS 窗口、菜单、目录选择和本地后端进程控制；不得承载发票解析主逻辑
+- `scripts/dev`：开发、Docker、门禁脚本
+- `tests`：自动化测试与黄金样本
+- `runtime`、`运行状态`、`dist`：本地运行态和发布产物，必须 ignored
+- 根目录允许保留 `启动一站式发票汇总系统.bat`、`停止一站式发票汇总系统.bat`、`停止一站式发票汇总系统并停止监控.bat` 和本机生成的 `启动一站式发票汇总系统.lnk`，作为用户第一视图入口；`.lnk` 不纳入 Git。
+- 根目录 `检查启动环境.bat` 为只读诊断入口，开发与测试可传 `-ConfigPath`；启动冲突必须给出可见提示、监听 PID 和可读取的程序路径，权限不足必须显式说明。诊断不能授予所有权或自动结束其他环境进程。Windows Desktop 单实例按安装路径与运行目录隔离，不同环境仍共用固定端口并明确拒绝冲突；正式 EXE 必须保留 InvoiceHub 的产品名和文件描述，托盘提供运行诊断。
+
 ## 2. 仓库根、配置与治理
 
 | 文件 | 职责与入口 | 关系与修改影响 |
@@ -91,9 +144,9 @@
 | `.github/workflows/ci.yml` | Windows x64 与 macOS arm64 非发布 CI。 | 默认浅 checkout，运行源码/发行/文档/Swift/脚本门禁；发布 Git 夹具必须自行兼容浅边界；`contents: read`，不签名、不上传 Release。 |
 | `.github/workflows/dco.yml` | 拉取请求的 DCO sign-off 检查。 | 遍历 PR 中的非 merge commits，缺少 `Signed-off-by` 即失败；合并前将其配置为 `main` 的 required check。 |
 | `.github/dependabot.yml` | Dependabot 的 GitHub Actions 与 pip 周期更新配置。 | 仓库公开后由 GitHub 读取；不修改产品包或 release identity。 |
-| `AGENTS.md` | 全仓库最高优先级工程规则。 | 所有任务先读；跨模块任务再按本架构地图选读专题。 |
+| `AGENTS.md` | 全仓库必读规则与按需阅读入口。 | 所有任务先读；跨模块任务再按本架构地图选读专题。 |
 | `CHANGELOG.md` | 当前重构和旧项目迁移历史。 | 为复杂保护逻辑提供历史原因；任何项目变更都更新 `Unreleased`。 |
-| `CLAUDE.md` | 兼容其他编码 Agent 的快速入口。 | 不再复制易漂移规模数据，指向 `AGENTS.md` 和架构入口。 |
+| `CLAUDE.md` | 兼容其他编码 Agent 的快速入口。 | 简短兼容入口，指向 `AGENTS.md`、功能规则索引和架构专题，不复制业务细则。 |
 | `IMPLEMENTATION_STATUS.md` | 当前完成度、基线与未完成能力。 | 与 README、迁移清单和架构债务状态同步。 |
 | `LICENSE` | AGPL-3.0-or-later 完整许可证文本。 | 进入源码快照和双平台成品；发布前仍需人工法律复核。 |
 | `NOTICE` | 版权、AGPL、商标、贡献者版权和用户数据边界声明。 | 与 LICENSE、THIRD_PARTY_NOTICES 和公开仓库治理一致；不把用户发票或生成物自动纳入 AGPL。 |
@@ -127,6 +180,22 @@
 | `导入旧版设置.bat` | Windows 新目录安装后的显式设置迁移入口。 | 转发到白名单迁移 PS1；不复制业务文件和运行态。 |
 | `发票文件/.gitkeep` | 脱敏默认 `watch_dir` 的空目录占位。 | core 包会重建同名目录；实际发票和成本产物不纳入 Git。 |
 
+## 按需读取的功能规则
+
+规则正文从 AGENTS.md 迁入以下专题；查找先读 [任务索引](AGENT_TASK_MAP.md#quick-lookup)。
+
+| 文件 | 职责 | 关系与维护 |
+|---|---|---|
+| `docs/architecture/rules/INVOICE_EXTRACTION.md` | 发票提取、金额与同票分类的强制约束。 | 从 AGENT_TASK_MAP 按问题进入；维护功能规则并回查对应源码与验收。 |
+| `docs/architecture/rules/COST_ANALYSIS.md` | 成本明细与开票参考的强制约束。 | 从 AGENT_TASK_MAP 按问题进入；维护功能规则并回查对应源码与验收。 |
+| `docs/architecture/rules/MONITORING.md` | 后台同步、监控与关闭的强制约束。 | 从 AGENT_TASK_MAP 按问题进入；维护功能规则并回查对应源码与验收。 |
+| `docs/architecture/rules/WEB_UI.md` | 页面、单据、预览、打印与皮肤的强制约束。 | 从 AGENT_TASK_MAP 按问题进入；维护功能规则并回查对应源码与验收。 |
+| `docs/architecture/rules/BOOKKEEPING.md` | 业务资料夹与做账的强制约束。 | 从 AGENT_TASK_MAP 按问题进入；维护功能规则并回查对应源码与验收。 |
+| `docs/architecture/rules/WINDOWS.md` | Windows 正式入口与启动的强制约束。 | 从 AGENT_TASK_MAP 按问题进入；维护功能规则并回查对应源码与验收。 |
+| `docs/architecture/rules/MACOS.md` | macOS 平台与 SwiftUI 参考壳的强制约束。 | 从 AGENT_TASK_MAP 按问题进入；维护功能规则并回查对应源码与验收。 |
+| `docs/architecture/rules/TAURI_HOST.md` | Tauri 宿主、所有权与更新事务的强制约束。 | 从 AGENT_TASK_MAP 按问题进入；维护功能规则并回查对应源码与验收。 |
+| `docs/architecture/rules/RELEASE.md` | 公开基线、构建与发行的强制约束。 | 从 AGENT_TASK_MAP 按问题进入；维护功能规则并回查对应源码与验收。 |
+
 ## 3. 文档
 
 | 文件 | 职责与入口 | 关系与修改影响 |
@@ -142,7 +211,7 @@
 | `docs/legacy/OLD_WORKSPACE_CHANGELOG_INDEX.md` | 旧工作区功能与故障的脱敏回溯索引。 | 只提供类别、不变量和当前查询入口；原始非公开 Changelog 不得复制、链接或写入公开工作树。 |
 | `docs/GIT_BRANCH_WORKTREE_FORK_GUIDE.md` | 分支、worktree、PR 和回退操作指南。 | 受 AGENTS Git 规则约束；稳定基线变化时同步。 |
 | `docs/MAC_WINDOWS_WORKFLOW.md` | Mac 开发与 Windows 正式验收分工。 | 与 Docker、PowerShell、正式 BAT 和发布验收相关。 |
-| `docs/MIGRATION_GAP_CHECKLIST.md` | 旧能力迁移缺口和验收状态。 | 功能迁移、验收口径和开发交接能力变化时更新。 |
+| `docs/MIGRATION_GAP_CHECKLIST.md` | 旧能力迁移缺口和验收状态。 | 功能迁移、验收口径变化时更新。 |
 | `docs/MONITORING_AND_LOGGING.md` | monitor 状态、日志和诊断说明。 | 与 `monitoring/*`、MonitorBridge 和设置页运行状态联动。 |
 | `docs/release/HISTORY_SANITIZATION_EXECUTION.md` | 公开历史净化、私有备份、候选内容审计、全 ref 验证和托管面复核的执行记录。 | 公开 Git 图、发布资产、仓库可见性或 Tauri 开发线变化前必须更新。 |
 | `docs/release/TAURI2_EXECUTION_PLAN.md` | 公开 Tauri 2 分阶段计划、实验决策记录、重打边界和当前阻断项。 | 改动 Tauri host、依赖锁、生命周期、更新或平台验收时先更新实验记录。 |
@@ -429,7 +498,7 @@
 | `tests/test_bookkeeping_validator_w9.py` | W9 可执行性 blockers。 | validator、decisions、catalogs。 |
 | `tests/test_runner_dryrun.py` | batch-bound dry-run 与禁止猜测最新文件。 | runners、scripts/tools。 |
 | `tests/test_summary_and_costs.py` | 金额防污染、同票纠偏、结构化成本、均价、参考状态和 schema 刷新。 | extraction、summary、cost_analysis、costs。 |
-| `tests/test_development_documentation.py` | 文件地图、链接、接口路由、基线、旧事实和敏感路径门禁。 | 本架构文档、README、AGENTS、CLAUDE 和 Git 指南。 |
+| `tests/test_development_documentation.py` | 文件地图、链接/定位锚点、Agent 入口体积与规则可达性、接口路由、基线、旧事实和敏感路径门禁。 | 本架构文档、README、AGENTS、CLAUDE 和 Git 指南。 |
 | `tests/test_tauri_foundation.py` | 版本派生、单点 drift 修复、doctor fail-closed、固定 origin、MSRV resolver、Cargo/pnpm lock 与非安装 bootstrap。 | Tauri foundation scripts, configuration, and plan; Rust compile is separately recorded, and no platform smoke test is claimed. |
 | `tests/test_tauri_dev_app.py` | Development `.app` allowlist staging、ordinary/recovery manifest 可重复性、固定不可安装 updater tuple、无权限的空 plugin-config 占位、launcher 哈希绑定与 app-only 构建参数契约。 | `scripts/dev/tauri_dev_app.py`、`src-tauri/tauri.dev.conf.json`；只证明开发组装输入，不证明 DMG/NSIS、签名、公证或平台发布。 |
 | `tests/test_tauri_recovery_smoke.py` | L10-E App plist/manifest identity、临时路径、marker scope、health/monitor identity 和闭合 HTTP allowlist 契约。 | `scripts/dev/tauri_recovery_smoke.py`；不模拟 check/install，真实 startup-recovery runtime 由 L10-E 有边界的平台样本单独记录。 |

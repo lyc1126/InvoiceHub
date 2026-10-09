@@ -11,20 +11,21 @@ const appearanceSource = fs.readFileSync(path.join(root, "web/static/js/appearan
 const documentsSource = fs.readFileSync(path.join(root, "web/static/js/page-documents.js"), "utf8");
 const indexSource = fs.readFileSync(path.join(root, "web/static/js/page-index.js"), "utf8");
 
-test("seven thousand invoices mount at most one hundred rows and preserve full-list selection", () => {
+test("seven thousand invoices mount at most one hundred rows and preserve full-list selection", async () => {
   const items = Array.from({length: 7003}, (_, i) => ({invoice_key: String(i), source_path: `synthetic/${i}`}));
-  const state = {invoiceItems: items, invoicePage: 1, selectedInvoices: new Map()};
+  const state = {invoiceItems: items.slice(0, 100), invoiceCount: items.length, invoicePage: 1, invoiceRevision: "r1", filters: {}, selectedInvoices: new Map()};
   const refs = {invoiceBody: {innerHTML: ""}};
   const nodes = new Map();
-  const context = vm.createContext({state, refs, document: {getElementById(id) { if (!nodes.has(id)) nodes.set(id, {}); return nodes.get(id); }},
+  const context = vm.createContext({state, refs, URLSearchParams, isCurrentRefresh: () => true, updateSelectionControls() {}, app: { setBusy() {}, api: async () => ({ items, snapshot: { revision: "r1" } }) }, document: {getElementById(id) { if (!nodes.has(id)) nodes.set(id, {}); return nodes.get(id); }},
     sortedInvoiceItems: items => items, updateDateSortControl() {}, updateSelectedInvoiceTotal() {},
     rowHtml: item => `<tr data-key="${item.invoice_key}"></tr>`, invoiceSelectionRecord: item => item});
   vm.runInContext(indexSource.slice(indexSource.indexOf("function renderInvoiceRows()"), indexSource.indexOf("function selectionDetailNumber(")), context);
   context.renderInvoiceRows();
   assert.equal((refs.invoiceBody.innerHTML.match(/<tr/g) || []).length, 100);
-  context.selectAllVisibleInvoices();
+  await context.selectAllVisibleInvoices();
   assert.equal(state.selectedInvoices.size, 7003);
   state.invoicePage = 71;
+  state.invoiceItems = items.slice(7000);
   context.renderInvoiceRows();
   assert.equal((refs.invoiceBody.innerHTML.match(/<tr/g) || []).length, 3);
   assert.match(refs.invoiceBody.innerHTML, /7002/);
@@ -32,7 +33,7 @@ test("seven thousand invoices mount at most one hundred rows and preserve full-l
 
 test("late broad-search response cannot replace the current invoice-only results", async () => {
   const pending = [];
-  const state = { filters: { keyword: "synthetic", search_scope: "all" }, refreshGeneration: 1 };
+  const state = { filters: { keyword: "synthetic", search_scope: "all" }, refreshGeneration: 1, invoiceRequest: 0, selectedInvoices: new Map() };
   const context = vm.createContext({
     state, URLSearchParams, refs: { tableMeta: {} },
     app: { api: (url) => new Promise(resolve => pending.push({ url, resolve })), formatMoney: String },

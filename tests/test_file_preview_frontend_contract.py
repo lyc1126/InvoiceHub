@@ -3,7 +3,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 APP_CSS_VERSION = "20260907-desktop-integrated-2"
-PAGE_INDEX_VERSION = "20260907-large-list-1"
+PAGE_INDEX_VERSION = "20261009-selection-6"
 
 
 def _assets() -> tuple[str, str, str]:
@@ -13,7 +13,7 @@ def _assets() -> tuple[str, str, str]:
     return html, js, css
 
 
-def test_preview_menu_order_and_three_item_keyboard_loop() -> None:
+def test_preview_menu_order_and_four_item_keyboard_loop() -> None:
     html, js, _css = _assets()
 
     preview_index = html.index('id="previewSelectedInvoicesBtn"')
@@ -21,7 +21,7 @@ def test_preview_menu_order_and_three_item_keyboard_loop() -> None:
     assert preview_index < print_index
     assert html.index("预览", preview_index) < print_index
     assert print_index < html.index('id="batchInboundDocumentsBtn"')
-    assert "return [refs.previewSelectedInvoicesBtn, refs.printSelectedInvoicesBtn, refs.batchInboundDocumentsBtn].filter(Boolean);" in js
+    assert 'return [refs.previewSelectedInvoicesBtn, refs.printSelectedInvoicesBtn, refs.batchInboundDocumentsBtn, document.getElementById("trashSelectedInvoicesBtn")].filter(Boolean);' in js
     assert 'if (event.key === "ArrowDown") nextIndex = (currentIndex + 1) % items.length;' in js
     assert 'if (event.key === "ArrowUp") nextIndex = (currentIndex - 1 + items.length) % items.length;' in js
     assert 'if (event.key === "Home") nextIndex = 0;' in js
@@ -57,7 +57,7 @@ def test_preview_dialog_focus_close_and_stable_states() -> None:
         "html.settings-shutdown-dialog-open,\n"
         "body.settings-shutdown-dialog-open { overflow: hidden !important; }"
     ) in css
-    assert "refs.filePreviewRetryBtn?.addEventListener(\"click\", loadFilePreviewJob);" in js
+    assert 'refs.filePreviewRetryBtn?.addEventListener("click", () => loadFilePreviewJob({ preservePosition: true }));' in js
     assert "stopFilePreviewKeepAlive();" in js
     assert ".file-preview-viewport" in css
     assert "min-height: 0;" in css
@@ -113,9 +113,9 @@ def test_preview_api_urls_responsive_modal_and_cache_versions() -> None:
     assert "function keepFilePreviewAlive" in js
     assert "status === 404 || status === 410" in js
     assert 'loadFilePreviewJob({ preservePosition: true, automatic: true })' in js
-    assert "state.filePreviewSelectionItems = selectedSummaryRequestItems();" in js
-    assert "const previousFileName = previousFile?.name || previousFile?.file_name || \"\";" in js
-    assert "Math.min(activePageCount, Math.max(1, options.preservePosition ? previousPageNumber : 1))" in js
+    assert "state.filePreviewSelectionItems = [...state.selectedInvoices.values()]" in js
+    assert "const selected = state.filePreviewSelectionItems[state.filePreviewFileNumber - 1];" in js
+    assert "Math.min(Math.max(1, Number(file.page_count || 1)), state.filePreviewPageNumber)" in js
     assert "state.filePreviewSelectionItems = [];" in js
     assert 'document.addEventListener("visibilitychange"' in js
     assert "/files/${encodeURIComponent(file.file_number)}/pages/${pageNumber}" in js

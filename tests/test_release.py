@@ -83,6 +83,17 @@ def _runtime(root: Path, lock: Path) -> Path:
     return runtime
 
 
+def test_core_identity_ignores_editable_install_metadata_but_tracks_source(tmp_path):
+    root = _release_source(tmp_path)
+    original = deterministic_build_id(root)
+    metadata = root / "src/invoice_hub.egg-info/PKG-INFO"
+    metadata.parent.mkdir()
+    metadata.write_text("local editable install metadata\n")
+    assert deterministic_build_id(root) == original
+    (root / "src/invoice_hub/module.py").write_text("VALUE = 2\n")
+    assert deterministic_build_id(root) != original
+
+
 def _inputs(tmp_path: Path) -> tuple[Path, Path, Path]:
     source = _release_source(tmp_path / "source")
     lock = source / "requirements" / "windows-x64-py314.lock"

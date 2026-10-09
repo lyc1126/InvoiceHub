@@ -52,7 +52,7 @@ def _is_windows_lock_contention(exc: OSError) -> bool:
     )
 
 
-def _acquire_sync_os_lock(handle) -> None:
+def _acquire_sync_os_lock(handle, *, blocking=True) -> None:
     if os.name == "nt":
         import msvcrt
 
@@ -75,11 +75,13 @@ def _acquire_sync_os_lock(handle) -> None:
             except OSError as exc:
                 if not _is_windows_lock_contention(exc):
                     raise
+                if not blocking:
+                    raise BlockingIOError() from exc
                 time.sleep(SYNC_WRITE_LOCK_POLL_SECONDS)
         return
     import fcntl
 
-    fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+    fcntl.flock(handle.fileno(), fcntl.LOCK_EX | (0 if blocking else fcntl.LOCK_NB))
 
 
 def _release_sync_os_lock(handle) -> None:
@@ -320,6 +322,36 @@ class MonitorState:
         """Serialize projection and monitor-state writes for this TargetProfile."""
         with self._file_lock(self.sync_write_lock_file):
             yield
+
+    @contextmanager
+    def try_sync_write_lock(self):
+        """Read-view requests fall back to committed cache instead of waiting for parsing."""
+        key = canonical_path(self.sync_write_lock_file)
+        lock = _sync_thread_lock(key)
+        if not lock.acquire(blocking=False):
+            yield False
+            return
+        try:
+            held = getattr(_SYNC_HELD_LOCKS, "counts", {})
+            if held.get(key):
+                yield True
+                return
+            self.state_dir.mkdir(parents=True, exist_ok=True)
+            with self.sync_write_lock_file.open("a+b") as handle:
+                try:
+                    _acquire_sync_os_lock(handle, blocking=False)
+                except BlockingIOError:
+                    yield False
+                    return
+                held[key] = 1
+                _SYNC_HELD_LOCKS.counts = held
+                try:
+                    yield True
+                finally:
+                    held.pop(key, None)
+                    _release_sync_os_lock(handle)
+        finally:
+            lock.release()
 
     @contextmanager
     def _file_lock(self, path: Path) -> Iterator[None]:

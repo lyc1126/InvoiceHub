@@ -376,7 +376,7 @@ fn create_desktop_window(
 ) -> Result<(), Box<dyn Error>> {
     let backend_url = invoicehub_desktop::backend_origin().parse()?;
     let app_handle = app.handle().clone();
-    tauri::WebviewWindowBuilder::new(
+    let window = tauri::WebviewWindowBuilder::new(
         app,
         MAIN_WINDOW_LABEL,
         tauri::WebviewUrl::External(backend_url),
@@ -411,6 +411,19 @@ fn create_desktop_window(
         }
     })
     .build()?;
+    let drop_window = window.clone();
+    window.on_webview_event(move |event| {
+        // Forward paths only to the owned localhost homepage; never expose private Host RPC credentials.
+        if drop_window.url().ok().is_none_or(|url| !invoicehub_desktop::accepts_temporary_file_drop(&url)) {
+            return;
+        }
+        if let tauri::WebviewEvent::DragDrop(tauri::DragDropEvent::Drop { paths, .. }) = event {
+            let paths: Vec<String> = paths.iter().map(|path| path.to_string_lossy().into_owned()).collect();
+            if let Ok(payload) = serde_json::to_string(&paths) {
+                let _ = drop_window.eval(&format!("window.dispatchEvent(new CustomEvent('invoicehub:temporary-drop', {{detail:{payload}}}));"));
+            }
+        }
+    });
     Ok(())
 }
 

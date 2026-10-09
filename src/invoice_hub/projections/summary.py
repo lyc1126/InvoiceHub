@@ -10,6 +10,7 @@ from openpyxl import Workbook, load_workbook
 from invoice_hub.domain import InvoiceRecord
 from invoice_hub.extraction import apply_invoice_family_corrections, extract_invoice_record, supported_invoice_files
 from invoice_hub.storage.files import write_csv_rows
+from invoice_hub.storage.read_views import ProgressiveRows
 
 SUMMARY_HEADERS = [
     "文件名",
@@ -115,10 +116,15 @@ def build_summary(
     if progress:
         progress(0, total)
     records = []
-    for index, path in enumerate(files, start=1):
-        records.append(extract_invoice_record(path))
-        if progress:
-            progress(index, total)
+    with ProgressiveRows(workspace_dir, "invoices") as preview:
+        for index, path in enumerate(files, start=1):
+            record = extract_invoice_record(path)
+            records.append(record)
+            # Raw rows are browse-only; family corrections and manual overrides
+            # still precede the final CSV/XLSX used by selection/export consumers.
+            preview.add([_row(record)], index, total)
+            if progress:
+                progress(index, total)
     records = apply_invoice_family_corrections(records, files)
     records = mark_duplicates(records)
     rows = [_row(record) for record in records]

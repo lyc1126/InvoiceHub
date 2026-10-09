@@ -1,5 +1,38 @@
 # InvoiceHub Agent 工程任务导航
 
+<a id="quick-lookup"></a>
+
+## 按问题快速定位
+
+每个任务先完整读取 [AGENTS.md](../../AGENTS.md)，再从下表选择全部命中项。**功能规则页是强制约束，任务行提供代码符号、联动范围与最低验收；两者都要读取。** 架构、数据链、跨模块、启动、监控和发布任务还须读取 [架构总入口](../DEVELOPMENT_ARCHITECTURE.md)。目录/配置任务同时核对 [目录规则](FILE_MAP.md#directory-rules)，Git 操作另读 [Git 细则](../GIT_BRANCH_WORKTREE_FORK_GUIDE.md#git-rules)。
+
+| 问题/改动关键词 | 必须读取的功能规则 | 代码、联动与验收入口 |
+|---|---|---|
+| PDF/OFD/XML/OCR、金额异常、购销方错位 | [提取与分类](rules/INVOICE_EXTRACTION.md) | [3. 发票提取与金额准确性](#task-extraction) |
+| 票种、大类、业务样式、同票格式冲突 | [提取与分类](rules/INVOICE_EXTRACTION.md) | [4. 发票分类与同票家族](#task-classification) |
+| 成本明细、均价、税额校验、加价与已开数量 | [成本](rules/COST_ANALYSIS.md)、[页面/单据/预览/皮肤](rules/WEB_UI.md) | [5. 成本明细、均价和开票参考](#task-costs) |
+| watch_dir、workspace、目录切换与路径归属 | [监控与关闭](rules/MONITORING.md)、[页面/单据/预览/皮肤](rules/WEB_UI.md) | [6. 目录、配置与 TargetProfile](#task-paths) |
+| 漏同步、ready、手改、启动慢、停止监控 | [监控与关闭](rules/MONITORING.md) | [7. Monitor、文件事件和后台同步](#task-monitor) |
+| 关闭系统、keep_monitor、偏好与诊断 | [监控与关闭](rules/MONITORING.md)、[页面/单据/预览/皮肤](rules/WEB_UI.md) | [8. 设置、偏好、诊断与 WebUI 关闭](#task-settings) |
+| 删除所选、回收站/废纸篓、确认与断线结果 | [页面](rules/WEB_UI.md)、[监控](rules/MONITORING.md)、[Windows](rules/WINDOWS.md)、[macOS](rules/MACOS.md) | [勾选工作流](#task-selection-workflow) |
+| 临时识别、临时文件线程、拖放排序与源失效 | [页面](rules/WEB_UI.md)、[提取](rules/INVOICE_EXTRACTION.md)、[宿主](rules/TAURI_HOST.md) | [临时识别](#task-temporary) |
+| JS/CSS、资源缓存、目录草稿、SSE、滚动与表格 | [页面/单据/预览/皮肤](rules/WEB_UI.md) | [9. 前端页面与静态资源](#task-web) |
+| 独立官网、介绍页面与打包白名单 | [页面/单据/预览/皮肤](rules/WEB_UI.md)、[构建与发行](rules/RELEASE.md) | [9.1 独立产品官网](#task-website) |
+| 大列表卡顿、索引停止、入库/出库、批量队列 | [页面/单据/预览/皮肤](rules/WEB_UI.md)、[成本](rules/COST_ANALYSIS.md) | [10. 入库单与出库单](#task-documents) |
+| 勾选合计、搜索税率、来源追溯、超过100份预览、OFD 缺字、打印空白/漏页 | [页面/单据/预览/皮肤](rules/WEB_UI.md) | [10.1 发票预览与批量打印](#task-preview) |
+| 凭证、科目映射、审批、迁移、导出、批次、捷锐 | [做账](rules/BOOKKEEPING.md) | [10.2 业务资料夹与做账 W8/W9](#task-bookkeeping) |
+| 明暗切换、no_skin、皮肤 ZIP 与字体资源 | [页面/单据/预览/皮肤](rules/WEB_UI.md) | [11. 皮肤系统](#task-skins) |
+| BAT/PS1、PowerShell、端口、中文路径、Tk | [Windows](rules/WINDOWS.md)、[监控与关闭](rules/MONITORING.md) | [12. Windows 正式入口与平台交互](#task-windows) |
+| NSOpenPanel、WKWebView、TCC、SwiftUI/Sparkle | [macOS 参考壳](rules/MACOS.md)、[监控与关闭](rules/MONITORING.md) | [12.1 macOS 壳、构建握手与原生桥接](#task-macos) |
+| Tauri、desktop/browser、Host RPC、所有权与退出 | [Tauri 宿主](rules/TAURI_HOST.md)、[构建与发行](rules/RELEASE.md) | [13. 公开基线与新平台构建](#task-tauri) |
+| 构建、签名、公证、RC、SBOM、receipt、Feed/updater | [构建与发行](rules/RELEASE.md)、[Tauri 宿主](rules/TAURI_HOST.md) | [13.1 About、更新 Feed 与平台安装](#task-release) |
+| 路由、返回字段、SQLite、仓储与跨层接口 | [页面/单据/预览/皮肤](rules/WEB_UI.md) | [14. API、SQLite 与存储基础设施](#task-api) |
+| 规则重组、文件地图、文档契约与注释维护 | AGENTS.md 与被修改专题 | [15. 测试与文档治理](#task-governance) |
+
+先用本表定位；关键词不明确时运行 `rg -n '<症状或符号>' docs/architecture/`，沿命中规则 → 任务行 → FILE_MAP → 当前源码/测试核实。后端返回字段变更也必须读页面/API 消费规则；涉及宿主、原生能力或成品时，追加对应平台和发行规则。未命中现有行的任务先确认其所属模块，再补导航，不能跳过适用规则。
+
+功能规则只在所属 `rules/*.md` 维护正文；下方历史条目、摘要和实现说明用于定位，不能把摘要当成完整规则，也不能把历史验收当作本次结果。
+
 2026-09-08：[`v0.3.0-alpha.2` 双平台预览](https://github.com/lyc1126/InvoiceHub/releases/tag/v0.3.0-alpha.2) 已按所有者确认的验收范围发布。Windows x64 portable ZIP 与 macOS arm64 preview DMG 同源，包含校验和、收据和平台 Python SBOM；Mac 离线核验与实际默认配置验收通过，隔离 HOME 自动烟测仍未通过，未启用安装 updater 或更新 Feed。精确发布身份和限制见[分支与发布记录](../BRANCH_STATUS.md)。
 
 
@@ -16,7 +49,7 @@
 
 ## 1. 使用方法
 
-每个新任务仍必须先读仓库根 `AGENTS.md`。涉及识别、汇总、localhost、OCR、成本、启动、发布或旧行为对照时，再按 `AGENTS.md` 读取全部相关真值文档。旧工作区功能或故障回溯还必须从 `docs/legacy/OLD_WORKSPACE_CHANGELOG_INDEX.md` 的脱敏路线开始，不能把私有原文带入公开工作树。本页不能替代这些规则，只负责定位工程入口。
+每个新任务仍必须先读仓库根 `AGENTS.md`。涉及识别、汇总、localhost、OCR、成本、启动、发布或旧行为对照时，再按 `AGENTS.md` 读取全部相关真值文档。旧工作区功能或故障回溯按 AGENTS 规定的当前源码/测试与真值 → 当前 CHANGELOG → 旧能力基线 → `docs/legacy/OLD_WORKSPACE_CHANGELOG_INDEX.md` 脱敏路线推进，不能把私有原文带入公开工作树。本页不能替代这些规则，只负责定位工程入口。
 
 ```mermaid
 flowchart TD
@@ -43,11 +76,15 @@ flowchart TD
 5. 在 [接口流程](INTERFACES_AND_FLOWS.md) 找页面/API/事件消费者，在 [数据算法](DATA_AND_ALGORITHMS.md) 找公式和失败策略。
 6. 修改前写出本次不会改变的真值、接口和产物；这一步决定相邻回归范围。
 
+<a id="task-extraction"></a>
+
 ## 3. 发票提取与金额准确性
+
+必读功能规则：[提取与分类](rules/INVOICE_EXTRACTION.md)。
 
 | 导航项 | 内容 |
 |---|---|
-| 首先阅读 | 数据算法第 7 节；接口流程第 6.4 节；`AGENTS.md` 数据准确性规则 |
+| 首先阅读 | 数据算法第 7 节；接口流程第 6.4 节；[提取与分类](rules/INVOICE_EXTRACTION.md) |
 | 首要入口 | `extraction/parsers.py::extract_invoice_record`、`_record_from_text`、`_record_from_xml`、`_record_from_ofd`、`_normalize_money`、`_extract_pdf_amount_triple`、`_first_money_near`、`_extract_einvoice_value_sequence` |
 | 必须联动 | `extraction/__init__.py` 公共导出、`projections/summary.py`、成本元数据、详情/一致性/API 字段；新字段还要改 `domain/models.py` |
 | 产物与消费者 | 普通 CSV/XLSX、`GET /api/v1/invoices`、详情、成本校验和一致性报告 |
@@ -55,11 +92,15 @@ flowchart TD
 | 真实验收 | 有真实版式时做旧/新影子对照，再检查 CSV/XLSX、列表、详情、勾选合计、成本状态与一致性；不能只看页面一格 |
 | 高风险提醒 | 不得用文件名补正文核心字段，不得恢复全文最大金额；主体序列不得产出金额；多个三元组、跨页或算术不一致必须放弃 |
 
+<a id="task-classification"></a>
+
 ## 4. 发票分类与同票家族
+
+必读功能规则：[提取与分类](rules/INVOICE_EXTRACTION.md)。
 
 | 导航项 | 内容 |
 |---|---|
-| 首先阅读 | 数据算法第 7.4 节；`AGENTS.md` 两维分类与同票冲突规则 |
+| 首先阅读 | 数据算法第 7.4 节；[提取与分类](rules/INVOICE_EXTRACTION.md) |
 | 首要入口 | `extraction/classification.py::classify_invoice`、`canonical_business_type`、`classification_status`；`parsers.py::_pdf_classification`、`_ofd_classification`、`apply_invoice_family_corrections` |
 | 必须联动 | `InvoiceRecord`、summary 表头、`AppState.list_invoices/_build_consistency_groups`、成本校验字段、index/detail/consistency JS 与模板 |
 | 产物与消费者 | 普通汇总四个分类字段、列表筛选、详情、一致性、成本“发票校验”sheet |
@@ -67,11 +108,17 @@ flowchart TD
 | 真实验收 | 新业务样式必须区分“合成测试通过”和“真实票验证”；检查当前皮肤与 `?no_skin=1` 的徽标/长文本 |
 | 高风险提醒 | 大类与业务样式不能合并；公司/项目/商品同名词不能触发业务类型；非空冲突不能被优先级吞掉 |
 
+<a id="task-costs"></a>
+
 ## 5. 成本明细、均价和开票参考
+
+2026-10-09 分页/渐进读取：同时定位 `storage/read_views.py`、`AppState.cost_view`、`CostProjectionService.cache_snapshot`、`MonitorState.try_sync_write_lock` 与 page-costs；最低增加 `tests/test_progressive_loading.py` 和 Node 交互回归，真实验收跨页草稿、完整 TSV、旧完整快照与首次临时结果的只读边界。
+
+必读功能规则：[成本](rules/COST_ANALYSIS.md)、[页面/单据/预览/皮肤](rules/WEB_UI.md)。
 
 | 导航项 | 内容 |
 |---|---|
-| 首先阅读 | 数据算法第 8、9 节；接口流程第 3.3、6.6 节；`AGENTS.md` 成本规则 |
+| 首先阅读 | 数据算法第 8、9 节；接口流程第 3.3、6.6 节；[成本](rules/COST_ANALYSIS.md) |
 | 首要入口 | `projections/cost_analysis.py::parse_cost_rows_from_words`、`_cost_validation`、`_select_cost_analysis`、`project_spec_summary`、`_invoice_reference_summary`；`projections/costs.py::CostProjectionService`；`AppState.cost_snapshot/save_cost_reference_status` |
 | 必须联动 | `cost_analysis.py` 与 `costs.py` 的重复公式/兼容键；`domain/models.py`、成本 CSV/XLSX 五 sheet、状态 JSON、cost API、page-costs、单据入库来源 |
 | 产物与消费者 | `watch_dir/成本发票明细.csv`、`成本发票汇总.xlsx`、`成本开票状态.json`、详情/选择成本拆分、单据 |
@@ -79,7 +126,11 @@ flowchart TD
 | 真实验收 | 页面四标签互斥、TSV 复制、行级加价草稿/保存/刷新、实际工作簿五 sheet；真实业务版式检查校验差异 |
 | 高风险提醒 | 库存均价与采购算术均价不能混用；已开快照不能随新增明细漂移；默认 8% 只是行级 fallback；税率固定 13% 是当前开票参考公式。旧 schema 修复、状态 JSON 和工作簿写入必须同 monitor 共用所捕获 profile 写锁，且不能阻塞 health 或把旧 profile 完成事件投到新目录 |
 
+<a id="task-paths"></a>
+
 ## 6. 目录、配置与 TargetProfile
+
+必读功能规则：[监控与关闭](rules/MONITORING.md)、[页面/单据/预览/皮肤](rules/WEB_UI.md)。
 
 | 导航项 | 内容 |
 |---|---|
@@ -91,7 +142,11 @@ flowchart TD
 | 真实验收 | 项目内相对目录、包外绝对目录、中文空格路径、缺失目录、同名文件/目录冲突；原生选择器只在 Windows 实测后声明 |
 | 高风险提醒 | 不读取或提交本机配置值；同一配置在 API、daemon、BAT 和打包内必须解析一致；成本产物不能搬到 workspace |
 
+<a id="task-monitor"></a>
+
 ## 7. Monitor、文件事件和后台同步
+
+必读功能规则：[监控与关闭](rules/MONITORING.md)。
 
 | 导航项 | 内容 |
 |---|---|
@@ -103,11 +158,15 @@ flowchart TD
 | 真实验收 | daemon start/ready、启动后立即放文件、事件 1 秒合并、60 秒兜底、停止 localhost 后 monitor 仍在、stop-all 退出 |
 | 高风险提醒 | PID+lock 才是运行真值；ready 必须在第二次补漏后；周期无变化不能全量解析；正式入口不能退回 FastAPI 内线程 |
 
+<a id="task-settings"></a>
+
 ## 8. 设置、偏好、诊断与 WebUI 关闭
+
+必读功能规则：[监控与关闭](rules/MONITORING.md)、[页面/单据/预览/皮肤](rules/WEB_UI.md)。
 
 | 导航项 | 内容 |
 |---|---|
-| 首先阅读 | 接口流程第 3.1、6.10 节；AGENTS 持续监听与关闭规则 |
+| 首先阅读 | 接口流程第 3.1、6.10 节；[监控与关闭](rules/MONITORING.md) |
 | 首要入口 | `AppState.settings/preferences/save_preferences/diagnostic_*`、`request_server_shutdown/finalize_server_shutdown`；`api/app.py::shutdown`；`page-settings.js` |
 | 必须联动 | settings 模板、settings-actions CSS、common SSE、bridge、server state/PID、两个正式停止 BAT 的固定语义 |
 | 产物与消费者 | preferences、support packages、server_state、server.pid、events；设置页所有分类 |
@@ -115,11 +174,17 @@ flowchart TD
 | 真实验收 | 两种关闭选择、记住/恢复询问、停止 monitor 失败时 WebUI 保留、响应先返回后进程退出、皮肤与 no-skin 两种页面 |
 | 高风险提醒 | 页面偏好不能改变两个停止 BAT；不能假设 PID 文件等于 `os.getpid()`；只在 PID 内容仍等于请求快照时删除 |
 
+<a id="task-web"></a>
+
 ## 9. 前端页面与静态资源
+
+2026-10-09 首页分页由 API 筛选/排序后切片，联动 list_invoices、page-index 与 read_views；最低增加 progressive loading 的首批暂停解析与 7,003 条全量统计用例，浏览器核对全选范围、迟到请求、当前资源版本与各皮肤。
+
+必读功能规则：[页面/单据/预览/皮肤](rules/WEB_UI.md)。
 
 | 导航项 | 内容 |
 |---|---|
-| 首先阅读 | 接口流程第 2 至 5、7 节；AGENTS“接口与前端同步”全部规则 |
+| 首先阅读 | 接口流程第 2 至 5、7 节；[页面/单据/预览/皮肤](rules/WEB_UI.md) |
 | 首要入口 | 目标 `web/templates/*.html`、对应 `web/static/js/page-*.js`、`common.js`、`app.css`；API 消费矩阵见接口专题 |
 | 必须联动 | 后端字段/错误、页面文案、空/错误/处理中状态、资源 `?v=`、所有引用同一 CSS/JS 的模板和前端契约 |
 | 产物与消费者 | 浏览器 DOM、真实 table/TSV、SSE 状态、当前活动皮肤与基础无皮肤样式 |
@@ -129,7 +194,11 @@ flowchart TD
 
 共享电源、请求反馈、导航或固定栏变更还需联动 `system_controls.html`、`system-controls.js`、`_template`、settings-actions CSS 与全部普通模板。最低运行 `node --test tests/frontend_interactions.test.cjs`、前端/预览/打印静态契约和页面/关闭 API；浏览器以一个有足够滚动内容的合成目录检查 sticky、一个延迟请求检查转圈，再验证皮肤/恢复入口、取消和失败恢复。合成量仅用于 UI 行为，不构成真实大目录识别吞吐结论。
 
+<a id="task-website"></a>
+
 ## 9.1 独立产品官网
+
+必读功能规则：[页面/单据/预览/皮肤](rules/WEB_UI.md)、[构建与发行](rules/RELEASE.md)。
 
 官网入口为 `website/index.html`，样式与交互为 `website/style.css`、`website/app.js`、`website/paper-scene.js`，合成演示数据由 `website/demo-data.js` 提供。先读 `website/README.md` 和 `website/ASSETS.md`，同步 FILE_MAP、README、状态和 CHANGELOG。最低检查是 `node --test website/tests/demo.test.cjs`、修改脚本语法及本地链接，视觉变化另需桌面/手机截图、真实交互和动画/减少动态效果检查。官网不请求业务 API，不加载应用皮肤，不处理真实发票；本轮浏览器访问未获许可，视觉验收保持未执行。
 
@@ -137,7 +206,13 @@ flowchart TD
 
 四视图和功能场景变更至少覆盖：筛选后空选择禁用、预览来源逐份保留、同票 PDF 回退与缺 PDF 整批阻断、明细税率/规格/单位分组、概念金额换算的分位守恒、五层画布进入/离开收敛与减少动态效果。Node VM 调度测试只证明控制状态，不替代真实像素或鼠标命中验收。
 
+<a id="task-documents"></a>
+
 ## 10. 入库单与出库单
+
+2026-10-09 单据加载性能同时定位 `document_index.py::InboundDetails/build_index/ensure` 与 `AppState.document_state/document_*_preview/*_export_status`；最低增加 `test_document_index.py`、`test_progressive_loading.py` 的无需无关扫描、部分候选只读、缓存失效及停止/恢复用例。首页批量可优先准备勾选票，但不能放宽正式导出的身份复核。
+
+必读功能规则：[页面/单据/预览/皮肤](rules/WEB_UI.md)、[成本](rules/COST_ANALYSIS.md)。
 
 | 导航项 | 内容 |
 |---|---|
@@ -149,13 +224,17 @@ flowchart TD
 | 真实验收 | 5 行与超模板行数、合并单元格/格式、覆盖/副本/取消/打开、文件占用、删除后重导、实际 Excel/WPS 打开 |
 | 高风险提醒 | 单据不进入 monitor 自动生成；入库逐明细不合并；服务端只接受计算出的受控根内路径 |
 
+<a id="task-preview"></a>
+
 ## 10.1 发票预览与批量打印
+
+必读功能规则：[页面/单据/预览/皮肤](rules/WEB_UI.md)。
 
 OFD 专用入口为 `services/ofd_rendering.py`、`tools/ofd-preview/` 与 `scripts/dev/build_ofd_preview.py`，必须联动核心源码指纹、依赖/JDK 锁和 [OFD 预览说明](../OFD_PREVIEW.md)。最低检查 `tests/test_ofd_rendering.py`，并以 `INVOICE_HUB_TEST_OFD_COMPONENT` 显式指向本平台构建组件运行真实 Java/PNG 与混选 API 回归；没有组件时的 skip 不能写成引擎通过。相邻 PDF/XML/图片、续租、源变化、打印和前端错误/系统打开契约继续执行。组件校验变化还需覆盖缓存命中无重复哈希与变更失效；预检查变化需覆盖模板图层和补充平面文字失败保护。依赖裁剪比较相同样本的完整与精简 PNG，发布仍需双平台 runtime/成品与许可验收。
 
 | 导航项 | 内容 |
 |---|---|
-| 首先阅读 | 数据算法第 12.5 节；接口流程第 2、3.2、6.12 节；`AGENTS.md` 路径与 macOS bridge 规则 |
+| 首先阅读 | 数据算法第 12.5 节；接口流程第 2、3.2、6.12 节；AGENTS 全局路径边界；[页面/单据/预览/皮肤](rules/WEB_UI.md)、[macOS 参考壳](rules/MACOS.md)、[Tauri 宿主](rules/TAURI_HOST.md) |
 | 首要入口 | `services/file_preview.py`、`services/invoice_printing.py`、`services/document_rendering.py`、`AppState.prepare_invoice_preview/keep_invoice_preview_alive/prepare_invoice_print`、`page-index.js`、`invoice_print.html` |
 | 必须联动 | API 路由/错误、预览闲置续租与 `404/410` 恢复、首页 DOM/CSS/静态版本、build manifest capabilities、Swift required routes 和 popup policy、OpenAPI verify、接口/数据/平台文档 |
 | 产物与消费者 | 短期内存 job、分页 PNG/XML 文本、受控打印 HTML、macOS 系统打印面板；不产生 SQLite 或投影主数据 |
@@ -163,11 +242,15 @@ OFD 专用入口为 `services/ofd_rendering.py`、`tools/ofd-preview/` 与 `scri
 | 真实验收 | 预览分页/缩放/打开文件和位置；弹窗超过原 15 分钟截止时间后仍可用；后台/恢复前台、后端重启和 job 回收后自动回到原文件/页码；批量打印同票收敛、首次打开非空、横纵混排，并核对 A4 与打印机保留 A5/default margins 时“源页数 = 打印纸数”；真实 WKWebView 系统面板及取消，不实际出纸 |
 | 高风险提醒 | preview 不得按同票收敛；续租只能滑动延长闲置期限，弹窗关闭必须停止，不得绕过目录/源文件/缓存边界；print 不得接受任意路径或非 PDF；popup 只能 exact about:blank -> 同端口 print job，不能带通用 bridge；首印必须等待 `load + decode` 和两次渲染帧，不能固定 A4、使用打印态 `100vw/100vh` 或在末页后强制分页 |
 
+<a id="task-bookkeeping"></a>
+
 ## 10.2 业务资料夹与做账 W8/W9
+
+必读功能规则：[做账](rules/BOOKKEEPING.md)。
 
 | 导航项 | 内容 |
 |---|---|
-| 首先阅读 | 接口流程第 3.5 节；数据算法第 3.2、4.5 节；`AGENTS.md` 做账全部规则 |
+| 首先阅读 | 接口流程第 3.5 节；数据算法第 3.2、4.5 节；[做账](rules/BOOKKEEPING.md) |
 | 首要入口 | `AppState.business_dossier/_scan_business_dossier/bookkeeping_*`；`bookkeeping/repository.py`、`validator.py`、`vouchers.py`、`decisions.py`、`catalogs.py`、`mapping.py`、`batches.py`；首页资料夹容错在 `page-index.js`，做账页在 `page-bookkeeping.js` |
 | 必须联动 | 公司资料夹受控路径、profile/catalog/mapping/store 绑定、proposal revision、统一 validator、batch manifest/XLSX、API/页面 blockers、runner facts |
 | 产物与消费者 | 公司资料夹 `凭证/` 下 JSON、批次、日志；`/api/v1/business-dossier*`、`/api/v1/bookkeeping/*` 和做账页 |
@@ -175,7 +258,11 @@ OFD 专用入口为 `services/ofd_rendering.py`、`tools/ofd-preview/` 与 `scri
 | 真实验收 | W9 profile/科目/辅助/映射人审必须基于目标账套重新采集；真实 Safari apply、读回和 reconcile-only 属 W10，每次 apply 仍需当回合明确授权 |
 | 高风险提醒 | 资料夹导航不得变成完整发票扫描或任意本机打开器；截断统计和 `os.scandir` 迭代中断后的累计统计都必须显式标为下界且不能阻塞发票列表。做账不得自动迁移、不绕过 blockers、不猜最新 XLSX、不直接写状态 JSON；测试通过不授权真实账套迁移、审批、导出或导入 |
 
+<a id="task-skins"></a>
+
 ## 11. 皮肤系统
+
+必读功能规则：[页面/单据/预览/皮肤](rules/WEB_UI.md)。
 
 新共享控件适配需检查原有两款皮肤的 `.appearance-toggle/.system-power` 稳定尺寸、全页关闭弹窗、批量单据和窄屏布局；Ink Pulse 保留深色单据预览，实际 PDF/图片源票面不反色。更新 `skin.json`、`BUILTIN_SKINS` 与前端/API 契约；实际 HTML 动态 CSS `?v=` 和字节必须匹配。
 
@@ -183,7 +270,7 @@ OFD 专用入口为 `services/ofd_rendering.py`、`tools/ofd-preview/` 与 `scri
 
 | 导航项 | 内容 |
 |---|---|
-| 首先阅读 | 接口流程第 3.6、6.9 节；数据算法第 12.2 节；AGENTS 皮肤安全规则 |
+| 首先阅读 | 接口流程第 3.6、6.9 节；数据算法第 12.2 节；[页面/单据/预览/皮肤](rules/WEB_UI.md) |
 | 首要入口 | `services/skins.py::validate_skin_zip/SkinService`、`api/app.py::_skin_zip_body/active_skin_link`、page-skins、common 首屏水合 |
 | 必须联动 | 内置 `skin.json/skin.css/asset-sources.json`、字体/纹理、设置外观分类、所有普通模板和 no-skin 恢复 |
 | 产物与消费者 | `runtime/local_state/skins`、服务端 CSS/资产响应、普通页面样式 |
@@ -191,7 +278,11 @@ OFD 专用入口为 `services/ofd_rendering.py`、`tools/ofd-preview/` 与 `scri
 | 真实验收 | 导入/替换/启用/重置、恶意 ZIP 拒绝、当前皮肤与 no-skin、桌面/移动关键业务表格不被破坏 |
 | 高风险提醒 | 禁止 JS/HTML/脚本/远程资源；先全量校验再写盘；导入目录不能是 watch_dir；内置同 id 不能被覆盖 |
 
+<a id="task-windows"></a>
+
 ## 12. Windows 正式入口与平台交互
+
+必读功能规则：[Windows](rules/WINDOWS.md)、[监控与关闭](rules/MONITORING.md)。
 
 Windows 环境加固还需用真实 Winsock abortive close 验证完整 200/204 不等 EOF、截断仍保留 10054；随包 Python 与新 EXE 验证错误 PYTHONHOME 不再污染标准库，spawn 失败不得残留旧握手成功日志，OS 错误只输出代码。对应入口为 BackendHost::launch 与 local_http 的 Windows 回归。
 
@@ -203,7 +294,7 @@ Windows 环境加固还需用真实 Winsock abortive close 验证完整 200/204 
 
 | 导航项 | 内容 |
 |---|---|
-| 首先阅读 | 接口流程第 6.1、6.10 节；AGENTS Windows 与验收规则；`docs/MAC_WINDOWS_WORKFLOW.md` |
+| 首先阅读 | 接口流程第 6.1、6.10 节；[Windows](rules/WINDOWS.md)；`docs/MAC_WINDOWS_WORKFLOW.md` |
 | 首要入口 | 根四个 BAT、`scripts/windows/InvoiceHub.Windows.psm1`、启动/停止/monitor/设置迁移 PS1、`platform/windows.py`、`native_dialogs.py` |
 | 必须联动 | config/targets 路径、API 入口、package/build/runtime manifest、server PID/state/log、MonitorBridge、浏览器派发、Windows 锁和 portable 验包 |
 | 产物与消费者 | 用户双击入口、`.lnk`、localhost/monitor 进程、runtime 诊断文件、系统壳/选择器 |
@@ -211,13 +302,17 @@ Windows 环境加固还需用真实 Winsock abortive close 验证完整 200/204 
 | 真实验收 | 正式根 BAT 启动、首页与 health、连续/并发启动、stale state、外部占端口、只停 WebUI、stop-all、根快捷方式、浏览器拉起、原生选择器 |
 | 高风险提醒 | 含非 ASCII 且可能由 PS 5.1 执行的发布 PS1 必须 UTF-8 BOM；固定 Program Files 路径不存在不代表没有 PS7，必须继续解析 PATH/App Execution Alias；PS5.1 不得直接信任无 charset JSON 的 `.Content`，必须按原始 UTF-8 字节解码后继续严格身份检查；自动化 Python 测试不能替代成品 BAT；系统壳派发成功后不要重复开 URL |
 
+<a id="task-macos"></a>
+
 ## 12.1 macOS 壳、构建握手与原生桥接
+
+必读功能规则：[macOS 参考壳](rules/MACOS.md)、[监控与关闭](rules/MONITORING.md)。
 
 Windows Tauri 双启动任务定位 `main.rs`、`backend.rs::spawn_backend_liveness_watcher` 和 preferences API；至少验证两种启动偏好、页面关闭后 host/backend/端口释放、单实例及监控保留/停止。ZIP 入口为 `scripts/dev/tauri_windows_portable.py`，构建读取本次工作区的干净快照，不能把旧候选 receipt 当作最新代码验收。
 
 | 导航项 | 内容 |
 |---|---|
-| 首先阅读 | [平台架构](PLATFORM_ARCHITECTURE.md)第 5 至 8 节；接口流程第 3.2、6.12 节；`AGENTS.md` macOS 本地壳规则 |
+| 首先阅读 | [平台架构](PLATFORM_ARCHITECTURE.md)第 5 至 8 节；接口流程第 3.2、6.12 节；[macOS 参考壳](rules/MACOS.md) |
 | 首要入口 | `BackendPaths.swift`、`LocalBackendController.swift`、`BuildHandshake.swift`、`InvoiceHubSparkleUpdater.swift`、`StartupSurface.swift`、`WebView.swift`、`InvoiceHubAPIClient.swift`、`InvoiceHubMacApp.swift`、`src-tauri/src/main.rs`、`src-tauri/src/backend.rs`、`src-tauri/src/monitor_recovery.rs`、`src-tauri/src/monitor_recovery/windows_marker_store.rs`、`src-tauri/src/monitor_bridge.rs`、`src-tauri/src/update_coordinator.rs`、`scripts/dev/tauri_dev_app.py`、`scripts/dev/tauri_recovery_smoke.py`、`scripts/dev/tauri_public_preview_smoke.py`、开发与正式三个 release 脚本 |
 | 必须联动 | Python build/package/runtime manifest/health、OpenAPI 路由、API/做账协议/capabilities、固定端口、Application Support、owned/external、启动方式、升级标记与 monitor 恢复、原生面板和打印 identity；Tauri updater 还要联动 backend 私有 secret、Host RPC runtime gate/candidate、authenticated bridge、platform marker store、coordinator、Windows `on_before_exit`、macOS relaunch 与 ExitRequested；Swift/Sparkle 仅保留参考实现 |
 | 产物与消费者 | ordinary development schema-3 arm64 `.app`（本地 ignored、updater-disabled）；L10-E development recovery-smoke `.app`（本地 ignored、不可安装）；正式 arm64 `.app/DMG/Sparkle ZIP`；三类 manifest/SBOM；Application Support 配置/runtime/PID/log；WKWebView 页面 |
@@ -225,13 +320,17 @@ Windows Tauri 双启动任务定位 `main.rs`、`backend.rs::spawn_backend_liven
 | 真实验收 | L9/P1-Q 已覆盖 ordinary development app 的 fixed-port owned backend、health/background、首页/静态资源、desktop 默认，以及真实 Cmd-Q 的 shutdown POST、stopped state、child/PID/端口清理；SSE 未及时退出时命中显式 kill+wait。L10-E 已以一次临时 HOME/state/watch 的 authenticated startup restore 观察到 monitor `running && ready`、marker 删除、显式 stop、本次进程组/PID/固定端口/临时目录清理和 `update_requests=0`。public-preview runner 已对本轮成品执行，但隔离 HOME 身份检查未通过；实际默认配置的 ready、页面和 monitor 启停已另行复核；该样本必须由 mounted-DMG 复制、隔离 HOME、真实 quarantine 和 LaunchServices 启动，不得直接运行 Mach-O 或清除属性。外部终止仍不作可拦截承诺；仍需 owned/external、browser、NSOpenPanel、tray 点击/单实例、预览/打印、真实 Feed/合法与篡改下载、安装/重启、签名/notary/staple、quarantine、首次目录授权、正式旧版到新版且 monitor 恢复 |
 | 高风险提醒 | 不只凭 health.ok 连接；正式 core 无效不得回退 checkout；握手和 recovery 请求都必须有界并重验 generation/phase/PID。Updater activation 晚于 gate release 与 app manage；startup restore 失败保留 marker 和诊断界面。普通 development/internal-alpha 必须 updater-disabled；L10-E development 只接受固定不可达 endpoint、无验签能力 key sentinel 和精确三字段 updater 对象，runner 不得调用 check/install 或 bridge start。完整候选只在 host 内，Web 不接收/返回 URL、signature 或 artifact ID；成功响应必须 flush 后才放行 private commit，writer/spawn/latch loss固定 `CommitLost` 且无副作用。Windows installer callback 必须确认 backend 终止，macOS 必须先停 backend/prepare relaunch 再 restart；外部不得获得安装 bridge。不换端口、杀未知进程或以 smoke 冒充真实升级证据 |
 
+<a id="task-tauri"></a>
+
 ## 13. 公开基线与新平台构建
+
+必读功能规则：[Tauri 宿主](rules/TAURI_HOST.md)、[构建与发行](rules/RELEASE.md)。
 
 Windows portable 目录发布重试需覆盖短暂 5/32/33 成功、持续失败达到上限和无关错误立即失败；不得把目录拒绝当作验包通过，测试入口为 test_stage_publish_retries_only_bounded_windows_sharing_errors。
 
 | 导航项 | 内容 |
 |---|---|
-| 首先阅读 | 历史净化执行记录；AGENTS 开源冻结/Tauri 规则；接口流程第 6.11 至 6.13 节 |
+| 首先阅读 | 历史净化执行记录；[Tauri 宿主](rules/TAURI_HOST.md)、[构建与发行](rules/RELEASE.md)；接口流程第 6.11 至 6.13 节 |
 | 首要入口 | `version.py`、`release/*`、`HISTORY_SANITIZATION_EXECUTION.md`、`.github` 治理配置；当前 `v0.3` 使用 `scripts/dev/tauri_version_sync.py`、`tauri_doctor.py`、`tauri_bootstrap.py`、`src-tauri/src/backend.rs`、`src-tauri/src/monitor_recovery.rs` 和 `src-tauri/src/host_rpc.rs` |
 | 必须联动 | LICENSE/NOTICE/贡献与安全文档、README/状态/架构地图、依赖锁、公开仓库设置、Release 元数据；Tauri lifecycle/updater 改动再联动 `api/app.py` 的 install body/error/origin、`AppState` metadata approval、`platform/host_rpc.py`、monitor 子进程环境、Web consumers 与 Host RPC contracts |
 | 产物与消费者 | 新的 `v0.3` 才产生 NSIS、DMG/更新归档、Feed、源码归档、SBOM 和发布收据 |
@@ -241,7 +340,11 @@ Windows portable 目录发布重试需覆盖短暂 5/32/33 成功、持续失败
 
 归档身份补充：必须以 `text=auto` 把自动识别的普通文本固定 LF，不能用 `* text` 把二进制强制归类为文本；Windows 组装的 Git archive 必须显式禁用 `core.autocrlf`。最低自动化门禁同时要求 `autocrlf=true` 全新 checkout 无 tracked changes、二进制 blob/checkout/archive 字节一致，以及 true/false 两种 Git 配置实际导出后的 Core Build ID 相同；创建隔离 Git checkout 的动态契约还必须在普通源仓库和 `--depth 1 --no-local` 浅源仓库中都通过。
 
+<a id="task-release"></a>
+
 ## 13.1 About、更新 Feed 与平台安装
+
+必读功能规则：[构建与发行](rules/RELEASE.md)、[Tauri 宿主](rules/TAURI_HOST.md)。
 
 | 导航项 | 内容 |
 |---|---|
@@ -255,7 +358,11 @@ Windows portable 目录发布重试需覆盖短暂 5/32/33 成功、持续失败
 
 L6-RRRRR 追加门禁：hosted check 锁竞争必须在 busy 后直接返回，不能写 `updates.checked` 或等待 SQLite；该样本与 install 私有 RPC 抛错后的 `finally` 释放是不同的阻断机制，均需由 Host RPC Python 并发契约覆盖。
 
+<a id="task-api"></a>
+
 ## 14. API、SQLite 与存储基础设施
+
+必读功能规则：[页面/单据/预览/皮肤](rules/WEB_UI.md)。
 
 | 导航项 | 内容 |
 |---|---|
@@ -267,11 +374,15 @@ L6-RRRRR 追加门禁：hosted check 锁竞争必须在 busy 后直接返回，�
 | 真实验收 | 只有用户可见/进程时序变化才需要 localhost/浏览器；纯仓储变更仍需并发和坏数据边界测试 |
 | 高风险提醒 | 路由不复制业务算法；SQLite settings/cache 当前无主要消费者；新增表不能变成发票主存储；原子写失败不能吞掉 |
 
+<a id="task-governance"></a>
+
 ## 15. 测试与文档治理
+
+规则结构调整须核对本页快速索引、被移动规则、两份 Agent 入口及文档契约；无需为文档任务加载无关产品模块。
 
 | 导航项 | 内容 |
 |---|---|
-| 首先阅读 | 本套全部架构入口；AGENTS 开工、验收、Git 与收尾规则；旧功能/故障回溯再读 `docs/legacy/OLD_WORKSPACE_CHANGELOG_INDEX.md` |
+| 首先阅读 | 本页快速索引、架构总入口及被修改的专题；AGENTS 开工、验收、Git 与收尾规则；旧功能/故障回溯再读 `docs/legacy/OLD_WORKSPACE_CHANGELOG_INDEX.md` |
 | 首要入口 | `tests/` 对应契约；`tests/test_development_documentation.py`；`CHANGELOG.md` Unreleased；脱敏历史索引 |
 | 必须联动 | 新文件 -> FILE_MAP；接口/流程 -> INTERFACES；算法/schema -> DATA；任务影响 -> 本页；复杂原因及跨功能衔接注释 -> COMMENT_RATIONALE；`CHANGELOG.md` 新增记录 -> 中文；旧记录回溯 -> 脱敏索引 |
 | 最低自动化 | 文档契约测试、所有本地 Markdown 链接、`git diff --check`；代码任务按风险加业务测试与 compileall |
@@ -310,13 +421,13 @@ bash -n macos/InvoiceHubMac/script/build_and_run.sh
 | 发生的变化 | 必须更新 |
 |---|---|
 | 任意项目文件变化 | `CHANGELOG.md` 的 `Unreleased` |
-| 行为、结构、入口或验收口径 | `README.md`、`IMPLEMENTATION_STATUS.md` |
+| 行为、结构、入口或验收口径 | `IMPLEMENTATION_STATUS.md` 与相关真值；README 仅按 AGENTS 首页定点维护约定更新 |
 | 旧能力迁移或缺口闭环 | `docs/MIGRATION_GAP_CHECKLIST.md` |
 | 新增/删除/重命名工程文件 | `FILE_MAP.md` |
 | API、页面消费、状态或流程 | `INTERFACES_AND_FLOWS.md` |
 | 模型、schema、公式、算法 | `DATA_AND_ALGORITHMS.md` |
 | 任务影响或最低门禁变化 | `AGENT_TASK_MAP.md` |
-| 新的复杂原因/风险 | `COMMENT_RATIONALE_MAP.md`；必要时写回 `AGENTS.md` |
+| 新的复杂原因/风险 | 所属功能规则与 `COMMENT_RATIONALE_MAP.md`；全局不变量再写回 `AGENTS.md` |
 | 平台入口、选择器、进程所有权或构建握手 | `PLATFORM_ARCHITECTURE.md`、`MAC_WINDOWS_WORKFLOW.md`、平台 README |
 
 最终必须再次运行 `git status --short --branch --ignored`，按 modified/deleted/untracked/ignored/warning 分类；明确哪些测试已运行、哪些未运行，以及是否覆盖真实默认配置、正式 BAT、浏览器、原生选择器和打包产物。
@@ -329,3 +440,25 @@ bash -n macos/InvoiceHubMac/script/build_and_run.sh
 - [接口与运行流程](INTERFACES_AND_FLOWS.md)
 - [数据结构与算法](DATA_AND_ALGORITHMS.md)
 - [注释与设计原因地图](COMMENT_RATIONALE_MAP.md)
+
+
+<a id="task-temporary"></a>
+
+## 临时识别工作区
+
+原文件预览联动 `FilePreviewService`，最低增加 `test_file_preview.py`、打印相邻回归及临时预览 HTTP/Node 测试；浏览器覆盖队列/历史、PDF翻页、XML纯文本、失效清空、返回与窄屏。只改临时预览消费时无需重跑未变的原生选择器实现，但原生/成品未覆盖必须披露。
+
+入口：`services/temporary_recognition.py`、`api/temporary_recognition.py`、`temporary_recognition.html`、`temporary-recognition.js/css`、首页与设置模板。原生联动 Python/Rust Host RPC、native_dialogs 和 Tauri main；不接入普通/成本投影或 monitor。
+
+最低验收：`test_temporary_recognition.py`、`temporary_recognition.test.cjs`、`test_tauri_host_rpc.py`、API/前端/文档契约；Rust check；三份合成票的排序、渐进进度、历史改名、源删除/移动/替换拒绝、复制、自动打开设置、取消/重复点击/迟到响应；默认外观、两款皮肤和 no_skin 的桌面/390px。真实原生多选/OS拖入及平台成品未跑必须披露。
+
+<a id="task-selection-workflow"></a>
+
+## 勾选工作流（2026-10-09）
+
+| 导航项 | 内容 |
+|---|---|
+| 修改入口 | AppState.prepare_invoice_trash/commit_invoice_trash、services/invoice_trash.py、platform/trash.py；cost_analysis.selection_cost_breakdown；page-index.js/page-detail.js |
+| 必须联动 | 同源API、活动目录及monitor锁、源签名、幂等日志、投影重建、来源详情返回、静态版本、接口/数据/文件/注释地图 |
+| 最低验收 | selection_workflow Python/Node；API、成本、预览、打印、渐进读取和临时识别相邻回归；JS语法、文档契约；桌面/390px、两皮肤/no_skin、焦点、删除取消；原生Trash用合成文件验证，Windows未实测必须披露 |
+| 高风险提醒 | 不删除真实资料验收；不能从回收站降级永久删除，不扩大家族选择；网络结果不明只GET日志，重启不重放；100项是名称窗口与后端批次限制，不应截断完整选择 |

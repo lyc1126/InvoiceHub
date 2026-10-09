@@ -20,6 +20,40 @@ from invoice_hub.storage.files import atomic_write_json, read_csv_rows, read_jso
 CACHE_VERSION = 1
 
 
+class InboundDetails:
+    """One disposable, signature-bound CSV index; never an invoice authority."""
+
+    def __init__(self):
+        self.lock = threading.RLock()
+        self.key = None
+        self.rows = {}
+        self.options = {}
+
+    def read(self, path: Path, numbers=None):
+        with self.lock:
+            key = (str(path.resolve()), signature(path))
+            if key != self.key:
+                rows = read_csv_rows(path)
+                if (str(path.resolve()), signature(path)) != key:
+                    raise ValueError("成本明细正在更新，请稍后重试。")
+                grouped = {}
+                for row in rows:
+                    grouped.setdefault(str(row.get("发票号码") or "").strip(), []).append(row)
+                self.rows, self.options, self.key = grouped, {}, key
+            wanted = self.rows.keys() if numbers is None else numbers
+            result = []
+            for number in wanted:
+                if number not in self.options:
+                    self.options[number] = inbound_invoice_options(self.rows.get(number, []))
+                result.extend(dict(item) for item in self.options[number])
+            return result
+
+    def invoice_rows(self, path: Path, number: str):
+        with self.lock:
+            self.read(path, [])
+            return [dict(row) for row in self.rows.get(number, [])]
+
+
 def _write_cache_json(path: Path, payload: dict) -> None:
     # Windows readers/virus scanners can briefly deny replacement. The worker must
     # publish its catalog before ready; retry sharing failures without hiding a lasting error.
@@ -79,6 +113,8 @@ def build_index(cache: str, outbound: str, detail: str, job_id: str) -> None:
             if signature(csv) != before:
                 raise RuntimeError("Cost details changed during indexing; refresh to retry")
             _write_cache_json(folder / "inbound.json", inbound)
+        status["revision"] = 1
+        status["inbound_ready"] = True
         status["phase"] = "discovering"
         report(True)
         files = []
@@ -106,6 +142,7 @@ def build_index(cache: str, outbound: str, detail: str, job_id: str) -> None:
             db.execute("PRAGMA synchronous=NORMAL")
             db.execute("CREATE TABLE IF NOT EXISTS files (path TEXT PRIMARY KEY, signature TEXT, record TEXT, seen TEXT)")
             records = []
+            last_catalog = time.monotonic()
             for path in files:
                 fingerprint = json.dumps([CACHE_VERSION, signature(path)])
                 cached = db.execute("SELECT signature, record FROM files WHERE path=?", (str(path),)).fetchone()
@@ -134,12 +171,19 @@ def build_index(cache: str, outbound: str, detail: str, job_id: str) -> None:
                     db.commit()
                 records.append((path, record))
                 status["processed"] += 1
+                if len(records) == 1 or time.monotonic() - last_catalog >= 0.75:
+                    # Publish a bounded-frequency view before progress; consumers can
+                    # browse partial candidates but export still requires a complete catalog.
+                    _write_cache_json(folder / "outbound.json", dict(job_id=job_id, items=outbound_invoice_options(
+                        Path(outbound) if outbound else None, records=records)))
+                    status["revision"] += 1
+                    last_catalog = time.monotonic()
                 report()
             db.execute("DELETE FROM files WHERE seen != ?", (job_id,))
             db.commit()
         items = outbound_invoice_options(Path(outbound) if outbound else None, records=records)
         _write_cache_json(folder / "outbound.json", dict(job_id=job_id, items=items))
-        status.update(state="ready", phase="complete", completed_at=time.time())
+        status.update(state="ready", phase="complete", completed_at=time.time(), revision=status["revision"] + 1)
         report(True)
     except Exception as error:
         status.update(state="failed", message=str(error))
@@ -224,16 +268,17 @@ class DocumentIndex:
                     raise
             result = self.status()
             inbound = read_json_object(self.folder / "inbound.json", {})
-            if result["state"] == "ready" and not self.outbound_catalog:
+            if (self.outbound_catalog.get("revision") != result.get("revision") or not self.outbound_catalog):
                 for _ in range(3):
                     candidate = read_json_object(self.folder / "outbound.json", {})
                     if candidate.get("job_id") == self.job_id and isinstance(candidate.get("items"), list):
                         self.outbound_catalog = candidate
+                        self.outbound_catalog["revision"] = result.get("revision")
                         break
                     time.sleep(0.01)
-                if not self.outbound_catalog:
+                if not self.outbound_catalog and result["state"] == "ready":
                     result.update(state="failed", message="Completed catalog is unavailable; resume to rebuild")
-            outbound_data = self.outbound_catalog if result["state"] == "ready" else {}
+            outbound_data = self.outbound_catalog
             return dict(index=result,
                         inbound_invoices=inbound.get("items", []) if inbound.get("signature") == self.input_signature else [],
                         outbound_invoices=outbound_data.get("items", []) if outbound_data.get("job_id") == self.job_id else [])

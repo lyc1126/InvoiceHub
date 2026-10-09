@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import multiprocessing
 import os
 import threading
@@ -13,7 +14,7 @@ from pathlib import Path
 import re
 
 from invoice_hub.domain.models import TargetProfile, utc_now_text
-from invoice_hub.monitoring.state import MonitorState
+from invoice_hub.monitoring.state import MonitorState, is_pid_alive
 from invoice_hub.monitoring.sync import MonitorSynchronizer
 from invoice_hub.platform import HostRpcCommand, OCR_EXTENSIONS, host_rpc, open_external_url, open_local_path, pick_directory, pick_file
 from invoice_hub.projections.cost_analysis import invoice_cost_breakdown, selection_cost_breakdown
@@ -41,7 +42,7 @@ from invoice_hub.extraction.classification import (
 from invoice_hub.release.build_manifest import load_build_manifest
 from invoice_hub.release.package_manifest import load_package_manifest
 from invoice_hub.services.monitor_bridge import MonitorBridge
-from invoice_hub.services.document_index import DocumentIndex
+from invoice_hub.services.document_index import DocumentIndex, InboundDetails
 from invoice_hub.services.file_preview import (
     MAX_PREVIEW_SELECTION_RECORDS,
     PREVIEW_JOB_TTL_SECONDS,
@@ -57,10 +58,12 @@ from invoice_hub.services.invoice_printing import (
     InvoicePrintService,
     InvoicePrintSource,
 )
+from invoice_hub.services.invoice_trash import InvoiceTrashService, TrashError
 from invoice_hub.services.app_icons import AppIconService
 from invoice_hub.services.skins import SkinService
 from invoice_hub.services.update_service import UpdateService
 from invoice_hub.storage import SQLiteRepository, atomic_write_json, read_csv_rows, read_json_object, write_csv_rows
+from invoice_hub.storage.read_views import ReadViews, COST_FIELDS, file_signature
 from invoice_hub.targets import AppConfig, ensure_runtime_layout, load_config, target_profile_for
 from invoice_hub.targets.paths import Layout, serialize_config_path
 from invoice_hub.version import CHANGELOG_URL, LOCAL_WEBSITE_PATH, PRODUCT_DISPLAY_NAME, PRODUCT_NAME, PUBLIC_SOURCE_URL
@@ -191,6 +194,8 @@ class AppState:
         self.repo.init_db()
         self._lock = threading.RLock()
         self._document_index = DocumentIndex(layout.runtime_dir / "local_state" / "documents" / "index")
+        self._inbound_details = InboundDetails()
+        self._outbound_preview_metadata = {}
         self._host_update_lock = threading.Lock()
         self._host_update_approval_version = ""
         self._host_update_check_generation = 0
@@ -202,8 +207,11 @@ class AppState:
         self._active_profile = target_profile_for(config)
         self._invoice_cache_key: tuple[int, int] | None = None
         self._invoice_cache_rows: list[dict[str, str]] = []
+        self._invoice_payload_key = None
+        self._invoice_payload = None
         self._invoice_print_service = InvoicePrintService()
         self._file_preview_service = FilePreviewService()
+        self._invoice_trash = InvoiceTrashService(layout.runtime_dir / "local_state" / "invoice-trash")
         self._server_shutdown_requested = False
         self._server_shutdown_behavior = ""
         self._server_shutdown_pid_value: str | None = None
@@ -1405,22 +1413,26 @@ class AppState:
             self.append_event("documents.defaults_updated", {"target_id": self.active_profile.id})
         return {"ok": True, "defaults": defaults, "defaults_path": str(self._document_defaults_path())}
 
-    def document_state(self, *, restart: bool = False, revalidate: bool = True) -> dict:
+    def document_state(self, *, restart: bool = False, revalidate: bool = True, selection_only: bool = False) -> dict:
         with self._lock:
-            return self._document_state_locked(restart=restart, revalidate=revalidate)
+            return self._document_state_locked(restart=restart, revalidate=revalidate, selection_only=selection_only)
 
-    def _document_state_locked(self, *, restart: bool, revalidate: bool) -> dict:
+    def _document_state_locked(self, *, restart: bool, revalidate: bool, selection_only: bool = False) -> dict:
         defaults = self.document_defaults()
         outbound_dir = self._outbound_invoice_dir_text()
         profile = self.active_profile.model_copy(deep=True)
         detail = Path(profile.watch_dir) / "成本发票明细.csv"
-        catalog = self._document_index.ensure(profile.id, outbound_dir, detail, restart=restart, revalidate=revalidate)
+        # A homepage selection already identifies its invoices. Do not start an
+        # unrelated outbound scan merely to obtain defaults and directory identity.
+        catalog = ({"index": {"state": "idle"}, "inbound_invoices": [], "outbound_invoices": []}
+                   if selection_only else self._document_index.ensure(profile.id, outbound_dir, detail, restart=restart, revalidate=revalidate))
         return {
             "ok": True,
             "watch_dir": profile.watch_dir,
             "target_id": profile.id,
             "cost_detail_csv_path": str(detail),
             "cost_detail_exists": detail.exists(),
+            "selection_only": selection_only,
             "defaults": defaults,
             "outbound_invoice_dir": outbound_dir,
             "outbound_dir_validation": self.inspect_document_dir(Path(outbound_dir)) if outbound_dir else self.inspect_document_dir(None),
@@ -1561,7 +1573,7 @@ class AppState:
             self._clear_invoice_cache()
             return []
         stat = path.stat()
-        key = (stat.st_mtime_ns, stat.st_size)
+        key = (str(path), stat.st_mtime_ns, stat.st_size, stat.st_ctime_ns)
         if key != self._invoice_cache_key:
             self._invoice_cache_rows = read_csv_rows(path)
             self._invoice_cache_key = key
@@ -2082,6 +2094,11 @@ class AppState:
                     invoice_numbers.append(number)
         return {
             "family_key": family_key,
+            "source_invoices": [{"invoice_key": str(item["invoice_key"]),
+                "source_path": str(item.get("source_path") or item.get("file_path") or ""),
+                "file_name": str(item.get("source_file") or item.get("file_name") or ""),
+                "invoice_number": str(item.get("invoice_number") or ""),
+                "target_id": self.active_profile.id} for item in items],
             "invoice_numbers": invoice_numbers,
             "source_paths": [str(item.get("source_path") or item.get("file_path") or "") for item in items],
             "source_files": [str(item.get("source_file") or item.get("file_name") or "") for item in items],
@@ -2205,7 +2222,42 @@ class AppState:
         }
 
     def list_invoices(self, filters: dict | None = None) -> dict:
-        rows = self._apply_manual_overrides(self._summary_rows())
+        filters = filters or {}
+        with self._lock:
+            key = [self.active_profile.id, str(self.invoice_summary_csv()), file_signature(self.invoice_summary_csv()),
+                   file_signature(self._manual_overrides_path())]
+            if key != self._invoice_payload_key:
+                self._invoice_payload = self._build_invoice_payload()
+                self._invoice_payload_key = key
+            payload = dict(self._invoice_payload)
+            snapshot = dict(payload["snapshot"], revision=hashlib.sha256(json.dumps(key).encode()).hexdigest()[:20], provisional=False)
+            # Only the paged browsing surface may consume unfinished rows. Selection,
+            # detail, print and export continue to use the finalized CSV identities.
+            if "page" in filters and not self.invoice_summary_csv().exists():
+                meta, rows = ReadViews(self.active_profile.workspace_dir).read("partial:invoices", page_size=None)
+                if meta:
+                    if meta.get("state") == "running" and not is_pid_alive(meta.get("pid")):
+                        meta["state"] = "interrupted"
+                    payload = self._build_invoice_payload(rows=rows)
+                    snapshot.update(provisional=True, revision=meta["revision"], progress=meta, source_label="正在整理的临时结果")
+            items = self._filter_invoice_items(payload["items"], filters)
+            if filters.get("date_sort") in {"asc", "desc"}:
+                def date_key(item):
+                    match = re.match(r"(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})", str(item.get("invoice_date") or ""))
+                    return tuple(map(int, match.groups())) if match else ()
+                dated = [item for item in items if date_key(item)]
+                undated = [item for item in items if not date_key(item)]
+                items = sorted(dated, key=date_key, reverse=filters["date_sort"] == "desc") + undated
+            count = len(items)
+            payload.update(count=count, items=items, stats={"all": payload["stats"]["all"], "filtered": self._invoice_stats(items)}, snapshot=snapshot)
+            if "page" in filters:
+                page_size = max(1, min(200, int(filters.get("page_size") or 100)))
+                page = max(1, min(int(filters["page"]), max(1, (count + page_size - 1) // page_size)))
+                payload.update(page=page, page_size=page_size, items=items[(page - 1) * page_size:page * page_size])
+            return payload
+
+    def _build_invoice_payload(self, filters=None, rows=None) -> dict:
+        rows = self._apply_manual_overrides(self._summary_rows() if rows is None else rows)
         items = []
         seen_numbers: dict[str, int] = {}
         for index, row in enumerate(rows):
@@ -2277,6 +2329,8 @@ class AppState:
     def _validated_invoice_selection(self, payload: dict, *, max_items: int, operation: str) -> tuple[dict, list[dict]]:
         if not isinstance(payload, dict):
             raise ValueError("请求体必须是 JSON 对象。")
+        if payload.get("target_id") is not None and payload["target_id"] != self.active_profile.id:
+            raise StaleInvoiceSelectionError("活动目录已切换，请刷新后重新勾选。")
         requested_items = payload.get("items")
         if not isinstance(requested_items, list) or not requested_items:
             raise ValueError("请至少勾选一张发票。")
@@ -2310,34 +2364,70 @@ class AppState:
             selected_items.append(current)
         return current_payload, selected_items
 
+    def prepare_invoice_trash(self, payload: dict) -> dict:
+        with self._lock:
+            if not isinstance(payload, dict) or payload.get("target_id") != self.active_profile.id:
+                raise TrashError("活动目录已切换，请刷新后重新勾选。")
+            _, items = self._validated_invoice_selection(payload, max_items=10000, operation="删除")
+            job = self._invoice_trash.prepare(self.active_profile.id, Path(self.active_profile.watch_dir), items)
+            return self._invoice_trash.public(job)
+
+    def invoice_trash_status(self, job_id: str) -> dict:
+        return self._invoice_trash.public(self._invoice_trash.get(job_id))
+
+    def commit_invoice_trash(self, job_id: str, payload: dict) -> dict:
+        if not isinstance(payload, dict) or payload.get("confirmed") is not True:
+            raise TrashError("请先确认移入废纸篓。")
+        with self._lock:
+            profile = self.active_profile.model_copy(deep=True)
+            fresh_commit = self._invoice_trash.get(job_id)["state"] == "prepared"
+            monitor_state = MonitorState(profile, self.layout.db_path)
+            # Directory changes and monitor projection writes cannot interleave with
+            # confirmed moves. A busy synchronizer returns a retryable error BEFORE moves.
+            with monitor_state.try_sync_write_lock() as acquired:
+                if not acquired:
+                    raise TrashError("目录正在同步，请稍后重新确认删除。")
+                job = self._invoice_trash.commit(job_id, profile.id, Path(profile.watch_dir))
+            if fresh_commit and (job["trashed_count"] or job["state"] in {"partial", "running"}):
+                self._clear_invoice_cache()
+                self._file_preview_service.clear()
+                self.append_event("invoices.trashed", {"target_id": profile.id,
+                    "job_id": job_id, "count": job["trashed_count"], "state": job["state"]})
+                # Existing synchronizer removes projections and preserves manual overrides;
+                # automatic deletion synchronization itself still never removes originals.
+                self.run_background_diagnostics("startup_sync")
+            return self._invoice_trash.public(job)
+
     def invoice_selection_summary(self, payload: dict) -> dict:
-        current_payload, selected_items = self._validated_invoice_selection(
-            payload, max_items=1000, operation="汇总"
-        )
+        # Keep captured target, source validation and the published result in one directory generation.
+        with self._lock:
+            current_payload, selected_items = self._validated_invoice_selection(
+                payload, max_items=1000, operation="汇总"
+            )
 
-        grouped: dict[str, list[dict]] = {}
-        for item in selected_items:
-            family_key = self._selection_family_key(item)
-            grouped.setdefault(family_key, []).append(item)
-        families = list(grouped.values())
-        cost_families = [self._selection_cost_family(key, items) for key, items in grouped.items()]
-        cost_rows = read_csv_rows(self.cost_service().detail_csv)
+            grouped: dict[str, list[dict]] = {}
+            for item in selected_items:
+                family_key = self._selection_family_key(item)
+                grouped.setdefault(family_key, []).append(item)
+            families = list(grouped.values())
+            cost_families = [self._selection_cost_family(key, items) for key, items in grouped.items()]
+            cost_rows = read_csv_rows(self.cost_service().detail_csv)
 
-        return {
-            "ok": True,
-            "selection": {
-                "record_count": len(selected_items),
-                "invoice_count": len(families),
-                "collapsed_record_count": len(selected_items) - len(families),
-            },
-            "totals": {
-                "pretax_amount": self._selection_metric_total(families, "pretax_amount"),
-                "tax_amount": self._selection_metric_total(families, "tax_amount"),
-                "total_with_tax": self._selection_metric_total(families, "amount"),
-            },
-            "cost_breakdown": selection_cost_breakdown(cost_rows, cost_families),
-            "snapshot": current_payload["snapshot"],
-        }
+            return {
+                "ok": True,
+                "selection": {
+                    "record_count": len(selected_items),
+                    "invoice_count": len(families),
+                    "collapsed_record_count": len(selected_items) - len(families),
+                },
+                "totals": {
+                    "pretax_amount": self._selection_metric_total(families, "pretax_amount"),
+                    "tax_amount": self._selection_metric_total(families, "tax_amount"),
+                    "total_with_tax": self._selection_metric_total(families, "amount"),
+                },
+                "cost_breakdown": selection_cost_breakdown(cost_rows, cost_families),
+                "snapshot": current_payload["snapshot"],
+            }
 
     @staticmethod
     def _invoice_print_label(items: list[dict], fallback_index: int) -> str:
@@ -2585,33 +2675,35 @@ class AppState:
         }
 
     def prepare_invoice_preview(self, payload: dict) -> dict:
-        _current_payload, selected_items = self._validated_invoice_selection(
-            payload,
-            max_items=MAX_PREVIEW_SELECTION_RECORDS,
-            operation="预览",
-        )
-        # Preview preserves every selected source record and its order; invoice-family
-        # collapsing belongs to totals and printing, not to source-file inspection.
-        sources = [self._invoice_preview_source(item) for item in selected_items]
-        try:
-            job = self._file_preview_service.create_job(sources)
-        except FilePreviewError as exc:
-            self.append_event(
-                "invoice.preview_job_failed",
-                {"code": exc.code, "record_count": len(selected_items)},
-                error={"message": str(exc)},
+        # Keep captured target, source validation and the published result in one directory generation.
+        with self._lock:
+            _current_payload, selected_items = self._validated_invoice_selection(
+                payload,
+                max_items=MAX_PREVIEW_SELECTION_RECORDS,
+                operation="预览",
             )
-            raise
-        self.append_event(
-            "invoice.preview_job_created",
-            {
-                "job_id": job.job_id,
-                "record_count": job.record_count,
-                "file_count": len(job.files),
-                "renderable_page_count": job.renderable_page_count,
-            },
-        )
-        return self._invoice_preview_payload(job)
+            # Preview preserves every selected source record and its order; invoice-family
+            # collapsing belongs to totals and printing, not to source-file inspection.
+            sources = [self._invoice_preview_source(item) for item in selected_items]
+            try:
+                job = self._file_preview_service.create_job(sources)
+            except FilePreviewError as exc:
+                self.append_event(
+                    "invoice.preview_job_failed",
+                    {"code": exc.code, "record_count": len(selected_items)},
+                    error={"message": str(exc)},
+                )
+                raise
+            self.append_event(
+                "invoice.preview_job_created",
+                {
+                    "job_id": job.job_id,
+                    "record_count": job.record_count,
+                    "file_count": len(job.files),
+                    "renderable_page_count": job.renderable_page_count,
+                },
+            )
+            return self._invoice_preview_payload(job)
 
     def invoice_preview_page(self, job_id: str, file_number: int, page_number: int):
         return self._file_preview_service.get_page(job_id, file_number, page_number)
@@ -2666,7 +2758,7 @@ class AppState:
     def invoice_detail(self, invoice_key: str) -> dict:
         items = self.list_invoices()["items"]
         try:
-            item = items[int(invoice_key)]
+            item = dict(items[int(invoice_key)])
         except Exception:
             raise KeyError(invoice_key)
         pair_key = self._consistency_group_key(item)
@@ -3135,6 +3227,60 @@ class AppState:
         payload["recent_watch_dirs"] = recent_watch_dirs
         return payload
 
+    def cost_view(self, view: str, page: int = 1, page_size: int = 100, revision: str = "") -> dict:
+        with self._lock:
+            profile = self._active_profile.model_copy(deep=True)
+            rate = str(self.config.reference_markup_rate)
+            recent = self._recent_watch_dirs()
+        service = CostProjectionService(Path(profile.watch_dir), Path(profile.workspace_dir), profile.id, reference_markup_rate=rate)
+        views = ReadViews(profile.workspace_dir)
+        monitor = MonitorState(profile, self.layout.db_path)
+        # Never remove the projection lock to make reads fast. Publish a committed
+        # read generation under that lock, then read its pages without holding it.
+        with monitor.try_sync_write_lock() as acquired:
+            if acquired and (service.detail_csv.exists() or service.summary_xlsx.exists()):
+                service.cache_snapshot()
+            meta, rows = views.read("cost:" + view, page, page_size)
+            if not acquired and not meta.get("detail_count"):
+                partial, _ = views.read("partial:costs", page_size=0)
+                if partial.get("count"):
+                    meta = {}
+        if meta:
+            if revision and revision != meta["revision"]:
+                raise StaleInvoiceSelectionError("成本结果已更新，请刷新后重试。")
+            counts = meta["counts"]
+            if page > max(1, (counts[view] + page_size - 1) // page_size):
+                page = max(1, (counts[view] + page_size - 1) // page_size)
+                next_meta, rows = views.read("cost:" + view, page, page_size)
+                if next_meta.get("revision") != meta["revision"]:
+                    raise StaleInvoiceSelectionError("成本结果已更新，请刷新后重试。")
+                meta = next_meta
+            meta.pop("fingerprint", None)
+            meta.update(updating=not acquired, editable=acquired, provisional=False)
+        else:
+            partial, rows = views.read("partial:costs", page, page_size if view == "details" else 0)
+            if partial.get("state") == "running" and not is_pid_alive(partial.get("pid")):
+                partial["state"] = "interrupted"
+            counts = {name: 0 for name in COST_FIELDS}
+            counts["details"] = partial.get("count", 0)
+            meta = dict(watch_dir=profile.watch_dir, source_dir=profile.watch_dir, target_id=profile.id,
+                        output_detail_csv_path=str(service.detail_csv), output_summary_xlsx_path=str(service.summary_xlsx),
+                        reference_status_path=str(service.status_json), reference_markup_rate=rate,
+                        detail_count=counts["details"], reference_status_stats={},
+                        sync={"sync_state": "pending", "source_invoice_count": partial.get("total", 0),
+                              "parsed_invoice_count": partial.get("processed", 0), "pending_count": max(0, partial.get("total", 0) - partial.get("processed", 0))},
+                        revision=partial.get("revision", "pending"), progress=partial, provisional=True,
+                        updating=not acquired, editable=False, counts=counts, count=counts[view])
+            # A released writer lock is not proof of a successful projection: failed
+            # or stopped work must keep its partial rows read-only on every tab.
+            if acquired and not partial:
+                meta.update(provisional=False, editable=True)
+                meta["sync"]["sync_state"] = "empty"
+        meta.update(view=view, page=page, page_size=page_size, recent_watch_dirs=recent)
+        for name, field in COST_FIELDS.items():
+            meta[field] = rows if name == view else []
+        return meta
+
     @staticmethod
     def _path_is_relative_to(path: Path, parent: Path) -> bool:
         try:
@@ -3447,12 +3593,18 @@ class AppState:
             reference_markup_rate = str(self.config.reference_markup_rate)
         monitor_state = MonitorState(profile, self.layout.db_path, sync_interval_seconds=60)
         with monitor_state.sync_write_lock():
-            result = CostProjectionService(
+            service = CostProjectionService(
                 Path(profile.watch_dir),
                 Path(profile.workspace_dir),
                 profile.id,
                 reference_markup_rate=reference_markup_rate,
-            ).save_reference_status(payload or {})
+            )
+            if payload.get("revision"):
+                service.cache_snapshot()
+                meta, _ = ReadViews(profile.workspace_dir).read("cost:reference", page_size=0)
+                if payload.get("target_id") != profile.id or payload["revision"] != meta.get("revision"):
+                    raise ValueError("成本结果或目录已更新，草稿未保存，请重新加载后核对。")
+            result = service.save_reference_status(payload or {})
         with self._lock:
             if profile_identity == _background_profile_identity(self._active_profile):
                 self._clear_invoice_cache()
@@ -3482,7 +3634,8 @@ class AppState:
         # here and again at export, so a directory switch cannot export another invoice.
         with self._lock:
             grouped = self._validated_inbound_selection(payload)
-            options = {item["invoice_number"]: item for item in inbound_invoice_options(read_csv_rows(self.cost_service().detail_csv))}
+            numbers = [family.removeprefix("number:") for family in grouped if family.startswith("number:")]
+            options = {item["invoice_number"]: item for item in self._inbound_details.read(self.cost_service().detail_csv, numbers)}
             entries = []
             root = Path(self.active_profile.watch_dir) / "入库单"
             for family, items in grouped.items():
@@ -3511,7 +3664,7 @@ class AppState:
 
     def document_inbound_preview(self, invoice_number: str, defaults: dict | None = None) -> dict:
         merged_defaults = merge_document_defaults(self.document_defaults(), {"inbound": (defaults or {})})
-        return build_inbound_preview(read_csv_rows(self.cost_service().detail_csv), invoice_number, merged_defaults)
+        return build_inbound_preview(self._inbound_details.invoice_rows(self.cost_service().detail_csv, invoice_number.strip()), invoice_number, merged_defaults)
 
     def document_outbound_preview(self, invoice_number: str, defaults: dict | None = None) -> dict:
         outbound_dir = self._outbound_invoice_dir_text()
@@ -3519,13 +3672,21 @@ class AppState:
             raise DocumentError("请先保存开具发票目录")
         merged_defaults = merge_document_defaults(self.document_defaults(), {"outbound": (defaults or {})})
         catalog = self.document_state(revalidate=False)
-        if catalog["index"]["state"] != "ready":
-            raise DocumentError("出库发票列表尚未加载完成，请继续加载后重试。")
         option = next((item for item in catalog["outbound_invoices"] if item["invoice_number"] == invoice_number), None)
         if option is None:
             raise KeyError(invoice_number)
-        return build_outbound_preview(Path(outbound_dir), invoice_number, merged_defaults,
-                                      source_files=[Path(path) for path in option["source_files"]])
+        fingerprint = [(path, file_signature(path)) for path in option["source_files"]]
+        preview = build_outbound_preview(Path(outbound_dir), invoice_number, merged_defaults,
+                                         source_files=[Path(path) for path in option["source_files"]])
+        preview["provisional"] = catalog["index"]["state"] != "ready"
+        if fingerprint != [(path, file_signature(path)) for path in option["source_files"]]:
+            raise DocumentError("源发票在预览期间发生变化，请重新预览。")
+        key = (self.active_profile.id, outbound_dir, invoice_number)
+        with self._lock:
+            if len(self._outbound_preview_metadata) >= 128:
+                self._outbound_preview_metadata.clear()
+            self._outbound_preview_metadata[key] = (fingerprint, {"invoice_number": preview["invoice_number"], "invoice_date": preview["invoice_date"]})
+        return preview
 
     def _inbound_document_target(self, payload: dict | None = None, include_defaults: bool = True) -> tuple[str, dict, Path, Path]:
         payload = payload or {}
@@ -3583,13 +3744,36 @@ class AppState:
         }
 
     def inbound_document_export_status(self, payload: dict | None = None) -> dict:
-        invoice_number, _preview, path, root = self._inbound_document_target(payload, include_defaults=False)
+        invoice_number = str((payload or {}).get("invoice_number") or "").strip()
+        options = self._inbound_details.read(self.cost_service().detail_csv, [invoice_number])
+        if not options:
+            raise KeyError(invoice_number)
+        if options[0].get("blocked"):
+            raise DocumentError(options[0]["message"])
+        root = Path(self.active_profile.watch_dir) / "入库单"
+        rows = self._inbound_details.invoice_rows(self.cost_service().detail_csv, invoice_number)
+        path = inbound_export_path(Path(self.active_profile.watch_dir), {"invoice_number": invoice_number, "invoice_date": rows[0].get("开票日期", "")})
         status = self._document_export_status(path, root)
         status["invoice_number"] = invoice_number
         return status
 
     def outbound_document_export_status(self, payload: dict | None = None) -> dict:
-        invoice_number, _preview, path, root = self._outbound_document_target(payload, include_defaults=False)
+        invoice_number = str((payload or {}).get("invoice_number") or "").strip()
+        catalog = self.document_state(revalidate=False)
+        option = next((item for item in catalog["outbound_invoices"] if item["invoice_number"] == invoice_number), None)
+        if option is None:
+            raise KeyError(invoice_number)
+        directory = Path(self._outbound_invoice_dir_text()).resolve()
+        if any(not Path(source).resolve().is_relative_to(directory) or not Path(source).is_file() for source in option["source_files"]):
+            raise DocumentError("源文件已移除或超出开具目录，请刷新列表。")
+        root = directory / "出库单"
+        fingerprint = [(source, file_signature(source)) for source in option["source_files"]]
+        key = (self.active_profile.id, self._outbound_invoice_dir_text(), invoice_number)
+        cached = self._outbound_preview_metadata.get(key)
+        # Reuse only server-produced filename metadata from unchanged sources. A
+        # direct status request or changed source must establish that metadata first.
+        metadata = cached[1] if cached and cached[0] == fingerprint else self.document_outbound_preview(invoice_number)
+        path = outbound_export_path(directory, metadata)
         status = self._document_export_status(path, root)
         status["invoice_number"] = invoice_number
         return status
@@ -3646,6 +3830,8 @@ class AppState:
     def _export_outbound_document_locked(self, payload: dict | None = None) -> dict:
         payload = payload or {}
         invoice_number, preview, path, root = self._outbound_document_target(payload)
+        if preview.get("provisional"):
+            raise DocumentError("当前为临时预览，请等待出库目录核对完成后导出。")
         mode = str(payload.get("mode") or "").strip().casefold()
         status = self._document_export_status(path, root)
         if status.get("occupied"):

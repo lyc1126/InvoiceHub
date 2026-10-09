@@ -42,6 +42,7 @@ class HostRpcCommand(str, Enum):
     PICK_OUTBOUND_INVOICE_DIRECTORY = "pick_outbound_invoice_dir"
     PICK_OCR_DIRECTORY = "pick_ocr_directory"
     PICK_OCR_FILE = "pick_ocr_file"
+    PICK_TEMPORARY_FILES = "pick_temporary_files"
     UPDATE_CHECK = "update_check"
     UPDATE_INSTALL = "update_install"
     SET_APP_ICON = "set_app_icon"
@@ -241,3 +242,15 @@ def set_app_icon(icon_id: str) -> None:
             raise HostRpcError("Tauri host App icon is unavailable")
     except (HostRpcError, UnicodeDecodeError, ValueError, TypeError):
         raise HostRpcError("Tauri host App icon is unavailable") from None
+
+
+def pick_temporary_files() -> list[str]:
+    raw = _send(HostRpcCommand.PICK_TEMPORARY_FILES)
+    try:
+        payload = json.loads(raw or b"{}")
+        paths = payload["paths"]
+        if payload.get("ok") is not True or not isinstance(paths, list) or any(not isinstance(path, str) for path in paths):
+            raise ValueError()
+        return paths
+    except (ValueError, KeyError, TypeError):
+        raise HostRpcError("Tauri host native picker is unavailable") from None

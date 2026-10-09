@@ -18,7 +18,21 @@ ARCHITECTURE_APPENDICES = (
     ROOT / "docs" / "architecture" / "AGENT_TASK_MAP.md",
     ROOT / "docs" / "architecture" / "COMMENT_RATIONALE_MAP.md",
 )
-ARCHITECTURE_DOCS = (ARCHITECTURE_ENTRY, *ARCHITECTURE_APPENDICES)
+ARCHITECTURE_RULES = tuple(
+    ROOT / "docs" / "architecture" / "rules" / f"{name}.md"
+    for name in (
+        "INVOICE_EXTRACTION",
+        "COST_ANALYSIS",
+        "MONITORING",
+        "WEB_UI",
+        "BOOKKEEPING",
+        "WINDOWS",
+        "MACOS",
+        "TAURI_HOST",
+        "RELEASE",
+    )
+)
+ARCHITECTURE_DOCS = (ARCHITECTURE_ENTRY, *ARCHITECTURE_APPENDICES, *ARCHITECTURE_RULES)
 MACOS_ENGINEERING_FILES = tuple(
     ROOT / path
     for path in (
@@ -328,6 +342,46 @@ def test_platform_architecture_covers_macos_and_shared_boundaries() -> None:
         assert f"`{relative}`" in file_map
 
 
+def test_agent_entries_and_scoped_rules_remain_navigable() -> None:
+    agents = ROOT / "AGENTS.md"
+    claude = ROOT / "CLAUDE.md"
+    task_map = ROOT / "docs" / "architecture" / "AGENT_TASK_MAP.md"
+    task_text = task_map.read_text(encoding="utf-8")
+    # Keep the mandatory entry bounded; feature rules must remain reachable even
+    # when an agent starts without the previous conversation or feature context.
+    assert agents.stat().st_size <= 16 * 1024
+    assert claude.stat().st_size <= 4 * 1024
+    for entry in (agents, claude):
+        assert "AGENT_TASK_MAP.md#quick-lookup" in entry.read_text(encoding="utf-8")
+    for rule in ARCHITECTURE_RULES:
+        assert rule.is_file()
+        assert f"(rules/{rule.name})" in task_text
+        text = rule.read_text(encoding="utf-8")
+        assert "(../../../AGENTS.md)" in text
+        assert "../AGENT_TASK_MAP.md#task-" in text
+        assert "完整读取" in text
+
+    # Explicit anchors make navigation independent of rendered Chinese heading
+    # slugs. Check both directions, including Git and directory-rule handoffs.
+    for source in (agents, claude, *ARCHITECTURE_DOCS):
+        text = source.read_text(encoding="utf-8")
+        for match in MARKDOWN_LINK_RE.finditer(text):
+            target = match.group("target").strip("<>")
+            if "://" in target or "#" not in target:
+                continue
+            path, fragment = target.split("#", 1)
+            if not (
+                fragment.startswith("task-")
+                or fragment in {"quick-lookup", "directory-rules", "git-rules"}
+            ):
+                continue
+            destination = source.parent / unquote(path) if path else source
+            anchors = re.findall(
+                r'<a id="([^"]+)"></a>', destination.read_text(encoding="utf-8")
+            )
+            assert anchors.count(fragment) == 1, f"{source.relative_to(ROOT)} -> {target}"
+
+
 def test_architecture_mermaid_and_markdown_fences_are_balanced() -> None:
     mermaid_blocks = sum(_assert_fences_are_balanced(path) for path in ARCHITECTURE_DOCS)
     assert mermaid_blocks >= 3
@@ -522,7 +576,9 @@ def test_l10_e_docs_keep_the_recovery_smoke_non_installing_and_isolated() -> Non
 
 
 def test_current_tauri_docs_require_bounded_update_checks_and_confirmed_exit_cleanup() -> None:
-    agents = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
+    tauri_rules = (
+        ROOT / "docs" / "architecture" / "rules" / "TAURI_HOST.md"
+    ).read_text(encoding="utf-8")
     plan = (ROOT / "docs" / "release" / "TAURI2_EXECUTION_PLAN.md").read_text(
         encoding="utf-8"
     )
@@ -530,7 +586,7 @@ def test_current_tauri_docs_require_bounded_update_checks_and_confirmed_exit_cle
         encoding="utf-8"
     )
 
-    for text in (agents, plan, platform):
+    for text in (tauri_rules, plan, platform):
         assert "ExitRequested" in text
         assert "kill" in text
         assert "5 秒" in text

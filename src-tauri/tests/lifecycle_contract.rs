@@ -146,6 +146,13 @@ fn strict_openapi_requires_the_expected_http_methods() {
             "/api/v1/settings/pick-watch-dir": {"post": {}},
             "/api/v1/documents/pick-outbound-dir": {"post": {}},
             "/api/v1/ocr/pick-file": {"post": {}},
+            "/api/v1/temporary-recognition/pick": {"post": {}},
+            "/api/v1/temporary-recognition/drop": {"post": {}},
+            "/api/v1/temporary-recognition/sessions": {"post": {}},
+            "/api/v1/cost-analysis/view": {"get": {}},
+            "/api/v1/invoices/trash-jobs": {"post": {}},
+            "/api/v1/invoices/trash-jobs/{job_id}": {"get": {}},
+            "/api/v1/invoices/trash-jobs/{job_id}/confirm": {"post": {}},
             "/api/v1/ocr/pick-folder": {"post": {}},
             "/api/v1/update/check": {"post": {}},
             "/api/v1/update/install": {"post": {}},
@@ -156,6 +163,21 @@ fn strict_openapi_requires_the_expected_http_methods() {
         }
     });
     assert_eq!(validate_openapi_routes(&valid), Ok(()));
+
+    for path in [
+        "/api/v1/temporary-recognition/pick",
+        "/api/v1/cost-analysis/view",
+        "/api/v1/invoices/trash-jobs",
+        "/api/v1/invoices/trash-jobs/{job_id}",
+        "/api/v1/invoices/trash-jobs/{job_id}/confirm",
+    ] {
+        let mut old_backend = valid.clone();
+        old_backend["paths"].as_object_mut().unwrap().remove(path);
+        assert_eq!(
+            validate_openapi_routes(&old_backend),
+            Err(HandshakeError::OpenApiMismatch)
+        );
+    }
 
     let mut missing_start = valid.clone();
     missing_start["paths"]
@@ -180,6 +202,9 @@ fn strict_openapi_requires_the_expected_http_methods() {
             "/api/v1/settings/pick-watch-dir": {"get": {}},
             "/api/v1/documents/pick-outbound-dir": {"post": {}},
             "/api/v1/ocr/pick-file": {"post": {}},
+            "/api/v1/temporary-recognition/pick": {"post": {}},
+            "/api/v1/temporary-recognition/drop": {"post": {}},
+            "/api/v1/temporary-recognition/sessions": {"post": {}},
             "/api/v1/ocr/pick-folder": {"post": {}}
         }
     });

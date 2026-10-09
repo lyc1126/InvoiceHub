@@ -86,4 +86,4 @@ def test_invoice_print_static_asset_versions_are_current() -> None:
         if "app.css?v=" in html:
             assert "app.css?v=20260907-desktop-integrated-2" in html
     index = (ROOT / "web" / "templates" / "index.html").read_text(encoding="utf-8")
-    assert "page-index.js?v=20260907-large-list-1" in index
+    assert "page-index.js?v=20261009-selection-6" in index

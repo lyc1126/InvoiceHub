@@ -1,5 +1,11 @@
 # Mac / Windows 开发与验收分工
 
+## 2026-10-09 工作流集成包
+
+本轮功能分支为 `codex/selection-workflow`，包含渐进读取、临时识别/预览、勾选回收与来源追溯。Mac使用同一精确clean commit构建ad-hoc预览DMG；Windows从此分支取得相同commit，在Windows本机使用既有 `tauri_windows_portable.py` 的build/verify入口。主线、Release与Feed不因功能分支推送自动变化。
+
+Windows验收需覆盖中文/空格路径、多文件选择与拖动排序、超过100份预览、回收站恢复、无回收能力磁盘拒绝、部分失败及目录切换；仅使用合成文件。Mac同样区分包内静态验包、LaunchServices启动、原生面板与真实默认业务配置，各项未执行必须披露。
+
 ## 当前公开基线
 
 脱敏根提交已发布到独立的公开仓库。候选树、保留 Git 对象、聚焦回归和托管面验证已通过；退休的预公开包、验证记录和本机验证目录只留在私有归档中，不能复用。`codex/tauri2-unified-desktop` 已建立；其 schema-3 development assembly 已构建并隔离烟测一个本地 macOS arm64 `.app`，但尚未创建公开 Tag、Release 或 Feed。

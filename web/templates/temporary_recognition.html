@@ -1,0 +1,41 @@
+<dialog id="temporaryDialog" class="temporary-dialog" aria-labelledby="temporaryTitle">
+  <div class="temporary-shell">
+    <header class="temporary-head">
+      <div><p class="temporary-eyebrow">QUICK CAPTURE <span>临时工作区</span></p><h2 id="temporaryTitle">临时识别</h2><p>选几份文件，识别后再看。独立于当前发票档案。</p></div>
+      <button id="temporaryClose" class="temporary-icon" type="button" aria-label="关闭临时识别">×</button>
+    </header>
+    <nav class="temporary-tabs" aria-label="临时识别视图">
+      <button id="temporaryNew" type="button" aria-current="page">新建识别</button>
+      <button id="temporaryHistory" type="button">查看历史 <span id="temporaryHistoryCount"></span></button>
+    </nav>
+    <div id="temporaryContent" class="temporary-content">
+      <p id="temporaryMessage" class="temporary-message" role="status" aria-live="polite" hidden></p>
+      <section id="temporaryDraft" aria-label="选择文件">
+        <button id="temporaryDropzone" class="temporary-dropzone" type="button">
+          <span class="temporary-plus" aria-hidden="true">＋</span>
+          <strong>拖入文件，开始一次临时识别</strong>
+          <span>或点击选择文件 · PDF / OFD / XML</span>
+          <small>单个文件 ≤ 32 MB · 图片及纯扫描件暂不支持</small>
+        </button>
+        <div class="temporary-queue-head"><span id="temporaryQueueCount">尚未添加文件</span><span>拖动手柄排序</span></div>
+        <ol id="temporaryQueue" class="temporary-queue" aria-label="文件识别顺序"></ol>
+        <div id="temporaryProgress" class="temporary-progress" hidden><div><strong id="temporaryProgressText">正在识别</strong><span id="temporaryProgressCount"></span></div><progress id="temporaryProgressBar" max="100" value="0" aria-label="临时识别进度"></progress></div>
+        <button id="temporaryShowCompleted" class="btn btn--secondary" type="button" hidden>查看本次识别结果</button>
+      </section>
+      <section id="temporaryHistoryView" aria-label="历史识别线程" hidden><p class="temporary-help">记录按识别日期排列。原文件移动、删除或变化后，旧结果不可查看。</p><div id="temporaryHistoryList"></div></section>
+      <section id="temporaryPreview" aria-label="原文件预览" hidden>
+        <div class="temporary-preview-head"><button id="temporaryPreviewBack" class="btn btn--ghost" type="button">← 返回列表</button><h3 id="temporaryPreviewTitle"></h3></div>
+        <div class="temporary-preview-toolbar"><div><button id="temporaryPreviewPrevious" class="btn btn--ghost" type="button" disabled aria-label="上一页">←</button><span id="temporaryPreviewPage"></span><button id="temporaryPreviewNext" class="btn btn--ghost" type="button" disabled aria-label="下一页">→</button></div><label>显示 <select id="temporaryPreviewZoom" aria-label="预览缩放"><option value="fit">适应宽度</option><option value="large">放大</option></select></label></div>
+        <p id="temporaryPreviewStatus" class="temporary-help" role="status"></p>
+        <button id="temporaryPreviewRetry" class="btn btn--secondary" type="button" hidden>重新读取</button>
+        <div id="temporaryPreviewBody" class="temporary-preview-body" tabindex="0" aria-label="文件内容" data-zoom="fit"></div>
+      </section>
+      <section id="temporaryResults" aria-label="临时识别列表" hidden>
+        <div class="temporary-results-head"><div><h3 id="temporaryResultTitle"></h3><p id="temporaryResultMeta"></p></div><button id="temporaryCopy" class="btn btn--ghost" type="button">复制表格</button></div>
+        <div class="temporary-table-scroll" tabindex="0" aria-label="识别结果，可横向滚动"><table id="temporaryTable"><thead><tr><th>文件名</th><th>发票号码</th><th>开票日期</th><th>销售方</th><th>购买方</th><th>价税合计</th><th>不含税金额</th><th>税额</th><th>状态</th><th>操作</th></tr></thead><tbody></tbody></table></div>
+        <p class="temporary-help">识别结果供核对，不写入发票汇总或成本分析。缺少字段时请核对原票。</p>
+      </section>
+    </div>
+    <footer class="temporary-footer"><div><span class="temporary-source-dot" aria-hidden="true"></span>原文件保留在原位置</div><div class="temporary-actions"><button id="temporaryStart" class="btn btn--primary" type="button" disabled>识别</button><button id="temporaryCancel" class="btn btn--ghost" type="button">取消</button><button id="temporaryView" class="btn btn--ghost" type="button">查看</button></div></footer>
+  </div>
+</dialog>

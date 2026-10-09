@@ -35,7 +35,7 @@
 | 目录、配置、监控与关闭 | 目录切换、文件遗漏、重复同步、启动窗口、停止语义 | `watch_dir` 与 `workspace` 分离；monitor 是独立进程；ready 只能在完整同步与观察器就绪后写入 | [接口与流程](../architecture/INTERFACES_AND_FLOWS.md)、`targets/`、`monitoring/`、启动与监控测试 |
 | 页面、皮肤与响应式布局 | 滚动链、弹窗定位、表格裁切、资源缓存、窄屏溢出 | 页面不得改变数据口径；真实表格和滚动链必须保留；静态资源改动须刷新版本并验收实际加载 | [注释与设计原因地图](../architecture/COMMENT_RATIONALE_MAP.md)、`web/`、前端契约 |
 | macOS、本地壳与原生能力 | 目录选择、窗口关闭、打印、壳与后端握手 | 平台壳只承载原生能力和生命周期，不重写业务核心；所有权、进程和本地 bridge 必须严格校验 | [平台架构](../architecture/PLATFORM_ARCHITECTURE.md)、`macos/InvoiceHubMac/`、平台测试 |
-| 做账与凭证 | 账套资料、映射、人审、导出、批次观察 | 文件真值、写锁、CAS、可执行性校验与批次不可变性不能被页面状态绕过 | `bookkeeping/`、[做账规则](../../AGENTS.md)、做账 API/仓储测试 |
+| 做账与凭证 | 账套资料、映射、人审、导出、批次观察 | 文件真值、写锁、CAS、可执行性校验与批次不可变性不能被页面状态绕过 | `bookkeeping/`、[做账规则](../architecture/rules/BOOKKEEPING.md)、做账 API/仓储测试 |
 | 发布、分支与开发治理 | 分支基线、版本、构建、发布、文档漂移 | 公开根与旧私有图隔离；新包必须从新公开输入构建；文档不能把历史样本写成当前事实 | [历史净化记录](../release/HISTORY_SANITIZATION_EXECUTION.md)、[任务导航](../architecture/AGENT_TASK_MAP.md)、发布契约 |
 | 已退休或不在范围的探索 | 云端、多用户、外部自动化、独立工具或过往界面试验 | 未列入当前产品边界的内容不因旧记录而恢复；先按 `AGENTS.md` 核对是否获得独立授权 | [项目边界](../../AGENTS.md)、[迁移缺口清单](../MIGRATION_GAP_CHECKLIST.md) |
 

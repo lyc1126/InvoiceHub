@@ -91,6 +91,7 @@ def run_native_dialog(command_name: str, initial_path: Path, title: str) -> dict
         env=env,
         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         check=False,
+        timeout=125 if command_name == "pick-temporary-files" else None,
     )
     if result.returncode != 0:
         stderr_tail = "\n".join((result.stderr or "").splitlines()[-20:])
@@ -129,3 +130,16 @@ def pick_file(
         if payload is not None:
             return payload
     return run_native_dialog("pick-file", initial_dir, title)
+
+
+def pick_temporary_files(initial_dir: Path) -> list[str]:
+    if host_rpc.is_configured():
+        return host_rpc.pick_temporary_files()
+    try:
+        payload = run_native_dialog("pick-temporary-files", initial_dir, "选择临时识别文件")
+    except (OSError, RuntimeError, ValueError, subprocess.TimeoutExpired):
+        raise host_rpc.HostRpcError("Native picker unavailable") from None
+    paths = payload.get("paths", [payload["path"]] if payload.get("path") else [])
+    if not isinstance(paths, list) or any(not isinstance(path, str) for path in paths):
+        raise host_rpc.HostRpcError("Native picker unavailable")
+    return paths

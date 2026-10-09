@@ -2,16 +2,18 @@
 
 本文按本仓库当前历史解释常用 Git 概念，方便之后判断“改了代码、提交了、推送了”分别处在哪一步。
 
-## 本仓库这次发生了什么
+## 公开基线与工作区边界
 
 - 当前公开权威引用是完成验证后的脱敏根提交；精确远端 HEAD 仍以实时 `git ls-remote` 为准。
-- 所有预公开提交、Tag 和二进制均不复用。远端历史净化、候选 Git 对象扫描和托管面验证通过后，下一功能分支才从 `main` 创建为 `codex/tauri2-unified-desktop`。
+- 所有预公开提交、Tag 和二进制均不复用。历史净化已完成；Tauri 2 已在 `main`，后续功能分支从实时核验的稳定主线创建。
 - 本次公开基线不保留任何旧分支、合并基线或发布身份。后续功能只在新的公开 `main` 上按普通分支和 PR 流程开发。
 - 私有工作区、stash、本机配置、未跟踪资产和 ignored 运行态均不属于公开图、Tag、Release 或 Feed 输入。
-- 本节只帮助理解当前工作流，不作为永久 Git 真值；分支和 commit 快照始终以 `AGENTS.md` 的“当前 Git 快照”和实时 `git status/log` 为准。
+- 本节只帮助理解当前工作流，不作为永久 Git 真值；分支和 commit 快照始终以 `AGENTS.md` 的“Git 与授权”和实时 `git status/log` 为准。
 - 当前本机配置：`config/app.local.json` 可能显示为 modified，这是本机运行配置，默认不提交。
 - 当前推荐开发方式：所有代码、接口、前端、解析、启动、成本、发布类功能改动先从 `main` 新建 `codex/<task-name>` 分支，再通过 GitHub Draft PR 验收。
 - 当前回溯原则：未合并功能直接删除分支；已合并功能用 `git revert` 生成反向提交，不默认重写 `main` 历史。
+
+操作前先读下方[强制 Git 操作规则](#git-rules)；本文示例不是推送、删除分支或合并的授权。
 
 ## 一句话区分
 
@@ -200,3 +202,48 @@ git revert <commit>
 ```
 
 默认不要用 `git reset --hard`、force push 或改写 GitHub 上的 `main` 历史。只有明确知道风险并得到用户确认时，才考虑历史重写。
+
+<a id="git-rules"></a>
+
+## Git 分支开发与回溯规则
+
+- `main` 只保留已验收、可回退的稳定版本；代码、接口、前端、解析、启动、成本、发布类功能改动不得直接在 `main` 上施工。
+- 大功能、用户可见功能、跨模块改动和高风险修复必须从当前稳定 `main` 新建 `codex/<task-name>` 分支开发；分支名用英文短横线描述任务，例如 `codex/voucher-draft`。
+- 创建分支前必须执行 `git status --short --branch --ignored`，并确认当前分支、未提交修改、ignored 运行态和当前 `main` 基线 commit；最终回复或任务记录中必须写清本轮从哪个 commit/分支开工。
+- 创建分支前若存在非本轮代码修改，必须先分类说明并决定是否暂存、提交、保留或停止；`config/app.local.json` 这类本机运行配置允许留在工作区，但不得纳入功能提交。
+- 默认使用同一个工作目录切换分支；只有并行维护两条开发线、需要长期对照旧实现或用户明确要求时，才使用 `git worktree`。使用 worktree 时必须说明新目录路径、绑定分支和清理方式。
+- `push` 不是默认收尾动作；只有用户明确要求“推送 / 上传到 GitHub / 更新 PR / 创建 PR”时，才允许执行 `git push`。不得因为本地提交完成就自动推送。
+- 用户明确要求推送功能分支时，使用 `git push -u origin codex/<task-name>`；不得把未验收功能直接推到 `origin/main`。
+- 用户明确要求创建或更新 PR 时，才允许推送分支并创建/更新 GitHub Draft PR。PR 描述必须列出变更范围、测试结果、未覆盖项、敏感路径/本机配置检查结论和回退方式。用户明确满意后，才允许合并进 `main`。
+- PR 合并前必须复核 PR diff、测试结果、未覆盖项、`config/app.local.json`、真实发票路径、运行态、发布产物和本机业务路径；发现风险时先修复或停止，不得带风险合并。
+- 未合并的功能如果不满意：切回 `main`，删除本地分支和远端分支即可；不得为丢弃未合并功能去重写 `main` 历史。
+- 已合并的功能如果不满意：优先使用 `git revert <merge-commit>` 或 `git revert <commit>` 生成反向提交；禁止默认使用 `git reset --hard`、强推或重写共享历史，除非用户明确要求并确认风险。
+- 本地未提交试验只能在功能分支内丢弃；不得在 `main` 上做“试试看”的高风险改动。
+- 未经用户明确要求，不做 force push，不改写已推送历史，不做 rebase/squash 来隐藏或重排既有提交。
+
+## Git 提交与推送速查
+
+- 开始提交前必须先执行 `git status --short --branch --ignored`，确认当前分支、领先/落后关系、未提交修改和 ignored 运行态；不得沿用旧状态判断。
+- 提交范围必须用显式文件清单暂存，优先 `git add <file...>`，不得用 `git add .`、`git add -A` 这类会把本机运行态、配置或产物一并扫进去的命令。
+- `config/app.local.json` 默认不提交本机运行配置；只有确认内容已脱敏、`watch_dir` 等路径符合“项目内相对路径、包外用户目录不写入默认示例”的规则时才允许暂存。含业务绝对路径、最近目录、真实发票路径的本机配置必须留在本地。
+- 暂存后必须检查：
+  - `git diff --cached --name-status`
+  - `git diff --cached --check`
+  - 对 staged diff 搜索本机业务路径、`.lnk`、`.venv`、`runtime`、`dist`、`运行状态`、`__pycache__`、真实发票和成本产物关键词。
+- 代码、接口、前端、解析、启动、成本或发布相关提交，必须先跑与风险匹配的测试；常规提交优先执行 `.venv\Scripts\python.exe -m pytest` 和 `.venv\Scripts\python.exe -m compileall src tests`。纯文档提交可不跑完整测试，但最终回复必须说明未运行原因。
+- 提交信息使用清晰英文祈使句，例如 `Add recent watch directory removal controls`；不要改写用户已有历史，不做 rebase/squash，除非用户明确要求。
+- 推送必须由用户明确指定；没有明确“推送/上传/更新 PR/创建 PR”要求时，不得执行 `git push`。用户要求推送时，推送目标必须匹配当前任务分支：功能分支使用 `git push -u origin codex/<task-name>`；只有已在 `main` 上完成验收合并或用户明确要求直推稳定主线时，才使用 `git push origin main`。
+- 如果 GitHub HTTPS 短暂超时，先重试并用 `git status --short --branch`、`git branch -vv` 判断本地是否仍领先；如果远端有冲突或不可访问，不擅自改分支名、不强推，停止并报告。
+- 推送后必须复核：
+  - `git branch -vv`
+  - `git log --oneline --decorate --graph --all -8`
+  - `git ls-remote --heads origin <当前分支名>`；涉及主线合并或推送时同时检查 `git ls-remote --heads origin main`
+  - `git status --short --ignored`
+- 最终回复必须按 `modified/deleted/untracked/ignored/warning` 分类说明工作区状态；如果 `config/app.local.json` 仍修改，必须说明它是本机运行配置并未上传。
+
+## 当前 Git 快照
+
+- 更新时间：`2026-08-14`。公开图以脱敏根提交开始，后续公开提交只能是其后代；不继承旧提交、Tag 或 Release 身份。精确 SHA 只通过实时 Git 命令核对，不写入当前事实文档。
+- 原工作区、stash、本机配置、未跟踪资产、ignored 运行态和真实业务文件都不属于公开根提交或发行输入，不得清理或混入。
+- 私有历史备份的存在不构成公开发布资格；若需恢复旧图，只能由所有者在独立 private 仓库中进行，绝不得推回公开仓库。
+- 每次任务开工、提交、推送和收尾前仍必须重新执行 `git status --short --branch --ignored`，不得沿用本节快照数字。

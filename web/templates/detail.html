@@ -6,6 +6,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <link rel="stylesheet" href="/static/css/app.css?v=20260907-desktop-integrated-2">
   <link rel="stylesheet" href="/static/css/settings-actions.css?v=20260907-desktop-integrated-2">
+  <link rel="stylesheet" href="/static/css/selection-workflow.css?v=20261009-selection-6">
 </head>
 <body data-page="detail">
   <header class="topbar">
@@ -14,7 +15,7 @@
     <button id="systemPowerBtn" class="system-power" type="button" title="关闭系统" aria-label="关闭系统" aria-haspopup="dialog" aria-controls="settingsShutdownDialog" aria-expanded="false"><span class="system-power__icon" aria-hidden="true"></span></button>
   </header>
   <main class="shell">
-    <section class="page-head"><div class="page-title"><h2>发票详情</h2><p id="detailPath" class="path-inline">正在读取...</p></div></section>
+    <section class="page-head"><div class="selection-detail-heading"><a id="detailBackBtn" class="btn btn--ghost selection-back" href="/" aria-label="返回上一级"><span aria-hidden="true">&lt;</span> 返回</a><div class="page-title"><h2>发票详情</h2><p id="detailPath" class="path-inline">正在读取...</p></div></div></section>
     <section id="detailBanner" class="banner banner--muted" hidden></section>
     <section class="detail-grid">
       <div class="detail-main-column">
@@ -56,6 +57,6 @@
   {{system_controls}}
   <script src="/static/js/common.js?v=20260907-desktop-integrated-2"></script>
   <script src="/static/js/system-controls.js?v=20260907-desktop-integrated-2"></script>
-  <script src="/static/js/page-detail.js?v=20260726-invoice-taxonomy"></script>
+  <script src="/static/js/page-detail.js?v=20261009-selection-6"></script>
 </body>
 </html>

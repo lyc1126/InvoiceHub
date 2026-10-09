@@ -146,7 +146,7 @@ def test_cost_page_keeps_required_controls() -> None:
     assert "解锁" in js
     assert "common.js?v=20260907-desktop-integrated-2" in html
     assert "app.css?v=20260907-desktop-integrated-2" in html
-    assert "page-costs.js?v=20260907-desktop-integrated-2" in html
+    assert "page-costs.js?v=20261009-progressive-3" in html
     for token in (
         "发票大类",
         "特定业务类型",
@@ -361,7 +361,7 @@ def test_home_sync_progress_and_cost_load_progress_are_separate() -> None:
     assert "refreshSyncProgress" not in costs_js
     assert "stopSyncProgressPolling" not in costs_js
     assert "const COST_LOAD_PROGRESS_SUCCESS_VISIBLE_MS = 900" in costs_js
-    assert 'app.api("/api/v1/cost-analysis")' in costs_js
+    assert '/api/v1/cost-analysis/view?' in costs_js
     assert 'await app.api("/api/v1/bridge/rebuild", { method: "POST", body: {} });' in costs_js
     assert "function beginCostLoadProgress()" in costs_js
     assert "function advanceCostLoadProgress(percent, detail)" in costs_js
@@ -418,7 +418,7 @@ def test_main_pages_keep_user_visible_controls() -> None:
     assert "app.css?v=20260907-desktop-integrated-2" in index
     assert "settings-actions.css?v=20260907-desktop-integrated-2" in index
     assert "common.js?v=20260907-desktop-integrated-2" in index
-    assert "page-index.js?v=20260907-large-list-1" in index
+    assert "page-index.js?v=20261009-selection-6" in index
     assert 'select name="search_scope"' in index
     assert '<option value="invoice" selected>销售方 / 发票号</option>' in index
     assert 'select name="invoice_type"' in index
@@ -619,7 +619,7 @@ def test_main_pages_keep_user_visible_controls() -> None:
     assert 'id="openSourceLocationBtn" class="btn btn--secondary" type="button">打开文件所在位置</button>' in detail
     assert detail.index("<h3>核心字段</h3>") < detail.index("openSourceBtn") < detail.index("openSourceLocationBtn") < detail.index('id="detailSummary"')
     assert detail.index("<h3>手工修订</h3>") < detail.index('<h3 id="detailCostTitle">本票成本明细</h3>')
-    assert "page-detail.js?v=20260726-invoice-taxonomy" in detail
+    assert "page-detail.js?v=20261009-selection-6" in detail
     assert "发票大类" in page_detail
     assert "特定业务类型" in page_detail
     assert "类型识别状态" in page_detail
@@ -843,7 +843,7 @@ def test_selected_invoice_summary_frontend_contract() -> None:
     for template_name in ("backend.html", "base_head.html", "consistency.html", "costs.html", "detail.html", "documents.html", "index.html", "ocr.html", "settings.html", "skins.html"):
         template = (ROOT / "web" / "templates" / template_name).read_text(encoding="utf-8")
         assert "app.css?v=20260907-desktop-integrated-2" in template
-    assert "page-index.js?v=20260907-large-list-1" in index
+    assert "page-index.js?v=20261009-selection-6" in index
 
 
 def test_consistency_page_is_user_facing_not_raw_json() -> None:
@@ -908,7 +908,7 @@ def test_documents_page_contract() -> None:
     assert ">打开该文件</button>" in html
     assert "app.css?v=20260907-desktop-integrated-2" in html
     assert "common.js?v=20260907-desktop-integrated-2" in html
-    assert "page-documents.js?v=20260907-large-list-1" in html
+    assert "page-documents.js?v=20261009-progressive-3" in html
     assert "large-lists.css?v=20260907-large-list-1" in html
     assert 'id="documentIndexStop"' in html
     assert 'id="documentIndexResume"' in html
@@ -1736,7 +1736,7 @@ def test_home_invoice_list_centers_content_and_uses_one_status_badge() -> None:
         assert "app.css?v=20260727-invoice-list-status-layout" not in html
         assert "app.css?v=20260726-invoice-taxonomy" not in html
     index = (templates_dir / "index.html").read_text(encoding="utf-8")
-    assert "page-index.js?v=20260907-large-list-1" in index
+    assert "page-index.js?v=20261009-selection-6" in index
 
 
 def test_ink_pulse_body_page_entry_never_creates_fixed_modal_containing_block() -> None:

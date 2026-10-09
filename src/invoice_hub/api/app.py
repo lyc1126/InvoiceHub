@@ -21,6 +21,9 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
 
+from invoice_hub.api.temporary_recognition import router as temporary_router
+from invoice_hub.services.temporary_recognition import TemporaryRecognitionService
+from invoice_hub.services.invoice_trash import TrashError
 from invoice_hub.platform import host_rpc
 from invoice_hub.projections.documents import DocumentError
 from invoice_hub.services import (
@@ -88,6 +91,8 @@ def _template(
     if "{{system_controls}}" in text:
         controls = (web_dir / "templates" / "system_controls.html").read_text(encoding="utf-8")
         text = text.replace("{{system_controls}}", controls)
+    if "{{temporary_recognition}}" in text:
+        text = text.replace("{{temporary_recognition}}", (web_dir / "templates" / "temporary_recognition.html").read_text(encoding="utf-8"))
     if "{{appearance_toggle}}" in text:
         toggle = (web_dir / "templates" / "appearance_toggle.html").read_text(encoding="utf-8")
         text = text.replace("{{appearance_toggle}}", toggle)
@@ -473,14 +478,19 @@ def create_app(
     web_dir = root / "web"
     if not (web_dir / "templates").exists():
         web_dir = WEB_DIR
+    # Share the bounded rendering pool; temporary source authorization remains in its own service.
+    temporary = TemporaryRecognitionService(state.layout.runtime_dir / "local_state" / "temporary-recognition", root, previews=state._file_preview_service)
     @asynccontextmanager
     async def lifespan(_app):
         try:
             yield
         finally:
+            await run_in_threadpool(temporary.close)
             await run_in_threadpool(state._document_index.close)
 
     app = FastAPI(title="一站式发票汇总系统", version=PRODUCT_VERSION, lifespan=lifespan)
+    app.include_router(temporary_router(temporary, _require_same_origin_write, _require_native_picker_origin))
+    app.state.temporary_recognition = temporary
     app.state.invoice_hub = state
     app.state.desktop_host_secret = desktop_host_secret
     app.state.monitor_recovery_replay_lock = threading.Lock()
@@ -494,6 +504,8 @@ def create_app(
         response = await call_next(request)
         version = str(request.query_params.get("v") or "").strip()
         path = request.url.path
+        if path.startswith(("/api/v1/temporary-recognition/", "/api/v1/invoices/trash-jobs")):
+            response.headers["Cache-Control"] = "private, no-store"
         is_static_asset = path.startswith("/static/")
         is_skin_asset = path.startswith("/api/v1/skins/") and "/files/" in path
         if response.status_code == 200 and version and (is_static_asset or is_skin_asset):
@@ -743,8 +755,33 @@ def create_app(
         return _state(request).rename_invoice_files()
 
     @app.get("/api/v1/invoices")
-    def invoices(request: Request, search_scope: Literal["invoice", "filename", "all"] = "all") -> dict:
+    def invoices(request: Request, search_scope: Literal["invoice", "filename", "all"] = "all",
+                 page: int | None = Query(None, ge=1), page_size: int = Query(100, ge=1, le=200),
+                 date_sort: Literal["", "asc", "desc"] = "") -> dict:
         return _state(request).list_invoices({**dict(request.query_params), "search_scope": search_scope})
+
+    @app.post("/api/v1/invoices/trash-jobs")
+    async def prepare_invoice_trash(request: Request):
+        _require_same_origin_write(request)
+        try:
+            return await run_in_threadpool(_state(request).prepare_invoice_trash, await request.json())
+        except (ValueError, OSError, StaleInvoiceSelectionError) as exc:
+            raise HTTPException(status_code=409, detail=str(exc))
+
+    @app.get("/api/v1/invoices/trash-jobs/{job_id}")
+    def invoice_trash_status(request: Request, job_id: str):
+        try:
+            return _state(request).invoice_trash_status(job_id)
+        except TrashError as exc:
+            raise HTTPException(status_code=404, detail=str(exc))
+
+    @app.post("/api/v1/invoices/trash-jobs/{job_id}/confirm")
+    async def commit_invoice_trash(request: Request, job_id: str):
+        _require_same_origin_write(request)
+        try:
+            return await run_in_threadpool(_state(request).commit_invoice_trash, job_id, await request.json())
+        except (ValueError, OSError, StaleInvoiceSelectionError) as exc:
+            raise HTTPException(status_code=409, detail=str(exc))
 
     @app.post("/api/v1/invoices/selection-summary")
     async def invoice_selection_summary(request: Request) -> dict:
@@ -864,9 +901,17 @@ def create_app(
         )
 
     @app.get("/api/v1/invoices/{invoice_key}")
-    def invoice_detail(request: Request, invoice_key: str) -> dict:
+    def invoice_detail(request: Request, invoice_key: str, source_path: str = "", target_id: str = "") -> dict:
         try:
-            return _state(request).invoice_detail(invoice_key)
+            state = _state(request)
+            with state._lock:
+                if source_path or target_id:
+                    state._validated_invoice_selection({"target_id": target_id,
+                        "items": [{"invoice_key": invoice_key, "source_path": source_path}]},
+                        max_items=1, operation="查看")
+                return state.invoice_detail(invoice_key)
+        except (ValueError, StaleInvoiceSelectionError) as exc:
+            raise HTTPException(status_code=409, detail=str(exc))
         except KeyError:
             raise HTTPException(status_code=404, detail="invoice not found")
 
@@ -896,6 +941,14 @@ def create_app(
     async def cost_analysis(request: Request) -> dict:
         return await run_in_threadpool(_state(request).cost_snapshot)
 
+    @app.get("/api/v1/cost-analysis/view")
+    def cost_analysis_view(request: Request, view: Literal["details", "project", "reference", "checks"] = "details",
+                           page: int = Query(1, ge=1), page_size: int = Query(100, ge=1, le=200), revision: str = "") -> dict:
+        try:
+            return _state(request).cost_view(view, page, page_size, revision)
+        except StaleInvoiceSelectionError as exc:
+            raise HTTPException(status_code=409, detail=str(exc))
+
     @app.post("/api/v1/cost-analysis/reference-status")
     async def reference_status(request: Request) -> dict:
         try:
@@ -909,8 +962,8 @@ def create_app(
         return _state(request).open_cost_summary()
 
     @app.get("/api/v1/documents/state")
-    def documents_state(request: Request) -> dict:
-        return _state(request).document_state()
+    def documents_state(request: Request, selection_only: bool = False, revalidate: bool = True) -> dict:
+        return _state(request).document_state(selection_only=selection_only, revalidate=revalidate)
 
     @app.get("/api/v1/documents/index")
     def documents_index_status(request: Request) -> dict:

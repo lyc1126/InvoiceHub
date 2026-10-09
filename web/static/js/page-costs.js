@@ -9,6 +9,11 @@ const COST_LOAD_PROGRESS_EXIT_MS = 180;
 
 const state = {
   payload: null,
+  pages: { details: 1, project: 1, reference: 1, checks: 1 },
+  requestId: 0,
+  pollTimer: 0,
+  referenceRows: new Map(),
+  referenceSelected: new Set(),
   dirty: new Map(),
   activeView: "details",
   editingReference: null,
@@ -273,6 +278,7 @@ function costTableShell(view) {
 }
 
 function costTableTotalRows(view) {
+  if (state.payload?.counts) return state.payload.counts[view] || 0;
   const config = costViewConfig(view);
   return Array.isArray(config?.rows) ? config.rows.length : 0;
 }
@@ -284,7 +290,7 @@ function updateCostRowLimitControls() {
   });
   COST_VIEWS.forEach((view) => {
     const totalRows = costTableTotalRows(view);
-    const visibleRows = Math.min(state.rowLimit, totalRows);
+    const visibleRows = costViewConfig(view)?.rows?.length || 0;
     const count = document.querySelector(`[data-cost-row-count="${view}"]`);
     if (count) count.textContent = `显示 ${visibleRows} / 共 ${totalRows} 条`;
   });
@@ -328,6 +334,19 @@ function renderCostView(view = state.activeView) {
   const table = config ? document.getElementById(config.tableId) : null;
   if (!table) return;
   app.renderTable(table, config.rows, config.columns);
+  const pages = Math.max(1, Math.ceil(costTableTotalRows(view) / state.rowLimit));
+  let pager = document.querySelector(`[data-cost-pager="${view}"]`);
+  if (!pager) {
+    pager = document.createElement("div");
+    pager.dataset.costPager = view;
+    pager.className = "list-pager cost-table-footer";
+    table.closest(".table-shell").after(pager);
+  }
+  pager.innerHTML = `<button type="button" class="btn btn--ghost" data-cost-page="-1" ${state.pages[view] <= 1 ? "disabled" : ""}>上一页</button>
+    <span>第 ${state.pages[view]} / ${pages} 页 · ${state.payload.provisional ? "已整理" : "共"} ${costTableTotalRows(view)} 条</span>
+    <button type="button" class="btn btn--ghost" data-cost-page="1" ${state.pages[view] >= pages ? "disabled" : ""}>下一页</button>`;
+  table.querySelectorAll("[data-reference-check]").forEach(input => { input.checked = state.referenceSelected.has(input.dataset.referenceCheck); });
+  if (state.payload.editable === false) table.querySelectorAll("input, button").forEach(input => { input.disabled = true; });
   state.renderedViews.add(view);
   updateCostRowLimitControls();
   scheduleCostTableSizing(view);
@@ -357,11 +376,18 @@ function render() {
   refs.syncPanel.className = `banner banner--${syncTone(payload.sync.sync_state)}`;
   refs.syncPanel.textContent = `发票池 ${payload.sync.source_invoice_count} 张，成本已纳入 ${payload.sync.parsed_invoice_count} 张，待同步 ${payload.sync.pending_count} 张，待核对 ${payload.sync.review_count || 0} 张，已校验但未解析明细 ${payload.sync.not_parsed_count} 张`;
   document.getElementById("detailCount").textContent = payload.detail_count;
-  document.getElementById("referenceCount").textContent = payload.invoice_reference.length;
+  document.getElementById("referenceCount").textContent = payload.counts?.reference ?? payload.invoice_reference.length;
   refs.inventoryTotalWithTax.textContent = app.formatMoney(referenceStats.inventory_total_with_tax || 0);
   refs.invoicedReferenceTotal.textContent = app.formatMoney(referenceStats.invoiced_reference_total_with_tax || 0);
   refs.uninvoicedReferenceTotal.textContent = app.formatMoney(referenceStats.uninvoiced_reference_total_with_tax || 0);
   document.getElementById("syncState").textContent = payload.sync.sync_state;
+  if (payload.provisional) {
+    const stopped = ["failed", "interrupted"].includes(payload.progress?.state) || !payload.updating;
+    refs.syncPanel.textContent += stopped
+      ? " · 整理尚未完成：临时明细仅供查看，请重新汇总后使用完整结果"
+      : " · 正在整理：仅显示已完成解析的明细，汇总与开票参考待完整校验";
+  }
+  else if (payload.updating) refs.syncPanel.textContent += " · 正在更新，显示上次完整结果，暂不可修改";
   resetRenderedCostViews();
   updateCostRowLimitControls();
   renderCostView(state.activeView);
@@ -386,7 +412,7 @@ function renderRecentWatchDirs(items) {
 }
 
 function isAutoRefreshReason(reason) {
-  return reason === "eventsource.open" || reason.startsWith("monitor.") || reason.startsWith("invoice.") || reason.startsWith("cost_analysis.") || reason.startsWith("manual_edit.");
+  return reason === "progress" || reason === "eventsource.open" || reason.startsWith("monitor.") || reason.startsWith("invoice.") || reason.startsWith("cost_analysis.") || reason.startsWith("manual_edit.");
 }
 
 async function loadCosts(reason = "") {
@@ -423,6 +449,8 @@ async function loadCostsNow(reason = "") {
     return;
   }
   const showLoadProgress = !isAutoRefreshReason(reason);
+  const requestId = ++state.requestId;
+  const view = state.activeView;
   if (showLoadProgress) {
     beginCostLoadProgress();
     await waitForCostLoadProgressPaint();
@@ -430,7 +458,25 @@ async function loadCostsNow(reason = "") {
   try {
     // This local lifecycle describes only the cost snapshot request and its first view render.
     // Global rebuild progress remains a homepage concern so the two operations cannot be conflated.
-    state.payload = await app.api("/api/v1/cost-analysis");
+    const query = new URLSearchParams({ view, page: state.pages[view], page_size: state.rowLimit });
+    const payload = await app.api(`/api/v1/cost-analysis/view?${query}`);
+    if (requestId !== state.requestId || view !== state.activeView) return;
+    const targetChanged = state.payload && state.payload.target_id !== payload.target_id;
+    const revisionChanged = state.payload && state.payload.revision !== payload.revision;
+    if (targetChanged) {
+      state.dirty.clear();
+      state.editingReference = null;
+    }
+    if (revisionChanged && state.dirty.size && reason !== "save") {
+      throw new Error("成本数据已更新，草稿仍保留；请核对并重新加载后再保存。");
+    }
+    if (revisionChanged || targetChanged) {
+      state.referenceRows.clear();
+      state.referenceSelected.clear();
+    }
+    for (const row of payload.invoice_reference || []) state.referenceRows.set(row.key, row);
+    state.payload = payload;
+    state.pages[view] = payload.page;
     if (reason === "save") state.dirty.clear();
     if (showLoadProgress) {
       advanceCostLoadProgress(58, "正在整理成本明细");
@@ -439,6 +485,8 @@ async function loadCostsNow(reason = "") {
       await waitForCostLoadProgressPaint();
     }
     render();
+    window.clearTimeout(state.pollTimer);
+    if (payload.updating) state.pollTimer = window.setTimeout(() => loadCosts("progress").catch(() => {}), 900);
     if (showLoadProgress) completeCostLoadProgress();
   } catch (error) {
     if (showLoadProgress) failCostLoadProgress(error?.message);
@@ -457,7 +505,7 @@ document.querySelectorAll(".tab").forEach((tab) => {
       view.hidden = view.dataset.view !== state.activeView;
       view.setAttribute("aria-hidden", view.hidden ? "true" : "false");
     });
-    renderCostView(state.activeView);
+    void loadCosts("tab").catch(error => { refs.syncPanel.textContent = error.message; });
     updateReferenceTextMarquee();
     updateReferenceControls();
     scheduleCostTableSizing(state.activeView);
@@ -522,10 +570,18 @@ document.addEventListener("focusout", (event) => {
 document.addEventListener("change", (event) => {
   const checkbox = event.target.closest("[data-reference-check]");
   if (!checkbox) return;
+  if (checkbox.checked) state.referenceSelected.add(checkbox.dataset.referenceCheck);
+  else state.referenceSelected.delete(checkbox.dataset.referenceCheck);
   updateReferenceControls();
 });
 
 document.addEventListener("click", (event) => {
+  const pageButton = event.target.closest("[data-cost-page]");
+  if (pageButton) {
+    state.pages[state.activeView] = Math.max(1, state.pages[state.activeView] + Number(pageButton.dataset.costPage));
+    void loadCosts("page").catch(error => { refs.syncPanel.textContent = error.message; });
+    return;
+  }
   const rowLimitButton = event.target.closest("[data-cost-row-limit]");
   if (rowLimitButton) {
     const nextLimit = Number(rowLimitButton.dataset.costRowLimit);
@@ -533,6 +589,8 @@ document.addEventListener("click", (event) => {
     state.rowLimit = nextLimit;
     saveCostRowLimit(nextLimit);
     saveCostPreferences({ cost_row_limit: nextLimit });
+    state.pages[state.activeView] = 1;
+    void loadCosts("page").catch(error => { refs.syncPanel.textContent = error.message; });
     updateCostRowLimitControls();
     scheduleCostTableSizing(state.activeView);
     return;
@@ -566,6 +624,9 @@ document.addEventListener("click", (event) => {
 });
 
 refs.refreshBtn.addEventListener("click", async () => {
+  if (state.dirty.size && !window.confirm("刷新会丢弃尚未保存的开票参考修改，是否继续？")) return;
+  state.dirty.clear();
+  state.editingReference = null;
   app.setBusy(refs.refreshBtn, true, "刷新中...");
   try {
     await loadCosts("manual_refresh");
@@ -595,8 +656,28 @@ refs.openSummaryBtn.addEventListener("click", async () => {
   }
 });
 refs.copyBtn.addEventListener("click", async () => {
-  const table = document.querySelector(`.cost-view[data-view="${state.activeView}"] table`);
-  await navigator.clipboard.writeText(app.tableToTsv(table));
+  const view = state.activeView;
+  const revision = state.payload?.revision;
+  const targetId = state.payload?.target_id;
+  if (!revision || state.payload.provisional) return;
+  app.setBusy(refs.copyBtn, true, "复制中");
+  try {
+    const parts = [];
+    const table = document.createElement("table");
+    table.innerHTML = "<thead></thead><tbody></tbody>";
+    const pages = Math.max(1, Math.ceil(costTableTotalRows(view) / 200));
+    const field = { details: "items", project: "project_summary", reference: "invoice_reference", checks: "checks" }[view];
+    // Copy still covers the whole view, not merely the currently mounted page.
+    for (let page = 1; page <= pages; page++) {
+      const payload = await app.api(`/api/v1/cost-analysis/view?${new URLSearchParams({ view, page, page_size: 200, revision })}`);
+      if (payload.target_id !== targetId || payload.revision !== revision || state.payload?.revision !== revision) throw new Error("数据已更新，请重新复制。");
+      app.renderTable(table, payload[field], costViewConfig(view).columns);
+      const text = app.tableToTsv(table);
+      parts.push(page === 1 ? text : text.split("\n").slice(1).join("\n"));
+    }
+    await navigator.clipboard.writeText(parts.join("\n"));
+  } catch (error) { refs.syncPanel.textContent = error.message; }
+  finally { app.setBusy(refs.copyBtn, false); }
 });
 
 function numberValue(value) {
@@ -888,7 +969,7 @@ function formatReferenceAmount(value) {
 }
 
 function payloadReferenceRow(key) {
-  return state.payload?.invoice_reference?.find((item) => String(item.key || "") === String(key || ""));
+  return state.referenceRows.get(String(key || ""));
 }
 
 function referenceRowElementByKey(key) {
@@ -927,12 +1008,14 @@ function referenceDraftMetrics(source) {
 
 function updateReferenceStatsFromDrafts() {
   if (!state.payload) return;
-  let invoicedTotal = 0;
-  let uninvoicedTotal = 0;
-  state.payload.invoice_reference.forEach((row) => {
+  let invoicedTotal = numberValue(state.payload.reference_status_stats?.invoiced_reference_total_with_tax);
+  let uninvoicedTotal = numberValue(state.payload.reference_status_stats?.uninvoiced_reference_total_with_tax);
+  state.dirty.forEach((_draft, key) => {
+    const row = payloadReferenceRow(key);
+    if (!row) return;
     const metrics = referenceDraftMetrics(row);
-    invoicedTotal += metrics.lockedReferenceTotal;
-    uninvoicedTotal += metrics.uninvoicedReferenceTotal;
+    invoicedTotal += metrics.lockedReferenceTotal - numberValue(row.invoiced_reference_total_with_tax);
+    uninvoicedTotal += metrics.uninvoicedReferenceTotal - numberValue(row.uninvoiced_reference_total_with_tax);
   });
   refs.invoicedReferenceTotal.textContent = app.formatMoney(invoicedTotal);
   refs.uninvoicedReferenceTotal.textContent = app.formatMoney(uninvoicedTotal);
@@ -992,16 +1075,14 @@ function selectedReferenceInputs() {
 }
 
 function selectedReferenceKeys() {
-  return [...document.querySelectorAll("[data-reference-check]:checked")]
-    .map((checkbox) => checkbox.dataset.referenceCheck)
-    .filter(Boolean);
+  return [...state.referenceSelected];
 }
 
 function updateReferenceControls() {
   const dirtyCount = state.dirty.size;
   const invalidCount = invalidReferenceDraftCount();
   const selectedCount = selectedReferenceKeys().length;
-  const busy = refs.saveBtn.dataset.busy === "true";
+  const busy = refs.saveBtn.dataset.busy === "true" || state.payload?.editable === false;
   const batchValid = isCompleteMarkupRateText(refs.batchMarkupInput?.value || "");
   refs.saveBtn.disabled = busy || dirtyCount === 0 || invalidCount > 0;
   if (!busy) refs.saveBtn.textContent = invalidCount ? "检查开票参考" : (dirtyCount ? `保存状态（${dirtyCount}）` : "保存状态");
@@ -1014,11 +1095,15 @@ function updateReferenceControls() {
 }
 
 function applySelectedQuantity(mode) {
-  selectedReferenceInputs().forEach((input) => {
-    input.value = mode === "max" ? input.dataset.referenceMaxValue || "0" : "0";
-    setRowDraft(input.dataset.referenceKey, { invoiced_quantity: input.value });
-    updateReferenceRowByKey(input.dataset.referenceKey);
+  selectedReferenceKeys().forEach((key) => {
+    const value = mode === "max" ? String(payloadReferenceRow(key)?.quantity || "0") : "0";
+    const input = referenceInputByKey(key);
+    if (input) input.value = value;
+    setRowDraft(key, { invoiced_quantity: value });
+    updateReferenceRowByKey(key);
   });
+  updateReferenceStatsFromDrafts();
+  updateReferenceControls();
 }
 
 function applySelectedMarkup(locked) {
@@ -1037,6 +1122,8 @@ function applySelectedMarkup(locked) {
     if (input && button) setMarkupControlState(input, button, locked);
     updateReferenceRowByKey(key);
   });
+  updateReferenceStatsFromDrafts();
+  updateReferenceControls();
 }
 
 refs.markMaxBtn?.addEventListener("click", () => applySelectedQuantity("max"));
@@ -1064,7 +1151,7 @@ refs.saveBtn.addEventListener("click", async () => {
   }));
   app.setBusy(refs.saveBtn, true, "保存中...");
   try {
-    await app.api("/api/v1/cost-analysis/reference-status", { method: "POST", body: JSON.stringify({ items }) });
+    await app.api("/api/v1/cost-analysis/reference-status", { method: "POST", body: JSON.stringify({ items, target_id: state.payload.target_id, revision: state.payload.revision }) });
     state.editingReference = null;
     await loadCosts("save");
     updateReferenceControls();
