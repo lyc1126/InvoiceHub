@@ -160,7 +160,9 @@ Windows验包测试中的假凭据在运行时拼接：保持生成文件的扫�
 | `stock_average_unit_price*` | 库存成本按数量加权；不能替换成行单价算术平均 | 缺少任一必需值时返回空，不把坏行作零 | 均价双口径/缺失行测试 |
 | `purchase_reference_average_unit_price_with_tax` | 采购参考刻画每次采购单价，行权重相同 | 不参与库存金额和开票参考基数 | 双口径测试 |
 | `_reference_key` 与 `costs.py::_reference_aliases` | SHA1 分隔键兼容旧系统，旧明文/规范化键仍需读取 | 新保存归一到 SHA1；四字段不能加入销售方/票号 | 旧 SHA1/兼容状态测试 |
-| `_invoice_reference_summary/_build_reference_rows` | 开票参考按库存除税均价、行级加价和 13% 销项税计算 | 8% 仅 fallback；每行独立；公式两文件一致 | 行级加价与统计测试 |
+| `_invoice_reference_summary/_build_reference_rows` | 开票参考按成本单价（不含税 + 不可抵扣税金）、行级加价和本公司销项税率计算 | 8% 仅 fallback；每行独立；公式在工作簿、API、保存与 page-costs 四处一致；无 `tax_profile` 时等同旧的一般纳税人 13% | 行级加价与统计测试、税务设置测试 |
+| `input_tax_deductibility/reference_cost_basis` | 一般纳税人只有专票与旅客运输普票可抵扣，其他普票税金计入成本；小规模全部计入 | 类型未确认时按不含税并标注，避免识别缺口抬高参考价；通行费普票未单独识别，会按不可抵扣计 | `test_cost_reference_general_taxpayer_adds_ordinary_invoice_tax_to_cost`、`..._unconfirmed_invoice_type_...` |
+| `_write_reference_status`（两处） | 改写状态 JSON 时保留顶层 `tax_profile` | 重新汇总合并工作簿状态、只保存行状态都不能清掉公司税务设置 | `test_rebuild_status_writer_preserves_tax_profile`、`test_cost_tax_profile_change_keeps_locked_snapshot_and_survives_row_saves` |
 | `CostProjectionService.save_reference_status::locked_part` | 已开金额代表保存当时的业务快照，新增明细只能增加未开 | 数量变化才按比例重锁；只改加价不重价已开部分 | 快照锁定/新增汇总/改加价测试 |
 | `_read_reference_status_from_workbook` | 旧目录可能只有工作簿状态，没有完整 JSON | 只作兼容兜底，恢复后写结构化 JSON | 工作簿恢复测试 |
 

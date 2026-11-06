@@ -97,6 +97,8 @@ class InvoiceReferenceRow(BaseModel):
 
 class ReferenceStatusPatch(BaseModel):
     items: list[dict[str, Any]] = Field(default_factory=list)
+    # Optional company tax settings: {"taxpayer_type": "general" | "small_scale", "output_tax_rate_percent": "13"}.
+    tax_profile: dict[str, Any] | None = None
 
 
 class CostAnalysisSnapshot(BaseModel):
@@ -110,6 +112,7 @@ class CostAnalysisSnapshot(BaseModel):
     reference_status_path: str
     reference_status_exists: bool = False
     reference_markup_rate: str = "8%"
+    reference_tax_profile: dict[str, Any] = Field(default_factory=dict)
     detail_count: int = 0
     check_count: int = 0
     mismatch_count: int = 0

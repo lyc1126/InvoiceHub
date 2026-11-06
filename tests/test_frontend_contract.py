@@ -91,7 +91,13 @@ def test_cost_page_keeps_required_controls() -> None:
     assert "库存平均单价(除税) = sum(金额(除税)) / sum(数量)" in html
     assert "库存平均单价(含税) = sum(金额(除税)+税金) / sum(数量)" in html
     assert "采购参考平均单价(含税) = avg(明细行含税原始单价)" in html
-    assert "平均单价(含税) = 平均单价(除税) × 1.13" in html
+    assert "平均单价(含税) = 平均单价(除税) × (1 + 本公司销项税率)" in html
+    assert "× 1.13" not in html
+    assert 'id="taxpayerTypeSelect"' in html
+    assert 'id="outputTaxRateSelect"' in html
+    assert 'id="saveTaxProfileBtn"' in html
+    for option in ('value="general"', 'value="small_scale"', 'value="13"', 'value="3"', 'value="1"'):
+        assert option in html
     assert "最近保存的文件夹" in js
     assert "入库总量合计" in html
     assert "已开库存合计金额" in html
@@ -123,11 +129,18 @@ def test_cost_page_keeps_required_controls() -> None:
     assert '"平均单价(含税)"' in reference_columns_body
     assert "row.reference_average_unit_price_with_tax" in js
     assert "numberValue(row.total_with_tax) / quantity" not in js
-    assert "const referenceAverageUnitPrice = numberValue(source.average_unit_price) * multiplier;" in js
+    assert "const referenceAverageUnitPrice = numberValue(source.reference_cost_unit_price ?? source.average_unit_price) * multiplier;" in js
+    assert "const outputTaxRate = referenceOutputTaxRate();" in js
     assert "const referenceAmount = referenceAverageUnitPrice * max;" in js
-    assert "const referenceTax = referenceAmount * 0.13;" in js
+    assert "const referenceTax = referenceAmount * outputTaxRate;" in js
     assert "const referenceTotal = referenceAmount + referenceTax;" in js
-    assert "const referenceAverageWithTax = referenceAverageUnitPrice * 1.13;" in js
+    assert "const referenceAverageWithTax = referenceAverageUnitPrice * (1 + outputTaxRate);" in js
+    assert "referenceAmount * 0.13" not in js
+    assert "referenceAverageUnitPrice * 1.13" not in js
+    assert "state.payload?.reference_tax_profile?.output_tax_rate" in js
+    assert "tax_profile: taxProfileSelection()" in js
+    assert "请先保存开票参考草稿，再修改税务设置" in js
+    assert reference_columns_body.rstrip().rstrip(",").endswith('render: (row) => referenceText(row, "reference_cost_basis_text") }')
     assert "const referenceAmount = numberValue(source.amount) * multiplier;" not in js
     assert "referenceAverageWithTax = numberValue(source.average_unit_price) * 1.13 * multiplier" not in js
     assert "inventory_total_with_tax" in js
@@ -146,7 +159,7 @@ def test_cost_page_keeps_required_controls() -> None:
     assert "解锁" in js
     assert "common.js?v=20260907-desktop-integrated-2" in html
     assert "app.css?v=20260907-desktop-integrated-2" in html
-    assert "page-costs.js?v=20261009-progressive-3" in html
+    assert "page-costs.js?v=20261105-cost-tax-profile" in html
     for token in (
         "发票大类",
         "特定业务类型",

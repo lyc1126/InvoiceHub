@@ -2,6 +2,16 @@
 
 ## 未发布
 
+### 2026-11-05 开票参考按公司税务设置计价（BUG-01）
+
+- 需求：用户要求先修复 BUG-01：开票参考销项税率写死 13%、成本固定取不含税金额，小规模纳税人（3% / 1%）与劳务类公司参考价算错。用户确认税率本轮只按公司设置（品目级覆盖随 COST-02 品目表再做），一般纳税人取得的普通发票进项税同步计入成本。
+- 起点：`codex/selection-workflow` 与 `main` 同为 `ddf5ab6`；新建 `codex/cost-output-tax-rate`，工作区既有未提交改动（选择工作流文档、成本页浮层、`bank/`、交接工具等）原样保留，未纳入本轮判断。
+- 核查：13% 在四处各自计算——工作簿 `_invoice_reference_summary`、API 读取 `_build_reference_rows`、状态保存 `save_reference_status`、`page-costs.js` 草稿联动（`0.13` / `1.13`）；发票类型只在“发票校验”行里（`发票大类/特定业务类型/类型识别状态`），成本明细 CSV 没有。
+- 方案：公司税务设置存于 `watch_dir/成本开票状态.json` 顶层 `tax_profile`（纳税人类型、销项税率），随公司资料夹走，不新增配置文件；缺失时按一般纳税人 13%，旧状态结果不变。`cost_analysis.py` 新增 `ReferenceTaxProfile`、`parse_reference_tax_profile`（严格，非法 `400`）、`reference_tax_profile_from_status`（容错）、`input_tax_deductibility`、`reference_cost_basis`：成本单价 = sum(金额(除税) + 不可抵扣税金) / sum(数量)，小规模全部计入；一般纳税人只计入已确认的增值税普通发票（旅客运输除外），类型未确认的按不含税并标注“N 张发票类型待核对”。四处计价统一用该成本与公司税率；两个状态写入函数在改写行状态（含重新汇总合并工作簿状态）时保留 `tax_profile`。`POST /api/v1/cost-analysis/reference-status` 接受可选 `tax_profile`；快照新增 `reference_tax_profile`，开票参考行新增 `reference_cost_unit_price/reference_cost_basis/reference_cost_note/reference_cost_basis_text`，`average_unit_price` 仍为纯不含税均价。工作簿“开票参考”末尾新增“成本口径”“销项税率”两列（旧工作簿缺列会按既有 schema 自愈重写）。`/costs` 新增“本公司税务设置”（纳税人类型、13/9/6/5/3/1/0%），有未保存的开票参考草稿时不允许保存；开票参考表末尾新增“成本口径”列；算法说明浮层改为新公式；`page-costs.js` 资源版本 `20261105-cost-tax-profile`。已开快照不随税务设置重算。
+- 文档：成本规则页、数据与算法 §9.3、接口与流程（cost API 字段与 reference-status 载荷）、设计原因、任务导航高风险提醒、实现状态、未来工作总览 BUG-01（改为进行中）与成本分析 v2 设计落地顺序。
+- 验证：本机 python.org Python 3.14（未新建虚拟环境）`PYTHONPATH=src python3.14 -m pytest tests/test_summary_and_costs.py tests/test_frontend_contract.py tests/test_invoice_classification.py` 通过；其中新增 13 项覆盖默认一般纳税人 13%、小规模 1% 含税成本与工作簿两列、一般纳税人专票 / 普票 / 旅客运输混合、类型待核对标注、改税务设置不动已开快照且行保存不丢设置、6 类非法输入拒绝且不写文件、重新汇总读取并保留设置、重新汇总写入函数保留设置。`node --check web/static/js/page-costs.js` 通过。2026-11-06 用户为该 Python 补装 fastapi / uvicorn / certifi / httpx2 后，`tests/test_api_contract.py` 与 `tests/test_progressive_loading.py` 通过，全量 `pytest` 817 passed、16 skipped。真实页面验收：在 `/tmp` 用合成配置（端口 8799、合成专票与普票各一张）启动源码服务，经专用 Chrome DevTools 协议操作 `/costs`：默认一般纳税人 13% 时成本口径“部分含税”、参考含税单价 123.87（=(200+200+6)/4×1.08×1.13）；改为小规模 1% 保存后为“含税”、117.81，工作簿“开票参考”同为 117.81 / 471.23 且末列“成本口径=含税”“销项税率=1%”，状态 JSON 写入 `tax_profile`；有加价率草稿时“保存税务设置”禁用并提示，草稿行按已保存税率联动为 119.99；页面无脚本错误。验收后停止服务并删除 `/tmp` 数据。
+- 未覆盖：TSV 复制未实测（列配置相同，未读剪贴板）；未覆盖深色 / 其他皮肤、窄窗口、正式 Windows BAT、真实默认配置与业务目录、系统选择器、桌面宿主与打包产物。“成本口径”列位于开票参考表最右侧，需要横向滚动。通行费电子普通发票未单独识别，会按不可抵扣计入成本；专票是否已勾选抵扣未读取进项抵扣目录。征收率优惠未写入代码，仅在小规模选择非 0/1/3/5% 时提示核对。未提交、未推送。
+
 ### 2026-10-09 双平台工作流完善与源码集成打包
 
 - 需求与起点：用户要求把渐进读取、临时识别/预览和勾选工作流一起提交、推送，并生成Mac包，Windows由用户取同一源码自行打包。本轮继续 `codex/selection-workflow`，起点为 `ee0f2c2557d2b2a3640e9c00d9b8241581db4409`；银行底稿、税务设计、交接工具和其它未授权资产保留在工作区，不进入本次产品输入。

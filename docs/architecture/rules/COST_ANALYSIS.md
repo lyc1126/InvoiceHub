@@ -21,6 +21,7 @@
 - `workspace` 只保留普通汇总与运行状态工作区；成本页面和 API 不得让用户误以为成本汇总表在 `workspace`。
 - “刷新”和“重新汇总”语义必须分开：刷新只重新读取当前状态，不生成文件；重新汇总才扫描当前发票目录并重建普通汇总与成本分析。
 - 成本分析表“开票参考”sheet 与 `/costs` 页面“开票参考”标签必须以当前成本明细为来源，按 `发票代码(**内文字) / 内部项目名称 / 规格型号 / 单位` 汇总；不能输出销售方和涉及发票号码；开票加价率不再固定，默认 `8%` 只作为行级 fallback，每条开票参考行可在 `watch_dir/成本开票状态.json` 中单独保存 `reference_markup_rate/reference_markup_rate_percent/reference_markup_locked`，勾选后的批量加价率操作只作用于已选行。API 必须持续暴露兼容字段 `reference_markup_rate`，但页面不得再提供顶部全局加价率设置。
+- 开票参考按本公司税务设置计价：`watch_dir/成本开票状态.json` 顶层 `tax_profile = {taxpayer_type: general|small_scale, output_tax_rate, output_tax_rate_percent}`，缺失或不可读时按一般纳税人、13%，旧状态文件结果不变。成本单价 = sum(金额(除税) + 不可抵扣税金) / sum(数量)：小规模纳税人全部税金计入；一般纳税人只计入“发票校验”中已确认为增值税普通发票且非旅客运输的税金，类型未确认的按不含税计并在“成本口径”标注待核对，不得因识别缺口抬高参考价。参考税金与含税单价用 `tax_profile.output_tax_rate`。工作簿、`costs.py` 的读取与保存、`page-costs.js` 草稿联动四处必须同一公式；任何改写状态 JSON 的路径（含重新汇总合并工作簿状态）都必须保留 `tax_profile`。改税务设置不重算已开快照；页面有未保存的开票参考草稿时不允许保存税务设置。
 - 开票参考状态保存时必须按同一汇总键持久化到当前 `watch_dir/成本开票状态.json`，并锁定当次 `已开数量` 与已开参考金额/税金/价税合计快照。后续新增同键发票只能增加未开部分，不能让已开金额随新汇总漂移。
 - 底层 `成本发票明细.csv` 必须保持一条明细一行、票面字段不留空；工作簿和页面可以合并展示同票票面字段，但不能改变 CSV 逐行口径。
 - 调整成本字段时必须同步更新工作簿 sheet、`GET /api/v1/cost-analysis`、`POST /api/v1/cost-analysis/reference-status`、`/costs` 前端和契约测试。
@@ -38,6 +39,7 @@
   - `invoice_reference`
   - `reference_status_stats`
   - `reference_markup_rate`
+  - `reference_tax_profile`（纳税人类型、销项税率、是否已保存、提示）
   - `sync`
 - `/costs` 页面中与工作簿 sheet 对应的标签必须互斥显示；新增或调整标签时必须检查 `hidden/aria-selected/aria-hidden`、`.cost-view[hidden]` 和复制 TSV 口径。
 

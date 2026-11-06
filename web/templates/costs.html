@@ -56,6 +56,31 @@
       <div class="stat-card"><span>同步状态</span><strong id="syncState">--</strong><small>发票池对比成本产物</small></div>
     </section>
 
+    <section id="costTaxProfile" class="inline-panel cost-tax-profile" aria-label="本公司税务设置">
+      <div class="toolbar">
+        <strong>本公司税务设置</strong>
+        <label class="cost-tax-profile__field">纳税人类型
+          <select id="taxpayerTypeSelect" class="input">
+            <option value="general">一般纳税人</option>
+            <option value="small_scale">小规模纳税人</option>
+          </select>
+        </label>
+        <label class="cost-tax-profile__field">销项税率
+          <select id="outputTaxRateSelect" class="input">
+            <option value="13">13%</option>
+            <option value="9">9%</option>
+            <option value="6">6%</option>
+            <option value="5">5%</option>
+            <option value="3">3%</option>
+            <option value="1">1%</option>
+            <option value="0">0%</option>
+          </select>
+        </label>
+        <button id="saveTaxProfileBtn" class="btn btn--secondary" type="button" disabled>保存税务设置</button>
+        <span id="taxProfileHint" class="cost-tax-profile__hint" aria-live="polite"></span>
+      </div>
+    </section>
+
     <section class="list-controls sticky-controls" aria-label="成本列表操作">
       <div class="toolbar cost-actions">
         <button id="refreshBtn" class="btn btn--ghost" type="button">刷新</button>
@@ -79,7 +104,7 @@
             <strong>平均单价算法说明</strong>
             <p><b>发票明细</b>：平均单价(含税) = (金额(除税) + 税金) / 数量；金额、税金或数量非法时留空。</p>
             <p><b>项目规格汇总</b>：库存平均单价(除税) = sum(金额(除税)) / sum(数量)，库存平均单价(含税) = sum(金额(除税)+税金) / sum(数量)；采购参考平均单价(含税) = avg(明细行含税原始单价)，只作采购参考。</p>
-            <p><b>开票参考</b>：平均单价(除税) = 库存加权除税成本 × (1 + 行级加价率)，平均单价(含税) = 平均单价(除税) × 1.13；金额、税金和价税合计随数量与加价率联动。</p>
+            <p><b>开票参考</b>：成本单价 = sum(金额(除税) + 不可抵扣税金) / sum(数量)，小规模纳税人的进项税全部计入成本，一般纳税人只计入普通发票（旅客运输除外）的税金；平均单价(除税) = 成本单价 × (1 + 行级加价率)，平均单价(含税) = 平均单价(除税) × (1 + 本公司销项税率)；金额、税金和价税合计随数量、加价率与税务设置联动。</p>
           </div>
         </div>
         <div class="tabs cost-tabs" role="tablist" aria-label="成本分析视图">
@@ -143,6 +168,6 @@
   {{system_controls}}
   <script src="/static/js/common.js?v=20260907-desktop-integrated-2"></script>
   <script src="/static/js/system-controls.js?v=20260907-desktop-integrated-2"></script>
-  <script src="/static/js/page-costs.js?v=20261009-progressive-3"></script>
+  <script src="/static/js/page-costs.js?v=20261105-cost-tax-profile"></script>
 </body>
 </html>

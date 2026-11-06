@@ -17,6 +17,7 @@ const state = {
   dirty: new Map(),
   activeView: "details",
   editingReference: null,
+  taxProfileEditing: false,
   renderedViews: new Set(),
   rowLimit: loadCostRowLimit(),
   costLoadProgressAnnouncementKey: "",
@@ -50,6 +51,10 @@ const refs = {
   inventoryTotalWithTax: document.getElementById("inventoryTotalWithTax"),
   invoicedReferenceTotal: document.getElementById("invoicedReferenceTotal"),
   uninvoicedReferenceTotal: document.getElementById("uninvoicedReferenceTotal"),
+  taxpayerTypeSelect: document.getElementById("taxpayerTypeSelect"),
+  outputTaxRateSelect: document.getElementById("outputTaxRateSelect"),
+  saveTaxProfileBtn: document.getElementById("saveTaxProfileBtn"),
+  taxProfileHint: document.getElementById("taxProfileHint"),
 };
 
 const detailColumns = [
@@ -101,6 +106,8 @@ const referenceColumns = [
   { key: "invoice_status", label: "开票状态", render: (row) => app.statusPill(row.invoice_status || "未开具", app.toneFromStatus(row.invoice_status || "")) },
   { key: "invoiced_reference_total_with_tax", label: "已开参考价税合计", render: (row) => referenceNumber(row.invoiced_reference_total_with_tax, "invoiced-reference-total") },
   { key: "uninvoiced_reference_amount", label: "未开参考金额", render: (row) => referenceNumber(row.uninvoiced_reference_amount, "uninvoiced-reference-amount") },
+  // Appended last so updateReferenceRowByKey's fixed cell indexes stay valid.
+  { key: "reference_cost_basis_text", label: "成本口径", render: (row) => referenceText(row, "reference_cost_basis_text") },
 ];
 
 function syncTone(value) {
@@ -380,6 +387,7 @@ function render() {
   refs.inventoryTotalWithTax.textContent = app.formatMoney(referenceStats.inventory_total_with_tax || 0);
   refs.invoicedReferenceTotal.textContent = app.formatMoney(referenceStats.invoiced_reference_total_with_tax || 0);
   refs.uninvoicedReferenceTotal.textContent = app.formatMoney(referenceStats.uninvoiced_reference_total_with_tax || 0);
+  renderTaxProfile();
   document.getElementById("syncState").textContent = payload.sync.sync_state;
   if (payload.provisional) {
     const stopped = ["failed", "interrupted"].includes(payload.progress?.state) || !payload.updating;
@@ -395,6 +403,68 @@ function render() {
   updateReferenceStatsFromDrafts();
   restoreReferenceFocus(focusState);
   updateReferenceControls();
+}
+
+const DEFAULT_OUTPUT_TAX_RATE = 0.13;
+
+function referenceOutputTaxRate() {
+  const rate = Number(state.payload?.reference_tax_profile?.output_tax_rate);
+  return Number.isFinite(rate) && rate >= 0 ? rate : DEFAULT_OUTPUT_TAX_RATE;
+}
+
+function savedTaxProfile() {
+  const profile = state.payload?.reference_tax_profile || {};
+  return {
+    taxpayer_type: profile.taxpayer_type || "general",
+    output_tax_rate_percent: String(Number(profile.output_tax_rate_percent ?? DEFAULT_OUTPUT_TAX_RATE * 100)),
+  };
+}
+
+function taxProfileSelection() {
+  return {
+    taxpayer_type: refs.taxpayerTypeSelect?.value || "general",
+    output_tax_rate_percent: refs.outputTaxRateSelect?.value || "13",
+  };
+}
+
+function taxProfileChanged() {
+  const saved = savedTaxProfile();
+  const selected = taxProfileSelection();
+  return saved.taxpayer_type !== selected.taxpayer_type || saved.output_tax_rate_percent !== selected.output_tax_rate_percent;
+}
+
+function ensureTaxRateOption(percent) {
+  if (!refs.outputTaxRateSelect || [...refs.outputTaxRateSelect.options].some((option) => option.value === percent)) return;
+  refs.outputTaxRateSelect.add(new Option(`${percent}%`, percent));
+}
+
+function renderTaxProfile() {
+  if (!refs.taxpayerTypeSelect || !refs.outputTaxRateSelect) return;
+  // Keep an unsaved selection across auto refreshes; only a save or a clean state resets it.
+  if (!state.taxProfileEditing) {
+    const saved = savedTaxProfile();
+    ensureTaxRateOption(saved.output_tax_rate_percent);
+    refs.taxpayerTypeSelect.value = saved.taxpayer_type;
+    refs.outputTaxRateSelect.value = saved.output_tax_rate_percent;
+  }
+  updateTaxProfileControls();
+}
+
+function updateTaxProfileControls() {
+  if (!refs.saveTaxProfileBtn) return;
+  const profile = state.payload?.reference_tax_profile || {};
+  const changed = taxProfileChanged();
+  const blockedByDrafts = state.dirty.size > 0;
+  const busy = refs.saveTaxProfileBtn.dataset.busy === "true" || !state.payload || state.payload.editable === false || state.payload.provisional;
+  refs.saveTaxProfileBtn.disabled = busy || !changed || blockedByDrafts;
+  refs.saveTaxProfileBtn.title = blockedByDrafts ? "请先保存开票参考草稿，再修改税务设置" : "保存后重算开票参考；已开参考金额保持当次快照";
+  const selectedSmallScale = refs.taxpayerTypeSelect.value === "small_scale";
+  const basis = selectedSmallScale ? "小规模纳税人：进项税全部计入成本" : "一般纳税人：专用发票按不含税计成本，普通发票（旅客运输除外）的税金计入成本";
+  const notices = [basis];
+  if (!profile.configured && !changed) notices.push("尚未保存，当前按一般纳税人、13% 计算");
+  if (changed) notices.push(blockedByDrafts ? "有未保存的开票参考草稿，请先保存" : "修改未保存");
+  else if (profile.warning) notices.push(profile.warning);
+  refs.taxProfileHint.textContent = notices.join("；");
 }
 
 function renderRecentWatchDirs(items) {
@@ -466,6 +536,7 @@ async function loadCostsNow(reason = "") {
     if (targetChanged) {
       state.dirty.clear();
       state.editingReference = null;
+      state.taxProfileEditing = false;
     }
     if (revisionChanged && state.dirty.size && reason !== "save") {
       throw new Error("成本数据已更新，草稿仍保留；请核对并重新加载后再保存。");
@@ -982,11 +1053,13 @@ function referenceDraftMetrics(source) {
   const next = Math.min(numberValue(draft.invoiced_quantity), max);
   const percent = numberValue(draft.reference_markup_rate_percent);
   const multiplier = 1 + percent / 100;
-  const referenceAverageUnitPrice = numberValue(source.average_unit_price) * multiplier;
+  // Mirrors costs.py: cost base includes non-deductible input VAT, output VAT uses the company tax profile.
+  const referenceAverageUnitPrice = numberValue(source.reference_cost_unit_price ?? source.average_unit_price) * multiplier;
+  const outputTaxRate = referenceOutputTaxRate();
   const referenceAmount = referenceAverageUnitPrice * max;
-  const referenceTax = referenceAmount * 0.13;
+  const referenceTax = referenceAmount * outputTaxRate;
   const referenceTotal = referenceAmount + referenceTax;
-  const referenceAverageWithTax = referenceAverageUnitPrice * 1.13;
+  const referenceAverageWithTax = referenceAverageUnitPrice * (1 + outputTaxRate);
   const ratio = max <= 0 ? 0 : next / max;
   const quantityChanged = Math.abs(next - numberValue(source.invoiced_quantity)) > 0.0000001;
   const lockedReferenceTotal = next <= 0 ? 0 : (quantityChanged ? referenceTotal * ratio : numberValue(source.invoiced_reference_total_with_tax));
@@ -1092,6 +1165,7 @@ function updateReferenceControls() {
   if (refs.batchMarkupLockBtn) refs.batchMarkupLockBtn.disabled = selectedCount === 0 || !batchValid;
   if (refs.batchMarkupUnlockBtn) refs.batchMarkupUnlockBtn.disabled = selectedCount === 0;
   if (refs.batchMarkupInput) refs.batchMarkupInput.setAttribute("aria-invalid", refs.batchMarkupInput.value && !batchValid ? "true" : "false");
+  updateTaxProfileControls();
 }
 
 function applySelectedQuantity(mode) {
@@ -1137,6 +1211,35 @@ window.addEventListener("resize", app.debounce(() => {
 if (document.fonts?.ready) {
   document.fonts.ready.then(() => scheduleCostTableSizing(state.activeView)).catch(() => {});
 }
+
+[refs.taxpayerTypeSelect, refs.outputTaxRateSelect].forEach((select) => {
+  select?.addEventListener("change", () => {
+    state.taxProfileEditing = taxProfileChanged();
+    updateTaxProfileControls();
+  });
+});
+
+refs.saveTaxProfileBtn?.addEventListener("click", async () => {
+  if (state.dirty.size > 0 || !taxProfileChanged()) {
+    updateTaxProfileControls();
+    return;
+  }
+  app.setBusy(refs.saveTaxProfileBtn, true, "保存中...");
+  try {
+    await app.api("/api/v1/cost-analysis/reference-status", {
+      method: "POST",
+      body: JSON.stringify({ items: [], tax_profile: taxProfileSelection(), target_id: state.payload.target_id, revision: state.payload.revision }),
+    });
+    state.taxProfileEditing = false;
+    await loadCosts("save");
+  } catch (error) {
+    refs.syncPanel.className = "banner banner--danger";
+    refs.syncPanel.textContent = error.message || "税务设置保存失败";
+  } finally {
+    app.setBusy(refs.saveTaxProfileBtn, false);
+    updateTaxProfileControls();
+  }
+});
 
 refs.saveBtn.addEventListener("click", async () => {
   if (invalidReferenceDraftCount() > 0) {

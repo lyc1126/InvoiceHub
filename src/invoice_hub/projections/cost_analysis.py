@@ -19,13 +19,27 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
 from invoice_hub.extraction import extract_invoice_record, normalize_classification_text
+from invoice_hub.extraction.classification import (
+    BUSINESS_TYPE_PASSENGER,
+    CLASSIFICATION_STATUS_OK,
+    INVOICE_TYPE_ORDINARY,
+    INVOICE_TYPE_SPECIAL,
+)
 
 
 COST_DETAIL_CSV_NAME = "成本发票明细.csv"
 COST_SUMMARY_XLSX_NAME = "成本发票汇总.xlsx"
 COST_REFERENCE_STATUS_NAME = "成本开票状态.json"
 DEFAULT_REFERENCE_MARKUP_RATE = Decimal("0.08")
+# Default output rate when a company has no saved tax profile; keeps old status files unchanged.
 REFERENCE_OUTPUT_TAX_RATE = Decimal("0.13")
+TAXPAYER_GENERAL = "general"
+TAXPAYER_SMALL_SCALE = "small_scale"
+TAXPAYER_LABELS = {TAXPAYER_GENERAL: "一般纳税人", TAXPAYER_SMALL_SCALE: "小规模纳税人"}
+SMALL_SCALE_USUAL_RATES = {Decimal("0"), Decimal("0.01"), Decimal("0.03"), Decimal("0.05")}
+INPUT_TAX_DEDUCTIBLE = "deductible"
+INPUT_TAX_NON_DEDUCTIBLE = "non_deductible"
+INPUT_TAX_PENDING = "pending"
 
 DETAIL_HEADERS = [
     "销售方",
@@ -95,6 +109,8 @@ INVOICE_REFERENCE_HEADERS = [
     "未开参考价税合计",
     "参考加价率",
     "状态更新时间",
+    "成本口径",
+    "销项税率",
 ]
 
 CHECK_HEADERS = [
@@ -376,11 +392,155 @@ def purchase_reference_average_unit_price_with_tax(rows: list[dict]) -> Decimal 
     return total / Decimal(count)
 
 
-def reference_output_average_unit_price_with_tax(avg_price: Decimal | None, markup_rate: object) -> Decimal | None:
+def reference_output_average_unit_price_with_tax(
+    avg_price: Decimal | None,
+    markup_rate: object,
+    output_tax_rate: Decimal = REFERENCE_OUTPUT_TAX_RATE,
+) -> Decimal | None:
     if avg_price is None:
         return None
     reference_average_unit_price = avg_price * reference_markup_multiplier(markup_rate)
-    return reference_average_unit_price * (Decimal("1") + REFERENCE_OUTPUT_TAX_RATE)
+    return reference_average_unit_price * (Decimal("1") + output_tax_rate)
+
+
+@dataclass(frozen=True)
+class ReferenceTaxProfile:
+    """Company-level tax settings saved in `watch_dir/成本开票状态.json` under `tax_profile`.
+
+    The workbook, the cost API, status saving and page-costs.js all price the 开票参考 from this
+    one profile; a missing profile means 一般纳税人 + 13%, which is the pre-profile behaviour.
+    """
+
+    taxpayer_type: str = TAXPAYER_GENERAL
+    output_tax_rate: Decimal = REFERENCE_OUTPUT_TAX_RATE
+    configured: bool = False
+
+    def status_payload(self) -> dict:
+        return {
+            "taxpayer_type": self.taxpayer_type,
+            "output_tax_rate": _decimal_text(self.output_tax_rate, "0.000001"),
+            "output_tax_rate_percent": _decimal_text(self.output_tax_rate * Decimal("100"), "0.001"),
+        }
+
+    def api_payload(self) -> dict:
+        percent = _decimal_text(self.output_tax_rate * Decimal("100"), "0.001")
+        warning = ""
+        if self.taxpayer_type == TAXPAYER_SMALL_SCALE and self.output_tax_rate not in SMALL_SCALE_USUAL_RATES:
+            warning = "小规模纳税人通常按征收率 3%（或减按 1%）开票，请核对销项税率。"
+        return {
+            **self.status_payload(),
+            "taxpayer_type_label": TAXPAYER_LABELS[self.taxpayer_type],
+            "output_tax_rate_display": f"{percent}%",
+            "configured": self.configured,
+            "warning": warning,
+        }
+
+
+def _tax_rate_from_percent(value: object) -> Decimal:
+    rate = _to_decimal(value)
+    if rate is None or not rate.is_finite() or rate < 0 or rate >= 100:
+        raise ValueError("销项税率必须是 0 到 100 之间的百分数")
+    return rate / Decimal("100")
+
+
+def parse_reference_tax_profile(value: object) -> ReferenceTaxProfile:
+    """Strict parser for user input (API); raises ValueError instead of silently defaulting."""
+    if not isinstance(value, dict):
+        raise ValueError("税务设置格式不正确")
+    taxpayer_type = _clean_text(value.get("taxpayer_type"))
+    if taxpayer_type not in TAXPAYER_LABELS:
+        raise ValueError("纳税人类型只能是一般纳税人或小规模纳税人")
+    return ReferenceTaxProfile(taxpayer_type, _tax_rate_from_percent(value.get("output_tax_rate_percent")), True)
+
+
+def reference_tax_profile_from_status(payload: object) -> ReferenceTaxProfile:
+    """Tolerant reader for saved status files: anything unreadable falls back to the default."""
+    raw = payload.get("tax_profile") if isinstance(payload, dict) else None
+    if not isinstance(raw, dict):
+        return ReferenceTaxProfile()
+    try:
+        return parse_reference_tax_profile(raw)
+    except ValueError:
+        return ReferenceTaxProfile()
+
+
+def input_tax_deductibility(invoice: dict | None) -> str:
+    """Whether a general taxpayer may deduct this cost invoice's input VAT.
+
+    Only 增值税专用发票 and the 旅客运输 普票 are deductible; other 普票 put their VAT into cost.
+    An unconfirmed classification stays `pending` and is priced like before (不含税) so a
+    recognition gap never silently raises the reference price.
+    """
+    invoice = invoice or {}
+    invoice_type = normalize_classification_text(invoice.get("发票大类"))
+    status = _clean_text(invoice.get("类型识别状态"))
+    if status != CLASSIFICATION_STATUS_OK or invoice_type not in {INVOICE_TYPE_SPECIAL, INVOICE_TYPE_ORDINARY}:
+        return INPUT_TAX_PENDING
+    if invoice_type == INVOICE_TYPE_SPECIAL:
+        return INPUT_TAX_DEDUCTIBLE
+    if normalize_classification_text(invoice.get("特定业务类型")) == BUSINESS_TYPE_PASSENGER:
+        return INPUT_TAX_DEDUCTIBLE
+    return INPUT_TAX_NON_DEDUCTIBLE
+
+
+def input_tax_index(check_rows: Iterable[dict] | None) -> dict[str, str]:
+    """源文件 -> deductibility, read from the 发票校验 rows that carry each invoice's classification."""
+    return {
+        _clean_text(row.get("源文件")): input_tax_deductibility(row)
+        for row in check_rows or []
+        if _clean_text(row.get("源文件"))
+    }
+
+
+def reference_cost_basis(
+    rows: list[dict],
+    tax_profile: ReferenceTaxProfile,
+    deductibility: dict[str, str] | None = None,
+) -> dict:
+    """Weighted cost per unit used as the 开票参考 base: 金额(除税) + 不可抵扣的税金, divided by 数量.
+
+    小规模纳税人 cannot deduct any input VAT, so every row carries its tax; 一般纳税人 only for
+    non-deductible invoices. Any bad row makes the price empty, matching stock_average_unit_price.
+    """
+    deductibility = deductibility or {}
+    total_cost = Decimal("0")
+    total_quantity = Decimal("0")
+    taxed_rows = 0
+    pending_sources: set[str] = set()
+    unit_price: Decimal | None = None
+    for row in rows:
+        amount = _to_decimal(row.get("金额(除税)"))
+        quantity = _to_decimal(row.get("数量"))
+        if amount is None or quantity is None or quantity <= 0 or amount < 0:
+            total_quantity = Decimal("0")
+            break
+        source = _clean_text(row.get("源文件"))
+        status = INPUT_TAX_NON_DEDUCTIBLE if tax_profile.taxpayer_type == TAXPAYER_SMALL_SCALE else deductibility.get(source, INPUT_TAX_PENDING)
+        if status == INPUT_TAX_NON_DEDUCTIBLE:
+            tax_amount = _to_decimal(row.get("税金"))
+            if tax_amount is None or tax_amount < 0:
+                total_quantity = Decimal("0")
+                break
+            amount += tax_amount
+            taxed_rows += 1
+        elif status == INPUT_TAX_PENDING:
+            pending_sources.add(source)
+        total_cost += amount
+        total_quantity += quantity
+    if total_quantity > 0:
+        unit_price = total_cost / total_quantity
+    if not rows or taxed_rows == 0:
+        label = "不含税"
+    elif taxed_rows == len(rows):
+        label = "含税"
+    else:
+        label = "部分含税"
+    note = f"{len(pending_sources)} 张发票类型待核对，暂按不含税计成本" if pending_sources else ""
+    return {"unit_price": unit_price, "label": label, "note": note}
+
+
+def reference_cost_basis_text(basis: dict) -> str:
+    return f"{basis['label']}（{basis['note']}）" if basis.get("note") else basis["label"]
 
 
 def _round(value: Decimal | None, places: str = "0.01") -> Decimal | None:
@@ -1584,6 +1744,13 @@ def _write_reference_status(
         "reference_markup_locked": bool(reference_markup_locked),
         "items": normalized,
     }
+    # Rewriting items (e.g. merging workbook status during 重新汇总) must not drop the company tax profile.
+    try:
+        existing = json.loads(path.read_text(encoding="utf-8-sig")) if path.exists() else {}
+    except Exception:
+        existing = {}
+    if isinstance(existing, dict) and isinstance(existing.get("tax_profile"), dict):
+        payload["tax_profile"] = existing["tax_profile"]
     tmp_path = path.with_name(f"{path.name}.tmp")
     tmp_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     os.replace(tmp_path, path)
@@ -1837,8 +2004,13 @@ def _invoice_reference_summary(
     rows: list[dict],
     status_items: dict[str, dict] | None = None,
     reference_markup_rate: object = DEFAULT_REFERENCE_MARKUP_RATE,
+    tax_profile: ReferenceTaxProfile | None = None,
+    check_rows: list[dict] | None = None,
 ) -> list[dict]:
     fallback_markup_rate = normalize_reference_markup_rate(reference_markup_rate)
+    tax_profile = tax_profile or ReferenceTaxProfile()
+    output_tax_rate = tax_profile.output_tax_rate
+    deductibility = input_tax_index(check_rows)
     grouped: dict[tuple, list[dict]] = defaultdict(list)
     for row in rows:
         key = (
@@ -1851,16 +2023,16 @@ def _invoice_reference_summary(
     result = []
     for key, group_rows in sorted(grouped.items()):
         quantity = _sum_decimal(group_rows, "数量")
-        amount = _sum_decimal(group_rows, "金额(除税)")
-        avg_price = stock_average_unit_price(group_rows)
+        cost_basis = reference_cost_basis(group_rows, tax_profile, deductibility)
+        avg_price = cost_basis["unit_price"]
         status_key = _reference_key(*key)
         status_item = _reference_status_item(status_items, status_key, *key)
         markup = _row_markup_meta(status_item, fallback_markup_rate)
         markup_multiplier = reference_markup_multiplier(markup["rate"])
-        reference_avg_price_with_tax = reference_output_average_unit_price_with_tax(avg_price, markup["rate"])
+        reference_avg_price_with_tax = reference_output_average_unit_price_with_tax(avg_price, markup["rate"], output_tax_rate)
         reference_base_amount = avg_price * quantity if avg_price is not None and quantity > 0 else Decimal("0")
         reference_amount = reference_base_amount * markup_multiplier
-        reference_tax = reference_amount * REFERENCE_OUTPUT_TAX_RATE
+        reference_tax = reference_amount * output_tax_rate
         reference_total = reference_amount + reference_tax
         invoiced_quantity = _to_decimal(status_item.get("invoiced_quantity")) or Decimal("0")
         invoiced_quantity = _clamp_decimal(invoiced_quantity, Decimal("0"), quantity if quantity > 0 else Decimal("0"))
@@ -1911,6 +2083,8 @@ def _invoice_reference_summary(
                 "未开参考价税合计": _number(uninvoiced_reference_total),
                 "参考加价率": markup["display"],
                 "状态更新时间": _clean_text(status_item.get("updated_at")),
+                "成本口径": reference_cost_basis_text(cost_basis),
+                "销项税率": tax_profile.api_payload()["output_tax_rate_display"],
             }
         )
     return result
@@ -2084,6 +2258,7 @@ def _write_workbook(
     check_rows: list[dict],
     status_items: dict[str, dict] | None = None,
     reference_markup_rate: object = DEFAULT_REFERENCE_MARKUP_RATE,
+    tax_profile: ReferenceTaxProfile | None = None,
 ) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     wb = Workbook()
@@ -2096,7 +2271,14 @@ def _write_workbook(
         wb,
         "开票参考",
         INVOICE_REFERENCE_HEADERS,
-        _invoice_reference_summary(detail_rows, status_items=status_items, reference_markup_rate=reference_markup_rate),
+        # 发票校验 rows carry each invoice's 发票大类, which decides whether its input VAT is cost.
+        _invoice_reference_summary(
+            detail_rows,
+            status_items=status_items,
+            reference_markup_rate=reference_markup_rate,
+            tax_profile=tax_profile,
+            check_rows=check_rows,
+        ),
     )
     _append_sheet(wb, "发票校验", CHECK_HEADERS, check_rows)
     wb.save(path)
@@ -2162,11 +2344,19 @@ def build_cost_analysis_outputs(
             status_payload = {}
     markup_rate = normalize_reference_markup_rate(status_payload.get("reference_markup_rate", reference_markup_rate))
     markup_locked = _truthy(status_payload.get("reference_markup_locked", False))
+    tax_profile = reference_tax_profile_from_status(status_payload)
     status_items, status_changed = _merge_reference_status(_load_reference_status(status_json), _load_workbook_reference_status(summary_xlsx))
     if status_changed:
         _write_reference_status(status_json, status_items, reference_markup_rate=markup_rate, reference_markup_locked=markup_locked)
     _write_csv(detail_csv, detail_rows)
-    _write_workbook(summary_xlsx, detail_rows, check_rows, status_items=status_items, reference_markup_rate=markup_rate)
+    _write_workbook(
+        summary_xlsx,
+        detail_rows,
+        check_rows,
+        status_items=status_items,
+        reference_markup_rate=markup_rate,
+        tax_profile=tax_profile,
+    )
 
     failed = [item for item in analyses if item.get("status") == "failed"]
     skipped = [item for item in analyses if item.get("status") == "skipped"]

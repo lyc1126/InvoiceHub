@@ -1155,3 +1155,189 @@ def test_cost_sync_matches_summary_absolute_paths_to_detail_file_names(tmp_path:
     assert sync.parsed_invoice_count == 1
     assert sync.pending_count == 0
     assert sync.sync_state == "fresh"
+
+
+def _write_cost_workbook_with_checks(watch: Path, rows: list[dict], checks: list[dict]) -> None:
+    from invoice_hub.projections.cost_analysis import _write_workbook
+
+    write_csv_rows(watch / "成本发票明细.csv", DETAIL_HEADERS, rows)
+    _write_workbook(watch / "成本发票汇总.xlsx", rows, checks)
+
+
+def _cost_check_row(source: str, invoice_type: str, business_type: str = "标准电子发票", status: str = "ok") -> dict:
+    return {"源文件": source, "发票大类": invoice_type, "特定业务类型": business_type, "类型识别状态": status, "校验状态": "通过"}
+
+
+def _reference_sheet_rows(path: Path) -> list[dict]:
+    from openpyxl import load_workbook
+
+    wb = load_workbook(path, read_only=True, data_only=True)
+    try:
+        values = list(wb["开票参考"].iter_rows(values_only=True))
+    finally:
+        wb.close()
+    return [dict(zip(values[0], row)) for row in values[1:]]
+
+
+def test_cost_reference_defaults_to_general_taxpayer_13_percent(tmp_path: Path) -> None:
+    watch = tmp_path / "发票文件"
+    workspace = tmp_path / "workspace"
+    watch.mkdir()
+    workspace.mkdir()
+    _write_cost_workbook_with_checks(watch, [_cost_detail_row()], [_cost_check_row("a.pdf", "增值税专用发票")])
+
+    snapshot = CostProjectionService(watch, workspace, "target").snapshot()
+    reference = snapshot.invoice_reference[0]
+
+    assert snapshot.reference_tax_profile["taxpayer_type"] == "general"
+    assert snapshot.reference_tax_profile["output_tax_rate_percent"] == "13"
+    assert snapshot.reference_tax_profile["configured"] is False
+    assert reference["reference_cost_unit_price"] == 10.0
+    assert reference["reference_cost_basis_text"] == "不含税"
+    assert reference["reference_average_unit_price_with_tax"] == 12.204
+    assert round(reference["reference_tax_amount"], 4) == 14.04
+
+
+def test_cost_reference_small_scale_taxpayer_costs_include_tax_and_use_levy_rate(tmp_path: Path) -> None:
+    watch = tmp_path / "发票文件"
+    workspace = tmp_path / "workspace"
+    watch.mkdir()
+    workspace.mkdir()
+    _write_cost_workbook_with_checks(watch, [_cost_detail_row()], [_cost_check_row("a.pdf", "增值税专用发票")])
+    service = CostProjectionService(watch, workspace, "target")
+
+    service.save_reference_status({"items": [], "tax_profile": {"taxpayer_type": "small_scale", "output_tax_rate_percent": "1"}})
+    snapshot = service.snapshot()
+    reference = snapshot.invoice_reference[0]
+
+    # Cost 113 / 10 = 11.3 (input VAT not deductible) -> × 1.08 markup -> × 1.01 levy rate.
+    assert reference["reference_cost_unit_price"] == 11.3
+    assert reference["reference_cost_basis_text"] == "含税"
+    assert round(reference["reference_average_unit_price_with_tax"], 5) == 12.32604
+    assert round(reference["reference_tax_amount"], 4) == 1.2204
+    assert snapshot.reference_tax_profile["taxpayer_type_label"] == "小规模纳税人"
+    assert snapshot.reference_tax_profile["output_tax_rate_display"] == "1%"
+    assert snapshot.reference_tax_profile["warning"] == ""
+    sheet = _reference_sheet_rows(watch / "成本发票汇总.xlsx")[0]
+    assert sheet["成本口径"] == "含税"
+    assert sheet["销项税率"] == "1%"
+    assert sheet["平均单价(含税)"] == pytest.approx(12.33)
+
+
+def test_cost_reference_general_taxpayer_adds_ordinary_invoice_tax_to_cost(tmp_path: Path) -> None:
+    watch = tmp_path / "发票文件"
+    workspace = tmp_path / "workspace"
+    watch.mkdir()
+    workspace.mkdir()
+    rows = [
+        _cost_detail_row(源文件="special.pdf", 发票号码="1"),
+        _cost_detail_row(源文件="ordinary.pdf", 发票号码="2", 税率="0.03", 税金="3", 价税合计="103"),
+        _cost_detail_row(源文件="passenger.pdf", 发票号码="3", 税率="0.09", 税金="9", 价税合计="109"),
+    ]
+    checks = [
+        _cost_check_row("special.pdf", "增值税专用发票"),
+        _cost_check_row("ordinary.pdf", "增值税普通发票"),
+        _cost_check_row("passenger.pdf", "增值税普通发票", "旅客运输"),
+    ]
+    _write_cost_workbook_with_checks(watch, rows, checks)
+
+    reference = CostProjectionService(watch, workspace, "target").snapshot().invoice_reference[0]
+
+    # Only the ordinary invoice's 3.00 VAT is cost: (100 + 103 + 100) / 30.
+    assert reference["reference_cost_unit_price"] == pytest.approx(10.1)
+    assert reference["reference_cost_basis"] == "部分含税"
+    assert reference["reference_cost_note"] == ""
+    assert reference["average_unit_price"] == 10.0
+
+
+def test_cost_reference_unconfirmed_invoice_type_keeps_pretax_cost_and_is_flagged(tmp_path: Path) -> None:
+    watch = tmp_path / "发票文件"
+    workspace = tmp_path / "workspace"
+    watch.mkdir()
+    workspace.mkdir()
+    _write_cost_workbook_with_checks(
+        watch, [_cost_detail_row()], [_cost_check_row("a.pdf", "增值税普通发票", status="needs_review")]
+    )
+
+    reference = CostProjectionService(watch, workspace, "target").snapshot().invoice_reference[0]
+
+    assert reference["reference_cost_unit_price"] == 10.0
+    assert reference["reference_cost_basis_text"] == "不含税（1 张发票类型待核对，暂按不含税计成本）"
+
+
+def test_cost_tax_profile_change_keeps_locked_snapshot_and_survives_row_saves(tmp_path: Path) -> None:
+    watch = tmp_path / "发票文件"
+    workspace = tmp_path / "workspace"
+    watch.mkdir()
+    workspace.mkdir()
+    _write_cost_workbook_with_checks(watch, [_cost_detail_row()], [_cost_check_row("a.pdf", "增值税专用发票")])
+    service = CostProjectionService(watch, workspace, "target")
+    key = _reference_key("材料", "项目", "规格", "吨")
+
+    service.save_reference_status({"items": [{"key": key, "invoiced_quantity": "5"}]})
+    locked_total = service.snapshot().invoice_reference[0]["invoiced_reference_total_with_tax"]
+    service.save_reference_status({"items": [], "tax_profile": {"taxpayer_type": "small_scale", "output_tax_rate_percent": "3"}})
+    service.save_reference_status({"items": [{"key": key, "reference_markup_rate_percent": "10"}]})
+    reference = service.snapshot().invoice_reference[0]
+    payload = read_json_object(watch / "成本开票状态.json")
+
+    assert locked_total == pytest.approx(61.02)
+    assert reference["invoiced_reference_total_with_tax"] == pytest.approx(61.02)
+    assert payload["tax_profile"] == {"taxpayer_type": "small_scale", "output_tax_rate": "0.03", "output_tax_rate_percent": "3"}
+    # Remaining half is priced from the new profile: 11.3 × 1.10 × 1.03 × 10 = 128.029, minus the locked 61.02.
+    assert reference["uninvoiced_reference_total_with_tax"] == pytest.approx(128.029 - 61.02)
+
+
+@pytest.mark.parametrize(
+    "profile",
+    [
+        {"taxpayer_type": "other", "output_tax_rate_percent": "13"},
+        {"taxpayer_type": "general", "output_tax_rate_percent": "100"},
+        {"taxpayer_type": "general", "output_tax_rate_percent": "-1"},
+        {"taxpayer_type": "general", "output_tax_rate_percent": "abc"},
+        {"taxpayer_type": "general", "output_tax_rate_percent": "NaN"},
+        "13",
+    ],
+)
+def test_cost_tax_profile_rejects_invalid_input(tmp_path: Path, profile: object) -> None:
+    watch = tmp_path / "发票文件"
+    workspace = tmp_path / "workspace"
+    watch.mkdir()
+    workspace.mkdir()
+    write_csv_rows(watch / "成本发票明细.csv", DETAIL_HEADERS, [_cost_detail_row()])
+
+    with pytest.raises(ValueError):
+        CostProjectionService(watch, workspace, "target").save_reference_status({"items": [], "tax_profile": profile})
+    assert not (watch / "成本开票状态.json").exists()
+
+
+def test_cost_rebuild_reads_saved_tax_profile_and_keeps_it(tmp_path: Path) -> None:
+    watch = tmp_path / "发票文件"
+    watch.mkdir()
+    (watch / "invoice.xml").write_text(_cost_xml_text(), encoding="utf-8")
+    profile = {"taxpayer_type": "small_scale", "output_tax_rate": "0.01", "output_tax_rate_percent": "1"}
+    (watch / "成本开票状态.json").write_text(
+        '{"version": 1, "items": {}, "tax_profile": {"taxpayer_type": "small_scale", "output_tax_rate": "0.01", "output_tax_rate_percent": "1"}}',
+        encoding="utf-8",
+    )
+
+    build_cost_analysis_outputs(watch, watch)
+
+    sheet_rows = _reference_sheet_rows(watch / "成本发票汇总.xlsx")
+    assert sheet_rows
+    assert all(row["销项税率"] == "1%" and row["成本口径"] == "含税" for row in sheet_rows)
+    assert read_json_object(watch / "成本开票状态.json")["tax_profile"] == profile
+
+
+def test_rebuild_status_writer_preserves_tax_profile(tmp_path: Path) -> None:
+    from invoice_hub.projections.cost_analysis import _write_reference_status
+
+    status = tmp_path / "成本开票状态.json"
+    profile = {"taxpayer_type": "small_scale", "output_tax_rate": "0.03", "output_tax_rate_percent": "3"}
+    status.write_text('{"version": 1, "items": {}, "tax_profile": %s}' % __import__("json").dumps(profile), encoding="utf-8")
+
+    _write_reference_status(status, {"k": {"reference_key": "k", "invoiced_quantity": "1"}})
+
+    payload = read_json_object(status)
+    assert payload["tax_profile"] == profile
+    assert payload["items"]["k"]["invoiced_quantity"] == "1"

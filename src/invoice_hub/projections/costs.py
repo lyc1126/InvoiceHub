@@ -19,7 +19,7 @@ from invoice_hub.projections.cost_analysis import (
     DETAIL_HEADERS,
     INVOICE_REFERENCE_HEADERS,
     PROJECT_SPEC_SUMMARY_HEADERS,
-    REFERENCE_OUTPUT_TAX_RATE,
+    ReferenceTaxProfile,
     average_unit_price,
     detail_rows_with_tax_average,
     build_cost_analysis_outputs,
@@ -32,6 +32,11 @@ from invoice_hub.projections.cost_analysis import (
     reference_markup_percent_text,
     average_unit_price_with_tax,
     purchase_reference_average_unit_price_with_tax,
+    input_tax_index,
+    parse_reference_tax_profile,
+    reference_cost_basis,
+    reference_cost_basis_text,
+    reference_tax_profile_from_status,
     _write_workbook,
 )
 from invoice_hub.storage.files import atomic_write_json, read_csv_rows, read_json_object, write_csv_rows
@@ -189,20 +194,26 @@ def _write_reference_status(
     items: dict[str, dict],
     reference_markup_rate: object = DEFAULT_REFERENCE_MARKUP_RATE,
     reference_markup_locked: bool = False,
+    tax_profile: ReferenceTaxProfile | None = None,
 ) -> None:
     markup_rate = normalize_reference_markup_rate(reference_markup_rate)
     normalized = {key: dict(value) for key, value in sorted(items.items()) if key and isinstance(value, dict)}
-    atomic_write_json(
-        path,
-        {
-            "version": 1,
-            "updated_at": utc_now_text(),
-            "reference_markup_rate": _decimal_text(markup_rate, "0.000001"),
-            "reference_markup_rate_percent": reference_markup_percent_text(markup_rate),
-            "reference_markup_locked": bool(reference_markup_locked),
-            "items": normalized,
-        },
-    )
+    payload = {
+        "version": 1,
+        "updated_at": utc_now_text(),
+        "reference_markup_rate": _decimal_text(markup_rate, "0.000001"),
+        "reference_markup_rate_percent": reference_markup_percent_text(markup_rate),
+        "reference_markup_locked": bool(reference_markup_locked),
+        "items": normalized,
+    }
+    if tax_profile is not None and tax_profile.configured:
+        payload["tax_profile"] = tax_profile.status_payload()
+    else:
+        # Saving row status without touching the tax settings keeps whatever the company saved.
+        existing = _read_reference_status_payload(path).get("tax_profile")
+        if isinstance(existing, dict):
+            payload["tax_profile"] = existing
+    atomic_write_json(path, payload)
 
 
 def _valid_invoice_number(value: object) -> str:
@@ -305,6 +316,9 @@ class CostProjectionService:
             "locked": _truthy(payload.get("reference_markup_locked", False)),
         }
 
+    def _tax_profile(self) -> ReferenceTaxProfile:
+        return reference_tax_profile_from_status(_read_reference_status_payload(self.status_json))
+
     def _summary_metadata(self) -> list[dict]:
         rows = []
         for row in read_csv_rows(self.summary_csv):
@@ -337,6 +351,7 @@ class CostProjectionService:
             checks,
             status_items=_read_reference_status(self.status_json),
             reference_markup_rate=reference_markup_rate,
+            tax_profile=self._tax_profile(),
         )
 
     def _read_csv_headers(self) -> list[str]:
@@ -409,6 +424,7 @@ class CostProjectionService:
             checks,
             status_items=status_items,
             reference_markup_rate=markup["rate"],
+            tax_profile=self._tax_profile(),
         )
         return True
 
@@ -422,7 +438,8 @@ class CostProjectionService:
         checks = self._read_workbook_sheet("发票校验", CHECK_HEADERS)
         project_summary = self._project_summary_rows()
         markup = self._markup_meta()
-        invoice_reference = self._build_reference_rows(detail_rows)
+        tax_profile = self._tax_profile()
+        invoice_reference = self._build_reference_rows(detail_rows, check_rows=checks, tax_profile=tax_profile)
         sync = self._sync_status(detail_rows, checks)
         mismatch_count = sum(1 for row in checks if str(row.get("校验状态") or "").strip() != "通过")
         return CostAnalysisSnapshot(
@@ -434,6 +451,7 @@ class CostProjectionService:
             reference_status_path=str(self.status_json),
             reference_status_exists=self.status_json.exists(),
             reference_markup_rate=markup["display"],
+            reference_tax_profile=tax_profile.api_payload(),
             detail_count=len(detail_rows),
             check_count=len(checks),
             mismatch_count=mismatch_count,
@@ -456,7 +474,12 @@ class CostProjectionService:
         current = _read_reference_status(self.status_json)
         fallback_markup = self._markup_meta()
         workbook_status = self._read_reference_status_from_workbook()
-        reference_rows = self._build_reference_rows(read_csv_rows(self.detail_csv), current)
+        tax_profile_changed = "tax_profile" in payload
+        tax_profile = parse_reference_tax_profile(payload.get("tax_profile")) if tax_profile_changed else self._tax_profile()
+        checks = self._read_workbook_sheet("发票校验", CHECK_HEADERS)
+        reference_rows = self._build_reference_rows(
+            read_csv_rows(self.detail_csv), current, check_rows=checks, tax_profile=tax_profile
+        )
         by_key = {row["key"]: row for row in reference_rows}
         for item in payload.get("items", []):
             key = str(item.get("key") or "").strip()
@@ -493,9 +516,9 @@ class CostProjectionService:
             else:
                 row_locked = existing_markup["locked"]
             row_multiplier = reference_markup_multiplier(row_rate)
-            reference_average_unit_price = _decimal(row.get("average_unit_price")) * row_multiplier
+            reference_average_unit_price = _decimal(row.get("reference_cost_unit_price")) * row_multiplier
             reference_amount = reference_average_unit_price * quantity
-            reference_tax = reference_amount * REFERENCE_OUTPUT_TAX_RATE
+            reference_tax = reference_amount * tax_profile.output_tax_rate
             reference_total = reference_amount + reference_tax
             ratio = Decimal("0") if quantity == 0 else invoiced_quantity / quantity
             status = "已开具" if invoiced_quantity >= quantity and quantity > 0 else ("未开具" if invoiced_quantity == 0 else "部分开具")
@@ -543,6 +566,7 @@ class CostProjectionService:
             current,
             reference_markup_rate=fallback_markup["rate"],
             reference_markup_locked=fallback_markup["locked"],
+            tax_profile=tax_profile if tax_profile_changed else None,
         )
         self._refresh_workbook_from_current_detail(fallback_markup["rate"])
         return {"ok": True, "reference_status_path": str(self.status_json), "workbook_updated": self.summary_xlsx.exists()}
@@ -578,10 +602,20 @@ class CostProjectionService:
             )
         return result
 
-    def _build_reference_rows(self, detail_rows: list[dict], status_items: dict[str, dict] | None = None) -> list[dict]:
+    def _build_reference_rows(
+        self,
+        detail_rows: list[dict],
+        status_items: dict[str, dict] | None = None,
+        check_rows: list[dict] | None = None,
+        tax_profile: ReferenceTaxProfile | None = None,
+    ) -> list[dict]:
         status_items = status_items if status_items is not None else _read_reference_status(self.status_json)
         workbook_status = self._read_reference_status_from_workbook()
         fallback_markup = self._markup_meta()
+        tax_profile = tax_profile or self._tax_profile()
+        output_tax_rate = tax_profile.output_tax_rate
+        # Same formula as cost_analysis._invoice_reference_summary; the workbook and this API must agree.
+        deductibility = input_tax_index(check_rows)
         grouped: dict[str, dict] = {}
         for row in detail_rows:
             key = _reference_key(row)
@@ -613,10 +647,12 @@ class CostProjectionService:
             avg_price = average_unit_price(row.get("source_rows") or [])
             avg_price_with_tax = average_unit_price_with_tax(row.get("source_rows") or [])
             purchase_avg_price_with_tax = purchase_reference_average_unit_price_with_tax(row.get("source_rows") or [])
-            reference_avg_price_with_tax = reference_output_average_unit_price_with_tax(avg_price, markup["rate"])
-            reference_base_amount = avg_price * quantity if avg_price is not None and quantity > 0 else Decimal("0")
+            cost_basis = reference_cost_basis(row.get("source_rows") or [], tax_profile, deductibility)
+            cost_price = cost_basis["unit_price"]
+            reference_avg_price_with_tax = reference_output_average_unit_price_with_tax(cost_price, markup["rate"], output_tax_rate)
+            reference_base_amount = cost_price * quantity if cost_price is not None and quantity > 0 else Decimal("0")
             reference_amount = reference_base_amount * markup_multiplier
-            reference_tax = reference_amount * REFERENCE_OUTPUT_TAX_RATE
+            reference_tax = reference_amount * output_tax_rate
             reference_total = reference_amount + reference_tax
             invoiced_quantity = _decimal(status.get("invoiced_quantity"))
             if invoiced_quantity > quantity:
@@ -632,6 +668,10 @@ class CostProjectionService:
                     "average_unit_price": float(avg_price) if avg_price is not None else 0,
                     "average_unit_price_with_tax": float(avg_price_with_tax) if avg_price_with_tax is not None else 0,
                     "purchase_reference_average_unit_price_with_tax": float(purchase_avg_price_with_tax) if purchase_avg_price_with_tax is not None else 0,
+                    "reference_cost_unit_price": float(cost_price) if cost_price is not None else 0,
+                    "reference_cost_basis": cost_basis["label"],
+                    "reference_cost_note": cost_basis["note"],
+                    "reference_cost_basis_text": reference_cost_basis_text(cost_basis),
                     "amount": float(row["amount"]),
                     "tax_amount": float(row["tax_amount"]),
                     "total_with_tax": float(row["total_with_tax"]),
