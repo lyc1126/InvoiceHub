@@ -22,6 +22,7 @@ Read [AGENTS.md](AGENTS.md) in full before analysis, edits, tests, or conclusion
 
 Search by symptom, symbol, or path with `rg -n '<keyword>' docs/architecture/`; open the matched rule section and source/tests before making a conclusion.
 
+Tax workbench/calculator work remains design-only: start with [tax rules](docs/architecture/rules/TAX_WORKBENCH.md), [the design](docs/TAX_WORKBENCH_DESIGN.md), and [policy/algorithm specifications](docs/TAX_ALGORITHMS_AND_POLICY.md). These do not claim a shipped API or authorize company-folder or ledger operations.
 
 ## Maintenance
 

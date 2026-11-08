@@ -24,6 +24,7 @@
 - 当前不做：多用户、权限、授权、云部署、MSI、Windows ARM64、macOS Intel/Universal、App Store、本地 OCR 正式打包版、SQLite 发票主存储。
 - 本文件已整合旧项目仓库根 `AGENTS.md` 与 `发票处理脚本/AGENTS.md` 中仍适配重构版的约束。旧项目特有的目录名、版本号、旧 `web_localhost` 布局和旧包名只作为历史基线，不作为新项目结构要求。
 - 共享业务核心为 Python/FastAPI/Web 与独立 monitor，当前桌面宿主为 `src-tauri/`；SwiftUI/WKWebView 保留为开发与迁移参考。版本与契约以 `src/invoice_hub/version.py`、`src/invoice_hub/release/build_manifest.py` 为准。
+- 税务工作台当前仅设计与合成原型，后续按 [税务规则](docs/architecture/rules/TAX_WORKBENCH.md) 进入；设计文件和旧草稿不能当作已实现产品能力。
 
 ## 第一性原则
 
@@ -104,6 +105,7 @@
 - 行为、结构、入口、验收口径变化时必须同步更新 `IMPLEMENTATION_STATUS.md` 与相关真值文档；`README.md` 按首页维护约定，只在大型产品内容更新后定点修改，或执行用户明确要求的修改。
 - 涉及旧功能迁移、缺口修复或验收口径变化时必须同步更新 `docs/MIGRATION_GAP_CHECKLIST.md`。
 - 如果本轮修复触发新模式或新风险，必须写回所属功能规则；跨功能的长期不变量再回写本文件。
+- 确认值得做但本轮不做的优化、新功能或已确认缺陷，登记到 [未来工作总览](docs/PRODUCT_BACKLOG.md)（编号、优先级、证据、验收标准、影响范围），新增设计稿或原型同时登记到其索引；不要只留在聊天或 CHANGELOG 里。
 - 开发、调试、测试、烟测、解压验收、打包验收产生的临时文件和临时目录，收尾前必须清理；确需保留时必须在回复中写明保留路径、原因和后续清理动作。
 - 收尾前必须运行 `git status --short --ignored` 并分类说明：
   - `modified`

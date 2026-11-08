@@ -30,6 +30,12 @@
 | `tests/test_progressive_loading.py` | 暂停第二张解析证明首批可见；分页/全量统计/缓存复用/写锁并发/失败临时数据/过期保存/单据按需预览回归 |
 
 `TargetProfile.workspace_dir/read-views.sqlite3` 及 WAL/SHM 仅为可重建读取缓存，不作为发票主存储或发行输入。现有 `document_index.py` 增加成本 CSV 分组内存缓存与阶段性候选发布；三个 page 脚本继续由各自模板加载；成本与单据版本为 `20261009-progressive-3`，首页后续升级为 `20261009-selection-6`。未改变成本三件套所在目录。
+| `docs/TAX_WORKBENCH_DESIGN.md` | 首页交互、独立公司资料绑定、证据/任务/API 草案与 D0—D5 计划 | 设计提案，不表示拟议工程文件已创建；关联算法规格及合成原型 |
+| `docs/TAX_ALGORITHMS_AND_POLICY.md` | Decimal、价税、月度 VAT、附加、印花、季度所得税公式，官方依据和独立预期 | 记录已核对与待补证边界，不是现行生产规则包 |
+| `docs/TAX_POLICY_SOURCES_AND_REVIEW.md` | 政策来源分级（A 官方原文 / B 解释与征管口径 / C 线索 / D 视频号自媒体）、四层政策中心、变更流水线、订阅与待办、覆盖声明与漏报保障、版本差异、运营成本与核验签署 | 设计与治理规格；本轮未执行抓取、轮询或外部请求，不新增未核验文号；D5 的前置约束 |
+| `docs/TAX_WORKBENCH_VALUE_AND_READINESS.md` | 决策文档：会计痛点、计算器就绪度与草稿定位核查、政策中心价值与护城河、最小可用形态、开发者重新评估清单与停止条件 | 记录当前事实与判断，不是设计规格；结论可被实现推翻，推翻时同步更新本页 |
+| `docs/design/tax-calculator-prototype.html` | 小图标/入口位置、紧凑 20 键、预设/自定义税率输入、税种切换/勾选、独立滚动的翻面/结果、资料选择模拟 | 自定义只校验输入并标记待重算；位置偏好仅会话内；选择器不打开真实系统窗口；不进入 `web/` 或包资源清单，无税务运算、业务 IO 或生产 API；图标 ISC 来源参照 `website/assets/LICENSE-lucide` |
+| `docs/design/workspace-sidebar-prototype.html` | 左侧模块列（含临时识别、↑ 更新入口）、可拖动调宽的公司 › 项目 / 目录侧栏与右键置顶、悬停全名卡片；目录页保留现有首页发票列表与勾选合计详情、右键标签；`⇄` 比较标签按关系勾稽（进销存、往来、抵扣），类目可点开明细、下方原始文件并排联动；首页标签可全部关闭（空白起始页），其他模块不显示标签并各自缓存对象与滚动位置；公司/项目票面汇总、原始凭证缩略图、缺失子目录创建与新建工作区向导；做账（可编辑凭证、年月小日历选所属期、记账日期、跨期单据、通用凭证导出、库存加权、工资社保、税费）；双击 `hi.` 刷新本页缓存；银行版式识别与余额链 | 单文件合成数据交互原型：进项、销项、流水、勾选清单由同一份合成账簿派生；不读写真实目录、不进入 `web/` 或包资源清单、无生产 API；仍是单活动监控目录。分阶段落地见 [产品待办 WS-01—06](../PRODUCT_BACKLOG.md#ws-01) 与 [BANK-01](../PRODUCT_BACKLOG.md#bank-01) |
 
 2026-09-08 OFD 预览新增工程文件：
 
@@ -191,6 +197,7 @@
 | `docs/architecture/rules/MONITORING.md` | 后台同步、监控与关闭的强制约束。 | 从 AGENT_TASK_MAP 按问题进入；维护功能规则并回查对应源码与验收。 |
 | `docs/architecture/rules/WEB_UI.md` | 页面、单据、预览、打印与皮肤的强制约束。 | 从 AGENT_TASK_MAP 按问题进入；维护功能规则并回查对应源码与验收。 |
 | `docs/architecture/rules/BOOKKEEPING.md` | 业务资料夹与做账的强制约束。 | 从 AGENT_TASK_MAP 按问题进入；维护功能规则并回查对应源码与验收。 |
+| `docs/architecture/rules/TAX_WORKBENCH.md` | 税务工作台与税务计算器的强制约束。 | 从 AGENT_TASK_MAP 按问题进入；维护功能规则并回查对应源码与验收。 |
 | `docs/architecture/rules/WINDOWS.md` | Windows 正式入口与启动的强制约束。 | 从 AGENT_TASK_MAP 按问题进入；维护功能规则并回查对应源码与验收。 |
 | `docs/architecture/rules/MACOS.md` | macOS 平台与 SwiftUI 参考壳的强制约束。 | 从 AGENT_TASK_MAP 按问题进入；维护功能规则并回查对应源码与验收。 |
 | `docs/architecture/rules/TAURI_HOST.md` | Tauri 宿主、所有权与更新事务的强制约束。 | 从 AGENT_TASK_MAP 按问题进入；维护功能规则并回查对应源码与验收。 |
@@ -212,6 +219,8 @@
 | `docs/GIT_BRANCH_WORKTREE_FORK_GUIDE.md` | 分支、worktree、PR 和回退操作指南。 | 受 AGENTS Git 规则约束；稳定基线变化时同步。 |
 | `docs/MAC_WINDOWS_WORKFLOW.md` | Mac 开发与 Windows 正式验收分工。 | 与 Docker、PowerShell、正式 BAT 和发布验收相关。 |
 | `docs/MIGRATION_GAP_CHECKLIST.md` | 旧能力迁移缺口和验收状态。 | 功能迁移、验收口径变化时更新。 |
+| `docs/PRODUCT_BACKLOG.md` | 未来工作总览：设计稿与原型索引、已确认但未排期的优化与新功能、待修复缺陷，含编号、优先级、状态、证据、方案、验收标准与影响范围。 | 发现值得做但本轮不做的改进时登记；排期、完成或放弃时更新状态并链接 CHANGELOG；证据不得含真实业务数据。 |
+| `docs/COST_ANALYSIS_V2_DESIGN.md` | 成本分析 v2 设计提案：已确认决策、公司级品目表（别名、库存科目、类型、税率）、成本基数（进项税是否计入、结存加权单价）、销项税率与计税方式、灵活定价规则（加价率 / 目标毛利 / 固定加价 / 合同价 / 阶梯 / 市场价底线）与 4 层优先级、页面结构、兼容迁移与落地顺序。 | 未实现；现行规则以 COST_ANALYSIS 规则页为准；落地拆分见 PRODUCT_BACKLOG 的 COST-06、COST-01—05 与 BUG-01。 |
 | `docs/MONITORING_AND_LOGGING.md` | monitor 状态、日志和诊断说明。 | 与 `monitoring/*`、MonitorBridge 和设置页运行状态联动。 |
 | `docs/release/HISTORY_SANITIZATION_EXECUTION.md` | 公开历史净化、私有备份、候选内容审计、全 ref 验证和托管面复核的执行记录。 | 公开 Git 图、发布资产、仓库可见性或 Tauri 开发线变化前必须更新。 |
 | `docs/release/TAURI2_EXECUTION_PLAN.md` | 公开 Tauri 2 分阶段计划、实验决策记录、重打边界和当前阻断项。 | 改动 Tauri host、依赖锁、生命周期、更新或平台验收时先更新实验记录。 |

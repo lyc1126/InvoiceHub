@@ -4,6 +4,7 @@
 
 - 适用问题：PDF/OFD/XML/OCR、金额脏值、购销方、票种与同票纠偏。
 - 代码与验收定位：extraction/parsers.py、extraction/classification.py；数据算法第 7 节、任务导航第 3—4 节。Python 模块目录（extraction/projections/monitoring/services/bookkeeping/runners/platform/release）相对 `src/invoice_hub/`，其余路径相对仓库根。
+- 待开发优化：[未来工作总览 OCR-01](../../PRODUCT_BACKLOG.md#ocr-01)（接入 PaddleOCR 官方 API / 自建服务）；开工前先读对应条目。
 - 导航：[任务入口](../AGENT_TASK_MAP.md#task-extraction) · [架构总入口](../../DEVELOPMENT_ARCHITECTURE.md) · [文件地图](../FILE_MAP.md) · [接口与流程](../INTERFACES_AND_FLOWS.md) · [数据与算法](../DATA_AND_ALGORITHMS.md) · [设计原因](../COMMENT_RATIONALE_MAP.md)。
 
 ## 金额证据

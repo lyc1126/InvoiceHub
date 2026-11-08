@@ -26,6 +26,8 @@ ARCHITECTURE_RULES = tuple(
         "MONITORING",
         "WEB_UI",
         "BOOKKEEPING",
+        "TAX_WORKBENCH",
+
         "WINDOWS",
         "MACOS",
         "TAURI_HOST",

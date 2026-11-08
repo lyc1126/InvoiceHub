@@ -20,6 +20,10 @@
 
 本轮起点为 已核验的本地 `main`（精确起点见本轮 CHANGELOG），实现在 `codex/progressive-data-loading`，尚未合并或发布。首页改为服务端分页；成本页按标签分页读取上次完整快照；首次无正式投影时，普通汇总和成本各自在解析阶段发布只读临时批次。`storage/read_views.py` 管理每个 TargetProfile workspace 中的可重建 SQLite 读取缓存，CSV/XLSX/JSON 与源发票的权威关系不变。单据入库候选提前发布，首页批量入库只准备所选票，出库候选增量更新。接口、缓存代际和保护语义见架构专题同日条目。
 
+功能约束按需读取：[提取与分类](architecture/rules/INVOICE_EXTRACTION.md)、[成本](architecture/rules/COST_ANALYSIS.md)、[监控与关闭](architecture/rules/MONITORING.md)、[页面/单据/预览/皮肤](architecture/rules/WEB_UI.md)、[做账](architecture/rules/BOOKKEEPING.md)、[税务设计](architecture/rules/TAX_WORKBENCH.md)、[Windows](architecture/rules/WINDOWS.md)、[macOS 参考壳](architecture/rules/MACOS.md)、[Tauri 宿主](architecture/rules/TAURI_HOST.md)、[构建与发行](architecture/rules/RELEASE.md)。先按 [任务快速索引](architecture/AGENT_TASK_MAP.md#quick-lookup) 定位全部命中项，再读取规则全文及对应实现章节；AGENTS.md 保留全局必读规则。
+
+2026-09-12 设计入口：[税务计算器与公司财税工作台](TAX_WORKBENCH_DESIGN.md)、[算法与政策规格](TAX_ALGORITHMS_AND_POLICY.md)、[政策来源与核验](TAX_POLICY_SOURCES_AND_REVIEW.md)、[价值评估与就绪度](TAX_WORKBENCH_VALUE_AND_READINESS.md)（决策页，记录就绪度与是否投入的判断）。当前仅有文档和独立合成原型；其新增目录、接口、数据模型、公司绑定、申报表映射、征期与政策中心均为拟议内容，不属于下文 main 当前实现。开发按任务导航中的税务设计行进入。
+
 2026-09-10：alpha.2 优化版 1 已完成同源 Mac 构建并发布，内置平台 Python/Java/OFD 组件；离线、包内两页 OFD 和实际正常配置的 ready/页面/monitor 验收通过。隔离 HOME 自动样本未通过，其他平台原生与签名限制仍保留。精确身份、发布状态与来源见[分支记录](BRANCH_STATUS.md)；后续开发以 main 为准，制品身份由优化批次 Tag 固定。
 
 2026-09-09 本地 main 已同步 PR #24，Windows 加固在 `codex/windows-alpha2-startup-hardening`：保留 HTTP framing 与浏览器兜底，增加内置 Python 的 PYTHONHOME 隔离、spawn 阶段诊断与真实 Winsock 回归。稳定源码仍为 main；alpha.2 新候选的身份和验证范围见本轮 CHANGELOG，公开资产不变。

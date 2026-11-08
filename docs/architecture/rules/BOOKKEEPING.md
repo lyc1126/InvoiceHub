@@ -5,6 +5,7 @@
 - 适用问题：W8/W9/W10、凭证、映射、审批、导出、迁移、批次观察与捷锐。
 - 代码与验收定位：bookkeeping/、runners/；接口流程第 3.5 节、数据算法第 3.2、4.5 节、任务导航第 10.2 节。Python 模块目录（extraction/projections/monitoring/services/bookkeeping/runners/platform/release）相对 `src/invoice_hub/`，其余路径相对仓库根。
 - 导航：[任务入口](../AGENT_TASK_MAP.md#task-bookkeeping) · [架构总入口](../../DEVELOPMENT_ARCHITECTURE.md) · [文件地图](../FILE_MAP.md) · [接口与流程](../INTERFACES_AND_FLOWS.md) · [数据与算法](../DATA_AND_ALGORITHMS.md) · [设计原因](../COMMENT_RATIONALE_MAP.md)。
+- 待开发优化：[未来工作总览 BK-01](../../PRODUCT_BACKLOG.md#bk-01)（通用凭证导出）、[BANK-01](../../PRODUCT_BACKLOG.md#bank-01)（通用银行版式引擎）、[WS-05 / WS-07](../../PRODUCT_BACKLOG.md#ws-05)（做账可视化与后端）；开工前先读对应条目。
 
 ## 做账（bookkeeping）规则
 
