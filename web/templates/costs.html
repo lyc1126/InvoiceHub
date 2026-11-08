@@ -4,7 +4,7 @@
   <title>成本分析</title>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <link rel="stylesheet" href="/static/css/app.css?v=20261108-cost-actions-2">
+  <link rel="stylesheet" href="/static/css/app.css?v=20261108-cost-smooth-tabs-3">
   <link rel="stylesheet" href="/static/css/settings-actions.css?v=20260907-desktop-integrated-2">
 </head>
 <body data-page="costs">
@@ -147,7 +147,7 @@
       </div>
     </section>
     <section class="panel cost-view" data-view="reference" hidden>
-      <div class="panel__head"><h3>开票参考</h3><div class="panel__meta">已开数量保存时锁定金额快照。<button id="referenceExclusionsBtn" class="btn btn--ghost btn--mini" type="button">已移除 0 项</button></div></div>
+      <div class="panel__head"><h3>开票参考</h3><div class="panel__meta">已开数量保存时锁定金额快照。<span class="reference-select-tools" role="group" aria-label="勾选"><button id="selectAllReferenceBtn" class="btn btn--ghost btn--mini" type="button">全选</button><button id="clearAllReferenceBtn" class="btn btn--ghost btn--mini" type="button" disabled>清空全选</button></span><button id="referenceExclusionsBtn" class="btn btn--ghost btn--mini" type="button">已移除 0 项</button></div></div>
       <div class="table-shell"><table class="data-table" id="referenceTable"><thead></thead><tbody></tbody></table></div>
       <div class="cost-table-footer" data-cost-table-footer="reference">
         <span class="cost-table-count" data-cost-row-count="reference">显示 0 / 共 0 条</span>
@@ -190,7 +190,7 @@
         </div>
         <div class="cost-action-bar__group" role="group" aria-label="移除">
           <button id="excludeSelectedBtn" class="btn btn--ghost cost-action-bar__remove" type="button" disabled title="只从开票参考排除，不删除文件，可在「已移除」中恢复">从开票参考移除</button>
-          <button id="clearSelectionBtn" class="btn btn--ghost" type="button" title="Esc">取消选择</button>
+          <button id="clearSelectionBtn" class="btn btn--ghost" type="button" title="Esc">清空全选</button>
         </div>
       </div>
       <div class="cost-action-bar__zone cost-action-bar__save" data-action-zone="save" hidden>
@@ -237,6 +237,6 @@
   {{system_controls}}
   <script src="/static/js/common.js?v=20260907-desktop-integrated-2"></script>
   <script src="/static/js/system-controls.js?v=20260907-desktop-integrated-2"></script>
-  <script src="/static/js/page-costs.js?v=20261108-cost-actions-2"></script>
+  <script src="/static/js/page-costs.js?v=20261108-cost-smooth-tabs-3"></script>
 </body>
 </html>

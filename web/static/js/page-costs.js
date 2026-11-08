@@ -74,6 +74,8 @@ const refs = {
   dirtyCount: document.getElementById("referenceDirtyCount"),
   excludeSelectedBtn: document.getElementById("excludeSelectedBtn"),
   clearSelectionBtn: document.getElementById("clearSelectionBtn"),
+  selectAllBtn: document.getElementById("selectAllReferenceBtn"),
+  clearAllBtn: document.getElementById("clearAllReferenceBtn"),
   discardBtn: document.getElementById("discardReferenceBtn"),
   exclusionsBtn: document.getElementById("referenceExclusionsBtn"),
   sourcesDialog: document.getElementById("referenceSourcesDialog"),
@@ -412,34 +414,62 @@ function resetRenderedCostViews() {
   });
 }
 
+// Write only when the value changed: re-writing identical text still re-lays out and repaints.
+function setText(el, text) {
+  if (el && el.textContent !== String(text)) el.textContent = String(text);
+}
+
+const renderedHtml = new WeakMap();
+
+function setHtml(el, html) {
+  if (el && renderedHtml.get(el) !== html) {
+    el.innerHTML = html;
+    renderedHtml.set(el, html);
+  }
+}
+
+function renderCostChrome() {
+  // Everything above the sheets: path, sync banner, stat cards and the two context panels.
+  const payload = state.payload;
+  const referenceStats = payload.reference_status_stats || {};
+  setText(refs.path, `当前发票目录：${payload.watch_dir} | 生成文件：${payload.output_summary_xlsx_path}`);
+  refs.path.title = refs.path.textContent;
+  renderRecentWatchDirs(payload.recent_watch_dirs || []);
+  let syncText = `发票池 ${payload.sync.source_invoice_count} 张，成本已纳入 ${payload.sync.parsed_invoice_count} 张，待同步 ${payload.sync.pending_count} 张，待核对 ${payload.sync.review_count || 0} 张，已校验但未解析明细 ${payload.sync.not_parsed_count} 张`;
+  if (payload.provisional) {
+    const stopped = ["failed", "interrupted"].includes(payload.progress?.state) || !payload.updating;
+    syncText += stopped
+      ? " · 整理尚未完成：临时明细仅供查看，请重新汇总后使用完整结果"
+      : " · 正在整理：仅显示已完成解析的明细，汇总与开票参考待完整校验";
+  }
+  else if (payload.updating) syncText += " · 正在更新，显示上次完整结果，暂不可修改";
+  const syncClass = `banner banner--${syncTone(payload.sync.sync_state)}`;
+  if (refs.syncPanel.className !== syncClass) refs.syncPanel.className = syncClass;
+  setText(refs.syncPanel, syncText);
+  setText(document.getElementById("detailCount"), payload.detail_count);
+  setText(document.getElementById("referenceCount"), payload.counts?.reference ?? payload.invoice_reference.length);
+  setText(refs.inventoryTotalWithTax, app.formatMoney(referenceStats.inventory_total_with_tax || 0));
+  setText(document.getElementById("syncState"), payload.sync.sync_state);
+  renderTaxProfile();
+  renderOutboundSummary(payload.outbound_summary);
+}
+
 function render() {
   const payload = state.payload;
   if (!payload) return;
   const focusState = captureReferenceFocus();
-  const referenceStats = payload.reference_status_stats || {};
-  refs.path.textContent = `当前发票目录：${payload.watch_dir} | 生成文件：${payload.output_summary_xlsx_path}`;
-  refs.path.title = refs.path.textContent;
-  renderRecentWatchDirs(payload.recent_watch_dirs || []);
-  refs.syncPanel.className = `banner banner--${syncTone(payload.sync.sync_state)}`;
-  refs.syncPanel.textContent = `发票池 ${payload.sync.source_invoice_count} 张，成本已纳入 ${payload.sync.parsed_invoice_count} 张，待同步 ${payload.sync.pending_count} 张，待核对 ${payload.sync.review_count || 0} 张，已校验但未解析明细 ${payload.sync.not_parsed_count} 张`;
-  document.getElementById("detailCount").textContent = payload.detail_count;
-  document.getElementById("referenceCount").textContent = payload.counts?.reference ?? payload.invoice_reference.length;
-  refs.inventoryTotalWithTax.textContent = app.formatMoney(referenceStats.inventory_total_with_tax || 0);
-  refs.invoicedReferenceTotal.textContent = app.formatMoney(referenceStats.invoiced_reference_total_with_tax || 0);
-  refs.uninvoicedReferenceTotal.textContent = app.formatMoney(referenceStats.uninvoiced_reference_total_with_tax || 0);
-  renderTaxProfile();
-  renderOutboundSummary(payload.outbound_summary);
-  document.getElementById("syncState").textContent = payload.sync.sync_state;
-  if (payload.provisional) {
-    const stopped = ["failed", "interrupted"].includes(payload.progress?.state) || !payload.updating;
-    refs.syncPanel.textContent += stopped
-      ? " · 整理尚未完成：临时明细仅供查看，请重新汇总后使用完整结果"
-      : " · 正在整理：仅显示已完成解析的明细，汇总与开票参考待完整校验";
-  }
-  else if (payload.updating) refs.syncPanel.textContent += " · 正在更新，显示上次完整结果，暂不可修改";
+  renderCostChrome();
+  // Data changed: the sheets are rebuilt, but the shown sheet keeps its height and the page keeps its
+  // scroll position while that happens, so a refresh does not snap the page back to the top.
+  const panel = document.querySelector(`.cost-view[data-view="${state.activeView}"]`);
+  const keptHeight = panel ? Math.round(panel.getBoundingClientRect().height) : 0;
+  const scrollY = window.scrollY;
+  if (panel && keptHeight) panel.style.minHeight = `${keptHeight}px`;
   resetRenderedCostViews();
   updateCostRowLimitControls();
   renderCostView(state.activeView);
+  if (panel) panel.style.removeProperty("min-height");
+  if (Math.abs(window.scrollY - scrollY) > 1) window.scrollTo(0, scrollY);
   updateReferenceTextMarquee();
   updateReferenceStatsFromDrafts();
   restoreReferenceFocus(focusState);
@@ -508,7 +538,7 @@ function updateTaxProfileControls() {
   if (!profile.configured && !changed) notices.push("未保存，按一般纳税人 13% 计算");
   if (changed) notices.push(blockedByDrafts ? "有未保存的开票参考草稿，请先保存" : "修改未保存");
   else if (profile.warning) notices.push(profile.warning);
-  refs.taxProfileHint.textContent = notices.join("；");
+  setText(refs.taxProfileHint, notices.join("；"));
 }
 
 const OUTBOUND_QUANTITY_TOLERANCE = 0.0005;
@@ -539,8 +569,8 @@ function renderOutboundSummary(summary) {
   }
   if (info.warning) lines.push(`<p class="cost-panel-warning">${app.escapeHtml(info.warning)}</p>`);
   if (info.uniform_markup_warning) lines.push(`<p class="cost-panel-note">${app.escapeHtml(info.uniform_markup_warning)}</p>`);
-  if (refs.outboundCounts) refs.outboundCounts.innerHTML = chips.join("");
-  refs.outboundSummary.innerHTML = lines.join("");
+  setHtml(refs.outboundCounts, chips.join(""));
+  setHtml(refs.outboundSummary, lines.join(""));
 }
 
 function outboundCompareMeta(row, invoicedQuantity) {
@@ -694,7 +724,9 @@ async function loadCostsNow(reason = "") {
     app.setServiceStatus(refs.eventState, "warning", "正在编辑开票数量或加价率，已暂停自动刷新表格");
     return;
   }
-  const showLoadProgress = !isAutoRefreshReason(reason);
+  // Switching sheets or pages is a view change, not a data reload: no progress strip, no full redraw.
+  const localViewChange = reason === "tab" || reason === "page";
+  const showLoadProgress = !isAutoRefreshReason(reason) && !localViewChange;
   const requestId = ++state.requestId;
   const view = state.activeView;
   if (showLoadProgress) {
@@ -731,19 +763,61 @@ async function loadCostsNow(reason = "") {
       advanceCostLoadProgress(82, "正在初始化成本视图");
       await waitForCostLoadProgressPaint();
     }
-    render();
+    if (isAutoRefreshReason(reason) && !revisionChanged && !targetChanged && state.renderedViews.has(view)) {
+      // Background refresh with the same data generation (e.g. the event stream reconnecting):
+      // only status text may change, so the sheets are left alone instead of being rebuilt.
+      renderCostChrome();
+      updateReferenceStatsFromDrafts();
+      updateReferenceControls();
+    } else if (localViewChange && !revisionChanged && !targetChanged && state.renderedViews.size) {
+      // Same data generation: render only the sheet being shown; other sheets, panels and stats stay as they are.
+      if (reason === "page") state.renderedViews.delete(view);
+      renderCostView(view);
+      updateReferenceTextMarquee();
+      updateReferenceStatsFromDrafts();
+      updateReferenceControls();
+    } else {
+      render();
+    }
+    finishCostViewSwap(view);
     window.clearTimeout(state.pollTimer);
     if (payload.updating) state.pollTimer = window.setTimeout(() => loadCosts("progress").catch(() => {}), 900);
     if (showLoadProgress) completeCostLoadProgress();
   } catch (error) {
+    finishCostViewSwap(view);
     if (showLoadProgress) failCostLoadProgress(error?.message);
     throw error;
   }
 }
 
+function finishCostViewSwap(view) {
+  const panel = document.querySelector(`.cost-view[data-view="${view}"]`);
+  if (!panel) return;
+  // Size the table shell from the rows just rendered before releasing the kept height; a cap
+  // measured while the sheet was empty would briefly shorten the page and reset the scroll.
+  if (!panel.hidden) updateCostTableSizing(view);
+  panel.style.removeProperty("min-height");
+  panel.removeAttribute("aria-busy");
+}
+
 document.querySelectorAll(".tab").forEach((tab) => {
   tab.addEventListener("click", () => {
+    if (tab.dataset.view === state.activeView) return;
+    // Keep the outgoing sheet's height on the incoming one until its rows arrive, so the page
+    // does not collapse and jump; a short fade marks the switch (skipped for reduced motion).
+    const previous = document.querySelector(".cost-view:not([hidden])");
+    const keptHeight = previous ? Math.round(previous.getBoundingClientRect().height) : 0;
     state.activeView = tab.dataset.view;
+    const incoming = document.querySelector(`.cost-view[data-view="${state.activeView}"]`);
+    if (incoming && !state.renderedViews.has(state.activeView)) {
+      if (keptHeight) incoming.style.minHeight = `${keptHeight}px`;
+      incoming.setAttribute("aria-busy", "true");
+    }
+    if (incoming) {
+      incoming.classList.remove("is-entering");
+      void incoming.offsetWidth;
+      incoming.classList.add("is-entering");
+    }
     document.querySelectorAll(".tab").forEach((item) => {
       item.classList.toggle("is-active", item === tab);
       item.setAttribute("aria-selected", item === tab ? "true" : "false");
@@ -755,7 +829,8 @@ document.querySelectorAll(".tab").forEach((tab) => {
     void loadCosts("tab").catch(error => { refs.syncPanel.textContent = error.message; });
     updateReferenceTextMarquee();
     updateReferenceControls();
-    scheduleCostTableSizing(state.activeView);
+    // An empty sheet is sized once its rows arrive (finishCostViewSwap); measuring now would cap it too small.
+    if (state.renderedViews.has(state.activeView)) scheduleCostTableSizing(state.activeView);
   });
 });
 
@@ -1266,8 +1341,8 @@ function updateReferenceStatsFromDrafts() {
     invoicedTotal += metrics.lockedReferenceTotal - numberValue(row.invoiced_reference_total_with_tax);
     uninvoicedTotal += metrics.uninvoicedReferenceTotal - numberValue(row.uninvoiced_reference_total_with_tax);
   });
-  refs.invoicedReferenceTotal.textContent = app.formatMoney(invoicedTotal);
-  refs.uninvoicedReferenceTotal.textContent = app.formatMoney(uninvoicedTotal);
+  setText(refs.invoicedReferenceTotal, app.formatMoney(invoicedTotal));
+  setText(refs.uninvoicedReferenceTotal, app.formatMoney(uninvoicedTotal));
 }
 
 function updateReferenceTextMarquee() {
@@ -1364,7 +1439,13 @@ function updateReferenceControls() {
   if (refs.saveZone) refs.saveZone.hidden = !showSave;
   if (refs.actionBar) refs.actionBar.hidden = !(showSelection || showSave);
   document.body.classList.toggle("has-cost-action-bar", showSelection || showSave);
-  if (refs.selectedCount) refs.selectedCount.textContent = `已选 ${selectedCount} 行`;
+  const totalRows = Number(state.payload?.counts?.reference ?? state.referenceRows.size) || 0;
+  if (refs.selectedCount) refs.selectedCount.textContent = `已选 ${selectedCount} / ${totalRows} 行`;
+  if (refs.selectAllBtn) {
+    refs.selectAllBtn.disabled = refs.selectAllBtn.dataset.busy === "true" || totalRows === 0 || selectedCount >= totalRows || state.payload?.provisional;
+    if (refs.selectAllBtn.dataset.busy !== "true") refs.selectAllBtn.textContent = `全选（${totalRows} 行）`;
+  }
+  if (refs.clearAllBtn) refs.clearAllBtn.disabled = selectedCount === 0;
   if (refs.dirtyCount) refs.dirtyCount.textContent = invalidCount ? `${invalidCount} 行需检查` : `${dirtyCount} 行未保存`;
   if (refs.discardBtn) refs.discardBtn.disabled = busy;
   updateTaxProfileControls();
@@ -1396,6 +1477,35 @@ async function saveExclusions(next, statusEl, message) {
   if (statusEl) statusEl.textContent = message;
   refs.syncPanel.className = "banner banner--success";
   refs.syncPanel.textContent = message;
+}
+
+async function selectAllReferenceRows() {
+  // 全选 covers every 开票参考 row, not only the mounted page: fetch the other pages of the same
+  // revision so batch actions and saving have each row's data. A newer revision aborts the selection.
+  const revision = state.payload?.revision;
+  const targetId = state.payload?.target_id;
+  const total = Number(state.payload?.counts?.reference || 0);
+  if (!revision || !total) return;
+  app.setBusy(refs.selectAllBtn, true, "全选中…");
+  try {
+    const keys = [];
+    for (let page = 1; page <= Math.max(1, Math.ceil(total / 200)); page++) {
+      const payload = await app.api(`/api/v1/cost-analysis/view?${new URLSearchParams({ view: "reference", page, page_size: 200, revision })}`);
+      if (payload.target_id !== targetId || payload.revision !== revision || state.payload?.revision !== revision) throw new Error("数据已更新，请重新全选。");
+      for (const row of payload.invoice_reference || []) {
+        state.referenceRows.set(row.key, row);
+        keys.push(row.key);
+      }
+    }
+    keys.forEach((key) => state.referenceSelected.add(key));
+    document.querySelectorAll("[data-reference-check]").forEach((input) => { input.checked = state.referenceSelected.has(input.dataset.referenceCheck); });
+  } catch (error) {
+    refs.syncPanel.className = "banner banner--danger";
+    refs.syncPanel.textContent = error.message || "全选失败";
+  } finally {
+    app.setBusy(refs.selectAllBtn, false);
+    updateReferenceControls();
+  }
 }
 
 function clearReferenceSelection() {
@@ -1545,6 +1655,8 @@ document.addEventListener("keydown", (event) => {
   if (state.activeView === "reference" && state.referenceSelected.size) clearReferenceSelection();
 });
 refs.clearSelectionBtn?.addEventListener("click", clearReferenceSelection);
+refs.clearAllBtn?.addEventListener("click", clearReferenceSelection);
+refs.selectAllBtn?.addEventListener("click", () => void selectAllReferenceRows());
 refs.discardBtn?.addEventListener("click", () => {
   state.dirty.clear();
   state.editingReference = null;

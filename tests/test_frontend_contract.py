@@ -197,8 +197,8 @@ def test_cost_page_keeps_required_controls() -> None:
     assert "锁定" in js
     assert "解锁" in js
     assert "common.js?v=20260907-desktop-integrated-2" in html
-    assert "app.css?v=20261108-cost-actions-2" in html
-    assert "page-costs.js?v=20261108-cost-actions-2" in html
+    assert "app.css?v=20261108-cost-smooth-tabs-3" in html
+    assert "page-costs.js?v=20261108-cost-smooth-tabs-3" in html
     for token in (
         "发票大类",
         "特定业务类型",
@@ -279,6 +279,15 @@ def test_cost_page_keeps_required_controls() -> None:
     assert "reference_exclusions: next" in js
     assert "data-reference-sources" in js and "data-source-pick" in js and "data-restore-kind" in js
     assert "请先保存或放弃未保存的修改，再移除" in js
+    # Sheet / page switches render only the shown sheet and keep its height while loading (no jump).
+    assert 'const localViewChange = reason === "tab" || reason === "page";' in js
+    assert "const showLoadProgress = !isAutoRefreshReason(reason) && !localViewChange;" in js
+    assert "incoming.style.minHeight = `${keptHeight}px`;" in js
+    assert ".cost-view.is-entering { animation: cost-view-enter 140ms ease-out; }" in css
+    assert ".cost-view.is-entering { animation: none; }" in css
+    # 全选 spans every page of the same revision; 清空全选 is available in the panel and the bar.
+    assert 'id="selectAllReferenceBtn"' in html and 'id="clearAllReferenceBtn"' in html and ">清空全选<" in html
+    assert "async function selectAllReferenceRows()" in js and "数据已更新，请重新全选。" in js
     assert "updateReferenceControls" in js
     assert "app.setBusy" in js
     assert ".cost-view[hidden]" in css
@@ -381,8 +390,14 @@ def test_cost_page_keeps_required_controls() -> None:
     assert 'setCell("reference_average_unit_price_with_tax", referenceNumber(formatUnitPrice(metrics.referenceAverageWithTax), "average-unit-price-with-tax"));' in js
     assert 'setCell("reference_total_with_tax", referenceNumber(formatReferenceAmount(metrics.referenceTotal), "reference-total"));' in js
     assert 'setCell("uninvoiced_reference_amount", referenceNumber(formatReferenceAmount(metrics.uninvoicedReferenceAmount), "uninvoiced-reference-amount"));' in js
-    assert "refs.invoicedReferenceTotal.textContent = app.formatMoney(invoicedTotal);" in js
-    assert "refs.uninvoicedReferenceTotal.textContent = app.formatMoney(uninvoicedTotal);" in js
+    assert "setText(refs.invoicedReferenceTotal, app.formatMoney(invoicedTotal));" in js
+    assert "setText(refs.uninvoicedReferenceTotal, app.formatMoney(uninvoicedTotal));" in js
+    # Unchanged background refreshes update only the chrome; full redraws keep height and scroll.
+    assert "isAutoRefreshReason(reason) && !revisionChanged && !targetChanged && state.renderedViews.has(view)" in js
+    assert "if (Math.abs(window.scrollY - scrollY) > 1) window.scrollTo(0, scrollY);" in js
+    # Sizing an empty sheet capped it at ~620px, collapsing the page for a frame and resetting the scroll.
+    assert "if (!panel.hidden) updateCostTableSizing(view);" in js
+    assert "if (state.renderedViews.has(state.activeView)) scheduleCostTableSizing(state.activeView);" in js
     assert "tabindex=\"0\"" in js
     assert "text-align: center" in css
     assert ".cost-view .data-table" in css
@@ -479,7 +494,7 @@ def test_main_pages_keep_user_visible_controls() -> None:
     assert "过去保存" in index
     assert 'class="inline-panel path-inline" hidden' not in index
     assert 'id="watchDirDraft" class="watch-dir-draft" hidden' in index
-    assert "app.css?v=20261108-cost-actions-2" in index
+    assert "app.css?v=20261108-cost-smooth-tabs-3" in index
     assert "settings-actions.css?v=20260907-desktop-integrated-2" in index
     assert "common.js?v=20260907-desktop-integrated-2" in index
     assert "page-index.js?v=20261009-selection-6" in index
@@ -689,7 +704,7 @@ def test_main_pages_keep_user_visible_controls() -> None:
     assert "类型识别状态" in page_detail
     assert "类型识别说明" in page_detail
     assert "common.js?v=20260907-desktop-integrated-2" in detail
-    assert "app.css?v=20261108-cost-actions-2" in detail
+    assert "app.css?v=20261108-cost-smooth-tabs-3" in detail
     assert ".panel__head .detail-file-actions" in css
     assert ".detail-grid" in css
     assert ".detail-grid .stat-card strong { min-width: 0; overflow-wrap: anywhere; word-break: break-word; }" in css
@@ -906,7 +921,7 @@ def test_selected_invoice_summary_frontend_contract() -> None:
 
     for template_name in ("backend.html", "base_head.html", "consistency.html", "costs.html", "detail.html", "documents.html", "index.html", "ocr.html", "settings.html", "skins.html"):
         template = (ROOT / "web" / "templates" / template_name).read_text(encoding="utf-8")
-        assert "app.css?v=20261108-cost-actions-2" in template
+        assert "app.css?v=20261108-cost-smooth-tabs-3" in template
     assert "page-index.js?v=20261009-selection-6" in index
 
 
@@ -970,7 +985,7 @@ def test_documents_page_contract() -> None:
     assert ">是</button>" in html
     assert ">否</button>" in html
     assert ">打开该文件</button>" in html
-    assert "app.css?v=20261108-cost-actions-2" in html
+    assert "app.css?v=20261108-cost-smooth-tabs-3" in html
     assert "common.js?v=20260907-desktop-integrated-2" in html
     assert "page-documents.js?v=20261009-progressive-3" in html
     assert "large-lists.css?v=20260907-large-list-1" in html
@@ -1074,7 +1089,7 @@ def test_bookkeeping_page_static_contract() -> None:
     assert 'body data-page="bookkeeping"' in html
     assert "{{BASE_HEAD}}" in html
     assert "{{BOOTSTRAP_JSON}}" in html
-    assert "app.css?v=20261108-cost-actions-2" in base_head
+    assert "app.css?v=20261108-cost-smooth-tabs-3" in base_head
     assert "page-bookkeeping.js?v=20260711-w9-ledger-review-v3" in html
     assert 'id="voucherBlockers"' in html
     assert "item.can_approve === true" in js
@@ -1279,7 +1294,7 @@ def test_settings_page_contract() -> None:
     assert 'class="settings-edit-card settings-defaults-card"' in html
     assert 'href="/skins"' in html
     assert 'href="/backend"' in html
-    assert "app.css?v=20261108-cost-actions-2" in html
+    assert "app.css?v=20261108-cost-smooth-tabs-3" in html
     assert "settings-actions.css?v=20260907-desktop-integrated-2" in html
     assert "common.js?v=20260907-desktop-integrated-2" in html
     assert "page-settings.js?v=20260907-desktop-integrated-2" in html
@@ -1567,7 +1582,7 @@ def test_skin_page_contract_and_common_skin_loader() -> None:
     assert "disabled>替换" in html
     assert "skinList" in html
     assert 'role="radiogroup"' in html
-    assert "app.css?v=20261108-cost-actions-2" in html
+    assert "app.css?v=20261108-cost-smooth-tabs-3" in html
     assert "common.js?v=20260907-desktop-integrated-2" in html
     assert "page-skins.js?v=20260907-desktop-integrated-2" in html
     assert '@app.get("/skins", response_class=HTMLResponse)' in api_app
@@ -1796,7 +1811,7 @@ def test_home_invoice_list_centers_content_and_uses_one_status_badge() -> None:
         html = template_path.read_text(encoding="utf-8")
         if "app.css?v=" not in html:
             continue
-        assert "app.css?v=20261108-cost-actions-2" in html
+        assert "app.css?v=20261108-cost-smooth-tabs-3" in html
         assert "app.css?v=20260727-invoice-list-status-layout" not in html
         assert "app.css?v=20260726-invoice-taxonomy" not in html
     index = (templates_dir / "index.html").read_text(encoding="utf-8")
