@@ -84,6 +84,6 @@ def test_invoice_print_static_asset_versions_are_current() -> None:
     for template in templates:
         html = template.read_text(encoding="utf-8")
         if "app.css?v=" in html:
-            assert "app.css?v=20260907-desktop-integrated-2" in html
+            assert "app.css?v=20261108-cost-quantity-layout" in html
     index = (ROOT / "web" / "templates" / "index.html").read_text(encoding="utf-8")
     assert "page-index.js?v=20261009-selection-6" in index

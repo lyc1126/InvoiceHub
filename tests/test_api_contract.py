@@ -1867,6 +1867,42 @@ def test_bridge_rebuild_and_events(tmp_path: Path, monkeypatch) -> None:
     assert progress["percent"] == 100
 
 
+def test_bridge_rebuild_reads_outbound_invoices_into_cost_reference(tmp_path: Path, monkeypatch) -> None:
+    from tests.test_summary_and_costs import COMPANY, _cost_xml_text, _xml_invoice
+
+    monkeypatch.setattr(
+        "invoice_hub.services.app_state.AppState.run_background_diagnostics",
+        lambda self, trigger="startup_sync": None,
+    )
+    watch = tmp_path / "发票文件"
+    outbound = tmp_path / "开具发票"
+    watch.mkdir()
+    outbound.mkdir()
+    (watch / "cost.xml").write_text(_cost_xml_text(), encoding="utf-8")
+    (outbound / "sale.xml").write_text(
+        _xml_invoice("20000000000000000001", COMPANY, "客户甲", [("12E", "2", "216.00", "28.08", "钢筋")]), encoding="utf-8"
+    )
+    client = TestClient(create_app(tmp_path))
+    assert client.put("/api/v1/documents/outbound-dir", json={"outbound_invoice_dir": str(outbound)}).json()["ok"] is True
+
+    before = client.get("/api/v1/cost-analysis").json()
+    result = client.post("/api/v1/bridge/rebuild").json()
+    cost = client.get("/api/v1/cost-analysis").json()
+    row = next(item for item in cost["invoice_reference"] if item["规格型号"] == "12E")
+
+    assert before["outbound_summary"]["read_at"] == ""
+    assert result["ok"] is True
+    assert result["detail"]["cost_analysis"]["outbound"]["used_invoice_count"] == 1
+    assert "items" not in result["detail"]["cost_analysis"]["outbound"]
+    assert cost["outbound_summary"]["matched_item_count"] == 1
+    assert row["outbound_quantity"] == 2.0
+    assert row["actual_markup_text"] == "8%"
+    assert row["outbound_compare"] == "outbound_more"
+    assert row["invoiced_quantity"] == 0.0
+    view = client.get("/api/v1/cost-analysis/view", params={"view": "reference"}).json()
+    assert view["outbound_summary"]["used_invoice_count"] == 1
+
+
 def test_bridge_progress_api_filters_to_active_profile_and_safe_fields(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(
         "invoice_hub.services.app_state.AppState.run_background_diagnostics",

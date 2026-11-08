@@ -113,6 +113,7 @@ class CostAnalysisSnapshot(BaseModel):
     reference_status_exists: bool = False
     reference_markup_rate: str = "8%"
     reference_tax_profile: dict[str, Any] = Field(default_factory=dict)
+    outbound_summary: dict[str, Any] = Field(default_factory=dict)
     detail_count: int = 0
     check_count: int = 0
     mismatch_count: int = 0

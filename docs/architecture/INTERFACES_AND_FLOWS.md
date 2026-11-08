@@ -171,7 +171,7 @@ preview 和 print 都以短期内存 job 输出，不能把 PNG、XML 文本或�
 
 | 方法与路径 | AppState 入口 | 主要请求/返回 | 消费者与错误 |
 |---|---|---|---|
-| `GET /api/v1/cost-analysis` | `cost_snapshot` | 必含 watch/source/target、成本三路径、items/project_summary/invoice_reference/checks、状态统计、兼容 `reference_markup_rate`、`reference_tax_profile`、`sync`；`invoice_reference` 行另含 `reference_cost_unit_price/reference_cost_basis/reference_cost_note/reference_cost_basis_text`，`average_unit_price` 仍是纯不含税库存均价 | 兼容完整读取与设置页；在线程池读取，旧 schema 修复受 profile 写锁保护 |
+| `GET /api/v1/cost-analysis` | `cost_snapshot` | 必含 watch/source/target、成本三路径、items/project_summary/invoice_reference/checks、状态统计、兼容 `reference_markup_rate`、`reference_tax_profile`、`outbound_summary`、`sync`；`invoice_reference` 行另含 `reference_cost_unit_price/reference_cost_basis/reference_cost_note/reference_cost_basis_text` 与销项比对 `outbound_quantity/outbound_amount/outbound_unit_price/outbound_invoice_count/actual_markup_rate/actual_markup_text/outbound_compare/outbound_compare_text/outbound_suggested_quantity`，`average_unit_price` 仍是纯不含税库存均价 | 兼容完整读取与设置页；在线程池读取，旧 schema 修复受 profile 写锁保护 |
 | `GET /api/v1/cost-analysis/view` | `cost_view` | `view=details/project/reference/checks`，page/page_size，可选 revision；返回当前标签行、全局 counts/stats、revision/provisional/editable/updating | 成本页；每页最多 200，旧 revision 返回 409；繁忙时读取缓存而不等待整轮汇总 |
 | `POST /api/v1/cost-analysis/reference-status` | `save_cost_reference_status` | `{items:[{key,invoiced_quantity,reference_markup_rate_percent,reference_markup_locked}], tax_profile?:{taxpayer_type,output_tax_rate_percent}}` | 成本页；JSON 解析后在线程池写状态 JSON/工作簿，非法/超量数量、加价率或税务设置（类型不在 general/small_scale、税率不在 [0,100)）`400`；不带 `tax_profile` 时保留已保存设置 |
 | `POST /api/v1/cost-analysis/open-summary` | `open_cost_summary` | 打开当前 `watch_dir/成本发票汇总.xlsx` | 成本页；缺失时返回结构化失败 |
@@ -346,7 +346,7 @@ L10-D 复用 L10-R/C 的 lease、marker、fixed-loopback bridge 和 pure coordin
 |---|---|---|---|
 | `GET /api/v1/bridge/status` | `bridge_status` | PID + lock 真值，返回 `running/ready/observer_active`、路径和最近状态 | 首页、设置页、backend |
 | `POST /api/v1/bridge/health-check` | `bridge_health_check` | bridge 结构化诊断 | 首页 |
-| `POST /api/v1/bridge/rebuild` | `bridge_rebuild` | 同步重建普通汇总和成本分析，记录 task/event | 首页、成本、设置 |
+| `POST /api/v1/bridge/rebuild` | `bridge_rebuild` | 同步重建普通汇总和成本分析，之后读取开具发票目录做销项比对（`detail.cost_analysis.outbound`，不含逐品目明细），记录 task/event | 首页、成本、设置 |
 | `POST /api/v1/bridge/start` | `bridge_start` | 启动独立 daemon，等待 `ready` | 首页、设置；启动不就绪返回 `ok=false` |
 | `POST /api/v1/bridge/stop` | `bridge_stop` | 请求 daemon 停止，超时后可强制终止 | 首页、设置；不停止 WebUI |
 | `POST /api/v1/bridge/open-log` | `open_monitor_log` | 打开业务监控日志 | 设置页 |

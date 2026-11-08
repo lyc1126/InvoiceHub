@@ -1341,3 +1341,161 @@ def test_rebuild_status_writer_preserves_tax_profile(tmp_path: Path) -> None:
     payload = read_json_object(status)
     assert payload["tax_profile"] == profile
     assert payload["items"]["k"]["invoiced_quantity"] == "1"
+
+
+def _xml_invoice(number: str, seller: str, buyer: str, items: list[tuple[str, str, str, str, str]]) -> str:
+    """items: (spec, quantity, amount, tax, item_name) for *材料* lines."""
+    lines = "".join(
+        f"""
+    <IssuItemInformation>
+      <ItemName>*材料*{name}</ItemName><SpecMod>{spec}</SpecMod><MeaUnits>吨</MeaUnits>
+      <Quantity>{qty}</Quantity><UnPrice>{float(amount) / float(qty):g}</UnPrice><Amount>{amount}</Amount>
+      <TaxRate>0.13</TaxRate><ComTaxAm>{tax}</ComTaxAm><TotalTaxIncludedAmount>{float(amount) + float(tax):.2f}</TotalTaxIncludedAmount>
+    </IssuItemInformation>"""
+        for spec, qty, amount, tax, name in items
+    )
+    total = sum(float(item[2]) for item in items)
+    tax = sum(float(item[3]) for item in items)
+    return f"""<?xml version="1.0" encoding="UTF-8"?>
+<EInvoice>
+  <EInvoiceData>
+    <SellerInformation><SellerName>{seller}</SellerName></SellerInformation>
+    <BuyerInformation><BuyerName>{buyer}</BuyerName></BuyerInformation>
+    <BasicInformation>
+      <InvoiceType>增值税专用发票</InvoiceType>
+      <BusinessType>标准电子发票</BusinessType>
+      <InvoiceNumber>{number}</InvoiceNumber>
+      <IssueDate>2026-06-30</IssueDate>
+      <TotalAmWithoutTax>{total:.2f}</TotalAmWithoutTax>
+      <TotalTaxAm>{tax:.2f}</TotalTaxAm>
+      <TotalTaxIncludedAmount>{total + tax:.2f}</TotalTaxIncludedAmount>
+    </BasicInformation>{lines}
+  </EInvoiceData>
+</EInvoice>
+"""
+
+
+COMPANY = "示例购买方有限公司"
+
+
+def _outbound_fixture(tmp_path: Path) -> tuple[Path, Path, Path]:
+    watch = tmp_path / "成本发票"
+    outbound = tmp_path / "开具发票"
+    workspace = tmp_path / "workspace"
+    for folder in (watch, outbound, workspace):
+        folder.mkdir()
+    # Cost: 12E 2 t at 100/t, 14E 1 t at 100/t.
+    (watch / "cost.xml").write_text(_cost_xml_text(), encoding="utf-8")
+    build_cost_analysis_outputs(watch, watch)
+    # Sales by this company: 12E 1.5 t at 120/t; the same invoice saved twice must count once.
+    sale = _xml_invoice("20000000000000000001", COMPANY, "客户甲", [("12E", "1.5", "180.00", "23.40", "钢筋")])
+    (outbound / "sale-1.xml").write_text(sale, encoding="utf-8")
+    (outbound / "sale-1-copy.xml").write_text(sale, encoding="utf-8")
+    # A sale of an item never bought here, and another company's invoice that must be ignored.
+    (outbound / "sale-2.xml").write_text(
+        _xml_invoice("20000000000000000002", COMPANY, "客户乙", [("16E", "1", "130.00", "16.90", "钢筋")]), encoding="utf-8"
+    )
+    (outbound / "other.xml").write_text(
+        _xml_invoice("20000000000000000003", "别的公司", "客户丙", [("14E", "5", "600.00", "78.00", "钢筋")]), encoding="utf-8"
+    )
+    return watch, outbound, workspace
+
+
+def test_outbound_summary_dedupes_formats_and_ignores_other_companies(tmp_path: Path) -> None:
+    watch, outbound, workspace = _outbound_fixture(tmp_path)
+    service = CostProjectionService(watch, workspace, "target")
+
+    summary = service.refresh_outbound(outbound)
+    snapshot = service.snapshot()
+    rows = {row["规格型号"]: row for row in snapshot.invoice_reference}
+    overview = snapshot.outbound_summary
+
+    assert summary["invoice_count"] == 3
+    assert summary["used_invoice_count"] == 2
+    assert summary["excluded_invoice_count"] == 1
+    assert rows["12E"]["outbound_quantity"] == 1.5
+    assert rows["12E"]["outbound_unit_price"] == 120.0
+    assert rows["12E"]["actual_markup_text"] == "20%"
+    assert rows["12E"]["outbound_compare"] == "outbound_more"
+    assert rows["12E"]["outbound_compare_text"] == "销项多 1.5"
+    assert rows["12E"]["outbound_suggested_quantity"] == 1.5
+    assert rows["12E"]["invoiced_quantity"] == 0.0  # hand-entered status is never overwritten
+    assert rows["14E"]["outbound_compare"] == "none"
+    assert overview["matched_item_count"] == 1
+    assert overview["unmatched_item_count"] == 1
+    assert overview["unmatched_items"] == ["钢筋 / 16E / 吨"]
+    assert overview["uniform_markup_warning"] == ""
+    sheet = {row["规格型号"]: row for row in _reference_sheet_rows(watch / "成本发票汇总.xlsx")}
+    assert sheet["12E"]["销项数量"] == 1.5
+    assert sheet["12E"]["实际加价率"] == "20%"
+    assert sheet["12E"]["销项比对"] == "销项多 1.5"
+    assert not list(watch.glob("*outbound*")) and not list(outbound.glob("*.json"))
+
+
+def test_outbound_summary_reuses_unchanged_files(monkeypatch, tmp_path: Path) -> None:
+    from invoice_hub.projections import cost_outbound
+
+    watch, outbound, workspace = _outbound_fixture(tmp_path)
+    service = CostProjectionService(watch, workspace, "target")
+    service.refresh_outbound(outbound)
+    calls = []
+    original = cost_outbound._select_cost_analysis
+    monkeypatch.setattr(cost_outbound, "_select_cost_analysis", lambda candidates: calls.append(candidates) or original(candidates))
+
+    service.refresh_outbound(outbound)
+    assert calls == []
+    (outbound / "sale-2.xml").write_text(
+        _xml_invoice("20000000000000000002", COMPANY, "客户乙", [("16E", "2", "260.00", "33.80", "钢筋")]), encoding="utf-8"
+    )
+    service.refresh_outbound(outbound)
+    assert len(calls) == 1
+
+
+def test_outbound_compare_states_follow_hand_entered_quantity(tmp_path: Path) -> None:
+    from decimal import Decimal
+
+    from invoice_hub.projections.cost_analysis import outbound_reference_fields
+
+    item = {"quantity": "2", "amount": "240", "invoice_count": 1}
+    cost = Decimal("100")
+    assert outbound_reference_fields(None, Decimal("3"), Decimal("1"), cost)["outbound_compare_text"] == "无销项"
+    assert outbound_reference_fields(item, Decimal("3"), Decimal("2"), cost)["outbound_compare"] == "match"
+    manual = outbound_reference_fields(item, Decimal("3"), Decimal("2.5"), cost)
+    assert manual["outbound_compare_text"] == "手填多 0.5（可能有未归档的销项）"
+    over = outbound_reference_fields({"quantity": "4", "amount": "480"}, Decimal("3"), Decimal("0"), cost)
+    assert over["outbound_compare_text"] == "销项多 4；销项超过进项 1"
+    assert over["outbound_suggested_quantity"] == Decimal("3")
+    assert outbound_reference_fields(item, Decimal("3"), Decimal("0"), None)["actual_markup_text"] == ""
+
+
+def test_outbound_overview_flags_uniform_markup(tmp_path: Path) -> None:
+    from decimal import Decimal
+
+    from invoice_hub.projections.cost_analysis import outbound_overview
+
+    summary = {"configured": True, "items": {"a": {}, "b": {}, "c": {}}}
+    same = [{"actual_markup_rate": Decimal("0.08"), "outbound_quantity": Decimal("1")} for _ in range(3)]
+    mixed = same[:2] + [{"actual_markup_rate": "0.1", "outbound_quantity": 1.0}]
+
+    assert "都是 8%" in outbound_overview(summary, ["a", "b", "c"], same)["uniform_markup_warning"]
+    assert outbound_overview(summary, ["a", "b", "c"], mixed)["uniform_markup_warning"] == ""
+    assert outbound_overview(summary, ["a", "b"], same[:2])["uniform_markup_warning"] == ""
+
+
+def test_outbound_summary_guards_missing_overlapping_and_broken_sources(monkeypatch, tmp_path: Path) -> None:
+    from invoice_hub.projections import costs
+
+    watch, outbound, workspace = _outbound_fixture(tmp_path)
+    service = CostProjectionService(watch, workspace, "target")
+
+    assert service.refresh_outbound("")["configured"] is False
+    assert "不可用" in service.refresh_outbound(tmp_path / "missing")["warning"]
+    assert "重叠" in service.refresh_outbound(watch)["warning"]
+
+    def broken(*_args, **_kwargs):
+        raise RuntimeError("坏文件")
+
+    monkeypatch.setattr(costs, "read_outbound_summary", broken)
+    summary = service.refresh_outbound(outbound)
+    assert summary["warning"] == "读取开具发票失败：坏文件"
+    assert service.snapshot().outbound_summary["warning"] == "读取开具发票失败：坏文件"

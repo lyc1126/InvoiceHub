@@ -1342,7 +1342,8 @@ body[data-page="index"] .table--invoice-list .invoice-type-pill--ordinary {
   padding-right: 4px;
 }
 #referenceTable {
-  min-width: 1560px;
+  /* Quantity block (columns 1–11, 1222px) stays visible on a normal window; price columns scroll. */
+  min-width: 2156px;
   table-layout: fixed;
 }
 #referenceTable th,
@@ -1352,20 +1353,49 @@ body[data-page="index"] .table--invoice-list .invoice-type-pill--ordinary {
   text-align: center;
   vertical-align: middle;
 }
+/* Widths follow referenceColumns in page-costs.js; reorder both together. */
 #referenceTable th:nth-child(1), #referenceTable td:nth-child(1) { width: 52px; text-align: center; }
-#referenceTable th:nth-child(2), #referenceTable td:nth-child(2) { width: 136px; }
+#referenceTable th:nth-child(2), #referenceTable td:nth-child(2) { width: 120px; }
 #referenceTable th:nth-child(3), #referenceTable td:nth-child(3) { width: 170px; }
 #referenceTable th:nth-child(4), #referenceTable td:nth-child(4) { width: 88px; }
 #referenceTable th:nth-child(5), #referenceTable td:nth-child(5) { width: 56px; text-align: center; }
 #referenceTable th:nth-child(6), #referenceTable td:nth-child(6) { width: 88px; }
-#referenceTable th:nth-child(7), #referenceTable td:nth-child(7) { width: 132px; }
-#referenceTable th:nth-child(8), #referenceTable td:nth-child(8) { width: 132px; }
-#referenceTable th:nth-child(9), #referenceTable td:nth-child(9) { width: 132px; }
-#referenceTable th:nth-child(10), #referenceTable td:nth-child(10) { width: 122px; }
-#referenceTable th:nth-child(11), #referenceTable td:nth-child(11) { width: 88px; }
-#referenceTable th:nth-child(12), #referenceTable td:nth-child(12) { width: 112px; }
-#referenceTable th:nth-child(13), #referenceTable td:nth-child(13) { width: 150px; }
-#referenceTable th:nth-child(14), #referenceTable td:nth-child(14) { width: 138px; }
+#referenceTable th:nth-child(7), #referenceTable td:nth-child(7) { width: 122px; }
+#referenceTable th:nth-child(8), #referenceTable td:nth-child(8) { width: 96px; }
+#referenceTable th:nth-child(9), #referenceTable td:nth-child(9) { width: 230px; }
+#referenceTable th:nth-child(10), #referenceTable td:nth-child(10) { width: 88px; }
+#referenceTable th:nth-child(11), #referenceTable td:nth-child(11) { width: 112px; }
+#referenceTable th:nth-child(12), #referenceTable td:nth-child(12) { width: 132px; }
+#referenceTable th:nth-child(13), #referenceTable td:nth-child(13) { width: 132px; }
+#referenceTable th:nth-child(14), #referenceTable td:nth-child(14) { width: 100px; }
+#referenceTable th:nth-child(15), #referenceTable td:nth-child(15) { width: 132px; }
+#referenceTable th:nth-child(16), #referenceTable td:nth-child(16) { width: 150px; }
+#referenceTable th:nth-child(17), #referenceTable td:nth-child(17) { width: 138px; }
+#referenceTable th:nth-child(18), #referenceTable td:nth-child(18) { width: 150px; }
+#referenceTable td:nth-child(9) .btn--mini { margin-left: 4px; }
+/* 成本页：税务设置与销项数量比对并排，窄窗口改为上下排列。 */
+.cost-context-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+  gap: 12px;
+  margin: 0 0 12px;
+}
+.cost-context-grid > .inline-panel { margin: 0; display: flex; flex-direction: column; gap: 6px; }
+.cost-panel-title { color: var(--text); font-size: 14px; }
+.cost-panel-note { margin: 0; font-size: 12px; color: var(--muted); }
+.cost-panel-warning { margin: 0; font-size: 12px; color: #92400e; }
+.cost-tax-profile__controls { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px 12px; }
+.cost-tax-profile__field { display: inline-flex; flex-direction: column; gap: 4px; font-size: 12px; }
+.cost-tax-profile__field .input { min-width: 128px; }
+.cost-outbound__head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; }
+.cost-outbound__counts { display: inline-flex; flex-wrap: wrap; gap: 6px; }
+.cost-outbound__summary { display: flex; flex-direction: column; gap: 4px; }
+.cost-outbound__summary p { margin: 0; }
+.cost-outbound__unmatched { font-size: 12px; }
+.cost-outbound__unmatched summary { cursor: pointer; color: var(--text); }
+@media (max-width: 1100px) {
+  .cost-context-grid { grid-template-columns: minmax(0, 1fr); }
+}
 .reference-text {
   display: block;
   max-width: 100%;

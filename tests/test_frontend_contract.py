@@ -140,7 +140,28 @@ def test_cost_page_keeps_required_controls() -> None:
     assert "state.payload?.reference_tax_profile?.output_tax_rate" in js
     assert "tax_profile: taxProfileSelection()" in js
     assert "请先保存开票参考草稿，再修改税务设置" in js
-    assert reference_columns_body.rstrip().rstrip(",").endswith('render: (row) => referenceText(row, "reference_cost_basis_text") }')
+    assert 'referenceText(row, "reference_cost_basis_text")' in reference_columns_body
+    # Quantity block first (库存数量与票面一致为原则): 数量 → 已开 → 销项 → 数量比对 → 未开 → 开票状态.
+    keys = re.findall(r'\{ key: "([^"]+)"', reference_columns_body)
+    assert keys[5:11] == ["quantity", "invoiced_quantity", "outbound_quantity", "outbound_compare_text", "uninvoiced_quantity", "invoice_status"]
+    assert keys.index("actual_markup_text") > keys.index("invoice_status")
+    assert keys[-1] == "reference_cost_basis_text" and len(keys) == 18
+    assert '{ key: "outbound_compare_text", label: "数量比对", render: renderOutboundCompare }' in reference_columns_body
+    # Live draft updates address cells by column key, so reordering columns cannot desync them.
+    assert "const referenceColumnIndex = Object.fromEntries(" in js
+    assert 'setCell("outbound_compare_text", renderOutboundCompare(source));' in js
+    assert "cells[17]" not in js and "cells[6]" not in js
+    assert 'class="cost-context-grid"' in html
+    assert 'id="costOutboundCounts"' in html
+    assert "数量一致 ${info.quantity_match_count || 0}" in js
+    assert "销项超过进项 ${info.oversold_count || 0}" in js
+    assert 'id="costOutboundPanel"' in html
+    assert 'id="costOutboundSummary"' in html
+    assert 'id="batchOutboundBtn"' in html
+    assert "data-outbound-apply" in js
+    assert "renderOutboundSummary(payload.outbound_summary);" in js
+    assert "比对只给建议，已开数量以保存的为准" in js
+    assert "setRowDraft(key, { invoiced_quantity: value });" in js
     assert "const referenceAmount = numberValue(source.amount) * multiplier;" not in js
     assert "referenceAverageWithTax = numberValue(source.average_unit_price) * 1.13 * multiplier" not in js
     assert "inventory_total_with_tax" in js
@@ -158,8 +179,8 @@ def test_cost_page_keeps_required_controls() -> None:
     assert "锁定" in js
     assert "解锁" in js
     assert "common.js?v=20260907-desktop-integrated-2" in html
-    assert "app.css?v=20260907-desktop-integrated-2" in html
-    assert "page-costs.js?v=20261105-cost-tax-profile" in html
+    assert "app.css?v=20261108-cost-quantity-layout" in html
+    assert "page-costs.js?v=20261108-cost-quantity-layout" in html
     for token in (
         "发票大类",
         "特定业务类型",
@@ -299,8 +320,12 @@ def test_cost_page_keeps_required_controls() -> None:
     assert "min-width: 1520px" in css
     assert "#projectTable" in css
     assert "min-width: 1420px" in css
-    assert "min-width: 1560px" in css
+    assert "min-width: 2156px" in css
+    assert ".cost-context-grid {" in css
     assert "#referenceTable th:nth-child(14)" in css
+    # 成本口径 and the three 销项 columns need explicit widths, or table-layout: fixed squeezes them.
+    for index in (15, 16, 17, 18):
+        assert f"#referenceTable th:nth-child({index})" in css
     assert ".reference-number" in css
     assert ".reference-text" in css
     assert ".reference-text__inner" in css
@@ -327,9 +352,9 @@ def test_cost_page_keeps_required_controls() -> None:
     assert 'await loadCosts("save");' in js
     assert "updateReferenceStatsFromDrafts();" in js
     assert "setMarkupControlState(input, markupButton, nextLocked);\n  updateReferenceRowByKey(key);" in js
-    assert 'cells[6].innerHTML = referenceNumber(formatUnitPrice(metrics.referenceAverageWithTax), "average-unit-price-with-tax");' in js
-    assert 'cells[8].innerHTML = referenceNumber(formatReferenceAmount(metrics.referenceTotal), "reference-total");' in js
-    assert 'cells[13].innerHTML = referenceNumber(formatReferenceAmount(metrics.uninvoicedReferenceAmount), "uninvoiced-reference-amount");' in js
+    assert 'setCell("reference_average_unit_price_with_tax", referenceNumber(formatUnitPrice(metrics.referenceAverageWithTax), "average-unit-price-with-tax"));' in js
+    assert 'setCell("reference_total_with_tax", referenceNumber(formatReferenceAmount(metrics.referenceTotal), "reference-total"));' in js
+    assert 'setCell("uninvoiced_reference_amount", referenceNumber(formatReferenceAmount(metrics.uninvoicedReferenceAmount), "uninvoiced-reference-amount"));' in js
     assert "refs.invoicedReferenceTotal.textContent = app.formatMoney(invoicedTotal);" in js
     assert "refs.uninvoicedReferenceTotal.textContent = app.formatMoney(uninvoicedTotal);" in js
     assert "tabindex=\"0\"" in js
@@ -428,7 +453,7 @@ def test_main_pages_keep_user_visible_controls() -> None:
     assert "过去保存" in index
     assert 'class="inline-panel path-inline" hidden' not in index
     assert 'id="watchDirDraft" class="watch-dir-draft" hidden' in index
-    assert "app.css?v=20260907-desktop-integrated-2" in index
+    assert "app.css?v=20261108-cost-quantity-layout" in index
     assert "settings-actions.css?v=20260907-desktop-integrated-2" in index
     assert "common.js?v=20260907-desktop-integrated-2" in index
     assert "page-index.js?v=20261009-selection-6" in index
@@ -638,7 +663,7 @@ def test_main_pages_keep_user_visible_controls() -> None:
     assert "类型识别状态" in page_detail
     assert "类型识别说明" in page_detail
     assert "common.js?v=20260907-desktop-integrated-2" in detail
-    assert "app.css?v=20260907-desktop-integrated-2" in detail
+    assert "app.css?v=20261108-cost-quantity-layout" in detail
     assert ".panel__head .detail-file-actions" in css
     assert ".detail-grid" in css
     assert ".detail-grid .stat-card strong { min-width: 0; overflow-wrap: anywhere; word-break: break-word; }" in css
@@ -855,7 +880,7 @@ def test_selected_invoice_summary_frontend_contract() -> None:
 
     for template_name in ("backend.html", "base_head.html", "consistency.html", "costs.html", "detail.html", "documents.html", "index.html", "ocr.html", "settings.html", "skins.html"):
         template = (ROOT / "web" / "templates" / template_name).read_text(encoding="utf-8")
-        assert "app.css?v=20260907-desktop-integrated-2" in template
+        assert "app.css?v=20261108-cost-quantity-layout" in template
     assert "page-index.js?v=20261009-selection-6" in index
 
 
@@ -919,7 +944,7 @@ def test_documents_page_contract() -> None:
     assert ">是</button>" in html
     assert ">否</button>" in html
     assert ">打开该文件</button>" in html
-    assert "app.css?v=20260907-desktop-integrated-2" in html
+    assert "app.css?v=20261108-cost-quantity-layout" in html
     assert "common.js?v=20260907-desktop-integrated-2" in html
     assert "page-documents.js?v=20261009-progressive-3" in html
     assert "large-lists.css?v=20260907-large-list-1" in html
@@ -1023,7 +1048,7 @@ def test_bookkeeping_page_static_contract() -> None:
     assert 'body data-page="bookkeeping"' in html
     assert "{{BASE_HEAD}}" in html
     assert "{{BOOTSTRAP_JSON}}" in html
-    assert "app.css?v=20260907-desktop-integrated-2" in base_head
+    assert "app.css?v=20261108-cost-quantity-layout" in base_head
     assert "page-bookkeeping.js?v=20260711-w9-ledger-review-v3" in html
     assert 'id="voucherBlockers"' in html
     assert "item.can_approve === true" in js
@@ -1228,7 +1253,7 @@ def test_settings_page_contract() -> None:
     assert 'class="settings-edit-card settings-defaults-card"' in html
     assert 'href="/skins"' in html
     assert 'href="/backend"' in html
-    assert "app.css?v=20260907-desktop-integrated-2" in html
+    assert "app.css?v=20261108-cost-quantity-layout" in html
     assert "settings-actions.css?v=20260907-desktop-integrated-2" in html
     assert "common.js?v=20260907-desktop-integrated-2" in html
     assert "page-settings.js?v=20260907-desktop-integrated-2" in html
@@ -1516,7 +1541,7 @@ def test_skin_page_contract_and_common_skin_loader() -> None:
     assert "disabled>替换" in html
     assert "skinList" in html
     assert 'role="radiogroup"' in html
-    assert "app.css?v=20260907-desktop-integrated-2" in html
+    assert "app.css?v=20261108-cost-quantity-layout" in html
     assert "common.js?v=20260907-desktop-integrated-2" in html
     assert "page-skins.js?v=20260907-desktop-integrated-2" in html
     assert '@app.get("/skins", response_class=HTMLResponse)' in api_app
@@ -1745,7 +1770,7 @@ def test_home_invoice_list_centers_content_and_uses_one_status_badge() -> None:
         html = template_path.read_text(encoding="utf-8")
         if "app.css?v=" not in html:
             continue
-        assert "app.css?v=20260907-desktop-integrated-2" in html
+        assert "app.css?v=20261108-cost-quantity-layout" in html
         assert "app.css?v=20260727-invoice-list-status-layout" not in html
         assert "app.css?v=20260726-invoice-taxonomy" not in html
     index = (templates_dir / "index.html").read_text(encoding="utf-8")

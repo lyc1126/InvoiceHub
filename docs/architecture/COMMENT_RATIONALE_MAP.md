@@ -163,6 +163,7 @@ Windows验包测试中的假凭据在运行时拼接：保持生成文件的扫�
 | `_invoice_reference_summary/_build_reference_rows` | 开票参考按成本单价（不含税 + 不可抵扣税金）、行级加价和本公司销项税率计算 | 8% 仅 fallback；每行独立；公式在工作簿、API、保存与 page-costs 四处一致；无 `tax_profile` 时等同旧的一般纳税人 13% | 行级加价与统计测试、税务设置测试 |
 | `input_tax_deductibility/reference_cost_basis` | 一般纳税人只有专票与旅客运输普票可抵扣，其他普票税金计入成本；小规模全部计入 | 类型未确认时按不含税并标注，避免识别缺口抬高参考价；通行费普票未单独识别，会按不可抵扣计 | `test_cost_reference_general_taxpayer_adds_ordinary_invoice_tax_to_cost`、`..._unconfirmed_invoice_type_...` |
 | `_write_reference_status`（两处） | 改写状态 JSON 时保留顶层 `tax_profile` | 重新汇总合并工作簿状态、只保存行状态都不能清掉公司税务设置 | `test_rebuild_status_writer_preserves_tax_profile`、`test_cost_tax_profile_change_keeps_locked_snapshot_and_survives_row_saves` |
+| `read_outbound_summary/outbound_reference_fields` | 销项只在手动重新汇总时读取并缓存到工作区；只采用销售方为本目录进项购买方的票；比对不改保存的已开数量 | 开具目录是全局设置，切换公司后可能指向别家；手填可能早于销项归档，自动覆盖会改动已开快照 | `test_outbound_summary_dedupes_formats_and_ignores_other_companies`、`test_outbound_compare_states_follow_hand_entered_quantity`、`test_bridge_rebuild_reads_outbound_invoices_into_cost_reference` |
 | `CostProjectionService.save_reference_status::locked_part` | 已开金额代表保存当时的业务快照，新增明细只能增加未开 | 数量变化才按比例重锁；只改加价不重价已开部分 | 快照锁定/新增汇总/改加价测试 |
 | `_read_reference_status_from_workbook` | 旧目录可能只有工作簿状态，没有完整 JSON | 只作兼容兜底，恢复后写结构化 JSON | 工作簿恢复测试 |
 

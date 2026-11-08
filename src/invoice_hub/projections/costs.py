@@ -33,12 +33,15 @@ from invoice_hub.projections.cost_analysis import (
     average_unit_price_with_tax,
     purchase_reference_average_unit_price_with_tax,
     input_tax_index,
+    outbound_overview,
+    outbound_reference_fields,
     parse_reference_tax_profile,
     reference_cost_basis,
     reference_cost_basis_text,
     reference_tax_profile_from_status,
     _write_workbook,
 )
+from invoice_hub.projections.cost_outbound import OUTBOUND_SUMMARY_NAME, _empty_summary as _empty_outbound_summary, load_outbound_summary, read_outbound_summary
 from invoice_hub.storage.files import atomic_write_json, read_csv_rows, read_json_object, write_csv_rows
 
 COST_SOURCE_EXTS = {".pdf", ".ofd", ".xml"}
@@ -277,6 +280,7 @@ class CostProjectionService:
         self.summary_xlsx = self.watch_dir / COST_SUMMARY_XLSX_NAME
         self.status_json = self.watch_dir / COST_REFERENCE_STATUS_NAME
         self.summary_csv = self.workspace_dir / "发票汇总.csv"
+        self.outbound_summary_json = self.workspace_dir / OUTBOUND_SUMMARY_NAME
 
     def rebuild(self, progress: Callable[[int, int], None] | None = None) -> dict:
         # Retain a consistent complete generation before replacing any projection.
@@ -291,13 +295,15 @@ class CostProjectionService:
                 reference_markup_rate=self._markup_meta()["rate"],
                 progress=progress,
                 on_rows=preview.add,
+                outbound_items=self._outbound_items(),
             )
         self.cache_snapshot()
         return result
 
     def read_fingerprint(self):
         return [str(self.watch_dir.resolve()), self.target_id, str(self.reference_markup_rate),
-                *[file_signature(path) for path in (self.detail_csv, self.summary_xlsx, self.status_json, self.summary_csv)]]
+                *[file_signature(path) for path in (self.detail_csv, self.summary_xlsx, self.status_json, self.summary_csv,
+                                                    self.outbound_summary_json)]]
 
     def cache_snapshot(self):
         views = ReadViews(self.workspace_dir)
@@ -315,6 +321,25 @@ class CostProjectionService:
             "percent": reference_markup_percent_text(rate),
             "locked": _truthy(payload.get("reference_markup_locked", False)),
         }
+
+    def _outbound_items(self) -> dict[str, dict]:
+        items = load_outbound_summary(self.workspace_dir).get("items")
+        return items if isinstance(items, dict) else {}
+
+    def refresh_outbound(self, outbound_dir: str | Path | None, progress: Callable[[int, int], None] | None = None) -> dict:
+        """Re-read the issued-invoice folder (manual 重新汇总 only) and rewrite the workbook with the comparison.
+
+        Monitor-driven rebuilds reuse the last saved summary, so the outbound folder is never
+        watched and a stale summary is shown with its read time rather than silently dropped.
+        """
+        try:
+            summary = read_outbound_summary(outbound_dir, self.watch_dir, read_csv_rows(self.detail_csv), self.workspace_dir, progress)
+        except Exception as exc:
+            # A broken sales file must not fail the cost rebuild; keep the reason visible on the page.
+            summary = {**_empty_outbound_summary(str(outbound_dir or ""), f"读取开具发票失败：{exc}")}
+            atomic_write_json(self.outbound_summary_json, summary)
+        self._refresh_workbook_from_current_detail(self._markup_meta()["rate"])
+        return summary
 
     def _tax_profile(self) -> ReferenceTaxProfile:
         return reference_tax_profile_from_status(_read_reference_status_payload(self.status_json))
@@ -352,6 +377,7 @@ class CostProjectionService:
             status_items=_read_reference_status(self.status_json),
             reference_markup_rate=reference_markup_rate,
             tax_profile=self._tax_profile(),
+            outbound_items=self._outbound_items(),
         )
 
     def _read_csv_headers(self) -> list[str]:
@@ -425,6 +451,7 @@ class CostProjectionService:
             status_items=status_items,
             reference_markup_rate=markup["rate"],
             tax_profile=self._tax_profile(),
+            outbound_items=self._outbound_items(),
         )
         return True
 
@@ -452,6 +479,9 @@ class CostProjectionService:
             reference_status_exists=self.status_json.exists(),
             reference_markup_rate=markup["display"],
             reference_tax_profile=tax_profile.api_payload(),
+            outbound_summary=outbound_overview(
+                load_outbound_summary(self.workspace_dir), [row["key"] for row in invoice_reference], invoice_reference
+            ),
             detail_count=len(detail_rows),
             check_count=len(checks),
             mismatch_count=mismatch_count,
@@ -616,6 +646,7 @@ class CostProjectionService:
         output_tax_rate = tax_profile.output_tax_rate
         # Same formula as cost_analysis._invoice_reference_summary; the workbook and this API must agree.
         deductibility = input_tax_index(check_rows)
+        outbound_items = self._outbound_items()
         grouped: dict[str, dict] = {}
         for row in detail_rows:
             key = _reference_key(row)
@@ -660,6 +691,7 @@ class CostProjectionService:
             locked_amount = self._locked_reference_part(status, "invoiced_reference_amount", reference_amount, quantity, invoiced_quantity)
             locked_tax = self._locked_reference_part(status, "invoiced_reference_tax", reference_tax, quantity, invoiced_quantity)
             locked_total = self._locked_reference_part(status, "invoiced_reference_total_with_tax", reference_total, quantity, invoiced_quantity)
+            outbound = outbound_reference_fields(outbound_items.get(key), quantity, invoiced_quantity, cost_price)
             invoice_status = status.get("invoice_status") or ("已开具" if quantity > 0 and invoiced_quantity >= quantity else ("未开具" if invoiced_quantity == 0 else "部分开具"))
             result.append(
                 {
@@ -694,6 +726,15 @@ class CostProjectionService:
                     "uninvoiced_reference_tax": float(max(Decimal("0"), reference_tax - locked_tax)),
                     "uninvoiced_reference_total_with_tax": float(max(Decimal("0"), reference_total - locked_total)),
                     "status_updated_at": str(status.get("updated_at") or ""),
+                    "outbound_quantity": float(outbound["outbound_quantity"]),
+                    "outbound_amount": float(outbound["outbound_amount"]),
+                    "outbound_unit_price": float(outbound["outbound_unit_price"]) if outbound["outbound_unit_price"] is not None else None,
+                    "outbound_invoice_count": outbound["outbound_invoice_count"],
+                    "actual_markup_rate": _decimal_text(outbound["actual_markup_rate"], "0.000001") if outbound["actual_markup_rate"] is not None else "",
+                    "actual_markup_text": outbound["actual_markup_text"],
+                    "outbound_compare": outbound["outbound_compare"],
+                    "outbound_compare_text": outbound["outbound_compare_text"],
+                    "outbound_suggested_quantity": float(outbound["outbound_suggested_quantity"]),
                 }
             )
         return sorted(result, key=lambda item: item["key"])

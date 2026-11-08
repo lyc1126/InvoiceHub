@@ -55,6 +55,9 @@ const refs = {
   outputTaxRateSelect: document.getElementById("outputTaxRateSelect"),
   saveTaxProfileBtn: document.getElementById("saveTaxProfileBtn"),
   taxProfileHint: document.getElementById("taxProfileHint"),
+  outboundSummary: document.getElementById("costOutboundSummary"),
+  outboundCounts: document.getElementById("costOutboundCounts"),
+  batchOutboundBtn: document.getElementById("batchOutboundBtn"),
 };
 
 const detailColumns = [
@@ -91,6 +94,9 @@ const checkColumns = [
     return renderCostCell(row, key, "checks");
   },
 }));
+// Quantity first: keeping 库存数量 equal to the invoice face is the reconciliation principle, so
+// 已开 / 销项 / 比对 sit together on the left; price columns follow (price drift is normal).
+// Column widths live in app.css (#referenceTable nth-child); keep both orders in step.
 const referenceColumns = [
   { key: "select", label: "选择", render: (row) => `<input class="invoice-checkbox" type="checkbox" data-reference-check="${app.escapeHtml(row.key)}" aria-label="选择开票参考行">` },
   { key: "发票代码(**内文字)", label: "发票代码", render: (row) => referenceText(row, "发票代码(**内文字)") },
@@ -98,17 +104,20 @@ const referenceColumns = [
   { key: "规格型号", label: "规格型号", render: (row) => referenceText(row, "规格型号") },
   { key: "单位", label: "单位", render: (row) => referenceText(row, "单位") },
   { key: "quantity", label: "数量", render: (row) => referenceNumber(row.quantity, "quantity") },
-  { key: "reference_average_unit_price_with_tax", label: "平均单价(含税)", render: renderReferenceAverageWithTax },
-  { key: "markup_rate", label: "加价率", render: renderReferenceMarkup },
-  { key: "reference_total_with_tax", label: "参考价税合计", render: (row) => referenceNumber(row.reference_total_with_tax, "reference-total") },
   { key: "invoiced_quantity", label: "已开数量", render: renderReferenceQuantity },
+  { key: "outbound_quantity", label: "销项数量", render: (row) => (row.outbound_compare && row.outbound_compare !== "none" ? referenceNumber(formatQuantity(row.outbound_quantity), "outbound-quantity") : "--") },
+  { key: "outbound_compare_text", label: "数量比对", render: renderOutboundCompare },
   { key: "uninvoiced_quantity", label: "未开数量", render: (row) => referenceNumber(row.uninvoiced_quantity, "uninvoiced-quantity") },
   { key: "invoice_status", label: "开票状态", render: (row) => app.statusPill(row.invoice_status || "未开具", app.toneFromStatus(row.invoice_status || "")) },
+  { key: "reference_average_unit_price_with_tax", label: "平均单价(含税)", render: renderReferenceAverageWithTax },
+  { key: "markup_rate", label: "加价率", render: renderReferenceMarkup },
+  { key: "actual_markup_text", label: "实际加价率", render: (row) => (row.actual_markup_text ? referenceNumber(row.actual_markup_text, "actual-markup") : "--") },
+  { key: "reference_total_with_tax", label: "参考价税合计", render: (row) => referenceNumber(row.reference_total_with_tax, "reference-total") },
   { key: "invoiced_reference_total_with_tax", label: "已开参考价税合计", render: (row) => referenceNumber(row.invoiced_reference_total_with_tax, "invoiced-reference-total") },
   { key: "uninvoiced_reference_amount", label: "未开参考金额", render: (row) => referenceNumber(row.uninvoiced_reference_amount, "uninvoiced-reference-amount") },
-  // Appended last so updateReferenceRowByKey's fixed cell indexes stay valid.
   { key: "reference_cost_basis_text", label: "成本口径", render: (row) => referenceText(row, "reference_cost_basis_text") },
 ];
+const referenceColumnIndex = Object.fromEntries(referenceColumns.map((column, index) => [column.key, index]));
 
 function syncTone(value) {
   if (value === "fresh" || value === "empty") return "success";
@@ -388,6 +397,7 @@ function render() {
   refs.invoicedReferenceTotal.textContent = app.formatMoney(referenceStats.invoiced_reference_total_with_tax || 0);
   refs.uninvoicedReferenceTotal.textContent = app.formatMoney(referenceStats.uninvoiced_reference_total_with_tax || 0);
   renderTaxProfile();
+  renderOutboundSummary(payload.outbound_summary);
   document.getElementById("syncState").textContent = payload.sync.sync_state;
   if (payload.provisional) {
     const stopped = ["failed", "interrupted"].includes(payload.progress?.state) || !payload.updating;
@@ -459,12 +469,86 @@ function updateTaxProfileControls() {
   refs.saveTaxProfileBtn.disabled = busy || !changed || blockedByDrafts;
   refs.saveTaxProfileBtn.title = blockedByDrafts ? "请先保存开票参考草稿，再修改税务设置" : "保存后重算开票参考；已开参考金额保持当次快照";
   const selectedSmallScale = refs.taxpayerTypeSelect.value === "small_scale";
-  const basis = selectedSmallScale ? "小规模纳税人：进项税全部计入成本" : "一般纳税人：专用发票按不含税计成本，普通发票（旅客运输除外）的税金计入成本";
+  const basis = selectedSmallScale ? "小规模：进项税全部计入成本" : "一般纳税人：专票按不含税、普票（旅客运输除外）含税计成本";
   const notices = [basis];
-  if (!profile.configured && !changed) notices.push("尚未保存，当前按一般纳税人、13% 计算");
+  if (!profile.configured && !changed) notices.push("未保存，按一般纳税人 13% 计算");
   if (changed) notices.push(blockedByDrafts ? "有未保存的开票参考草稿，请先保存" : "修改未保存");
   else if (profile.warning) notices.push(profile.warning);
   refs.taxProfileHint.textContent = notices.join("；");
+}
+
+const OUTBOUND_QUANTITY_TOLERANCE = 0.0005;
+
+function renderOutboundSummary(summary) {
+  if (!refs.outboundSummary) return;
+  const info = summary || {};
+  const chips = [];
+  const lines = [];
+  if (!info.read_at) {
+    lines.push(`<p>尚未读取开具发票：点「重新汇总」后按开具发票比对已开数量；已开数量仍可手填。</p>`);
+  } else if (!info.configured) {
+    lines.push(`<p>未设置开具发票目录（在「单据」页设置），已开数量只能手填。</p>`);
+  } else {
+    // Counts use the saved 已开数量 across every row, not just the mounted page.
+    chips.push(app.statusPill(`数量一致 ${info.quantity_match_count || 0}`, "success"));
+    chips.push(app.statusPill(`待更新 ${info.quantity_pending_count || 0}`, info.quantity_pending_count ? "warning" : "muted"));
+    chips.push(app.statusPill(`销项超过进项 ${info.oversold_count || 0}`, info.oversold_count ? "danger" : "muted"));
+    chips.push(app.statusPill(`无销项 ${info.no_outbound_count || 0}`, "muted"));
+    const readAt = new Date(info.read_at);
+    const readAtText = Number.isNaN(readAt.getTime()) ? String(info.read_at) : readAt.toLocaleString("zh-CN", { hour12: false });
+    lines.push(`<p>读取 ${info.invoice_count} 张，采用 ${info.used_invoice_count} 张，非本公司 ${info.excluded_invoice_count} 张，无明细 ${info.no_detail_invoice_count} 张；对上 ${info.matched_item_count} 个品目，未对上 ${info.unmatched_item_count} 个。</p>`);
+    if (info.unmatched_item_count) {
+      const more = info.unmatched_item_count > (info.unmatched_items || []).length ? " 等" : "";
+      lines.push(`<details class="cost-outbound__unmatched"><summary>查看未对上的销项品目</summary>${app.escapeHtml((info.unmatched_items || []).join("、") + more)}</details>`);
+    }
+    lines.push(`<p class="cost-panel-note" title="${app.escapeHtml(info.outbound_dir || "")}">读取于 ${app.escapeHtml(readAtText)}，开具发票变化后点「重新汇总」更新；比对只给建议，已开数量以保存的为准。</p>`);
+  }
+  if (info.warning) lines.push(`<p class="cost-panel-warning">${app.escapeHtml(info.warning)}</p>`);
+  if (info.uniform_markup_warning) lines.push(`<p class="cost-panel-note">${app.escapeHtml(info.uniform_markup_warning)}</p>`);
+  if (refs.outboundCounts) refs.outboundCounts.innerHTML = chips.join("");
+  refs.outboundSummary.innerHTML = lines.join("");
+}
+
+function outboundCompareMeta(row, invoicedQuantity) {
+  // Mirrors cost_analysis.outbound_reference_fields, but against the current draft quantity.
+  const outbound = numberValue(row.outbound_quantity);
+  const total = numberValue(row.quantity);
+  if (!row.outbound_compare || row.outbound_compare === "none" || outbound === 0) return { text: "无销项", tone: "muted", canApply: false };
+  const diff = invoicedQuantity - outbound;
+  let text = "一致";
+  let tone = "success";
+  if (Math.abs(diff) > OUTBOUND_QUANTITY_TOLERANCE) {
+    text = diff < 0 ? `销项多 ${formatQuantity(-diff)}` : `手填多 ${formatQuantity(diff)}（可能有未归档的销项）`;
+    tone = "warning";
+  }
+  if (outbound > total + OUTBOUND_QUANTITY_TOLERANCE) {
+    text += `；销项超过进项 ${formatQuantity(outbound - total)}`;
+    tone = "danger";
+  }
+  const suggested = numberValue(row.outbound_suggested_quantity);
+  return { text, tone, canApply: Math.abs(suggested - invoicedQuantity) > OUTBOUND_QUANTITY_TOLERANCE };
+}
+
+function renderOutboundCompare(row) {
+  const meta = outboundCompareMeta(row, numberValue(referenceDraft(row).invoiced_quantity));
+  const button = meta.canApply && state.payload?.editable !== false
+    ? ` <button class="btn btn--ghost btn--mini" type="button" data-outbound-apply="${app.escapeHtml(row.key)}" title="把已开数量改为销项数量 ${app.escapeHtml(formatQuantity(row.outbound_suggested_quantity))}（保存后生效）">按销项更新</button>`
+    : "";
+  return `${app.statusPill(meta.text, meta.tone)}${button}`;
+}
+
+function applyOutboundQuantity(keys) {
+  keys.forEach((key) => {
+    const row = payloadReferenceRow(key);
+    if (!row || !row.outbound_compare || row.outbound_compare === "none") return;
+    const value = formatQuantity(row.outbound_suggested_quantity);
+    const input = referenceInputByKey(key);
+    if (input) input.value = value;
+    setRowDraft(key, { invoiced_quantity: value });
+    updateReferenceRowByKey(key);
+  });
+  updateReferenceStatsFromDrafts();
+  updateReferenceControls();
 }
 
 function renderRecentWatchDirs(items) {
@@ -1130,12 +1214,18 @@ function updateReferenceRowByKey(key) {
   const markupInput = referenceMarkupInputByKey(key);
   if (quantityInput) quantityInput.setAttribute("aria-invalid", isCompleteQuantityText(quantityInput.value) && quantityWithinMax(quantityInput.value, max) ? "false" : "true");
   if (markupInput) markupInput.setAttribute("aria-invalid", isCompleteMarkupRateText(markupInput.value) ? "false" : "true");
-  if (cells[6]) cells[6].innerHTML = referenceNumber(formatUnitPrice(metrics.referenceAverageWithTax), "average-unit-price-with-tax");
-  if (cells[8]) cells[8].innerHTML = referenceNumber(formatReferenceAmount(metrics.referenceTotal), "reference-total");
-  if (cells[10]) cells[10].innerHTML = referenceNumber(formatQuantity(metrics.uninvoiced), "uninvoiced-quantity");
-  if (cells[11]) cells[11].innerHTML = app.statusPill(metrics.status, app.toneFromStatus(metrics.status));
-  if (cells[12]) cells[12].innerHTML = referenceNumber(formatReferenceAmount(metrics.lockedReferenceTotal), "invoiced-reference-total");
-  if (cells[13]) cells[13].innerHTML = referenceNumber(formatReferenceAmount(metrics.uninvoicedReferenceAmount), "uninvoiced-reference-amount");
+  // Look cells up by column key so reordering referenceColumns cannot desynchronise live drafts.
+  const setCell = (columnKey, html) => {
+    const cell = cells[referenceColumnIndex[columnKey]];
+    if (cell) cell.innerHTML = html;
+  };
+  setCell("reference_average_unit_price_with_tax", referenceNumber(formatUnitPrice(metrics.referenceAverageWithTax), "average-unit-price-with-tax"));
+  setCell("reference_total_with_tax", referenceNumber(formatReferenceAmount(metrics.referenceTotal), "reference-total"));
+  setCell("uninvoiced_quantity", referenceNumber(formatQuantity(metrics.uninvoiced), "uninvoiced-quantity"));
+  setCell("invoice_status", app.statusPill(metrics.status, app.toneFromStatus(metrics.status)));
+  setCell("invoiced_reference_total_with_tax", referenceNumber(formatReferenceAmount(metrics.lockedReferenceTotal), "invoiced-reference-total"));
+  setCell("uninvoiced_reference_amount", referenceNumber(formatReferenceAmount(metrics.uninvoicedReferenceAmount), "uninvoiced-reference-amount"));
+  setCell("outbound_compare_text", renderOutboundCompare(source));
   void metrics.referenceTax;
   updateReferenceStatsFromDrafts();
   updateReferenceControls();
@@ -1162,6 +1252,14 @@ function updateReferenceControls() {
   refs.saveBtn.title = invalidCount ? "已开数量和加价率只能输入数字，已开数量不能超过数量合计" : (dirtyCount ? `保存 ${dirtyCount} 行开票参考状态` : "已保存；修改已开数量或加价率后可再次保存");
   if (refs.markMaxBtn) refs.markMaxBtn.disabled = selectedCount === 0;
   if (refs.markZeroBtn) refs.markZeroBtn.disabled = selectedCount === 0;
+  if (refs.batchOutboundBtn) {
+    const applicable = selectedReferenceKeys().filter((key) => {
+      const compare = payloadReferenceRow(key)?.outbound_compare;
+      return compare && compare !== "none";
+    }).length;
+    refs.batchOutboundBtn.disabled = busy || applicable === 0;
+    refs.batchOutboundBtn.title = applicable ? `把已选中有销项的 ${applicable} 行已开数量改为销项数量，保存后生效` : "勾选有销项的行后可按销项更新已开数量";
+  }
   if (refs.batchMarkupLockBtn) refs.batchMarkupLockBtn.disabled = selectedCount === 0 || !batchValid;
   if (refs.batchMarkupUnlockBtn) refs.batchMarkupUnlockBtn.disabled = selectedCount === 0;
   if (refs.batchMarkupInput) refs.batchMarkupInput.setAttribute("aria-invalid", refs.batchMarkupInput.value && !batchValid ? "true" : "false");
@@ -1202,6 +1300,11 @@ function applySelectedMarkup(locked) {
 
 refs.markMaxBtn?.addEventListener("click", () => applySelectedQuantity("max"));
 refs.markZeroBtn?.addEventListener("click", () => applySelectedQuantity("zero"));
+refs.batchOutboundBtn?.addEventListener("click", () => applyOutboundQuantity(selectedReferenceKeys()));
+document.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-outbound-apply]");
+  if (button) applyOutboundQuantity([button.dataset.outboundApply]);
+});
 refs.batchMarkupLockBtn?.addEventListener("click", () => applySelectedMarkup(true));
 refs.batchMarkupUnlockBtn?.addEventListener("click", () => applySelectedMarkup(false));
 window.addEventListener("resize", app.debounce(() => {

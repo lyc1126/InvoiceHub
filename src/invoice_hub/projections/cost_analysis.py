@@ -111,6 +111,10 @@ INVOICE_REFERENCE_HEADERS = [
     "状态更新时间",
     "成本口径",
     "销项税率",
+    "销项数量",
+    "销项除税单价",
+    "实际加价率",
+    "销项比对",
 ]
 
 CHECK_HEADERS = [
@@ -541,6 +545,119 @@ def reference_cost_basis(
 
 def reference_cost_basis_text(basis: dict) -> str:
     return f"{basis['label']}（{basis['note']}）" if basis.get("note") else basis["label"]
+
+
+OUTBOUND_QUANTITY_TOLERANCE = Decimal("0.0005")
+UNIFORM_MARKUP_MIN_ITEMS = 3
+
+
+def outbound_reference_fields(
+    outbound_item: dict | None,
+    quantity_total: Decimal,
+    invoiced_quantity: Decimal,
+    cost_unit_price: Decimal | None,
+) -> dict:
+    """Compare one 开票参考 row with the 销项 (issued invoice) lines read for the same key.
+
+    The hand-entered 已开数量 stays authoritative: sales may be invoiced before their files are
+    filed, so the comparison only suggests a quantity and never overwrites saved status.
+    """
+    item = outbound_item or {}
+    quantity = _to_decimal(item.get("quantity")) or Decimal("0")
+    amount = _to_decimal(item.get("amount")) or Decimal("0")
+    unit_price = amount / quantity if quantity > 0 else None
+    markup = None
+    if unit_price is not None and cost_unit_price is not None and cost_unit_price > 0:
+        markup = unit_price / cost_unit_price - Decimal("1")
+    if not item or quantity == 0:
+        compare, text = "none", "无销项"
+    elif abs(invoiced_quantity - quantity) <= OUTBOUND_QUANTITY_TOLERANCE:
+        compare, text = "match", "一致"
+    elif quantity > invoiced_quantity:
+        compare, text = "outbound_more", f"销项多 {_decimal_text(quantity - invoiced_quantity, '0.001')}"
+    else:
+        compare, text = "manual_more", f"手填多 {_decimal_text(invoiced_quantity - quantity, '0.001')}（可能有未归档的销项）"
+    if quantity > quantity_total + OUTBOUND_QUANTITY_TOLERANCE:
+        text += f"；销项超过进项 {_decimal_text(quantity - quantity_total, '0.001')}"
+    suggested = min(max(quantity, Decimal("0")), quantity_total) if quantity_total > 0 else Decimal("0")
+    return {
+        "outbound_quantity": quantity,
+        "outbound_amount": amount,
+        "outbound_unit_price": unit_price,
+        "outbound_invoice_count": int(item.get("invoice_count") or 0),
+        "actual_markup_rate": markup,
+        "actual_markup_text": f"{_decimal_text(markup * Decimal('100'), '0.01')}%" if markup is not None else "",
+        "outbound_compare": compare,
+        "outbound_compare_text": text,
+        "outbound_suggested_quantity": suggested,
+    }
+
+
+def _outbound_sheet_cells(fields: dict) -> dict:
+    has_outbound = fields["outbound_compare"] != "none"
+    return {
+        "销项数量": _number(fields["outbound_quantity"], "0.001") if has_outbound else "",
+        "销项除税单价": _number(fields["outbound_unit_price"]) if fields["outbound_unit_price"] is not None else "",
+        "实际加价率": fields["actual_markup_text"],
+        "销项比对": fields["outbound_compare_text"],
+    }
+
+
+def outbound_overview(summary: dict | None, reference_keys: Iterable[str], row_fields: Iterable[dict]) -> dict:
+    """Page-level 销项 summary: what was read, what did not match a 开票参考 row, and the
+    COST-05 hint when every matched item carries exactly the same markup."""
+    summary = summary if isinstance(summary, dict) else {}
+    items = summary.get("items") if isinstance(summary.get("items"), dict) else {}
+    keys = set(reference_keys)
+    unmatched = [item for key, item in items.items() if key not in keys]
+    markups: set[str] = set()
+    counts = {"match": 0, "pending": 0, "oversold": 0, "none": 0}
+    for fields in row_fields:
+        # Quantity is the reconciliation principle: these counts drive the page's at-a-glance chips.
+        compare = fields.get("outbound_compare")
+        if compare == "match":
+            counts["match"] += 1
+        elif compare in {"outbound_more", "manual_more"}:
+            counts["pending"] += 1
+        elif compare == "none":
+            counts["none"] += 1
+        total = _to_decimal(fields.get("quantity"))
+        sold = _to_decimal(fields.get("outbound_quantity")) or Decimal("0")
+        if total is not None and sold > total + OUTBOUND_QUANTITY_TOLERANCE:
+            counts["oversold"] += 1
+        # Accepts the Decimal fields of outbound_reference_fields or the API's float/str copies.
+        rate = _to_decimal(fields.get("actual_markup_rate"))
+        quantity = _to_decimal(fields.get("outbound_quantity")) or Decimal("0")
+        if rate is not None and quantity > 0:
+            markups.add(_decimal_text(rate * Decimal("100"), "0.01"))
+    matched_count = sum(1 for key in items if key in keys)
+    uniform = ""
+    if matched_count >= UNIFORM_MARKUP_MIN_ITEMS and len(markups) == 1:
+        uniform = (
+            f"已对上的 {matched_count} 个品目实际加价率都是 {next(iter(markups))}%，售价完全跟随成本；"
+            "请留存合同定价条款、送货与签收单据。"
+        )
+    return {
+        "configured": bool(summary.get("configured")),
+        "outbound_dir": _clean_text(summary.get("outbound_dir")),
+        "read_at": _clean_text(summary.get("read_at")),
+        "invoice_count": int(summary.get("invoice_count") or 0),
+        "used_invoice_count": int(summary.get("used_invoice_count") or 0),
+        "excluded_invoice_count": int(summary.get("excluded_invoice_count") or 0),
+        "no_detail_invoice_count": int(summary.get("no_detail_invoice_count") or 0),
+        "matched_item_count": matched_count,
+        "unmatched_item_count": len(unmatched),
+        "unmatched_items": [
+            " / ".join(part for part in (_clean_text(item.get("item_name")), _clean_text(item.get("spec")), _clean_text(item.get("unit"))) if part)
+            for item in unmatched[:20]
+        ],
+        "warning": _clean_text(summary.get("warning")),
+        "uniform_markup_warning": uniform,
+        "quantity_match_count": counts["match"],
+        "quantity_pending_count": counts["pending"],
+        "oversold_count": counts["oversold"],
+        "no_outbound_count": counts["none"],
+    }
 
 
 def _round(value: Decimal | None, places: str = "0.01") -> Decimal | None:
@@ -2006,8 +2123,10 @@ def _invoice_reference_summary(
     reference_markup_rate: object = DEFAULT_REFERENCE_MARKUP_RATE,
     tax_profile: ReferenceTaxProfile | None = None,
     check_rows: list[dict] | None = None,
+    outbound_items: dict[str, dict] | None = None,
 ) -> list[dict]:
     fallback_markup_rate = normalize_reference_markup_rate(reference_markup_rate)
+    outbound_items = outbound_items or {}
     tax_profile = tax_profile or ReferenceTaxProfile()
     output_tax_rate = tax_profile.output_tax_rate
     deductibility = input_tax_index(check_rows)
@@ -2085,6 +2204,9 @@ def _invoice_reference_summary(
                 "状态更新时间": _clean_text(status_item.get("updated_at")),
                 "成本口径": reference_cost_basis_text(cost_basis),
                 "销项税率": tax_profile.api_payload()["output_tax_rate_display"],
+                **_outbound_sheet_cells(
+                    outbound_reference_fields(outbound_items.get(status_key), quantity, invoiced_quantity, avg_price)
+                ),
             }
         )
     return result
@@ -2259,6 +2381,7 @@ def _write_workbook(
     status_items: dict[str, dict] | None = None,
     reference_markup_rate: object = DEFAULT_REFERENCE_MARKUP_RATE,
     tax_profile: ReferenceTaxProfile | None = None,
+    outbound_items: dict[str, dict] | None = None,
 ) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     wb = Workbook()
@@ -2278,6 +2401,7 @@ def _write_workbook(
             reference_markup_rate=reference_markup_rate,
             tax_profile=tax_profile,
             check_rows=check_rows,
+            outbound_items=outbound_items,
         ),
     )
     _append_sheet(wb, "发票校验", CHECK_HEADERS, check_rows)
@@ -2291,6 +2415,7 @@ def build_cost_analysis_outputs(
     reference_markup_rate: object = DEFAULT_REFERENCE_MARKUP_RATE,
     progress: Callable[[int, int], None] | None = None,
     on_rows: Callable | None = None,
+    outbound_items: dict[str, dict] | None = None,
 ) -> dict:
     watch_folder = Path(watch_folder)
     output_folder = Path(output_folder)
@@ -2356,6 +2481,7 @@ def build_cost_analysis_outputs(
         status_items=status_items,
         reference_markup_rate=markup_rate,
         tax_profile=tax_profile,
+        outbound_items=outbound_items,
     )
 
     failed = [item for item in analyses if item.get("status") == "failed"]

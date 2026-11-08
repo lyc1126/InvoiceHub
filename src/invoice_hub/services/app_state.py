@@ -2911,6 +2911,7 @@ class AppState:
             profile = self._active_profile.model_copy(deep=True)
             profile_identity = _background_profile_identity(profile)
             reference_markup_rate = str(self.config.reference_markup_rate)
+            outbound_dir = self._outbound_invoice_dir_text()
         self.repo.create_task(task_id, "bridge.rebuild", "running", {"watch_dir": profile.watch_dir})
         progress = None
         try:
@@ -2948,9 +2949,22 @@ class AppState:
                             completed,
                             total,
                             52,
-                            92,
+                            86,
                         ),
                     )
+                    # 开票参考 compares hand-entered 已开数量 with issued invoices; only this manual
+                    # rebuild re-reads the (unwatched) outbound folder, after cost rows exist for the buyer check.
+                    progress.report("cost", "正在读取开具发票", percent=86)
+                    cost_result["outbound"] = {
+                        key: value
+                        for key, value in cost_service.refresh_outbound(
+                            outbound_dir,
+                            progress=lambda completed, total: progress.report_fraction(
+                                "cost", "正在读取开具发票", completed, total, 86, 92,
+                            ),
+                        ).items()
+                        if key != "items"
+                    }
                     progress.report("finalizing", "正在确认已处理文件", percent=92)
                     monitor_state.save_processed(
                         monitor_state.rebuild_processed_from_summary(
