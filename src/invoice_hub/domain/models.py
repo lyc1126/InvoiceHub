@@ -99,6 +99,8 @@ class ReferenceStatusPatch(BaseModel):
     items: list[dict[str, Any]] = Field(default_factory=list)
     # Optional company tax settings: {"taxpayer_type": "general" | "small_scale", "output_tax_rate_percent": "13"}.
     tax_profile: dict[str, Any] | None = None
+    # Optional 品目表 replacement: {原名称: {"standard_name", "type", "output_tax_rate_percent"}}.
+    item_catalog: dict[str, Any] | None = None
 
 
 class CostAnalysisSnapshot(BaseModel):
@@ -114,6 +116,8 @@ class CostAnalysisSnapshot(BaseModel):
     reference_markup_rate: str = "8%"
     reference_tax_profile: dict[str, Any] = Field(default_factory=dict)
     outbound_summary: dict[str, Any] = Field(default_factory=dict)
+    # 品目表 rows (one per invoice item name) for the /costs dialog; not a paged view.
+    item_catalog: list[dict[str, Any]] = Field(default_factory=list)
     detail_count: int = 0
     check_count: int = 0
     mismatch_count: int = 0

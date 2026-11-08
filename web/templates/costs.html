@@ -4,7 +4,7 @@
   <title>成本分析</title>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <link rel="stylesheet" href="/static/css/app.css?v=20261108-cost-quantity-layout">
+  <link rel="stylesheet" href="/static/css/app.css?v=20261108-cost-item-catalog">
   <link rel="stylesheet" href="/static/css/settings-actions.css?v=20260907-desktop-integrated-2">
 </head>
 <body data-page="costs">
@@ -99,6 +99,7 @@
         <button id="markSelectedMaxBtn" class="btn btn--ghost" type="button" disabled>批量设为已开具</button>
         <button id="markSelectedZeroBtn" class="btn btn--ghost" type="button" disabled>批量设为未开具</button>
         <button id="batchOutboundBtn" class="btn btn--ghost" type="button" disabled>已选按销项更新</button>
+        <button id="itemCatalogBtn" class="btn btn--secondary" type="button">品目表</button>
         <div class="batch-markup-control" aria-label="批量加价率">
           <input id="batchMarkupInput" class="batch-markup-input" type="text" inputmode="decimal" pattern="[0-9]*(\.[0-9]*)?" autocomplete="off" spellcheck="false" data-batch-markup-input aria-label="批量加价率百分比">
           <span class="markup-rate-percent" aria-hidden="true">%</span>
@@ -175,9 +176,20 @@
       </div>
     </section>
   </main>
+  <dialog id="itemCatalogDialog" class="item-catalog-dialog" aria-labelledby="itemCatalogTitle">
+    <h3 id="itemCatalogTitle">品目表</h3>
+    <p class="cost-panel-note">把「标准名称」改成另一个名称，即与它合并为同一品目（税收分类、规格、单位相同的才会并为一行）；类型不是货物的不进开票参考；销项税率留空则跟随本公司税务设置。保存后重算开票参考，合并 / 拆分行的已开数量按原保存值推算，请核对后保存。</p>
+    <div class="table-shell item-catalog-shell"><table class="data-table" id="itemCatalogTable"><thead></thead><tbody></tbody></table></div>
+    <datalist id="itemCatalogNames"></datalist>
+    <p id="itemCatalogStatus" class="cost-panel-note" role="status" aria-live="polite"></p>
+    <div class="item-catalog-actions">
+      <button id="itemCatalogCancel" class="btn btn--ghost" type="button">取消</button>
+      <button id="itemCatalogSave" class="btn btn--primary" type="button" disabled>保存品目表</button>
+    </div>
+  </dialog>
   {{system_controls}}
   <script src="/static/js/common.js?v=20260907-desktop-integrated-2"></script>
   <script src="/static/js/system-controls.js?v=20260907-desktop-integrated-2"></script>
-  <script src="/static/js/page-costs.js?v=20261108-cost-quantity-layout"></script>
+  <script src="/static/js/page-costs.js?v=20261108-cost-item-catalog"></script>
 </body>
 </html>

@@ -1499,3 +1499,154 @@ def test_outbound_summary_guards_missing_overlapping_and_broken_sources(monkeypa
     summary = service.refresh_outbound(outbound)
     assert summary["warning"] == "读取开具发票失败：坏文件"
     assert service.snapshot().outbound_summary["warning"] == "读取开具发票失败：坏文件"
+
+
+def _catalog_fixture(tmp_path: Path) -> tuple[Path, Path, CostProjectionService]:
+    watch = tmp_path / "发票文件"
+    workspace = tmp_path / "workspace"
+    watch.mkdir()
+    workspace.mkdir()
+    rows = [
+        _cost_detail_row(内部项目名称="盘螺", 规格型号="8", 源文件="a.pdf", 发票号码="1"),
+        _cost_detail_row(内部项目名称="三级抗震盘螺HRB400E", 规格型号="8", 数量="30", 税金="42.9", 价税合计="372.9", 源文件="b.pdf", 发票号码="2", **{"金额(除税)": "330"}),
+        _cost_detail_row(内部项目名称="0号柴油", 规格型号="0号", 单位="升", 数量="100", 税金="91", 价税合计="791", 源文件="c.pdf", 发票号码="3", **{"金额(除税)": "700"}),
+    ]
+    _write_cost_workbook_with_checks(watch, rows, [_cost_check_row(src, "增值税专用发票") for src in ("a.pdf", "b.pdf", "c.pdf")])
+    return watch, workspace, CostProjectionService(watch, workspace, "target")
+
+
+def _rows_by_name(service: CostProjectionService) -> dict[str, dict]:
+    return {row["内部项目名称"]: row for row in service.snapshot().invoice_reference}
+
+
+def test_item_catalog_merges_names_and_keeps_saved_invoiced_snapshots(tmp_path: Path) -> None:
+    watch, _workspace, service = _catalog_fixture(tmp_path)
+    before = _rows_by_name(service)
+    service.save_reference_status({"items": [
+        {"key": before["盘螺"]["key"], "invoiced_quantity": "4"},
+        {"key": before["三级抗震盘螺HRB400E"]["key"], "invoiced_quantity": "6"},
+    ]})
+    locked = {name: _rows_by_name(service)[name]["invoiced_reference_total_with_tax"] for name in ("盘螺", "三级抗震盘螺HRB400E")}
+
+    service.save_reference_status({"items": [], "item_catalog": {"三级抗震盘螺HRB400E": {"standard_name": "盘螺"}}})
+    merged = _rows_by_name(service)
+
+    assert set(merged) == {"盘螺", "0号柴油"}
+    assert merged["盘螺"]["quantity"] == 40.0
+    assert merged["盘螺"]["invoiced_quantity"] == 10.0
+    assert merged["盘螺"]["invoiced_reference_total_with_tax"] == pytest.approx(sum(locked.values()))
+    assert merged["盘螺"]["merge_note"]
+    assert len(merged["盘螺"]["member_keys"]) == 2
+    status = read_json_object(watch / "成本开票状态.json")
+    assert status["item_catalog"]["items"] == {"三级抗震盘螺HRB400E": {"standard_name": "盘螺", "type": "goods", "output_tax_rate_percent": ""}}
+    assert before["三级抗震盘螺HRB400E"]["key"] not in status["items"]
+    # Weighted cost of the merged group: (100 + 330) / 40.
+    assert merged["盘螺"]["reference_cost_unit_price"] == pytest.approx(10.75)
+    sheet = {row["内部项目名称"]: row for row in _reference_sheet_rows(watch / "成本发票汇总.xlsx")}
+    assert sheet["盘螺"]["数量合计"] == 40 and sheet["盘螺"]["已开数量"] == 10
+
+    service.save_reference_status({"items": [{"key": merged["盘螺"]["key"], "invoiced_quantity": "10"}]})
+    assert _rows_by_name(service)["盘螺"]["merge_note"] == ""
+
+
+def test_item_catalog_split_shares_merged_status_by_quantity(tmp_path: Path) -> None:
+    _watch, _workspace, service = _catalog_fixture(tmp_path)
+    service.save_reference_status({"items": [], "item_catalog": {"三级抗震盘螺HRB400E": {"standard_name": "盘螺"}}})
+    key = _rows_by_name(service)["盘螺"]["key"]
+    service.save_reference_status({"items": [{"key": key, "invoiced_quantity": "20"}]})
+
+    service.save_reference_status({"items": [], "item_catalog": {}})
+    split = _rows_by_name(service)
+
+    # 20 invoiced of 40 total is shared 10 : 30 by each name's quantity.
+    assert split["盘螺"]["invoiced_quantity"] == pytest.approx(5.0)
+    assert split["三级抗震盘螺HRB400E"]["invoiced_quantity"] == pytest.approx(15.0)
+    assert split["盘螺"]["merge_note"] and split["三级抗震盘螺HRB400E"]["merge_note"]
+    assert "item_catalog" not in read_json_object(service.status_json)
+
+
+def test_item_catalog_excludes_non_goods_and_applies_item_tax_rate(tmp_path: Path) -> None:
+    _watch, _workspace, service = _catalog_fixture(tmp_path)
+    service.save_reference_status({"items": [], "item_catalog": {
+        "0号柴油": {"type": "expense"},
+        "盘螺": {"standard_name": "盘螺", "output_tax_rate_percent": "9"},
+    }})
+    snapshot = service.snapshot()
+    rows = {row["内部项目名称"]: row for row in snapshot.invoice_reference}
+    catalog = {item["name"]: item for item in snapshot.item_catalog}
+
+    assert "0号柴油" not in rows
+    assert any(row["内部项目名称"] == "0号柴油" for row in snapshot.project_summary)
+    assert rows["盘螺"]["reference_output_tax_rate_percent"] == "9"
+    assert rows["三级抗震盘螺HRB400E"]["reference_output_tax_rate_percent"] == "13"
+    assert rows["盘螺"]["reference_average_unit_price_with_tax"] == pytest.approx(10 * 1.08 * 1.09)
+    assert catalog["0号柴油"]["type_label"] == "费用"
+    assert catalog["三级抗震盘螺HRB400E"]["spec_count"] == 1
+
+
+def test_item_catalog_spec_normalisation_finds_status_saved_under_old_key(tmp_path: Path) -> None:
+    watch = tmp_path / "发票文件"
+    workspace = tmp_path / "workspace"
+    watch.mkdir()
+    workspace.mkdir()
+    old_key = _reference_key("材料", "项目", "１２ Ｅ", "吨")
+    write_csv_rows(watch / "成本发票明细.csv", DETAIL_HEADERS, [_cost_detail_row(规格型号="１２ Ｅ")])
+    (watch / "成本开票状态.json").write_text(
+        '{"version": 1, "items": {"%s": {"reference_key": "%s", "invoiced_quantity": "4"}}}' % (old_key, old_key), encoding="utf-8"
+    )
+
+    row = CostProjectionService(watch, workspace, "target").snapshot().invoice_reference[0]
+
+    assert row["规格型号"] == "12E"
+    assert row["invoiced_quantity"] == 4.0
+    assert row["merge_note"] == ""
+
+
+def test_item_catalog_survives_other_saves_and_rejects_bad_input(tmp_path: Path) -> None:
+    from invoice_hub.projections.cost_analysis import _write_reference_status as rebuild_writer
+
+    _watch, _workspace, service = _catalog_fixture(tmp_path)
+    catalog = {"三级抗震盘螺HRB400E": {"standard_name": "盘螺"}}
+    service.save_reference_status({"items": [], "item_catalog": catalog})
+    key = _rows_by_name(service)["盘螺"]["key"]
+    service.save_reference_status({"items": [{"key": key, "reference_markup_rate_percent": "10"}]})
+    service.save_reference_status({"items": [], "tax_profile": {"taxpayer_type": "general", "output_tax_rate_percent": "13"}})
+    rebuild_writer(service.status_json, read_json_object(service.status_json)["items"])
+
+    assert read_json_object(service.status_json)["item_catalog"]["items"]["三级抗震盘螺HRB400E"]["standard_name"] == "盘螺"
+    before = service.status_json.read_text(encoding="utf-8")
+    for bad in ({"盘螺": {"type": "service"}}, {"盘螺": {"output_tax_rate_percent": "120"}}, {"盘螺": {"standard_name": "名" * 61}}, "盘螺"):
+        with pytest.raises(ValueError):
+            service.save_reference_status({"items": [], "item_catalog": bad})
+    assert service.status_json.read_text(encoding="utf-8") == before
+
+
+def test_item_catalog_regroups_outbound_lines_by_standard_name(tmp_path: Path) -> None:
+    watch, outbound, workspace = _outbound_fixture(tmp_path)
+    # Sales were invoiced as "盘螺 12E" while purchases say "钢筋 12E".
+    (outbound / "sale-3.xml").write_text(
+        _xml_invoice("20000000000000000004", COMPANY, "客户丁", [("12E", "0.5", "60.00", "7.80", "盘螺")]), encoding="utf-8"
+    )
+    service = CostProjectionService(watch, workspace, "target")
+    service.refresh_outbound(outbound)
+    assert "钢筋 / 12E / 吨" not in service.snapshot().outbound_summary["unmatched_items"]
+    assert "盘螺 / 12E / 吨" in service.snapshot().outbound_summary["unmatched_items"]
+
+    service.save_reference_status({"items": [], "item_catalog": {"盘螺": {"standard_name": "钢筋"}}})
+    snapshot = service.snapshot()
+    row = next(item for item in snapshot.invoice_reference if item["规格型号"] == "12E")
+
+    assert row["outbound_quantity"] == 2.0  # 1.5 + 0.5 now that both names are one item
+    assert "盘螺 / 12E / 吨" not in snapshot.outbound_summary["unmatched_items"]
+
+
+def test_item_catalog_merge_without_invoiced_quantity_needs_no_review(tmp_path: Path) -> None:
+    _watch, _workspace, service = _catalog_fixture(tmp_path)
+    rows = _rows_by_name(service)
+    # Only identical markups were saved, nothing invoiced: merging leaves nothing to check.
+    service.save_reference_status({"items": [
+        {"key": rows["盘螺"]["key"], "reference_markup_rate_percent": "8", "reference_markup_locked": True},
+        {"key": rows["三级抗震盘螺HRB400E"]["key"], "reference_markup_rate_percent": "8", "reference_markup_locked": True},
+    ]})
+    service.save_reference_status({"items": [], "item_catalog": {"三级抗震盘螺HRB400E": {"standard_name": "盘螺"}}})
+    assert _rows_by_name(service)["盘螺"]["merge_note"] == ""

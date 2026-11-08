@@ -1396,6 +1396,27 @@ body[data-page="index"] .table--invoice-list .invoice-type-pill--ordinary {
 @media (max-width: 1100px) {
   .cost-context-grid { grid-template-columns: minmax(0, 1fr); }
 }
+.item-catalog-dialog {
+  width: min(1040px, calc(100vw - 48px));
+  max-height: calc(100vh - 64px);
+  padding: 18px 20px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  display: none;
+  flex-direction: column;
+  gap: 10px;
+}
+.item-catalog-dialog[open] { display: flex; }
+.item-catalog-dialog h3 { margin: 0; }
+.item-catalog-shell { max-height: min(60vh, 560px); overflow: auto; }
+#itemCatalogTable { table-layout: fixed; min-width: 900px; }
+#itemCatalogTable th:nth-child(1), #itemCatalogTable td:nth-child(1) { width: 220px; text-align: left; }
+#itemCatalogTable th:nth-child(2), #itemCatalogTable td:nth-child(2) { width: 220px; }
+#itemCatalogTable th:nth-child(3), #itemCatalogTable td:nth-child(3) { width: 120px; }
+#itemCatalogTable th:nth-child(4), #itemCatalogTable td:nth-child(4) { width: 120px; }
+#itemCatalogTable td { vertical-align: middle; }
+#itemCatalogTable td .input { width: 100%; }
+.item-catalog-actions { display: flex; justify-content: flex-end; gap: 8px; }
 .reference-text {
   display: block;
   max-width: 100%;

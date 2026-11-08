@@ -6,6 +6,7 @@ import json
 import os
 import re
 import xml.etree.ElementTree as ET
+import unicodedata
 import zipfile
 from collections import defaultdict
 from dataclasses import dataclass
@@ -591,6 +592,222 @@ def outbound_reference_fields(
         "outbound_compare_text": text,
         "outbound_suggested_quantity": suggested,
     }
+
+
+ITEM_TYPE_GOODS = "goods"
+ITEM_TYPE_LABELS = {"goods": "货物", "expense": "费用", "fixed_asset": "固定资产"}
+ITEM_STANDARD_NAME_MAX = 60
+# Top-level keys of 成本开票状态.json that belong to the company, not to one reference row;
+# every writer of the status file must carry them over unchanged.
+STATUS_PRESERVED_KEYS = ("tax_profile", "item_catalog")
+
+
+def _catalog_name(value: object) -> str:
+    return re.sub(r"\s+", " ", unicodedata.normalize("NFKC", str(value or ""))).strip()
+
+
+def normalize_spec_text(value: object) -> str:
+    """规格只统一全角半角与空白；不改大小写，也不去掉 E 后缀（18E 与 18 是不同牌号）。"""
+    return re.sub(r"\s+", "", unicodedata.normalize("NFKC", str(value or "")))
+
+
+def parse_item_catalog(value: object) -> dict[str, dict]:
+    """Strict parser for the 品目表 the page saves: {原名称: {standard_name, type, output_tax_rate_percent}}."""
+    raw = value.get("items") if isinstance(value, dict) and isinstance(value.get("items"), dict) else value
+    if not isinstance(raw, dict):
+        raise ValueError("品目表格式不正确")
+    items: dict[str, dict] = {}
+    for name, entry in raw.items():
+        name = _catalog_name(name)
+        if not name or not isinstance(entry, dict):
+            raise ValueError("品目表名称不能为空")
+        standard = _catalog_name(entry.get("standard_name")) or name
+        if len(standard) > ITEM_STANDARD_NAME_MAX:
+            raise ValueError(f"标准名称不能超过 {ITEM_STANDARD_NAME_MAX} 个字：{standard[:20]}…")
+        item_type = _clean_text(entry.get("type")) or ITEM_TYPE_GOODS
+        if item_type not in ITEM_TYPE_LABELS:
+            raise ValueError(f"品目类型只能是货物、费用或固定资产：{name}")
+        rate_text = _clean_text(entry.get("output_tax_rate_percent"))
+        if rate_text:
+            _tax_rate_from_percent(rate_text)
+        if standard == name and item_type == ITEM_TYPE_GOODS and not rate_text:
+            continue  # default entry; keeping it out of the file keeps old companies unchanged
+        items[name] = {"standard_name": standard, "type": item_type, "output_tax_rate_percent": rate_text}
+    return items
+
+
+def item_catalog_from_status(payload: object) -> dict[str, dict]:
+    """Tolerant reader for the saved 品目表; an unreadable catalog behaves like no catalog."""
+    raw = payload.get("item_catalog") if isinstance(payload, dict) else None
+    if not isinstance(raw, dict):
+        return {}
+    try:
+        return parse_item_catalog(raw)
+    except ValueError:
+        return {}
+
+
+def resolve_item(catalog: dict[str, dict], name: object) -> dict:
+    """标准名称 / 类型 / 税率 for one invoice item name, following 改名 chains (A→B→C) safely."""
+    current = _catalog_name(name)
+    seen: set[str] = set()
+    entry = catalog.get(current, {})
+    item_type = entry.get("type") or ITEM_TYPE_GOODS
+    rate = entry.get("output_tax_rate_percent") or ""
+    while current in catalog and current not in seen:
+        seen.add(current)
+        target = catalog[current].get("standard_name") or current
+        if target == current:
+            break
+        current = target
+        # The standard name's own settings win, so a merged group has one type and one rate.
+        if current in catalog:
+            item_type = catalog[current].get("type") or item_type
+            rate = catalog[current].get("output_tax_rate_percent") or rate
+    return {"standard_name": current, "type": item_type, "output_tax_rate_percent": rate}
+
+
+def canonical_reference_rows(rows: list[dict], catalog: dict[str, dict] | None) -> list[dict]:
+    """Rows as the 开票参考 groups them: name → 标准名称, spec whitespace/width unified, non-goods dropped.
+
+    Each row keeps `_member_key`, its pre-catalog grouping key, so status saved before a merge (or a
+    spec normalisation) is still found; with no catalog and clean specs every key is unchanged.
+    """
+    catalog = catalog or {}
+    result = []
+    for row in rows:
+        values = (row.get("发票代码(**内文字)"), row.get("内部项目名称"), row.get("规格型号"), row.get("单位"))
+        item = resolve_item(catalog, values[1])
+        if item["type"] != ITEM_TYPE_GOODS:
+            continue
+        canonical = dict(row)
+        canonical["内部项目名称"] = item["standard_name"] if catalog.get(_catalog_name(values[1])) else _clean_text(values[1])
+        canonical["规格型号"] = normalize_spec_text(values[2])
+        canonical["_member_key"] = _reference_key(*values)
+        canonical["_raw_values"] = values
+        canonical["_output_tax_rate_percent"] = item["output_tax_rate_percent"]
+        result.append(canonical)
+    return result
+
+
+def canonical_outbound_items(items: dict[str, dict] | None, catalog: dict[str, dict] | None) -> dict[str, dict]:
+    """Regroup the saved 销项 summary (keyed by raw names) by the current 品目表 without re-reading files."""
+    merged: dict[str, dict] = {}
+    for item in (items or {}).values():
+        rows = canonical_reference_rows(
+            [{"发票代码(**内文字)": item.get("item_code"), "内部项目名称": item.get("item_name"), "规格型号": item.get("spec"), "单位": item.get("unit")}],
+            catalog,
+        )
+        if not rows:
+            continue
+        row = rows[0]
+        key = _reference_key(row["发票代码(**内文字)"], row["内部项目名称"], row["规格型号"], row["单位"])
+        target = merged.setdefault(key, {
+            "item_code": row["发票代码(**内文字)"] or "", "item_name": row["内部项目名称"], "spec": row["规格型号"], "unit": row["单位"] or "",
+            "quantity": Decimal("0"), "amount": Decimal("0"), "tax": Decimal("0"), "invoice_count": 0,
+        })
+        target["quantity"] += _to_decimal(item.get("quantity")) or Decimal("0")
+        target["amount"] += _to_decimal(item.get("amount")) or Decimal("0")
+        target["tax"] += _to_decimal(item.get("tax")) or Decimal("0")
+        target["invoice_count"] += int(item.get("invoice_count") or 0)
+    return merged
+
+
+MERGED_SNAPSHOT_FIELDS = ("invoiced_reference_amount", "invoiced_reference_tax", "invoiced_reference_total_with_tax")
+
+
+def merged_status_item(
+    status_items: dict[str, dict] | None,
+    key: str,
+    member_quantities: dict[str, Decimal],
+    lookup: Callable[[str], dict] | None = None,
+) -> dict:
+    """Saved 已开 status for one (possibly merged) 开票参考 group.
+
+    A status saved for exactly this member set is used as is. Otherwise the members' own saved
+    statuses are added up (已开数量 and 已开快照金额), so merging two names never loses an invoiced
+    snapshot; a status saved for a larger, since-split group is shared out by quantity. Both cases
+    are flagged with `merge_note` so the page asks the user to check before saving.
+    """
+    status_items = status_items or {}
+    lookup = lookup or (lambda alias: status_items.get(alias) if isinstance(status_items.get(alias), dict) else {})
+    members = sorted(member_quantities)
+    own = lookup(key)
+    if own and sorted(own.get("member_keys") or [key]) == members:
+        return dict(own)
+    parts: list[tuple[dict, Decimal]] = []
+    for member in members:
+        item = lookup(member)
+        if item and sorted(item.get("member_keys") or [member]) == [member]:
+            parts.append((item, Decimal("1")))
+    covered = {member for member in members if lookup(member) and sorted(lookup(member).get("member_keys") or [member]) == [member]}
+    # Members that were saved inside a bigger merged group that no longer exists: take their share.
+    for saved_key, saved in status_items.items():
+        if not isinstance(saved, dict):
+            continue
+        saved_members = saved.get("member_keys") or []
+        shared = [member for member in members if member in saved_members and member not in covered]
+        if not shared or len(saved_members) <= 1:
+            continue
+        total_quantity = _to_decimal(saved.get("quantity_total")) or Decimal("0")
+        mine = sum((member_quantities[member] for member in shared), Decimal("0"))
+        if total_quantity > 0:
+            parts.append((saved, min(mine / total_quantity, Decimal("1"))))
+            covered.update(shared)
+    if not parts:
+        return {}
+    if len(parts) == 1 and parts[0][1] == 1 and len(members) == 1:
+        return dict(parts[0][0])  # same single group, only re-keyed (e.g. spec whitespace unified)
+    result: dict = {"member_keys": members, "merge_note": "合并或拆分后按原已保存状态推算，请核对已开数量后保存"}
+    invoiced = Decimal("0")
+    for item, share in parts:
+        invoiced += (_to_decimal(item.get("invoiced_quantity")) or Decimal("0")) * share
+    result["invoiced_quantity"] = _decimal_text(invoiced, "0.000001")
+    for field in MERGED_SNAPSHOT_FIELDS:
+        values = [(_to_decimal(item.get(field)), share) for item, share in parts if _to_decimal(item.get("invoiced_quantity"))]
+        if values and all(value is not None for value, _ in values):
+            result[field] = _decimal_text(sum((value * share for value, share in values), Decimal("0")), "0.000001")
+    largest = max(parts, key=lambda part: _to_decimal(part[0].get("quantity_total")) or Decimal("0"))[0]
+    for field in ("reference_markup_rate", "reference_markup_rate_percent", "reference_markup_locked"):
+        if field in largest:
+            result[field] = largest[field]
+    rates = {_clean_text(item.get("reference_markup_rate_percent") or item.get("reference_markup_rate")) for item, _ in parts}
+    if invoiced == 0 and len(rates - {""}) <= 1:
+        # Nothing was invoiced and the markups agree: there is nothing for the user to check.
+        result.pop("merge_note")
+    return result
+
+
+def item_catalog_overview(rows: list[dict], catalog: dict[str, dict]) -> list[dict]:
+    """One line per invoice item name for the 品目表 dialog (what appears on the cost invoices)."""
+    grouped: dict[str, dict] = {}
+    for row in rows:
+        name = _catalog_name(row.get("内部项目名称"))
+        if not name:
+            continue
+        entry = grouped.setdefault(name, {"name": name, "specs": set(), "units": set(), "quantity": Decimal("0"), "row_count": 0})
+        entry["specs"].add(normalize_spec_text(row.get("规格型号")))
+        if _clean_text(row.get("单位")):
+            entry["units"].add(_clean_text(row.get("单位")))
+        entry["quantity"] += _to_decimal(row.get("数量")) or Decimal("0")
+        entry["row_count"] += 1
+    result = []
+    for name, entry in sorted(grouped.items()):
+        saved = catalog.get(name, {})
+        resolved = resolve_item(catalog, name)
+        result.append({
+            "name": name,
+            "standard_name": saved.get("standard_name") or name,
+            "resolved_name": resolved["standard_name"],
+            "type": saved.get("type") or ITEM_TYPE_GOODS,
+            "type_label": ITEM_TYPE_LABELS[saved.get("type") or ITEM_TYPE_GOODS],
+            "output_tax_rate_percent": saved.get("output_tax_rate_percent") or "",
+            "spec_count": len(entry["specs"]),
+            "units": "、".join(sorted(entry["units"])),
+            "quantity": _decimal_text(entry["quantity"], "0.001"),
+            "row_count": entry["row_count"],
+        })
+    return result
 
 
 def _outbound_sheet_cells(fields: dict) -> dict:
@@ -1861,13 +2078,15 @@ def _write_reference_status(
         "reference_markup_locked": bool(reference_markup_locked),
         "items": normalized,
     }
-    # Rewriting items (e.g. merging workbook status during 重新汇总) must not drop the company tax profile.
+    # Rewriting items (e.g. merging workbook status during 重新汇总) must not drop company-level
+    # settings such as the tax profile or the 品目表.
     try:
         existing = json.loads(path.read_text(encoding="utf-8-sig")) if path.exists() else {}
     except Exception:
         existing = {}
-    if isinstance(existing, dict) and isinstance(existing.get("tax_profile"), dict):
-        payload["tax_profile"] = existing["tax_profile"]
+    for preserved in STATUS_PRESERVED_KEYS:
+        if isinstance(existing, dict) and isinstance(existing.get(preserved), dict):
+            payload[preserved] = existing[preserved]
     tmp_path = path.with_name(f"{path.name}.tmp")
     tmp_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     os.replace(tmp_path, path)
@@ -2124,14 +2343,15 @@ def _invoice_reference_summary(
     tax_profile: ReferenceTaxProfile | None = None,
     check_rows: list[dict] | None = None,
     outbound_items: dict[str, dict] | None = None,
+    item_catalog: dict[str, dict] | None = None,
 ) -> list[dict]:
     fallback_markup_rate = normalize_reference_markup_rate(reference_markup_rate)
-    outbound_items = outbound_items or {}
+    # Group by the 品目表's standard names (and outbound lines by the same catalog) before pricing.
+    outbound_items = canonical_outbound_items(outbound_items, item_catalog)
     tax_profile = tax_profile or ReferenceTaxProfile()
-    output_tax_rate = tax_profile.output_tax_rate
     deductibility = input_tax_index(check_rows)
     grouped: dict[tuple, list[dict]] = defaultdict(list)
-    for row in rows:
+    for row in canonical_reference_rows(rows, item_catalog):
         key = (
             _clean_text(row.get("发票代码(**内文字)")),
             _clean_text(row.get("内部项目名称")),
@@ -2145,7 +2365,16 @@ def _invoice_reference_summary(
         cost_basis = reference_cost_basis(group_rows, tax_profile, deductibility)
         avg_price = cost_basis["unit_price"]
         status_key = _reference_key(*key)
-        status_item = _reference_status_item(status_items, status_key, *key)
+        member_quantities: dict[str, Decimal] = defaultdict(lambda: Decimal("0"))
+        for row in group_rows:
+            member_quantities[row["_member_key"]] += _to_decimal(row.get("数量")) or Decimal("0")
+        member_raw = {row["_member_key"]: row["_raw_values"] for row in group_rows}
+        status_item = merged_status_item(
+            status_items, status_key, dict(member_quantities),
+            lambda alias: _reference_status_item(status_items, alias, *member_raw.get(alias, ())),
+        )
+        rate_percent = group_rows[0].get("_output_tax_rate_percent") or ""
+        output_tax_rate = _tax_rate_from_percent(rate_percent) if rate_percent else tax_profile.output_tax_rate
         markup = _row_markup_meta(status_item, fallback_markup_rate)
         markup_multiplier = reference_markup_multiplier(markup["rate"])
         reference_avg_price_with_tax = reference_output_average_unit_price_with_tax(avg_price, markup["rate"], output_tax_rate)
@@ -2203,7 +2432,7 @@ def _invoice_reference_summary(
                 "参考加价率": markup["display"],
                 "状态更新时间": _clean_text(status_item.get("updated_at")),
                 "成本口径": reference_cost_basis_text(cost_basis),
-                "销项税率": tax_profile.api_payload()["output_tax_rate_display"],
+                "销项税率": f"{_decimal_text(output_tax_rate * Decimal('100'), '0.001')}%",
                 **_outbound_sheet_cells(
                     outbound_reference_fields(outbound_items.get(status_key), quantity, invoiced_quantity, avg_price)
                 ),
@@ -2382,6 +2611,7 @@ def _write_workbook(
     reference_markup_rate: object = DEFAULT_REFERENCE_MARKUP_RATE,
     tax_profile: ReferenceTaxProfile | None = None,
     outbound_items: dict[str, dict] | None = None,
+    item_catalog: dict[str, dict] | None = None,
 ) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     wb = Workbook()
@@ -2402,6 +2632,7 @@ def _write_workbook(
             tax_profile=tax_profile,
             check_rows=check_rows,
             outbound_items=outbound_items,
+            item_catalog=item_catalog,
         ),
     )
     _append_sheet(wb, "发票校验", CHECK_HEADERS, check_rows)
@@ -2470,6 +2701,7 @@ def build_cost_analysis_outputs(
     markup_rate = normalize_reference_markup_rate(status_payload.get("reference_markup_rate", reference_markup_rate))
     markup_locked = _truthy(status_payload.get("reference_markup_locked", False))
     tax_profile = reference_tax_profile_from_status(status_payload)
+    item_catalog = item_catalog_from_status(status_payload)
     status_items, status_changed = _merge_reference_status(_load_reference_status(status_json), _load_workbook_reference_status(summary_xlsx))
     if status_changed:
         _write_reference_status(status_json, status_items, reference_markup_rate=markup_rate, reference_markup_locked=markup_locked)
@@ -2482,6 +2714,7 @@ def build_cost_analysis_outputs(
         reference_markup_rate=markup_rate,
         tax_profile=tax_profile,
         outbound_items=outbound_items,
+        item_catalog=item_catalog,
     )
 
     failed = [item for item in analyses if item.get("status") == "failed"]

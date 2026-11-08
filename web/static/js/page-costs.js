@@ -58,6 +58,13 @@ const refs = {
   outboundSummary: document.getElementById("costOutboundSummary"),
   outboundCounts: document.getElementById("costOutboundCounts"),
   batchOutboundBtn: document.getElementById("batchOutboundBtn"),
+  itemCatalogBtn: document.getElementById("itemCatalogBtn"),
+  itemCatalogDialog: document.getElementById("itemCatalogDialog"),
+  itemCatalogTable: document.getElementById("itemCatalogTable"),
+  itemCatalogNames: document.getElementById("itemCatalogNames"),
+  itemCatalogStatus: document.getElementById("itemCatalogStatus"),
+  itemCatalogSave: document.getElementById("itemCatalogSave"),
+  itemCatalogCancel: document.getElementById("itemCatalogCancel"),
 };
 
 const detailColumns = [
@@ -417,7 +424,10 @@ function render() {
 
 const DEFAULT_OUTPUT_TAX_RATE = 0.13;
 
-function referenceOutputTaxRate() {
+function referenceOutputTaxRate(row) {
+  // A 品目表 rate on the row overrides the company tax profile, matching costs.py.
+  const rowRate = Number(row?.reference_output_tax_rate);
+  if (row?.reference_output_tax_rate !== undefined && Number.isFinite(rowRate) && rowRate >= 0) return rowRate;
   const rate = Number(state.payload?.reference_tax_profile?.output_tax_rate);
   return Number.isFinite(rate) && rate >= 0 ? rate : DEFAULT_OUTPUT_TAX_RATE;
 }
@@ -534,7 +544,65 @@ function renderOutboundCompare(row) {
   const button = meta.canApply && state.payload?.editable !== false
     ? ` <button class="btn btn--ghost btn--mini" type="button" data-outbound-apply="${app.escapeHtml(row.key)}" title="把已开数量改为销项数量 ${app.escapeHtml(formatQuantity(row.outbound_suggested_quantity))}（保存后生效）">按销项更新</button>`
     : "";
-  return `${app.statusPill(meta.text, meta.tone)}${button}`;
+  const mergeNote = row.merge_note
+    ? `<span title="${app.escapeHtml(row.merge_note)}">${app.statusPill("已开数量待核对", "warning")}</span> `
+    : "";
+  return `${mergeNote}${app.statusPill(meta.text, meta.tone)}${button}`;
+}
+
+const ITEM_TYPE_OPTIONS = [["goods", "货物"], ["expense", "费用"], ["fixed_asset", "固定资产"]];
+const ITEM_RATE_OPTIONS = [["", "跟随公司"], ["13", "13%"], ["9", "9%"], ["6", "6%"], ["5", "5%"], ["3", "3%"], ["1", "1%"], ["0", "0%"]];
+
+function catalogSelect(name, field, options, value) {
+  const known = options.some(([optionValue]) => optionValue === value);
+  const list = known ? options : [...options, [value, `${value}%`]];
+  return `<select class="input" data-catalog-name="${app.escapeHtml(name)}" data-catalog-field="${field}" aria-label="${field === "type" ? "类型" : "销项税率"}">${list
+    .map(([optionValue, label]) => `<option value="${app.escapeHtml(optionValue)}"${optionValue === value ? " selected" : ""}>${app.escapeHtml(label)}</option>`)
+    .join("")}</select>`;
+}
+
+function renderItemCatalog() {
+  const items = state.payload?.item_catalog || [];
+  refs.itemCatalogNames.innerHTML = items.map((item) => `<option value="${app.escapeHtml(item.name)}"></option>`).join("");
+  app.renderTable(refs.itemCatalogTable, items, [
+    { key: "name", label: "发票上的名称", render: (item) => app.escapeHtml(item.name) },
+    { key: "standard_name", label: "标准名称", render: (item) => `<input class="input" type="text" list="itemCatalogNames" maxlength="60" data-catalog-name="${app.escapeHtml(item.name)}" data-catalog-field="standard_name" value="${app.escapeHtml(item.standard_name)}" aria-label="标准名称">` },
+    { key: "type", label: "类型", render: (item) => catalogSelect(item.name, "type", ITEM_TYPE_OPTIONS, item.type || "goods") },
+    { key: "output_tax_rate_percent", label: "销项税率", render: (item) => catalogSelect(item.name, "output_tax_rate_percent", ITEM_RATE_OPTIONS, item.output_tax_rate_percent || "") },
+    { key: "spec_count", label: "规格数", render: (item) => app.escapeHtml(String(item.spec_count)) },
+    { key: "units", label: "单位", render: (item) => app.escapeHtml(item.units || "") },
+    { key: "quantity", label: "数量合计", render: (item) => app.escapeHtml(item.quantity) },
+  ]);
+  updateItemCatalogControls();
+}
+
+function itemCatalogDraft() {
+  const draft = {};
+  refs.itemCatalogTable.querySelectorAll("[data-catalog-name]").forEach((control) => {
+    const name = control.dataset.catalogName;
+    draft[name] ||= {};
+    draft[name][control.dataset.catalogField] = control.value.trim();
+  });
+  return draft;
+}
+
+function itemCatalogChanged() {
+  const draft = itemCatalogDraft();
+  return (state.payload?.item_catalog || []).some((item) => {
+    const row = draft[item.name] || {};
+    return (row.standard_name || item.name) !== item.standard_name || (row.type || "goods") !== (item.type || "goods")
+      || (row.output_tax_rate_percent || "") !== (item.output_tax_rate_percent || "");
+  });
+}
+
+function updateItemCatalogControls() {
+  if (!refs.itemCatalogSave) return;
+  const blocked = state.dirty.size > 0;
+  const changed = itemCatalogChanged();
+  refs.itemCatalogSave.disabled = blocked || !changed || refs.itemCatalogSave.dataset.busy === "true" || state.payload?.editable === false;
+  refs.itemCatalogStatus.textContent = blocked
+    ? "开票参考还有未保存的草稿，请先保存或刷新后再修改品目表。"
+    : (changed ? "有未保存的修改。" : `共 ${(state.payload?.item_catalog || []).length} 个发票名称。`);
 }
 
 function applyOutboundQuantity(keys) {
@@ -1139,7 +1207,7 @@ function referenceDraftMetrics(source) {
   const multiplier = 1 + percent / 100;
   // Mirrors costs.py: cost base includes non-deductible input VAT, output VAT uses the company tax profile.
   const referenceAverageUnitPrice = numberValue(source.reference_cost_unit_price ?? source.average_unit_price) * multiplier;
-  const outputTaxRate = referenceOutputTaxRate();
+  const outputTaxRate = referenceOutputTaxRate(source);
   const referenceAmount = referenceAverageUnitPrice * max;
   const referenceTax = referenceAmount * outputTaxRate;
   const referenceTotal = referenceAmount + referenceTax;
@@ -1341,6 +1409,39 @@ refs.saveTaxProfileBtn?.addEventListener("click", async () => {
   } finally {
     app.setBusy(refs.saveTaxProfileBtn, false);
     updateTaxProfileControls();
+  }
+});
+
+refs.itemCatalogBtn?.addEventListener("click", () => {
+  if (!state.payload) return;
+  renderItemCatalog();
+  refs.itemCatalogDialog.showModal();
+});
+refs.itemCatalogCancel?.addEventListener("click", () => refs.itemCatalogDialog.close());
+refs.itemCatalogTable?.addEventListener("input", updateItemCatalogControls);
+refs.itemCatalogTable?.addEventListener("change", updateItemCatalogControls);
+refs.itemCatalogSave?.addEventListener("click", async () => {
+  if (state.dirty.size > 0 || !itemCatalogChanged()) {
+    updateItemCatalogControls();
+    return;
+  }
+  const items = {};
+  Object.entries(itemCatalogDraft()).forEach(([name, row]) => {
+    items[name] = { standard_name: row.standard_name || name, type: row.type || "goods", output_tax_rate_percent: row.output_tax_rate_percent || "" };
+  });
+  app.setBusy(refs.itemCatalogSave, true, "保存中...");
+  try {
+    await app.api("/api/v1/cost-analysis/reference-status", {
+      method: "POST",
+      body: JSON.stringify({ items: [], item_catalog: { items }, target_id: state.payload.target_id, revision: state.payload.revision }),
+    });
+    refs.itemCatalogDialog.close();
+    await loadCosts("save");
+  } catch (error) {
+    refs.itemCatalogStatus.textContent = error.message || "品目表保存失败";
+  } finally {
+    app.setBusy(refs.itemCatalogSave, false);
+    updateItemCatalogControls();
   }
 });
 

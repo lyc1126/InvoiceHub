@@ -32,7 +32,15 @@ from invoice_hub.projections.cost_analysis import (
     reference_markup_percent_text,
     average_unit_price_with_tax,
     purchase_reference_average_unit_price_with_tax,
+    STATUS_PRESERVED_KEYS,
+    canonical_outbound_items,
+    canonical_reference_rows,
     input_tax_index,
+    item_catalog_from_status,
+    item_catalog_overview,
+    merged_status_item,
+    parse_item_catalog,
+    _tax_rate_from_percent,
     outbound_overview,
     outbound_reference_fields,
     parse_reference_tax_profile,
@@ -198,6 +206,7 @@ def _write_reference_status(
     reference_markup_rate: object = DEFAULT_REFERENCE_MARKUP_RATE,
     reference_markup_locked: bool = False,
     tax_profile: ReferenceTaxProfile | None = None,
+    item_catalog: dict[str, dict] | None = None,
 ) -> None:
     markup_rate = normalize_reference_markup_rate(reference_markup_rate)
     normalized = {key: dict(value) for key, value in sorted(items.items()) if key and isinstance(value, dict)}
@@ -209,13 +218,18 @@ def _write_reference_status(
         "reference_markup_locked": bool(reference_markup_locked),
         "items": normalized,
     }
+    # Saving row status without touching company settings keeps whatever the company saved.
+    existing = _read_reference_status_payload(path)
+    for preserved in STATUS_PRESERVED_KEYS:
+        if isinstance(existing.get(preserved), dict):
+            payload[preserved] = existing[preserved]
     if tax_profile is not None and tax_profile.configured:
         payload["tax_profile"] = tax_profile.status_payload()
-    else:
-        # Saving row status without touching the tax settings keeps whatever the company saved.
-        existing = _read_reference_status_payload(path).get("tax_profile")
-        if isinstance(existing, dict):
-            payload["tax_profile"] = existing
+    if item_catalog is not None:
+        if item_catalog:
+            payload["item_catalog"] = {"version": 1, "items": item_catalog}
+        else:
+            payload.pop("item_catalog", None)
     atomic_write_json(path, payload)
 
 
@@ -341,6 +355,15 @@ class CostProjectionService:
         self._refresh_workbook_from_current_detail(self._markup_meta()["rate"])
         return summary
 
+    def _outbound_overview(self, invoice_reference: list[dict]) -> dict:
+        summary = load_outbound_summary(self.workspace_dir)
+        # Matched / unmatched must use the same 品目表 grouping as the reference rows.
+        summary = {**summary, "items": canonical_outbound_items(summary.get("items"), self._item_catalog())}
+        return outbound_overview(summary, [row["key"] for row in invoice_reference], invoice_reference)
+
+    def _item_catalog(self) -> dict[str, dict]:
+        return item_catalog_from_status(_read_reference_status_payload(self.status_json))
+
     def _tax_profile(self) -> ReferenceTaxProfile:
         return reference_tax_profile_from_status(_read_reference_status_payload(self.status_json))
 
@@ -378,6 +401,7 @@ class CostProjectionService:
             reference_markup_rate=reference_markup_rate,
             tax_profile=self._tax_profile(),
             outbound_items=self._outbound_items(),
+            item_catalog=self._item_catalog(),
         )
 
     def _read_csv_headers(self) -> list[str]:
@@ -452,6 +476,7 @@ class CostProjectionService:
             reference_markup_rate=markup["rate"],
             tax_profile=self._tax_profile(),
             outbound_items=self._outbound_items(),
+            item_catalog=self._item_catalog(),
         )
         return True
 
@@ -479,9 +504,8 @@ class CostProjectionService:
             reference_status_exists=self.status_json.exists(),
             reference_markup_rate=markup["display"],
             reference_tax_profile=tax_profile.api_payload(),
-            outbound_summary=outbound_overview(
-                load_outbound_summary(self.workspace_dir), [row["key"] for row in invoice_reference], invoice_reference
-            ),
+            item_catalog=item_catalog_overview(detail_rows, self._item_catalog()),
+            outbound_summary=self._outbound_overview(invoice_reference),
             detail_count=len(detail_rows),
             check_count=len(checks),
             mismatch_count=mismatch_count,
@@ -506,9 +530,14 @@ class CostProjectionService:
         workbook_status = self._read_reference_status_from_workbook()
         tax_profile_changed = "tax_profile" in payload
         tax_profile = parse_reference_tax_profile(payload.get("tax_profile")) if tax_profile_changed else self._tax_profile()
+        catalog_changed = "item_catalog" in payload
+        item_catalog = parse_item_catalog(payload.get("item_catalog")) if catalog_changed else self._item_catalog()
         checks = self._read_workbook_sheet("发票校验", CHECK_HEADERS)
+        detail_rows = read_csv_rows(self.detail_csv)
+        if catalog_changed:
+            current = self._migrate_statuses_to_catalog(detail_rows, current, checks, tax_profile, item_catalog)
         reference_rows = self._build_reference_rows(
-            read_csv_rows(self.detail_csv), current, check_rows=checks, tax_profile=tax_profile
+            detail_rows, current, check_rows=checks, tax_profile=tax_profile, item_catalog=item_catalog
         )
         by_key = {row["key"]: row for row in reference_rows}
         for item in payload.get("items", []):
@@ -516,9 +545,8 @@ class CostProjectionService:
             if not key or key not in by_key:
                 continue
             row = by_key[key]
-            row_with_aliases = dict(row)
-            row_with_aliases["aliases"] = _reference_aliases(row)
-            existing = self._status_for_reference(row_with_aliases, current, workbook_status)
+            # Already resolved through member keys by _build_reference_rows (merged groups included).
+            existing = dict(self._reference_statuses.get(key) or {})
             existing_markup = _row_markup_meta(existing, fallback_markup["rate"], fallback_markup["locked"])
             quantity = _decimal(row.get("quantity"))
             if "invoiced_quantity" in item:
@@ -555,6 +583,10 @@ class CostProjectionService:
             for alias in _reference_aliases(row):
                 if alias != key:
                     current.pop(alias, None)
+            for member in row.get("member_keys") or []:
+                saved = current.get(member)
+                if member != key and isinstance(saved, dict) and len(saved.get("member_keys") or [member]) <= 1:
+                    current.pop(member, None)  # folded into this merged group's saved status
 
             def locked_part(field: str, current_total: Decimal) -> Decimal:
                 if invoiced_quantity <= 0:
@@ -573,6 +605,7 @@ class CostProjectionService:
                 continue
             current[key] = {
                 "reference_key": key,
+                "member_keys": row.get("member_keys") or [key],
                 "item_code": row.get("发票代码(**内文字)", ""),
                 "item_name": row.get("内部项目名称", ""),
                 "spec": row.get("规格型号", ""),
@@ -597,9 +630,44 @@ class CostProjectionService:
             reference_markup_rate=fallback_markup["rate"],
             reference_markup_locked=fallback_markup["locked"],
             tax_profile=tax_profile if tax_profile_changed else None,
+            item_catalog=item_catalog if catalog_changed else None,
         )
         self._refresh_workbook_from_current_detail(fallback_markup["rate"])
         return {"ok": True, "reference_status_path": str(self.status_json), "workbook_updated": self.summary_xlsx.exists()}
+
+    def _migrate_statuses_to_catalog(
+        self,
+        detail_rows: list[dict],
+        current: dict[str, dict],
+        checks: list[dict],
+        tax_profile: ReferenceTaxProfile,
+        item_catalog: dict[str, dict],
+    ) -> dict[str, dict]:
+        """Re-key saved 已开 status once when the 品目表 changes, so the file matches the new grouping.
+
+        Merged groups add up their members' saved status; split groups take a quantity share of the
+        old merged status. Both keep `merge_note` until the user saves the row, and statuses of names
+        that left the 开票参考 (e.g. marked 费用) stay untouched so switching back restores them.
+        """
+        rows = self._build_reference_rows(detail_rows, current, check_rows=checks, tax_profile=tax_profile, item_catalog=item_catalog)
+        migrated = dict(current)
+        group_keys = {row["key"] for row in rows}
+        for row in rows:
+            status = self._reference_statuses.get(row["key"]) or {}
+            for member in row["member_keys"]:
+                if member != row["key"]:
+                    migrated.pop(member, None)
+            if status:
+                migrated[row["key"]] = {
+                    **status,
+                    "reference_key": row["key"],
+                    "member_keys": row["member_keys"],
+                    "quantity_total": _decimal_text(_decimal(row.get("quantity")), "0.001"),
+                }
+        # A merged status saved under a name no longer used has been shared out above.
+        for key in [key for key, item in migrated.items() if key not in group_keys and len(item.get("member_keys") or []) > 1]:
+            migrated.pop(key, None)
+        return migrated
 
     def _read_workbook_sheet(self, sheet_name: str, headers: list[str]) -> list[dict]:
         if not self.summary_xlsx.exists():
@@ -638,17 +706,19 @@ class CostProjectionService:
         status_items: dict[str, dict] | None = None,
         check_rows: list[dict] | None = None,
         tax_profile: ReferenceTaxProfile | None = None,
+        item_catalog: dict[str, dict] | None = None,
     ) -> list[dict]:
         status_items = status_items if status_items is not None else _read_reference_status(self.status_json)
         workbook_status = self._read_reference_status_from_workbook()
         fallback_markup = self._markup_meta()
         tax_profile = tax_profile or self._tax_profile()
-        output_tax_rate = tax_profile.output_tax_rate
+        item_catalog = self._item_catalog() if item_catalog is None else item_catalog
         # Same formula as cost_analysis._invoice_reference_summary; the workbook and this API must agree.
         deductibility = input_tax_index(check_rows)
-        outbound_items = self._outbound_items()
+        outbound_items = canonical_outbound_items(self._outbound_items(), item_catalog)
+        self._reference_statuses: dict[str, dict] = {}
         grouped: dict[str, dict] = {}
-        for row in detail_rows:
+        for row in canonical_reference_rows(detail_rows, item_catalog):
             key = _reference_key(row)
             if key not in grouped:
                 grouped[key] = {
@@ -663,8 +733,11 @@ class CostProjectionService:
                     "total_with_tax": Decimal("0"),
                     "source_rows": [],
                     "aliases": _reference_aliases(row),
+                    "members": {},
                 }
             grouped[key]["source_rows"].append(row)
+            member = grouped[key]["members"].setdefault(row["_member_key"], {"quantity": Decimal("0"), "raw": row["_raw_values"]})
+            member["quantity"] += _decimal(row.get("数量"))
             grouped[key]["quantity"] += _decimal(row.get("数量"))
             grouped[key]["amount"] += _decimal(row.get("金额(除税)"))
             grouped[key]["tax_amount"] += _decimal(row.get("税金"))
@@ -672,7 +745,18 @@ class CostProjectionService:
         result = []
         for key, row in grouped.items():
             quantity = row["quantity"]
-            status = self._status_for_reference(row, status_items, workbook_status)
+            members = row["members"]
+
+            def lookup(alias: str, members=members) -> dict:
+                raw = members.get(alias, {}).get("raw")
+                aliases = _reference_aliases(dict(zip(("发票代码(**内文字)", "内部项目名称", "规格型号", "单位"), raw))) if raw else [alias]
+                return self._status_for_reference({"key": alias, "aliases": aliases}, status_items, workbook_status)
+
+            # Status saved before a 品目表 merge or spec normalisation is found through member keys.
+            status = merged_status_item(status_items, key, {k: v["quantity"] for k, v in members.items()}, lookup)
+            self._reference_statuses[key] = status
+            rate_percent = row["source_rows"][0].get("_output_tax_rate_percent") or ""
+            output_tax_rate = _tax_rate_from_percent(rate_percent) if rate_percent else tax_profile.output_tax_rate
             markup = _row_markup_meta(status, fallback_markup["rate"], fallback_markup["locked"])
             markup_multiplier = reference_markup_multiplier(markup["rate"])
             avg_price = average_unit_price(row.get("source_rows") or [])
@@ -695,7 +779,11 @@ class CostProjectionService:
             invoice_status = status.get("invoice_status") or ("已开具" if quantity > 0 and invoiced_quantity >= quantity else ("未开具" if invoiced_quantity == 0 else "部分开具"))
             result.append(
                 {
-                    **{k: v for k, v in row.items() if not isinstance(v, Decimal) and k not in {"aliases", "source_rows"}},
+                    **{k: v for k, v in row.items() if not isinstance(v, Decimal) and k not in {"aliases", "source_rows", "members"}},
+                    "member_keys": sorted(members),
+                    "merge_note": str(status.get("merge_note") or ""),
+                    "reference_output_tax_rate": _decimal_text(output_tax_rate, "0.000001"),
+                    "reference_output_tax_rate_percent": _decimal_text(output_tax_rate * Decimal("100"), "0.001"),
                     "quantity": float(quantity),
                     "average_unit_price": float(avg_price) if avg_price is not None else 0,
                     "average_unit_price_with_tax": float(avg_price_with_tax) if avg_price_with_tax is not None else 0,
