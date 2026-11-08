@@ -40,6 +40,9 @@ from invoice_hub.projections.cost_analysis import (
     item_catalog_overview,
     merged_status_item,
     parse_item_catalog,
+    parse_reference_exclusions,
+    reference_exclusions_from_status,
+    reference_invoice_id,
     _tax_rate_from_percent,
     outbound_overview,
     outbound_reference_fields,
@@ -207,6 +210,7 @@ def _write_reference_status(
     reference_markup_locked: bool = False,
     tax_profile: ReferenceTaxProfile | None = None,
     item_catalog: dict[str, dict] | None = None,
+    reference_exclusions: dict[str, dict] | None = None,
 ) -> None:
     markup_rate = normalize_reference_markup_rate(reference_markup_rate)
     normalized = {key: dict(value) for key, value in sorted(items.items()) if key and isinstance(value, dict)}
@@ -230,6 +234,11 @@ def _write_reference_status(
             payload["item_catalog"] = {"version": 1, "items": item_catalog}
         else:
             payload.pop("item_catalog", None)
+    if reference_exclusions is not None:
+        if reference_exclusions.get("keys") or reference_exclusions.get("invoices"):
+            payload["reference_exclusions"] = {"version": 1, **reference_exclusions}
+        else:
+            payload.pop("reference_exclusions", None)
     atomic_write_json(path, payload)
 
 
@@ -282,6 +291,28 @@ def _keys_from_rows(rows: list[dict]) -> set[str]:
         if invoice_number:
             keys.add(f"invoice:{invoice_number}")
     return keys
+
+
+def _reference_sources(rows: list[dict]) -> list[dict]:
+    """Invoices behind one 开票参考 row, for the 来源 dialog (one line per invoice, not per detail line)."""
+    sources: dict[str, dict] = {}
+    for row in rows:
+        invoice_id = reference_invoice_id(row)
+        item = sources.setdefault(invoice_id, {
+            "id": invoice_id,
+            "invoice_number": str(row.get("发票号码") or ""),
+            "source": Path(str(row.get("源文件") or "")).name,
+            "seller": str(row.get("销售方") or ""),
+            "invoice_date": str(row.get("开票日期") or ""),
+            "quantity": Decimal("0"),
+            "amount": Decimal("0"),
+        })
+        item["quantity"] += _decimal(row.get("数量"))
+        item["amount"] += _decimal(row.get("金额(除税)"))
+    return [
+        {**item, "quantity": _decimal_text(item["quantity"], "0.001"), "amount": _decimal_text(item["amount"], "0.01")}
+        for item in sorted(sources.values(), key=lambda value: (value["invoice_date"], value["invoice_number"]))
+    ]
 
 
 class CostProjectionService:
@@ -358,8 +389,51 @@ class CostProjectionService:
     def _outbound_overview(self, invoice_reference: list[dict]) -> dict:
         summary = load_outbound_summary(self.workspace_dir)
         # Matched / unmatched must use the same 品目表 grouping as the reference rows.
-        summary = {**summary, "items": canonical_outbound_items(summary.get("items"), self._item_catalog())}
+        summary = {**summary, "items": canonical_outbound_items(summary.get("items"), self._item_catalog(), self._exclusions())}
         return outbound_overview(summary, [row["key"] for row in invoice_reference], invoice_reference)
+
+    def _exclusions(self) -> dict[str, dict]:
+        return reference_exclusions_from_status(_read_reference_status_payload(self.status_json))
+
+    def _exclusions_overview(self, detail_rows: list[dict]) -> dict:
+        exclusions = self._exclusions()
+        present_keys = {_reference_key(row) for row in canonical_reference_rows(detail_rows, self._item_catalog())}
+        present_invoices = {reference_invoice_id(row) for row in detail_rows}
+        keys = [{"key": key, **info, "present": key in present_keys} for key, info in sorted(exclusions["keys"].items())]
+        invoices = [{"id": key, **info, "present": key in present_invoices} for key, info in sorted(exclusions["invoices"].items())]
+        return {"keys": keys, "invoices": invoices, "count": len(keys) + len(invoices)}
+
+    def _merge_exclusions(self, requested: dict[str, list[str]], detail_rows: list[dict]) -> dict[str, dict]:
+        """Keep display info for each removed row / invoice so the restore list stays readable later."""
+        saved = self._exclusions()
+        rows_by_key: dict[str, dict] = {}
+        for row in canonical_reference_rows(detail_rows, self._item_catalog()):
+            rows_by_key.setdefault(_reference_key(row), row)
+        invoices_by_id: dict[str, dict] = {}
+        for row in detail_rows:
+            invoices_by_id.setdefault(reference_invoice_id(row), row)
+        now = utc_now_text()
+        keys = {}
+        for key in requested["keys"]:
+            row = rows_by_key.get(key)
+            keys[key] = saved["keys"].get(key) or {
+                "item_code": str((row or {}).get("发票代码(**内文字)") or ""),
+                "item_name": str((row or {}).get("内部项目名称") or ""),
+                "spec": str((row or {}).get("规格型号") or ""),
+                "unit": str((row or {}).get("单位") or ""),
+                "excluded_at": now,
+            }
+        invoices = {}
+        for invoice_id in requested["invoices"]:
+            row = invoices_by_id.get(invoice_id)
+            invoices[invoice_id] = saved["invoices"].get(invoice_id) or {
+                "invoice_number": str((row or {}).get("发票号码") or ""),
+                "source": Path(str((row or {}).get("源文件") or "")).name,
+                "seller": str((row or {}).get("销售方") or ""),
+                "invoice_date": str((row or {}).get("开票日期") or ""),
+                "excluded_at": now,
+            }
+        return {"keys": keys, "invoices": invoices}
 
     def _item_catalog(self) -> dict[str, dict]:
         return item_catalog_from_status(_read_reference_status_payload(self.status_json))
@@ -402,6 +476,7 @@ class CostProjectionService:
             tax_profile=self._tax_profile(),
             outbound_items=self._outbound_items(),
             item_catalog=self._item_catalog(),
+            exclusions=self._exclusions(),
         )
 
     def _read_csv_headers(self) -> list[str]:
@@ -477,6 +552,7 @@ class CostProjectionService:
             tax_profile=self._tax_profile(),
             outbound_items=self._outbound_items(),
             item_catalog=self._item_catalog(),
+            exclusions=self._exclusions(),
         )
         return True
 
@@ -505,6 +581,7 @@ class CostProjectionService:
             reference_markup_rate=markup["display"],
             reference_tax_profile=tax_profile.api_payload(),
             item_catalog=item_catalog_overview(detail_rows, self._item_catalog()),
+            reference_exclusions=self._exclusions_overview(detail_rows),
             outbound_summary=self._outbound_overview(invoice_reference),
             detail_count=len(detail_rows),
             check_count=len(checks),
@@ -532,6 +609,8 @@ class CostProjectionService:
         tax_profile = parse_reference_tax_profile(payload.get("tax_profile")) if tax_profile_changed else self._tax_profile()
         catalog_changed = "item_catalog" in payload
         item_catalog = parse_item_catalog(payload.get("item_catalog")) if catalog_changed else self._item_catalog()
+        exclusions_changed = "reference_exclusions" in payload
+        requested_exclusions = parse_reference_exclusions(payload.get("reference_exclusions")) if exclusions_changed else None
         checks = self._read_workbook_sheet("发票校验", CHECK_HEADERS)
         detail_rows = read_csv_rows(self.detail_csv)
         if catalog_changed:
@@ -631,6 +710,7 @@ class CostProjectionService:
             reference_markup_locked=fallback_markup["locked"],
             tax_profile=tax_profile if tax_profile_changed else None,
             item_catalog=item_catalog if catalog_changed else None,
+            reference_exclusions=self._merge_exclusions(requested_exclusions, detail_rows) if exclusions_changed else None,
         )
         self._refresh_workbook_from_current_detail(fallback_markup["rate"])
         return {"ok": True, "reference_status_path": str(self.status_json), "workbook_updated": self.summary_xlsx.exists()}
@@ -715,10 +795,11 @@ class CostProjectionService:
         item_catalog = self._item_catalog() if item_catalog is None else item_catalog
         # Same formula as cost_analysis._invoice_reference_summary; the workbook and this API must agree.
         deductibility = input_tax_index(check_rows)
-        outbound_items = canonical_outbound_items(self._outbound_items(), item_catalog)
+        exclusions = self._exclusions()
+        outbound_items = canonical_outbound_items(self._outbound_items(), item_catalog, exclusions)
         self._reference_statuses: dict[str, dict] = {}
         grouped: dict[str, dict] = {}
-        for row in canonical_reference_rows(detail_rows, item_catalog):
+        for row in canonical_reference_rows(detail_rows, item_catalog, exclusions):
             key = _reference_key(row)
             if key not in grouped:
                 grouped[key] = {
@@ -781,6 +862,7 @@ class CostProjectionService:
                 {
                     **{k: v for k, v in row.items() if not isinstance(v, Decimal) and k not in {"aliases", "source_rows", "members"}},
                     "member_keys": sorted(members),
+                    "sources": _reference_sources(row["source_rows"]),
                     "merge_note": str(status.get("merge_note") or ""),
                     "reference_output_tax_rate": _decimal_text(output_tax_rate, "0.000001"),
                     "reference_output_tax_rate_percent": _decimal_text(output_tax_rate * Decimal("100"), "0.001"),

@@ -165,6 +165,8 @@ Windows验包测试中的假凭据在运行时拼接：保持生成文件的扫�
 | `_write_reference_status`（两处） | 改写状态 JSON 时保留顶层 `tax_profile` | 重新汇总合并工作簿状态、只保存行状态都不能清掉公司税务设置 | `test_rebuild_status_writer_preserves_tax_profile`、`test_cost_tax_profile_change_keeps_locked_snapshot_and_survives_row_saves` |
 | `read_outbound_summary/outbound_reference_fields` | 销项只在手动重新汇总时读取并缓存到工作区；只采用销售方为本目录进项购买方的票；比对不改保存的已开数量 | 开具目录是全局设置，切换公司后可能指向别家；手填可能早于销项归档，自动覆盖会改动已开快照 | `test_outbound_summary_dedupes_formats_and_ignores_other_companies`、`test_outbound_compare_states_follow_hand_entered_quantity`、`test_bridge_rebuild_reads_outbound_invoices_into_cost_reference` |
 | `canonical_reference_rows/merged_status_item/_migrate_statuses_to_catalog` | 品目表改名即合并；已开状态在保存品目表时一次性迁移（合并相加、拆分按数量分摊）；规格不改大小写、不去 E 后缀 | 合并 / 拆分不能丢已开快照；18E 与 18 是不同牌号；无品目表时分组键不变，旧状态无需迁移 | `test_item_catalog_merges_names_and_keeps_saved_invoiced_snapshots`、`test_item_catalog_split_shares_merged_status_by_quantity`、`test_item_catalog_spec_normalisation_finds_status_saved_under_old_key` |
+| `reference_invoice_id/reference_exclusions` | 开票参考“移除”只是排除，不删文件、不改明细与已开状态；来源发票整张移除 | 用户要求可恢复且不动发票目录；按发票号整张排除，避免同票在不同品目里一半计入一半不计 | `test_reference_exclusions_remove_and_restore_rows_without_losing_status`、`test_reference_exclusions_remove_source_invoice_from_row` |
+| `referenceColumnIndex` / 底部操作条 | 草稿联动按列 key 定位；批量操作只在勾选 / 有草稿时出现 | 新增列（来源）与重排不会让联动写错格；减少常驻按钮 | 前端契约测试 `test_cost_page_keeps_required_controls` |
 | `CostProjectionService.save_reference_status::locked_part` | 已开金额代表保存当时的业务快照，新增明细只能增加未开 | 数量变化才按比例重锁；只改加价不重价已开部分 | 快照锁定/新增汇总/改加价测试 |
 | `_read_reference_status_from_workbook` | 旧目录可能只有工作簿状态，没有完整 JSON | 只作兼容兜底，恢复后写结构化 JSON | 工作簿恢复测试 |
 

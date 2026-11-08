@@ -2,7 +2,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-APP_CSS_VERSION = "20261108-cost-item-catalog"
+APP_CSS_VERSION = "20261108-cost-actions-2"
 PAGE_INDEX_VERSION = "20261009-selection-6"
 
 

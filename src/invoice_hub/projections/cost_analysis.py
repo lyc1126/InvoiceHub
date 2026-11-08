@@ -599,7 +599,8 @@ ITEM_TYPE_LABELS = {"goods": "货物", "expense": "费用", "fixed_asset": "固�
 ITEM_STANDARD_NAME_MAX = 60
 # Top-level keys of 成本开票状态.json that belong to the company, not to one reference row;
 # every writer of the status file must carry them over unchanged.
-STATUS_PRESERVED_KEYS = ("tax_profile", "item_catalog")
+STATUS_PRESERVED_KEYS = ("tax_profile", "item_catalog", "reference_exclusions")
+REFERENCE_KEY_PATTERN = re.compile(r"^[0-9a-f]{40}$")
 
 
 def _catalog_name(value: object) -> str:
@@ -667,18 +668,66 @@ def resolve_item(catalog: dict[str, dict], name: object) -> dict:
     return {"standard_name": current, "type": item_type, "output_tax_rate_percent": rate}
 
 
-def canonical_reference_rows(rows: list[dict], catalog: dict[str, dict] | None) -> list[dict]:
+def reference_invoice_id(row: dict) -> str:
+    """Stable id of the invoice a cost line came from: its number, else the source file name."""
+    number = _valid_invoice_number(row.get("发票号码"))
+    return f"invoice:{number}" if number else f"source:{Path(_clean_text(row.get('源文件'))).name}"
+
+
+def parse_reference_exclusions(value: object) -> dict[str, list[str]]:
+    """Strict parser for the page's 移除 lists: {"keys": [reference_key], "invoices": [invoice id]}."""
+    if not isinstance(value, dict):
+        raise ValueError("移除清单格式不正确")
+    keys = value.get("keys") or []
+    invoices = value.get("invoices") or []
+    if not isinstance(keys, list) or not isinstance(invoices, list):
+        raise ValueError("移除清单格式不正确")
+    keys = sorted({_clean_text(key) for key in keys})
+    invoices = sorted({_clean_text(item) for item in invoices})
+    if any(not REFERENCE_KEY_PATTERN.match(key) for key in keys):
+        raise ValueError("移除的开票参考行标识不正确")
+    if any(not re.match(r"^(invoice:\d{8,20}|source:[^/\\]+)$", item) for item in invoices):
+        raise ValueError("移除的来源发票标识不正确")
+    return {"keys": keys, "invoices": invoices}
+
+
+def reference_exclusions_from_status(payload: object) -> dict[str, dict]:
+    """Saved 移除 lists with their display info; unreadable entries are ignored, never guessed."""
+    raw = payload.get("reference_exclusions") if isinstance(payload, dict) else None
+    result: dict[str, dict] = {"keys": {}, "invoices": {}}
+    if not isinstance(raw, dict):
+        return result
+    for field, pattern in (("keys", REFERENCE_KEY_PATTERN), ("invoices", re.compile(r"^(invoice:\d{8,20}|source:[^/\\]+)$"))):
+        entries = raw.get(field)
+        if isinstance(entries, dict):
+            for key, info in entries.items():
+                if pattern.match(str(key)):
+                    result[field][str(key)] = dict(info) if isinstance(info, dict) else {}
+    return result
+
+
+def canonical_reference_rows(
+    rows: list[dict],
+    catalog: dict[str, dict] | None,
+    exclusions: dict[str, dict] | None = None,
+) -> list[dict]:
     """Rows as the 开票参考 groups them: name → 标准名称, spec whitespace/width unified, non-goods dropped.
 
     Each row keeps `_member_key`, its pre-catalog grouping key, so status saved before a merge (or a
     spec normalisation) is still found; with no catalog and clean specs every key is unchanged.
     """
     catalog = catalog or {}
+    # 移除 only takes lines out of the 开票参考; cost details, the workbook detail sheet and the
+    # saved 已开 status stay untouched so 恢复 brings the row back exactly as it was.
+    excluded_keys = set((exclusions or {}).get("keys") or {})
+    excluded_invoices = set((exclusions or {}).get("invoices") or {})
     result = []
     for row in rows:
         values = (row.get("发票代码(**内文字)"), row.get("内部项目名称"), row.get("规格型号"), row.get("单位"))
         item = resolve_item(catalog, values[1])
         if item["type"] != ITEM_TYPE_GOODS:
+            continue
+        if excluded_invoices and reference_invoice_id(row) in excluded_invoices:
             continue
         canonical = dict(row)
         canonical["内部项目名称"] = item["standard_name"] if catalog.get(_catalog_name(values[1])) else _clean_text(values[1])
@@ -686,17 +735,31 @@ def canonical_reference_rows(rows: list[dict], catalog: dict[str, dict] | None) 
         canonical["_member_key"] = _reference_key(*values)
         canonical["_raw_values"] = values
         canonical["_output_tax_rate_percent"] = item["output_tax_rate_percent"]
+        if excluded_keys and _reference_key(
+            canonical.get("发票代码(**内文字)"), canonical["内部项目名称"], canonical["规格型号"], canonical.get("单位")
+        ) in excluded_keys:
+            continue
         result.append(canonical)
     return result
 
 
-def canonical_outbound_items(items: dict[str, dict] | None, catalog: dict[str, dict] | None) -> dict[str, dict]:
-    """Regroup the saved 销项 summary (keyed by raw names) by the current 品目表 without re-reading files."""
+def canonical_outbound_items(
+    items: dict[str, dict] | None,
+    catalog: dict[str, dict] | None,
+    exclusions: dict[str, dict] | None = None,
+) -> dict[str, dict]:
+    """Regroup the saved 销项 summary (keyed by raw names) by the current 品目表 without re-reading files.
+
+    Removed 开票参考 rows drop their sales too, so they do not reappear as 未对上; removed source
+    invoices are purchase-side only and do not affect sales.
+    """
     merged: dict[str, dict] = {}
+    key_exclusions = {"keys": (exclusions or {}).get("keys") or {}}
     for item in (items or {}).values():
         rows = canonical_reference_rows(
             [{"发票代码(**内文字)": item.get("item_code"), "内部项目名称": item.get("item_name"), "规格型号": item.get("spec"), "单位": item.get("unit")}],
             catalog,
+            key_exclusions,
         )
         if not rows:
             continue
@@ -2344,14 +2407,15 @@ def _invoice_reference_summary(
     check_rows: list[dict] | None = None,
     outbound_items: dict[str, dict] | None = None,
     item_catalog: dict[str, dict] | None = None,
+    exclusions: dict[str, dict] | None = None,
 ) -> list[dict]:
     fallback_markup_rate = normalize_reference_markup_rate(reference_markup_rate)
     # Group by the 品目表's standard names (and outbound lines by the same catalog) before pricing.
-    outbound_items = canonical_outbound_items(outbound_items, item_catalog)
+    outbound_items = canonical_outbound_items(outbound_items, item_catalog, exclusions)
     tax_profile = tax_profile or ReferenceTaxProfile()
     deductibility = input_tax_index(check_rows)
     grouped: dict[tuple, list[dict]] = defaultdict(list)
-    for row in canonical_reference_rows(rows, item_catalog):
+    for row in canonical_reference_rows(rows, item_catalog, exclusions):
         key = (
             _clean_text(row.get("发票代码(**内文字)")),
             _clean_text(row.get("内部项目名称")),
@@ -2612,6 +2676,7 @@ def _write_workbook(
     tax_profile: ReferenceTaxProfile | None = None,
     outbound_items: dict[str, dict] | None = None,
     item_catalog: dict[str, dict] | None = None,
+    exclusions: dict[str, dict] | None = None,
 ) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     wb = Workbook()
@@ -2633,6 +2698,7 @@ def _write_workbook(
             check_rows=check_rows,
             outbound_items=outbound_items,
             item_catalog=item_catalog,
+            exclusions=exclusions,
         ),
     )
     _append_sheet(wb, "发票校验", CHECK_HEADERS, check_rows)
@@ -2702,6 +2768,7 @@ def build_cost_analysis_outputs(
     markup_locked = _truthy(status_payload.get("reference_markup_locked", False))
     tax_profile = reference_tax_profile_from_status(status_payload)
     item_catalog = item_catalog_from_status(status_payload)
+    exclusions = reference_exclusions_from_status(status_payload)
     status_items, status_changed = _merge_reference_status(_load_reference_status(status_json), _load_workbook_reference_status(summary_xlsx))
     if status_changed:
         _write_reference_status(status_json, status_items, reference_markup_rate=markup_rate, reference_markup_locked=markup_locked)
@@ -2715,6 +2782,7 @@ def build_cost_analysis_outputs(
         tax_profile=tax_profile,
         outbound_items=outbound_items,
         item_catalog=item_catalog,
+        exclusions=exclusions,
     )
 
     failed = [item for item in analyses if item.get("status") == "failed"]

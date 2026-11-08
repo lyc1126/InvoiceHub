@@ -1650,3 +1650,76 @@ def test_item_catalog_merge_without_invoiced_quantity_needs_no_review(tmp_path: 
     ]})
     service.save_reference_status({"items": [], "item_catalog": {"三级抗震盘螺HRB400E": {"standard_name": "盘螺"}}})
     assert _rows_by_name(service)["盘螺"]["merge_note"] == ""
+
+
+def test_reference_exclusions_remove_and_restore_rows_without_losing_status(tmp_path: Path) -> None:
+    watch, _workspace, service = _catalog_fixture(tmp_path)
+    rows = _rows_by_name(service)
+    key = rows["三级抗震盘螺HRB400E"]["key"]
+    service.save_reference_status({"items": [{"key": key, "invoiced_quantity": "6"}]})
+
+    service.save_reference_status({"items": [], "reference_exclusions": {"keys": [key], "invoices": []}})
+    snapshot = service.snapshot()
+    names = {row["内部项目名称"] for row in snapshot.invoice_reference}
+
+    assert "三级抗震盘螺HRB400E" not in names
+    assert any(row["内部项目名称"] == "三级抗震盘螺HRB400E" for row in snapshot.project_summary)
+    assert len(snapshot.items) == 3  # cost details untouched
+    assert snapshot.reference_exclusions["keys"][0]["item_name"] == "三级抗震盘螺HRB400E"
+    assert snapshot.reference_exclusions["keys"][0]["present"] is True
+    assert read_json_object(service.status_json)["items"][key]["invoiced_quantity"] == "6"
+    sheet = {row["内部项目名称"] for row in _reference_sheet_rows(watch / "成本发票汇总.xlsx")}
+    assert "三级抗震盘螺HRB400E" not in sheet
+
+    service.save_reference_status({"items": [], "reference_exclusions": {"keys": [], "invoices": []}})
+    restored = _rows_by_name(service)["三级抗震盘螺HRB400E"]
+    assert restored["invoiced_quantity"] == 6.0
+    assert "reference_exclusions" not in read_json_object(service.status_json)
+
+
+def test_reference_exclusions_remove_source_invoice_from_row(tmp_path: Path) -> None:
+    _watch, _workspace, service = _catalog_fixture(tmp_path)
+    service.save_reference_status({"items": [], "item_catalog": {"三级抗震盘螺HRB400E": {"standard_name": "盘螺"}}})
+    row = _rows_by_name(service)["盘螺"]
+    assert len(row["sources"]) == 2
+    invoice_b = next(source["id"] for source in row["sources"] if source["quantity"] == "30")
+
+    service.save_reference_status({"items": [], "reference_exclusions": {"keys": [], "invoices": [invoice_b]}})
+    trimmed = _rows_by_name(service)["盘螺"]
+
+    assert trimmed["quantity"] == 10.0
+    assert len(trimmed["sources"]) == 1
+    overview = service.snapshot().reference_exclusions
+    assert overview["invoices"][0]["id"] == invoice_b and overview["count"] == 1
+
+
+def test_reference_exclusions_reject_bad_input_and_survive_other_saves(tmp_path: Path) -> None:
+    from invoice_hub.projections.cost_analysis import _write_reference_status as rebuild_writer
+
+    _watch, _workspace, service = _catalog_fixture(tmp_path)
+    key = _rows_by_name(service)["盘螺"]["key"]
+    service.save_reference_status({"items": [], "reference_exclusions": {"keys": [key], "invoices": []}})
+    before = service.status_json.read_text(encoding="utf-8")
+    for bad in ({"keys": ["not-a-key"]}, {"invoices": ["../etc/passwd"]}, {"keys": "x"}, "x"):
+        with pytest.raises(ValueError):
+            service.save_reference_status({"items": [], "reference_exclusions": bad})
+    assert service.status_json.read_text(encoding="utf-8") == before
+
+    service.save_reference_status({"items": [], "tax_profile": {"taxpayer_type": "general", "output_tax_rate_percent": "13"}})
+    service.save_reference_status({"items": [], "item_catalog": {"0号柴油": {"type": "expense"}}})
+    rebuild_writer(service.status_json, read_json_object(service.status_json)["items"])
+    assert key in read_json_object(service.status_json)["reference_exclusions"]["keys"]
+    assert "盘螺" not in _rows_by_name(service)
+
+
+def test_reference_exclusions_hide_sales_of_removed_rows_from_unmatched(tmp_path: Path) -> None:
+    watch, outbound, workspace = _outbound_fixture(tmp_path)
+    service = CostProjectionService(watch, workspace, "target")
+    service.refresh_outbound(outbound)
+    key = next(row["key"] for row in service.snapshot().invoice_reference if row["规格型号"] == "12E")
+
+    service.save_reference_status({"items": [], "reference_exclusions": {"keys": [key], "invoices": []}})
+    overview = service.snapshot().outbound_summary
+
+    assert "钢筋 / 12E / 吨" not in overview["unmatched_items"]
+    assert overview["matched_item_count"] == 0

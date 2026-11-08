@@ -477,6 +477,17 @@ reference_key = SHA1(发票代码, 标准名称, 规格, 单位)；_member_key =
 
 已保存状态查找（`merged_status_item`）：本键已保存且 `member_keys` 与当前成员一致 → 直接用；否则合计成员各自的单组状态，并把仍保存在已拆分大组里的状态按 `成员数量 / quantity_total` 分摊；已开数量非零或加价率不一致时带 `merge_note`。保存品目表时按此结果把状态一次性写到新键（带 `member_keys`、`quantity_total`），移除被并入的成员键；销项汇总在快照时按同一品目表重新归组，不重读文件。
 
+### 9.3.2 开票参考移除
+
+```text
+invoice_id(行) = "invoice:" + 发票号码（8–20 位）| "source:" + 源文件名
+归一时：invoice_id ∈ reference_exclusions.invoices → 丢弃该明细行（整张发票，所有品目）
+        归一后 reference_key ∈ reference_exclusions.keys → 丢弃
+销项归组：被移除的 reference_key 一并丢弃（不再算作未对上）；移除来源发票不影响销项
+```
+
+已保存的已开状态、成本明细 CSV 与工作簿明细 sheet 不受影响；清空清单即恢复。
+
 ### 9.4 销项比对（COST-03）
 
 手动“重新汇总”在成本分析之后读取开具发票目录：

@@ -4,7 +4,7 @@
   <title>成本分析</title>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <link rel="stylesheet" href="/static/css/app.css?v=20261108-cost-item-catalog">
+  <link rel="stylesheet" href="/static/css/app.css?v=20261108-cost-actions-2">
   <link rel="stylesheet" href="/static/css/settings-actions.css?v=20260907-desktop-integrated-2">
 </head>
 <body data-page="costs">
@@ -57,8 +57,8 @@
     </section>
 
     <section class="cost-context-grid" aria-label="税务设置与销项比对">
-      <div id="costTaxProfile" class="inline-panel cost-tax-profile" aria-label="本公司税务设置">
-        <strong class="cost-panel-title">本公司税务设置</strong>
+      <div id="costTaxProfile" class="inline-panel cost-tax-profile" aria-label="本公司设置">
+        <strong class="cost-panel-title">本公司设置</strong>
         <div class="cost-tax-profile__controls">
           <label class="cost-tax-profile__field">纳税人类型
             <select id="taxpayerTypeSelect" class="input">
@@ -78,6 +78,7 @@
             </select>
           </label>
           <button id="saveTaxProfileBtn" class="btn btn--secondary" type="button" disabled>保存税务设置</button>
+          <button id="itemCatalogBtn" class="btn btn--ghost" type="button" title="维护标准名称、类型与品目税率">品目表</button>
         </div>
         <p id="taxProfileHint" class="cost-panel-note" aria-live="polite"></p>
       </div>
@@ -90,24 +91,7 @@
       </div>
     </section>
 
-    <section class="list-controls sticky-controls" aria-label="成本列表操作">
-      <div class="toolbar cost-actions">
-        <button id="refreshBtn" class="btn btn--ghost" type="button">刷新</button>
-        <button id="rebuildBtn" class="btn btn--primary" type="button">重新汇总</button>
-        <button id="openSummaryBtn" class="btn btn--secondary" type="button">打开成本分析表</button>
-        <button id="copyBtn" class="btn btn--ghost" type="button">复制当前表格</button>
-        <button id="markSelectedMaxBtn" class="btn btn--ghost" type="button" disabled>批量设为已开具</button>
-        <button id="markSelectedZeroBtn" class="btn btn--ghost" type="button" disabled>批量设为未开具</button>
-        <button id="batchOutboundBtn" class="btn btn--ghost" type="button" disabled>已选按销项更新</button>
-        <button id="itemCatalogBtn" class="btn btn--secondary" type="button">品目表</button>
-        <div class="batch-markup-control" aria-label="批量加价率">
-          <input id="batchMarkupInput" class="batch-markup-input" type="text" inputmode="decimal" pattern="[0-9]*(\.[0-9]*)?" autocomplete="off" spellcheck="false" data-batch-markup-input aria-label="批量加价率百分比">
-          <span class="markup-rate-percent" aria-hidden="true">%</span>
-          <button id="batchMarkupLockBtn" class="btn btn--ghost" type="button" disabled>批量锁定加价率</button>
-          <button id="batchMarkupUnlockBtn" class="btn btn--ghost" type="button" disabled>批量解锁加价率</button>
-        </div>
-        <button id="saveReferenceBtn" class="btn btn--primary" type="button" disabled>保存状态</button>
-      </div>
+    <section class="list-controls sticky-controls cost-command-bar" aria-label="成本列表操作">
       <div class="cost-view-switcher">
         <div class="cost-formula-help-wrap">
           <button class="cost-formula-help" type="button" aria-label="平均单价算法说明" aria-describedby="costFormulaTooltip">!</button>
@@ -123,6 +107,17 @@
           <button class="tab" data-view="project" role="tab" aria-selected="false" type="button">项目规格汇总</button>
           <button class="tab" data-view="reference" role="tab" aria-selected="false" type="button">开票参考</button>
           <button class="tab" data-view="checks" role="tab" aria-selected="false" type="button">发票校验</button>
+        </div>
+      </div>
+      <div class="cost-command-bar__actions">
+        <button id="refreshBtn" class="btn btn--ghost" type="button" title="重新读取当前结果，不生成文件">刷新</button>
+        <button id="rebuildBtn" class="btn btn--primary" type="button" title="扫描发票目录，重建汇总、成本分析与销项比对">重新汇总</button>
+        <div class="cost-more">
+          <button id="costMoreBtn" class="btn btn--ghost cost-more__toggle" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="costMoreMenu">更多<svg class="cost-more__chevron" viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+          <div id="costMoreMenu" class="cost-more__menu" role="menu" aria-label="更多操作" hidden>
+            <button id="openSummaryBtn" class="cost-more__item" type="button" role="menuitem">打开成本分析表</button>
+            <button id="copyBtn" class="cost-more__item" type="button" role="menuitem">复制当前表格</button>
+          </div>
         </div>
       </div>
     </section>
@@ -152,7 +147,7 @@
       </div>
     </section>
     <section class="panel cost-view" data-view="reference" hidden>
-      <div class="panel__head"><h3>开票参考</h3><div class="panel__meta">已开数量保存时锁定金额快照。</div></div>
+      <div class="panel__head"><h3>开票参考</h3><div class="panel__meta">已开数量保存时锁定金额快照。<button id="referenceExclusionsBtn" class="btn btn--ghost btn--mini" type="button">已移除 0 项</button></div></div>
       <div class="table-shell"><table class="data-table" id="referenceTable"><thead></thead><tbody></tbody></table></div>
       <div class="cost-table-footer" data-cost-table-footer="reference">
         <span class="cost-table-count" data-cost-row-count="reference">显示 0 / 共 0 条</span>
@@ -175,6 +170,35 @@
         </div>
       </div>
     </section>
+    <div id="referenceActionBar" class="cost-action-bar" role="region" aria-label="开票参考批量操作与保存" hidden>
+      <div class="cost-action-bar__zone" data-action-zone="selection" hidden>
+        <strong id="referenceSelectedCount" class="cost-action-bar__count">已选 0 行</strong>
+        <div class="cost-action-bar__group" role="group" aria-label="已开数量">
+          <span class="cost-action-bar__label">已开数量</span>
+          <button id="markSelectedMaxBtn" class="btn btn--ghost" type="button" disabled>设为全部已开</button>
+          <button id="markSelectedZeroBtn" class="btn btn--ghost" type="button" disabled>清零</button>
+          <button id="batchOutboundBtn" class="btn btn--ghost" type="button" disabled>按销项更新</button>
+        </div>
+        <div class="cost-action-bar__group" role="group" aria-label="加价率">
+          <span class="cost-action-bar__label">加价率</span>
+          <div class="batch-markup-control">
+            <input id="batchMarkupInput" class="batch-markup-input" type="text" inputmode="decimal" pattern="[0-9]*(\.[0-9]*)?" autocomplete="off" spellcheck="false" data-batch-markup-input aria-label="批量加价率百分比">
+            <span class="markup-rate-percent" aria-hidden="true">%</span>
+            <button id="batchMarkupLockBtn" class="btn btn--ghost" type="button" disabled>应用并锁定</button>
+            <button id="batchMarkupUnlockBtn" class="btn btn--ghost" type="button" disabled>解锁</button>
+          </div>
+        </div>
+        <div class="cost-action-bar__group" role="group" aria-label="移除">
+          <button id="excludeSelectedBtn" class="btn btn--ghost cost-action-bar__remove" type="button" disabled title="只从开票参考排除，不删除文件，可在「已移除」中恢复">从开票参考移除</button>
+          <button id="clearSelectionBtn" class="btn btn--ghost" type="button" title="Esc">取消选择</button>
+        </div>
+      </div>
+      <div class="cost-action-bar__zone cost-action-bar__save" data-action-zone="save" hidden>
+        <span id="referenceDirtyCount" class="cost-action-bar__count">0 行未保存</span>
+        <button id="discardReferenceBtn" class="btn btn--ghost" type="button">放弃修改</button>
+        <button id="saveReferenceBtn" class="btn btn--primary" type="button" disabled>保存状态</button>
+      </div>
+    </div>
   </main>
   <dialog id="itemCatalogDialog" class="item-catalog-dialog" aria-labelledby="itemCatalogTitle">
     <h3 id="itemCatalogTitle">品目表</h3>
@@ -187,9 +211,32 @@
       <button id="itemCatalogSave" class="btn btn--primary" type="button" disabled>保存品目表</button>
     </div>
   </dialog>
+  <dialog id="referenceSourcesDialog" class="item-catalog-dialog" aria-labelledby="referenceSourcesTitle">
+    <h3 id="referenceSourcesTitle">来源发票</h3>
+    <p class="cost-panel-note">勾选的发票只从开票参考移除：不删除文件，成本明细与工作簿明细照常保留，可在「已移除」中恢复。移除的是整张发票，它在其他品目行里的明细也会一起移出开票参考。</p>
+    <div class="table-shell item-catalog-shell"><table class="data-table" id="referenceSourcesTable"><thead></thead><tbody></tbody></table></div>
+    <p id="referenceSourcesStatus" class="cost-panel-note" role="status" aria-live="polite"></p>
+    <div class="item-catalog-actions">
+      <button id="referenceSourcesClose" class="btn btn--ghost" type="button">关闭</button>
+      <button id="referenceSourcesRemove" class="btn btn--secondary cost-action-bar__remove" type="button" disabled>移除所选发票</button>
+    </div>
+  </dialog>
+  <dialog id="referenceExclusionsDialog" class="item-catalog-dialog" aria-labelledby="referenceExclusionsTitle">
+    <h3 id="referenceExclusionsTitle">已移除的开票参考</h3>
+    <p class="cost-panel-note">这些品目行与来源发票没有计入开票参考；恢复后按原来保存的已开数量与加价率回到列表。</p>
+    <h4 class="cost-dialog-subtitle">品目行</h4>
+    <div class="table-shell item-catalog-shell"><table class="data-table" id="excludedRowsTable"><thead></thead><tbody></tbody></table></div>
+    <h4 class="cost-dialog-subtitle">来源发票</h4>
+    <div class="table-shell item-catalog-shell"><table class="data-table" id="excludedInvoicesTable"><thead></thead><tbody></tbody></table></div>
+    <p id="referenceExclusionsStatus" class="cost-panel-note" role="status" aria-live="polite"></p>
+    <div class="item-catalog-actions">
+      <button id="referenceExclusionsClose" class="btn btn--ghost" type="button">关闭</button>
+      <button id="referenceExclusionsRestoreAll" class="btn btn--secondary" type="button" disabled>全部恢复</button>
+    </div>
+  </dialog>
   {{system_controls}}
   <script src="/static/js/common.js?v=20260907-desktop-integrated-2"></script>
   <script src="/static/js/system-controls.js?v=20260907-desktop-integrated-2"></script>
-  <script src="/static/js/page-costs.js?v=20261108-cost-item-catalog"></script>
+  <script src="/static/js/page-costs.js?v=20261108-cost-actions-2"></script>
 </body>
 </html>

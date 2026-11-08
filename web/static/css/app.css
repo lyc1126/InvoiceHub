@@ -146,7 +146,6 @@ a { color: inherit; text-decoration: none; }
   flex-wrap: wrap;
 }
 .toolbar { margin-bottom: 14px; }
-.cost-actions { margin-bottom: 0; }
 .sync-progress {
   --sync-progress-inline-size: 184px;
   --sync-progress-block-size: 30px;
@@ -1342,8 +1341,8 @@ body[data-page="index"] .table--invoice-list .invoice-type-pill--ordinary {
   padding-right: 4px;
 }
 #referenceTable {
-  /* Quantity block (columns 1–11, 1222px) stays visible on a normal window; price columns scroll. */
-  min-width: 2156px;
+  /* Quantity block (columns 1–12, 1294px) stays visible on a normal window; price columns scroll. */
+  min-width: 2228px;
   table-layout: fixed;
 }
 #referenceTable th,
@@ -1360,19 +1359,22 @@ body[data-page="index"] .table--invoice-list .invoice-type-pill--ordinary {
 #referenceTable th:nth-child(4), #referenceTable td:nth-child(4) { width: 88px; }
 #referenceTable th:nth-child(5), #referenceTable td:nth-child(5) { width: 56px; text-align: center; }
 #referenceTable th:nth-child(6), #referenceTable td:nth-child(6) { width: 88px; }
-#referenceTable th:nth-child(7), #referenceTable td:nth-child(7) { width: 122px; }
-#referenceTable th:nth-child(8), #referenceTable td:nth-child(8) { width: 96px; }
-#referenceTable th:nth-child(9), #referenceTable td:nth-child(9) { width: 230px; }
-#referenceTable th:nth-child(10), #referenceTable td:nth-child(10) { width: 88px; }
-#referenceTable th:nth-child(11), #referenceTable td:nth-child(11) { width: 112px; }
-#referenceTable th:nth-child(12), #referenceTable td:nth-child(12) { width: 132px; }
+#referenceTable th:nth-child(7), #referenceTable td:nth-child(7) { width: 72px; }
+#referenceTable th:nth-child(8), #referenceTable td:nth-child(8) { width: 122px; }
+#referenceTable th:nth-child(9), #referenceTable td:nth-child(9) { width: 96px; }
+#referenceTable th:nth-child(10), #referenceTable td:nth-child(10) { width: 230px; }
+#referenceTable th:nth-child(11), #referenceTable td:nth-child(11) { width: 88px; }
+#referenceTable th:nth-child(12), #referenceTable td:nth-child(12) { width: 112px; }
 #referenceTable th:nth-child(13), #referenceTable td:nth-child(13) { width: 132px; }
-#referenceTable th:nth-child(14), #referenceTable td:nth-child(14) { width: 100px; }
-#referenceTable th:nth-child(15), #referenceTable td:nth-child(15) { width: 132px; }
-#referenceTable th:nth-child(16), #referenceTable td:nth-child(16) { width: 150px; }
-#referenceTable th:nth-child(17), #referenceTable td:nth-child(17) { width: 138px; }
-#referenceTable th:nth-child(18), #referenceTable td:nth-child(18) { width: 150px; }
-#referenceTable td:nth-child(9) .btn--mini { margin-left: 4px; }
+#referenceTable th:nth-child(14), #referenceTable td:nth-child(14) { width: 132px; }
+#referenceTable th:nth-child(15), #referenceTable td:nth-child(15) { width: 100px; }
+#referenceTable th:nth-child(16), #referenceTable td:nth-child(16) { width: 132px; }
+#referenceTable th:nth-child(17), #referenceTable td:nth-child(17) { width: 150px; }
+#referenceTable th:nth-child(18), #referenceTable td:nth-child(18) { width: 138px; }
+#referenceTable th:nth-child(19), #referenceTable td:nth-child(19) { width: 150px; }
+/* 数量比对 can carry a long note plus a button; wrap inside the cell instead of spilling over 未开数量. */
+.reference-compare { display: inline-flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 4px; max-width: 100%; }
+.reference-compare .status-pill { white-space: normal; text-align: center; }
 /* 成本页：税务设置与销项数量比对并排，窄窗口改为上下排列。 */
 .cost-context-grid {
   display: grid;
@@ -1417,6 +1419,72 @@ body[data-page="index"] .table--invoice-list .invoice-type-pill--ordinary {
 #itemCatalogTable td { vertical-align: middle; }
 #itemCatalogTable td .input { width: 100%; }
 .item-catalog-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.cost-dialog-subtitle { margin: 4px 0 0; font-size: 14px; }
+/* 成本页命令区：视图切换在左，刷新 / 重新汇总（唯一主按钮）/ 更多 在右。 */
+.cost-command-bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 16px; }
+.cost-command-bar .cost-view-switcher { margin: 0; }
+.cost-command-bar__actions { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+.cost-more { position: relative; }
+.cost-more__toggle { display: inline-flex; align-items: center; gap: 6px; }
+.cost-more__chevron { transition: transform 160ms ease-out; }
+.cost-more__toggle[aria-expanded="true"] .cost-more__chevron { transform: rotate(180deg); }
+.cost-more__menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  z-index: 40;
+  min-width: 180px;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: 0 8px 24px rgba(36, 37, 32, 0.12);
+  display: flex;
+  flex-direction: column;
+}
+.cost-more__menu[hidden] { display: none; }
+.cost-more__item {
+  min-height: 40px;
+  padding: 8px 12px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.cost-more__item:hover, .cost-more__item:focus-visible { background: var(--surface-2); outline: none; }
+/* 勾选或有未保存修改时才出现的底部操作条；内容区预留底部空间，表格不会被遮住。 */
+.cost-action-bar {
+  position: fixed;
+  left: 50%;
+  bottom: 16px;
+  z-index: 30;
+  transform: translateX(-50%);
+  width: min(100% - 32px, 1560px);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 20px;
+  padding: 10px 14px;
+  border: 1px solid var(--line-strong);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: 0 12px 32px rgba(36, 37, 32, 0.18);
+}
+.cost-action-bar[hidden], .cost-action-bar__zone[hidden] { display: none; }
+.cost-action-bar__zone { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
+.cost-action-bar__save { margin-left: auto; }
+.cost-action-bar__group { display: inline-flex; align-items: center; gap: 6px; padding-left: 12px; border-left: 1px solid var(--line); }
+.cost-action-bar__count { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.cost-action-bar__label { font-size: 12px; color: var(--muted); }
+.cost-action-bar__remove { color: #991b1b; }
+body.has-cost-action-bar .shell { padding-bottom: 120px; }
+@media (prefers-reduced-motion: reduce) {
+  .cost-more__chevron { transition: none; }
+}
 .reference-text {
   display: block;
   max-width: 100%;

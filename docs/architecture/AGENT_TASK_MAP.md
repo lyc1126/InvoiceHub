@@ -124,7 +124,7 @@ flowchart TD
 | 产物与消费者 | `watch_dir/成本发票明细.csv`、`成本发票汇总.xlsx`、`成本开票状态.json`、详情/选择成本拆分、单据 |
 | 最低自动化 | 完整 `tests/test_summary_and_costs.py`，成本相关 `tests/test_invoice_classification.py` 和 `tests/test_api_contract.py`；页面字段变化再跑 `test_frontend_contract.py` |
 | 真实验收 | 页面四标签互斥、TSV 复制、行级加价草稿/保存/刷新、实际工作簿五 sheet；真实业务版式检查校验差异 |
-| 高风险提醒 | 库存均价与采购算术均价不能混用；已开快照不能随新增明细漂移；默认 8% 只是行级 fallback；销项税率与成本是否含税来自状态 JSON 的 `tax_profile`（缺失 = 一般纳税人 13%），四处公式须一致且改写状态时不能丢 `tax_profile`。销项比对只在手动重新汇总读取开具目录（`projections/cost_outbound.py`，缓存在工作区），必须按销售方过滤非本公司发票，且不得覆盖保存的已开数量；开票参考表列顺序与 `#referenceTable` 列宽同步。品目表（`item_catalog`）参与所有分组：改分组键或状态写入时必须经 `canonical_reference_rows` / `merged_status_item`，且不能丢 `item_catalog`。旧 schema 修复、状态 JSON 和工作簿写入必须同 monitor 共用所捕获 profile 写锁，且不能阻塞 health 或把旧 profile 完成事件投到新目录 |
+| 高风险提醒 | 库存均价与采购算术均价不能混用；已开快照不能随新增明细漂移；默认 8% 只是行级 fallback；销项税率与成本是否含税来自状态 JSON 的 `tax_profile`（缺失 = 一般纳税人 13%），四处公式须一致且改写状态时不能丢 `tax_profile`。销项比对只在手动重新汇总读取开具目录（`projections/cost_outbound.py`，缓存在工作区），必须按销售方过滤非本公司发票，且不得覆盖保存的已开数量；开票参考表列顺序与 `#referenceTable` 列宽同步。品目表（`item_catalog`）参与所有分组：改分组键或状态写入时必须经 `canonical_reference_rows` / `merged_status_item`，且不能丢 `item_catalog` / `reference_exclusions`；开票参考“移除”只排除不删文件。改 `/costs` 静态资源必须升级 `?v=`。旧 schema 修复、状态 JSON 和工作簿写入必须同 monitor 共用所捕获 profile 写锁，且不能阻塞 health 或把旧 profile 完成事件投到新目录 |
 
 <a id="task-paths"></a>
 

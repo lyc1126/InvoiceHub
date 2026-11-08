@@ -65,6 +65,29 @@ const refs = {
   itemCatalogStatus: document.getElementById("itemCatalogStatus"),
   itemCatalogSave: document.getElementById("itemCatalogSave"),
   itemCatalogCancel: document.getElementById("itemCatalogCancel"),
+  moreBtn: document.getElementById("costMoreBtn"),
+  moreMenu: document.getElementById("costMoreMenu"),
+  actionBar: document.getElementById("referenceActionBar"),
+  selectionZone: document.querySelector('[data-action-zone="selection"]'),
+  saveZone: document.querySelector('[data-action-zone="save"]'),
+  selectedCount: document.getElementById("referenceSelectedCount"),
+  dirtyCount: document.getElementById("referenceDirtyCount"),
+  excludeSelectedBtn: document.getElementById("excludeSelectedBtn"),
+  clearSelectionBtn: document.getElementById("clearSelectionBtn"),
+  discardBtn: document.getElementById("discardReferenceBtn"),
+  exclusionsBtn: document.getElementById("referenceExclusionsBtn"),
+  sourcesDialog: document.getElementById("referenceSourcesDialog"),
+  sourcesTitle: document.getElementById("referenceSourcesTitle"),
+  sourcesTable: document.getElementById("referenceSourcesTable"),
+  sourcesStatus: document.getElementById("referenceSourcesStatus"),
+  sourcesRemove: document.getElementById("referenceSourcesRemove"),
+  sourcesClose: document.getElementById("referenceSourcesClose"),
+  exclusionsDialog: document.getElementById("referenceExclusionsDialog"),
+  excludedRowsTable: document.getElementById("excludedRowsTable"),
+  excludedInvoicesTable: document.getElementById("excludedInvoicesTable"),
+  exclusionsStatus: document.getElementById("referenceExclusionsStatus"),
+  exclusionsRestoreAll: document.getElementById("referenceExclusionsRestoreAll"),
+  exclusionsClose: document.getElementById("referenceExclusionsClose"),
 };
 
 const detailColumns = [
@@ -111,6 +134,7 @@ const referenceColumns = [
   { key: "规格型号", label: "规格型号", render: (row) => referenceText(row, "规格型号") },
   { key: "单位", label: "单位", render: (row) => referenceText(row, "单位") },
   { key: "quantity", label: "数量", render: (row) => referenceNumber(row.quantity, "quantity") },
+  { key: "sources", label: "来源", render: (row) => `<button class="btn btn--ghost btn--mini" type="button" data-reference-sources="${app.escapeHtml(row.key)}" title="查看或移除这一行的来源发票">${(row.sources || []).length} 张</button>` },
   { key: "invoiced_quantity", label: "已开数量", render: renderReferenceQuantity },
   { key: "outbound_quantity", label: "销项数量", render: (row) => (row.outbound_compare && row.outbound_compare !== "none" ? referenceNumber(formatQuantity(row.outbound_quantity), "outbound-quantity") : "--") },
   { key: "outbound_compare_text", label: "数量比对", render: renderOutboundCompare },
@@ -547,7 +571,7 @@ function renderOutboundCompare(row) {
   const mergeNote = row.merge_note
     ? `<span title="${app.escapeHtml(row.merge_note)}">${app.statusPill("已开数量待核对", "warning")}</span> `
     : "";
-  return `${mergeNote}${app.statusPill(meta.text, meta.tone)}${button}`;
+  return `<span class="reference-compare">${mergeNote}${app.statusPill(meta.text, meta.tone)}${button}</span>`;
 }
 
 const ITEM_TYPE_OPTIONS = [["goods", "货物"], ["expense", "费用"], ["fixed_asset", "固定资产"]];
@@ -1316,7 +1340,7 @@ function updateReferenceControls() {
   const busy = refs.saveBtn.dataset.busy === "true" || state.payload?.editable === false;
   const batchValid = isCompleteMarkupRateText(refs.batchMarkupInput?.value || "");
   refs.saveBtn.disabled = busy || dirtyCount === 0 || invalidCount > 0;
-  if (!busy) refs.saveBtn.textContent = invalidCount ? "检查开票参考" : (dirtyCount ? `保存状态（${dirtyCount}）` : "保存状态");
+  if (!busy) refs.saveBtn.textContent = invalidCount ? "检查开票参考" : "保存状态";
   refs.saveBtn.title = invalidCount ? "已开数量和加价率只能输入数字，已开数量不能超过数量合计" : (dirtyCount ? `保存 ${dirtyCount} 行开票参考状态` : "已保存；修改已开数量或加价率后可再次保存");
   if (refs.markMaxBtn) refs.markMaxBtn.disabled = selectedCount === 0;
   if (refs.markZeroBtn) refs.markZeroBtn.disabled = selectedCount === 0;
@@ -1331,7 +1355,95 @@ function updateReferenceControls() {
   if (refs.batchMarkupLockBtn) refs.batchMarkupLockBtn.disabled = selectedCount === 0 || !batchValid;
   if (refs.batchMarkupUnlockBtn) refs.batchMarkupUnlockBtn.disabled = selectedCount === 0;
   if (refs.batchMarkupInput) refs.batchMarkupInput.setAttribute("aria-invalid", refs.batchMarkupInput.value && !batchValid ? "true" : "false");
+  if (refs.excludeSelectedBtn) refs.excludeSelectedBtn.disabled = busy || selectedCount === 0 || dirtyCount > 0;
+  if (refs.excludeSelectedBtn) refs.excludeSelectedBtn.title = dirtyCount ? "请先保存或放弃未保存的修改，再移除" : "只从开票参考排除，不删除文件，可在「已移除」中恢复";
+  // The bottom bar only appears when there is something to act on: a selection on 开票参考, or unsaved drafts.
+  const showSelection = state.activeView === "reference" && selectedCount > 0;
+  const showSave = dirtyCount > 0;
+  if (refs.selectionZone) refs.selectionZone.hidden = !showSelection;
+  if (refs.saveZone) refs.saveZone.hidden = !showSave;
+  if (refs.actionBar) refs.actionBar.hidden = !(showSelection || showSave);
+  document.body.classList.toggle("has-cost-action-bar", showSelection || showSave);
+  if (refs.selectedCount) refs.selectedCount.textContent = `已选 ${selectedCount} 行`;
+  if (refs.dirtyCount) refs.dirtyCount.textContent = invalidCount ? `${invalidCount} 行需检查` : `${dirtyCount} 行未保存`;
+  if (refs.discardBtn) refs.discardBtn.disabled = busy;
   updateTaxProfileControls();
+  updateExclusionsButton();
+}
+
+function currentExclusions() {
+  const saved = state.payload?.reference_exclusions || {};
+  return {
+    keys: (saved.keys || []).map((item) => item.key),
+    invoices: (saved.invoices || []).map((item) => item.id),
+  };
+}
+
+function updateExclusionsButton() {
+  if (!refs.exclusionsBtn) return;
+  const count = state.payload?.reference_exclusions?.count || 0;
+  refs.exclusionsBtn.textContent = count ? `已移除 ${count} 项 · 管理` : "已移除 0 项";
+  refs.exclusionsBtn.disabled = count === 0;
+}
+
+async function saveExclusions(next, statusEl, message) {
+  // 移除 / 恢复 only rewrites the exclusion lists; saved 已开 status is never touched here.
+  await app.api("/api/v1/cost-analysis/reference-status", {
+    method: "POST",
+    body: JSON.stringify({ items: [], reference_exclusions: next, target_id: state.payload.target_id, revision: state.payload.revision }),
+  });
+  await loadCosts("save");
+  if (statusEl) statusEl.textContent = message;
+  refs.syncPanel.className = "banner banner--success";
+  refs.syncPanel.textContent = message;
+}
+
+function clearReferenceSelection() {
+  state.referenceSelected.clear();
+  document.querySelectorAll("[data-reference-check]").forEach((input) => { input.checked = false; });
+  updateReferenceControls();
+}
+
+function closeMoreMenu() {
+  if (!refs.moreMenu || refs.moreMenu.hidden) return;
+  refs.moreMenu.hidden = true;
+  refs.moreBtn.setAttribute("aria-expanded", "false");
+}
+
+function renderReferenceSources(row) {
+  refs.sourcesDialog.dataset.key = row.key;
+  refs.sourcesTitle.textContent = `来源发票 · ${row["内部项目名称"] || ""} ${row["规格型号"] || ""} ${row["单位"] || ""}`.trim();
+  app.renderTable(refs.sourcesTable, row.sources || [], [
+    { key: "pick", label: "选择", render: (item) => `<input type="checkbox" class="invoice-checkbox" data-source-pick="${app.escapeHtml(item.id)}" aria-label="选择来源发票">` },
+    { key: "invoice_number", label: "发票号码", render: (item) => app.escapeHtml(item.invoice_number || item.source) },
+    { key: "seller", label: "销售方", render: (item) => app.escapeHtml(item.seller) },
+    { key: "invoice_date", label: "开票日期", render: (item) => app.escapeHtml(item.invoice_date) },
+    { key: "quantity", label: "数量", render: (item) => app.escapeHtml(item.quantity) },
+    { key: "amount", label: "金额(除税)", render: (item) => app.escapeHtml(item.amount) },
+  ]);
+  refs.sourcesStatus.textContent = `共 ${(row.sources || []).length} 张发票`;
+  refs.sourcesRemove.disabled = true;
+}
+
+function renderExclusions() {
+  const saved = state.payload?.reference_exclusions || {};
+  const restore = (kind, id) => `<button class="btn btn--ghost btn--mini" type="button" data-restore-kind="${kind}" data-restore-id="${app.escapeHtml(id)}">恢复</button>`;
+  const when = (value) => app.escapeHtml(String(value || "").replace("T", " ").replace("Z", ""));
+  app.renderTable(refs.excludedRowsTable, saved.keys || [], [
+    { key: "item_name", label: "名称", render: (item) => app.escapeHtml(item.item_name || "（已不在明细中）") },
+    { key: "spec", label: "规格", render: (item) => app.escapeHtml(item.spec || "") },
+    { key: "unit", label: "单位", render: (item) => app.escapeHtml(item.unit || "") },
+    { key: "excluded_at", label: "移除时间 (UTC)", render: (item) => when(item.excluded_at) },
+    { key: "restore", label: "", render: (item) => restore("keys", item.key) },
+  ]);
+  app.renderTable(refs.excludedInvoicesTable, saved.invoices || [], [
+    { key: "invoice_number", label: "发票号码", render: (item) => app.escapeHtml(item.invoice_number || item.source || item.id) },
+    { key: "seller", label: "销售方", render: (item) => app.escapeHtml(item.seller || "") },
+    { key: "invoice_date", label: "开票日期", render: (item) => app.escapeHtml(item.invoice_date || "") },
+    { key: "excluded_at", label: "移除时间 (UTC)", render: (item) => when(item.excluded_at) },
+    { key: "restore", label: "", render: (item) => restore("invoices", item.id) },
+  ]);
+  refs.exclusionsRestoreAll.disabled = !saved.count;
 }
 
 function applySelectedQuantity(mode) {
@@ -1411,6 +1523,101 @@ refs.saveTaxProfileBtn?.addEventListener("click", async () => {
     updateTaxProfileControls();
   }
 });
+
+refs.moreBtn?.addEventListener("click", (event) => {
+  event.stopPropagation();
+  const open = refs.moreMenu.hidden;
+  refs.moreMenu.hidden = !open;
+  refs.moreBtn.setAttribute("aria-expanded", open ? "true" : "false");
+  if (open) refs.moreMenu.querySelector("[role=menuitem]")?.focus();
+});
+refs.moreMenu?.addEventListener("click", () => closeMoreMenu());
+document.addEventListener("click", (event) => {
+  if (refs.moreMenu && !refs.moreMenu.hidden && !event.target.closest(".cost-more")) closeMoreMenu();
+});
+document.addEventListener("keydown", (event) => {
+  if (event.key !== "Escape" || document.querySelector("dialog[open]")) return;
+  if (refs.moreMenu && !refs.moreMenu.hidden) {
+    closeMoreMenu();
+    refs.moreBtn.focus();
+    return;
+  }
+  if (state.activeView === "reference" && state.referenceSelected.size) clearReferenceSelection();
+});
+refs.clearSelectionBtn?.addEventListener("click", clearReferenceSelection);
+refs.discardBtn?.addEventListener("click", () => {
+  state.dirty.clear();
+  state.editingReference = null;
+  render();
+});
+refs.excludeSelectedBtn?.addEventListener("click", async () => {
+  const keys = selectedReferenceKeys();
+  if (!keys.length || state.dirty.size) return;
+  const current = currentExclusions();
+  app.setBusy(refs.excludeSelectedBtn, true, "移除中...");
+  try {
+    state.referenceSelected.clear();
+    await saveExclusions({ keys: [...new Set([...current.keys, ...keys])], invoices: current.invoices }, null,
+      `已从开票参考移除 ${keys.length} 行（未删除文件），可在「已移除」中恢复。`);
+  } catch (error) {
+    refs.syncPanel.className = "banner banner--danger";
+    refs.syncPanel.textContent = error.message || "移除失败";
+  } finally {
+    app.setBusy(refs.excludeSelectedBtn, false);
+    updateReferenceControls();
+  }
+});
+document.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-reference-sources]");
+  if (!button) return;
+  const row = payloadReferenceRow(button.dataset.referenceSources);
+  if (!row) return;
+  renderReferenceSources(row);
+  refs.sourcesDialog.showModal();
+});
+refs.sourcesTable?.addEventListener("change", () => {
+  const picked = refs.sourcesTable.querySelectorAll("[data-source-pick]:checked").length;
+  refs.sourcesRemove.disabled = picked === 0 || state.dirty.size > 0;
+  refs.sourcesStatus.textContent = state.dirty.size ? "请先保存或放弃开票参考的未保存修改，再移除来源发票。" : (picked ? `已选 ${picked} 张发票` : "");
+});
+refs.sourcesClose?.addEventListener("click", () => refs.sourcesDialog.close());
+refs.sourcesRemove?.addEventListener("click", async () => {
+  const picked = [...refs.sourcesTable.querySelectorAll("[data-source-pick]:checked")].map((input) => input.dataset.sourcePick);
+  if (!picked.length || state.dirty.size) return;
+  const current = currentExclusions();
+  app.setBusy(refs.sourcesRemove, true, "移除中...");
+  try {
+    await saveExclusions({ keys: current.keys, invoices: [...new Set([...current.invoices, ...picked])] }, null,
+      `已从开票参考移除 ${picked.length} 张来源发票（未删除文件），可在「已移除」中恢复。`);
+    refs.sourcesDialog.close();
+  } catch (error) {
+    refs.sourcesStatus.textContent = error.message || "移除失败";
+  } finally {
+    app.setBusy(refs.sourcesRemove, false);
+  }
+});
+refs.exclusionsBtn?.addEventListener("click", () => {
+  renderExclusions();
+  refs.exclusionsStatus.textContent = "";
+  refs.exclusionsDialog.showModal();
+});
+refs.exclusionsClose?.addEventListener("click", () => refs.exclusionsDialog.close());
+async function restoreExclusions(kind, id) {
+  const current = currentExclusions();
+  const next = kind === "all" ? { keys: [], invoices: [] } : { ...current, [kind]: current[kind].filter((value) => value !== id) };
+  try {
+    await saveExclusions(next, refs.exclusionsStatus, kind === "all" ? "已全部恢复到开票参考。" : "已恢复到开票参考。");
+    renderExclusions();
+    if (!state.payload?.reference_exclusions?.count) refs.exclusionsDialog.close();
+  } catch (error) {
+    refs.exclusionsStatus.textContent = error.message || "恢复失败";
+  }
+}
+refs.exclusionsDialog?.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-restore-kind]");
+  if (button) void restoreExclusions(button.dataset.restoreKind, button.dataset.restoreId);
+});
+refs.exclusionsRestoreAll?.addEventListener("click", () => void restoreExclusions("all"));
 
 refs.itemCatalogBtn?.addEventListener("click", () => {
   if (!state.payload) return;

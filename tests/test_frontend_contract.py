@@ -72,13 +72,22 @@ def test_cost_page_keeps_required_controls() -> None:
     assert "开票参考" in html
     assert "复制当前表格" in html
     assert "保存状态" in html
-    assert "批量设为已开具" in html
-    assert "批量设为未开具" in html
+    # Selection actions live in the bottom action bar, grouped by task (已开数量 / 加价率 / 移除).
+    assert 'id="referenceActionBar"' in html and 'data-action-zone="selection"' in html and 'data-action-zone="save"' in html
+    assert ">设为全部已开<" in html and ">清零<" in html and ">按销项更新<" in html
+    assert 'id="excludeSelectedBtn"' in html and "从开票参考移除" in html
+    assert 'id="clearSelectionBtn"' in html and 'id="discardReferenceBtn"' in html
+    # One primary action in the command bar; secondary actions sit in the 更多 menu.
+    assert html.split("<dialog")[0].count('class="btn btn--primary"') == 2  # 重新汇总 + 保存状态 (only with drafts); dialogs excluded
+    assert 'id="costMoreMenu" class="cost-more__menu" role="menu"' in html
+    assert 'id="openSummaryBtn" class="cost-more__item"' in html and 'id="copyBtn" class="cost-more__item"' in html
+    assert 'id="referenceSourcesDialog"' in html and 'id="referenceExclusionsDialog"' in html
+    assert 'id="referenceExclusionsBtn"' in html
     assert "打开成本分析表" in html
     assert "系统服务连接状态" in html
     assert "service-status service-status--muted" in html
     assert "list-controls" in html
-    assert "cost-actions" in html
+    assert 'class="list-controls sticky-controls cost-command-bar"' in html
     assert "cost-tabs" in html
     assert "cost-view-switcher" in html
     assert "cost-formula-help-wrap" in html
@@ -107,8 +116,8 @@ def test_cost_page_keeps_required_controls() -> None:
     assert "data-markup-rate-input" not in html
     assert "开票加价率</span>" not in html
     assert "batchMarkupInput" in html
-    assert "批量锁定加价率" in html
-    assert "批量解锁加价率" in html
+    assert ">应用并锁定<" in html
+    assert ">解锁<" in html
     assert "平均单价(含税)" in js
     assert "renderProjectAverageWithTax" in js
     assert "renderProjectPurchaseReferenceWithTax" in js
@@ -152,9 +161,9 @@ def test_cost_page_keeps_required_controls() -> None:
     assert 'referenceText(row, "reference_cost_basis_text")' in reference_columns_body
     # Quantity block first (库存数量与票面一致为原则): 数量 → 已开 → 销项 → 数量比对 → 未开 → 开票状态.
     keys = re.findall(r'\{ key: "([^"]+)"', reference_columns_body)
-    assert keys[5:11] == ["quantity", "invoiced_quantity", "outbound_quantity", "outbound_compare_text", "uninvoiced_quantity", "invoice_status"]
+    assert keys[5:12] == ["quantity", "sources", "invoiced_quantity", "outbound_quantity", "outbound_compare_text", "uninvoiced_quantity", "invoice_status"]
     assert keys.index("actual_markup_text") > keys.index("invoice_status")
-    assert keys[-1] == "reference_cost_basis_text" and len(keys) == 18
+    assert keys[-1] == "reference_cost_basis_text" and len(keys) == 19
     assert '{ key: "outbound_compare_text", label: "数量比对", render: renderOutboundCompare }' in reference_columns_body
     # Live draft updates address cells by column key, so reordering columns cannot desync them.
     assert "const referenceColumnIndex = Object.fromEntries(" in js
@@ -188,8 +197,8 @@ def test_cost_page_keeps_required_controls() -> None:
     assert "锁定" in js
     assert "解锁" in js
     assert "common.js?v=20260907-desktop-integrated-2" in html
-    assert "app.css?v=20261108-cost-item-catalog" in html
-    assert "page-costs.js?v=20261108-cost-item-catalog" in html
+    assert "app.css?v=20261108-cost-actions-2" in html
+    assert "page-costs.js?v=20261108-cost-actions-2" in html
     for token in (
         "发票大类",
         "特定业务类型",
@@ -234,10 +243,10 @@ def test_cost_page_keeps_required_controls() -> None:
     assert "app.connectEvents(refs.eventState, loadCosts, { refreshOnFirstOpen: false });" in js
     assert '<section class="tabs" role="tablist" aria-label="成本分析视图">' not in html
     assert '<div class="tabs cost-tabs" role="tablist" aria-label="成本分析视图">' in html
-    assert '<div class="toolbar cost-actions">' in html
+    assert '<div class="cost-command-bar__actions">' in html
     assert "table-scroll-x" not in html
-    assert html.index('<section class="stats-grid">') < html.index('<section class="list-controls sticky-controls"') < html.index('<section class="panel cost-view" data-view="details">')
-    assert html.index('<div class="toolbar cost-actions">') < html.index('<div class="cost-view-switcher">') < html.index('<div class="tabs cost-tabs"') < html.index('<section class="panel cost-view" data-view="details">')
+    assert html.index('<section class="stats-grid">') < html.index('<section class="list-controls sticky-controls cost-command-bar"') < html.index('<section class="panel cost-view" data-view="details">')
+    assert html.index('<div class="cost-view-switcher">') < html.index('<div class="tabs cost-tabs"') < html.index('<div class="cost-command-bar__actions">') < html.index('<section class="panel cost-view" data-view="details">')
     assert 'href="/backend"' not in html
     common = (ROOT / "web" / "static" / "js" / "common.js").read_text(encoding="utf-8")
     assert "cost_analysis.reference_status_updated" in common
@@ -264,7 +273,12 @@ def test_cost_page_keeps_required_controls() -> None:
     assert "setSelectionRange" in js
     assert "isAutoRefreshReason" in js
     assert "正在编辑开票数量或加价率，已暂停自动刷新表格" in js
-    assert "保存状态（" in js
+    assert "行未保存" in js
+    assert 'document.body.classList.toggle("has-cost-action-bar"' in js
+    assert 'if (event.key !== "Escape" || document.querySelector("dialog[open]")) return;' in js
+    assert "reference_exclusions: next" in js
+    assert "data-reference-sources" in js and "data-source-pick" in js and "data-restore-kind" in js
+    assert "请先保存或放弃未保存的修改，再移除" in js
     assert "updateReferenceControls" in js
     assert "app.setBusy" in js
     assert ".cost-view[hidden]" in css
@@ -282,7 +296,7 @@ def test_cost_page_keeps_required_controls() -> None:
     assert ".page-head__actions" in css
     assert "min-width: min(100%, 320px)" in css
     assert ".list-controls" in css
-    assert ".cost-actions" in css
+    assert ".cost-command-bar {" in css and ".cost-actions" not in css
     assert ".service-status--success" in css
     assert ".service-status--warning" in css
     assert ".status-pill--partial" in css
@@ -329,7 +343,10 @@ def test_cost_page_keeps_required_controls() -> None:
     assert "min-width: 1520px" in css
     assert "#projectTable" in css
     assert "min-width: 1420px" in css
-    assert "min-width: 2156px" in css
+    assert "min-width: 2228px" in css
+    assert "#referenceTable th:nth-child(19)" in css
+    assert "body.has-cost-action-bar .shell { padding-bottom: 120px; }" in css
+    assert ".cost-action-bar[hidden], .cost-action-bar__zone[hidden] { display: none; }" in css
     assert ".cost-context-grid {" in css
     assert "#referenceTable th:nth-child(14)" in css
     # 成本口径 and the three 销项 columns need explicit widths, or table-layout: fixed squeezes them.
@@ -462,7 +479,7 @@ def test_main_pages_keep_user_visible_controls() -> None:
     assert "过去保存" in index
     assert 'class="inline-panel path-inline" hidden' not in index
     assert 'id="watchDirDraft" class="watch-dir-draft" hidden' in index
-    assert "app.css?v=20261108-cost-item-catalog" in index
+    assert "app.css?v=20261108-cost-actions-2" in index
     assert "settings-actions.css?v=20260907-desktop-integrated-2" in index
     assert "common.js?v=20260907-desktop-integrated-2" in index
     assert "page-index.js?v=20261009-selection-6" in index
@@ -672,7 +689,7 @@ def test_main_pages_keep_user_visible_controls() -> None:
     assert "类型识别状态" in page_detail
     assert "类型识别说明" in page_detail
     assert "common.js?v=20260907-desktop-integrated-2" in detail
-    assert "app.css?v=20261108-cost-item-catalog" in detail
+    assert "app.css?v=20261108-cost-actions-2" in detail
     assert ".panel__head .detail-file-actions" in css
     assert ".detail-grid" in css
     assert ".detail-grid .stat-card strong { min-width: 0; overflow-wrap: anywhere; word-break: break-word; }" in css
@@ -889,7 +906,7 @@ def test_selected_invoice_summary_frontend_contract() -> None:
 
     for template_name in ("backend.html", "base_head.html", "consistency.html", "costs.html", "detail.html", "documents.html", "index.html", "ocr.html", "settings.html", "skins.html"):
         template = (ROOT / "web" / "templates" / template_name).read_text(encoding="utf-8")
-        assert "app.css?v=20261108-cost-item-catalog" in template
+        assert "app.css?v=20261108-cost-actions-2" in template
     assert "page-index.js?v=20261009-selection-6" in index
 
 
@@ -953,7 +970,7 @@ def test_documents_page_contract() -> None:
     assert ">是</button>" in html
     assert ">否</button>" in html
     assert ">打开该文件</button>" in html
-    assert "app.css?v=20261108-cost-item-catalog" in html
+    assert "app.css?v=20261108-cost-actions-2" in html
     assert "common.js?v=20260907-desktop-integrated-2" in html
     assert "page-documents.js?v=20261009-progressive-3" in html
     assert "large-lists.css?v=20260907-large-list-1" in html
@@ -1057,7 +1074,7 @@ def test_bookkeeping_page_static_contract() -> None:
     assert 'body data-page="bookkeeping"' in html
     assert "{{BASE_HEAD}}" in html
     assert "{{BOOTSTRAP_JSON}}" in html
-    assert "app.css?v=20261108-cost-item-catalog" in base_head
+    assert "app.css?v=20261108-cost-actions-2" in base_head
     assert "page-bookkeeping.js?v=20260711-w9-ledger-review-v3" in html
     assert 'id="voucherBlockers"' in html
     assert "item.can_approve === true" in js
@@ -1262,7 +1279,7 @@ def test_settings_page_contract() -> None:
     assert 'class="settings-edit-card settings-defaults-card"' in html
     assert 'href="/skins"' in html
     assert 'href="/backend"' in html
-    assert "app.css?v=20261108-cost-item-catalog" in html
+    assert "app.css?v=20261108-cost-actions-2" in html
     assert "settings-actions.css?v=20260907-desktop-integrated-2" in html
     assert "common.js?v=20260907-desktop-integrated-2" in html
     assert "page-settings.js?v=20260907-desktop-integrated-2" in html
@@ -1550,7 +1567,7 @@ def test_skin_page_contract_and_common_skin_loader() -> None:
     assert "disabled>替换" in html
     assert "skinList" in html
     assert 'role="radiogroup"' in html
-    assert "app.css?v=20261108-cost-item-catalog" in html
+    assert "app.css?v=20261108-cost-actions-2" in html
     assert "common.js?v=20260907-desktop-integrated-2" in html
     assert "page-skins.js?v=20260907-desktop-integrated-2" in html
     assert '@app.get("/skins", response_class=HTMLResponse)' in api_app
@@ -1779,7 +1796,7 @@ def test_home_invoice_list_centers_content_and_uses_one_status_badge() -> None:
         html = template_path.read_text(encoding="utf-8")
         if "app.css?v=" not in html:
             continue
-        assert "app.css?v=20261108-cost-item-catalog" in html
+        assert "app.css?v=20261108-cost-actions-2" in html
         assert "app.css?v=20260727-invoice-list-status-layout" not in html
         assert "app.css?v=20260726-invoice-taxonomy" not in html
     index = (templates_dir / "index.html").read_text(encoding="utf-8")

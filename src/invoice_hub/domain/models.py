@@ -101,6 +101,8 @@ class ReferenceStatusPatch(BaseModel):
     tax_profile: dict[str, Any] | None = None
     # Optional 品目表 replacement: {原名称: {"standard_name", "type", "output_tax_rate_percent"}}.
     item_catalog: dict[str, Any] | None = None
+    # Optional full replacement of the 移除 lists: {"keys": [reference_key], "invoices": [invoice id]}.
+    reference_exclusions: dict[str, Any] | None = None
 
 
 class CostAnalysisSnapshot(BaseModel):
@@ -118,6 +120,8 @@ class CostAnalysisSnapshot(BaseModel):
     outbound_summary: dict[str, Any] = Field(default_factory=dict)
     # 品目表 rows (one per invoice item name) for the /costs dialog; not a paged view.
     item_catalog: list[dict[str, Any]] = Field(default_factory=list)
+    # 开票参考 rows / source invoices the user removed (restorable); see reference_exclusions in the status file.
+    reference_exclusions: dict[str, Any] = Field(default_factory=dict)
     detail_count: int = 0
     check_count: int = 0
     mismatch_count: int = 0
