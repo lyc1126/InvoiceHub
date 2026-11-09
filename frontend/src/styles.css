@@ -1,0 +1,41 @@
+:root {
+  --paper: #fbfaf6;
+  --ink: #1d1d1b;
+  --muted: #6b6a64;
+  --line: #e4e1d8;
+  --accent: #d7f25a;
+  --danger: #b42318;
+  font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+  color: var(--ink);
+  background: var(--paper);
+}
+* { box-sizing: border-box; }
+body { margin: 0; }
+.shell { display: grid; grid-template-columns: 168px 1fr; min-height: 100vh; }
+.rail { display: flex; flex-direction: column; gap: 4px; padding: 16px 12px; border-right: 1px solid var(--line); }
+.brand { font-weight: 800; font-size: 22px; padding: 4px 8px 16px; }
+.rail-link { padding: 8px; border-radius: 8px; color: inherit; text-decoration: none; }
+.rail-link:hover { background: var(--line); }
+.rail-link.router-link-exact-active { background: var(--accent); }
+.rail-link--classic { margin-top: auto; color: var(--muted); }
+.content { padding: 24px 32px; min-width: 0; }
+.page-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.page-header h1 { font-size: 20px; margin: 0 0 16px; }
+.muted { color: var(--muted); }
+.banner { padding: 8px 12px; border-radius: 8px; }
+.banner--error { color: var(--danger); background: #fdecea; }
+.facts { border-collapse: collapse; }
+.facts th, .facts td { text-align: left; padding: 6px 16px 6px 0; border-bottom: 1px solid var(--line); }
+.facts th { color: var(--muted); font-weight: 500; white-space: nowrap; }
+.facts td { word-break: break-all; }
+button { font: inherit; padding: 6px 14px; border: 1px solid var(--ink); border-radius: 8px; background: transparent; cursor: pointer; }
+button:disabled { opacity: 0.5; cursor: default; }
+button[aria-busy="true"] { cursor: progress; }
+@media (max-width: 640px) {
+  .shell { grid-template-columns: 1fr; grid-template-rows: auto 1fr; }
+  .rail { flex-direction: row; align-items: center; border-right: 0; border-bottom: 1px solid var(--line); padding: 8px 12px; overflow-x: auto; }
+  .brand { padding: 0 8px 0 0; }
+  .rail-link--classic { margin-top: 0; margin-left: auto; white-space: nowrap; }
+  .content { padding: 16px; }
+}
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }

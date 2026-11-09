@@ -172,3 +172,33 @@ jobs:
         run: cargo clippy --locked --all-targets -- ${{ matrix.clippy_flags }}
       - name: Run unit and contract tests
         run: cargo test --locked
+
+  frontend:
+    name: Workspace frontend (Vue)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "24"
+      - name: Install the pinned pnpm and locked dependencies
+        run: |
+          corepack enable
+          pnpm install --frozen-lockfile
+      - name: Type-check
+        run: pnpm run typecheck
+      - name: Run component tests
+        run: pnpm test
+      # web/static/app is committed so release packaging ships web/ unchanged;
+      # rebuilding must reproduce it byte for byte.
+      - name: Verify the committed build is current
+        run: |
+          pnpm run build
+          git status --porcelain -- ../web/static/app
+          test -z "$(git status --porcelain -- ../web/static/app)"

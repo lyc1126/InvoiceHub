@@ -288,6 +288,17 @@ def create_app(
     def detail_page(request: Request, invoice_key: str) -> str:
         return render_page(request, "detail.html", {"page": "detail", "invoiceKey": invoice_key})
 
+    # Vue workspace preview (frontend/ -> committed build in web/static/app). Every
+    # client-side route returns the same shell; assets carry ?v= content hashes, so
+    # only this HTML must stay uncached for a rebuilt bundle to reach the browser.
+    @app.get("/workspace", response_class=HTMLResponse, include_in_schema=False)
+    @app.get("/workspace/{client_path:path}", response_class=HTMLResponse, include_in_schema=False)
+    def workspace_shell(client_path: str = "") -> HTMLResponse:
+        shell = web_dir / "static" / "app" / "index.html"
+        if not shell.is_file():
+            raise HTTPException(status_code=404, detail="工作区前端尚未构建：运行 frontend 的 pnpm run build")
+        return HTMLResponse(shell.read_text(encoding="utf-8"), headers={"Cache-Control": "no-store"})
+
     @app.get("/api/v1/health")
     def health(request: Request) -> dict:
         return _state(request).health()
