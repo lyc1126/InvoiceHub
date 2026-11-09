@@ -104,7 +104,10 @@ flowchart LR
 | `GET /backend` | `backend.html` 内联脚本 | health、settings、bridge/status | 不注入皮肤，不进入普通首要导航 | API/前端契约 |
 | `GET /invoices/{invoice_key}` | `detail.html` + `page-detail.js` | invoice detail、manual-fields、open-file、open-location | `invoice_key` 是当前汇总位置键，不是长期主键 | 详情与成本拆分 API 测试 |
 | `GET /invoices/print/{job_id}` | `invoice_print.html` 内联打印脚本 | print job、逐页 PNG | 不注入活动皮肤；全部图片完成 `load + decode` 和两次渲染帧后调用 `window.print()`；票面跟随实际页框；私有 no-store；macOS 子窗口只允许该同端口受控路径 | 打印服务/前端契约、真实浏览器分页与 macOS 策略测试 |
+| `GET /workspace`、`GET /workspace/{client_path:path}` | `web/static/app/index.html`（`frontend/` 的提交构建，Vue 3） | health、settings（只读） | 所有客户端路由返回同一外壳，`Cache-Control: no-store`；资源带 `?v=` 内容哈希走 immutable；`include_in_schema=false`，不改变桌面 OpenAPI 握手；构建缺失时 404；不注入皮肤、不连接 SSE | `test_workspace_frontend.py`、`frontend/tests/*.spec.ts` |
 | `GET /favicon.ico` | 静态响应 | 无业务数据 | `include_in_schema=false`，但仍属于 FastAPI 路由契约 | API 静态契约 |
+
+API 路由分布：页面、官网、打印页、`/workspace`、health 与桌面握手在 `api/app.py`；其余 `/api/v1` 路由按领域在 `api/routes/*.py`，由 `create_app` 按原注册顺序 `include_router`，因此路径匹配顺序与拆分前一致；共享的来源校验、认证 transcript 与错误映射在 `api/common.py`。
 
 所有普通页面由 `_template()` 做有限占位替换，不是 Jinja2 模板引擎。活动皮肤由服务端在 `</head>` 前注入；`/backend` 和带 `?no_skin=1` 的请求跳过注入。
 

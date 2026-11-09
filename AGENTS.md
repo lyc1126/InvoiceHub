@@ -53,7 +53,7 @@
 - 修改 API、页面消费、SSE、错误码、状态语义、生成产物或运行流程时，必须同步 `docs/architecture/INTERFACES_AND_FLOWS.md`；修改模型、SQLite schema、投影字段、公式或算法时，必须同步 `docs/architecture/DATA_AND_ALGORITHMS.md`。
 - 修改跨模块影响范围、最低测试或验收入口时，同步 `docs/architecture/AGENT_TASK_MAP.md`；产生新的非直觉约束、兼容原因或失败保护时，同步 `docs/architecture/COMMENT_RATIONALE_MAP.md`，必要时再把长期不变量写回本文件。
 - 整合开发分支完成验收并合并 `main` 后，必须在同一任务内把架构文档的开发实现基线和稳定发布基线切换到新的 `main` commit，不保留两套相互漂移的架构说明。
-- [文件地图的目录规则](docs/architecture/FILE_MAP.md#directory-rules) 约束工程文件归属；目录、入口和新文件任务必须核对。
+- [文件地图的目录规则](docs/architecture/FILE_MAP.md#directory-rules) 约束工程文件归属；目录、入口和新文件任务必须核对。新领域 API 放 `src/invoice_hub/api/routes/`、新领域用例放独立服务模块，不再堆进 `api/app.py` 或 `AppState`；新界面在 `frontend/`（Vue）实现并提交构建产物，不手改 `web/static/app/`。
 - 新增长期约束时，全局必读内容写入本文件；功能细则只维护在 `docs/architecture/rules/` 的所属专题，并同步任务导航及对应架构地图。不得将功能规则再次整段堆回 AGENTS.md 或 CLAUDE.md。
 
 ## 文档语言与代码注释规则

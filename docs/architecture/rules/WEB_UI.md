@@ -58,6 +58,14 @@
 - 新增内置皮肤必须只覆盖 CSS 变量和既有选择器，不能改变业务 DOM、表格结构、TSV 复制链路、SSE 重连、目录草稿或成本输入行为；引用第三方项目时只能作为视觉参考，除非许可和来源已明确记录，否则不得复制素材、字体包、组件代码或源码样式。
 - 内置皮肤允许打包本地字体子集和原创图片纹理，但必须使用包内相对 `url()`、记录来源/许可、禁止远程字体和外链图片；不得复制官方游戏素材、角色、Logo、截图或商业字体。
 
+## Vue 工作区前端
+
+- 新界面（多公司工作区及其后续模块）在 `frontend/`（Vue 3 + TypeScript + Pinia + Vue Router）实现；`web/templates` 与 `web/static/js` 的旧页面在对应模块迁移完成前保持原样，不在两套界面里重复实现同一业务规则，业务口径仍以后端 API 为准。
+- `web/static/app/` 是 `frontend` 的提交构建产物，不得手改；修改前端源码后必须 `pnpm run build` 并一起提交。产物固定为 `index.html`、`assets/app.js`、`assets/app.css`，缓存刷新由构建插件写入的 `?v=` 内容哈希完成；`/workspace/*` 外壳必须 no-store。CI 以 `--frozen-lockfile` 重建并要求与提交产物逐字节一致。
+- 前端依赖只用精确版本并锁定在 `frontend/pnpm-lock.yaml`；新增随包运行时依赖须同步 THIRD_PARTY_NOTICES。构建产物不得包含 sourcemap、本机路径或远程资源。
+- `/workspace` 路由不进入 OpenAPI，避免改变 Tauri/Swift 握手的必需操作集合；新增 API 仍按本页“接口、资源与交互”同步页面消费与契约测试。模块切换必须用 `KeepAlive` 等方式保留页面状态，局部操作不得整页重绘。
+- 前端改动最低运行 `pnpm run typecheck`、`pnpm test`、`pnpm run build` 与 `tests/test_workspace_frontend.py`；用户可见改动还须在真实浏览器核对桌面/390px、控制台与关键交互。
+
 ## 前端验证范围
 
 - 每个修改的前端 JS 文件执行 `node --check`；复验已提供的 Ink Pulse、Animal Island 与 `?no_skin=1`，覆盖桌面/窄屏、控制台错误、交互及滚动链，并按前文核对当前 localhost 实际提供的资源。系统原生选择器只能由真实应用窗口验收，静态或浏览器验证不能替代。

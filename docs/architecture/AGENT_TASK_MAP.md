@@ -18,6 +18,7 @@
 | 删除所选、回收站/废纸篓、确认与断线结果 | [页面](rules/WEB_UI.md)、[监控](rules/MONITORING.md)、[Windows](rules/WINDOWS.md)、[macOS](rules/MACOS.md) | [勾选工作流](#task-selection-workflow) |
 | 临时识别、临时文件线程、拖放排序与源失效 | [页面](rules/WEB_UI.md)、[提取](rules/INVOICE_EXTRACTION.md)、[宿主](rules/TAURI_HOST.md) | [临时识别](#task-temporary) |
 | JS/CSS、资源缓存、目录草稿、SSE、滚动与表格 | [页面/单据/预览/皮肤](rules/WEB_UI.md) | [9. 前端页面与静态资源](#task-web) |
+| Vue 工作区前端、`frontend/`、`web/static/app`、`/workspace` | [页面/单据/预览/皮肤](rules/WEB_UI.md) | [9.2 Vue 工作区前端](#task-workspace-frontend) |
 | 独立官网、介绍页面与打包白名单 | [页面/单据/预览/皮肤](rules/WEB_UI.md)、[构建与发行](rules/RELEASE.md) | [9.1 独立产品官网](#task-website) |
 | 大列表卡顿、索引停止、入库/出库、批量队列 | [页面/单据/预览/皮肤](rules/WEB_UI.md)、[成本](rules/COST_ANALYSIS.md) | [10. 入库单与出库单](#task-documents) |
 | 勾选合计、搜索税率、来源追溯、超过100份预览、OFD 缺字、打印空白/漏页 | [页面/单据/预览/皮肤](rules/WEB_UI.md) | [10.1 发票预览与批量打印](#task-preview) |
@@ -231,6 +232,22 @@ flowchart TD
 
 四视图和功能场景变更至少覆盖：筛选后空选择禁用、预览来源逐份保留、同票 PDF 回退与缺 PDF 整批阻断、明细税率/规格/单位分组、概念金额换算的分位守恒、五层画布进入/离开收敛与减少动态效果。Node VM 调度测试只证明控制状态，不替代真实像素或鼠标命中验收。
 
+<a id="task-workspace-frontend"></a>
+
+## 9.2 Vue 工作区前端
+
+必读功能规则：[页面/单据/预览/皮肤](rules/WEB_UI.md) 的“Vue 工作区前端”。
+
+| 导航项 | 内容 |
+|---|---|
+| 首先阅读 | 文件地图 15.1 节；接口流程第 2 节 `/workspace` 行；[未来工作总览](../PRODUCT_BACKLOG.md) 的 WS 条目与原型 |
+| 首要入口 | `frontend/src/router.ts`、`App.vue`、`api/client.ts`、`stores/`、`views/`；后端 `api/app.py::workspace_shell` |
+| 必须联动 | 后端 API 与 `frontend/src/api/types.ts`、提交构建 `web/static/app/`、THIRD_PARTY_NOTICES（新运行时依赖）、FILE_MAP 15.1 |
+| 产物与消费者 | 浏览器/Tauri WebView 中的 `/workspace/*`；发布包随 `web/` 携带构建产物 |
+| 最低自动化 | `cd frontend && pnpm run typecheck && pnpm test && pnpm run build`；`tests/test_workspace_frontend.py` |
+| 真实验收 | localhost 上 `/workspace` 深链接、桌面/390px、控制台、模块切换保留状态；系统原生能力仍需真实应用窗口 |
+| 高风险提醒 | 不手改 `web/static/app`；不把业务口径写进前端；依赖只用精确版本；`/workspace` 不进 OpenAPI |
+
 <a id="task-documents"></a>
 
 ## 10. 入库单与出库单
@@ -392,12 +409,12 @@ L6-RRRRR 追加门禁：hosted check 锁竞争必须在 busy 后直接返回，�
 | 导航项 | 内容 |
 |---|---|
 | 首先阅读 | 接口流程第 1、3 至 5 节；数据算法第 5、12.1 节 |
-| 首要入口 | `api/app.py::create_app`、`storage/repository.py::SQLiteRepository`、`storage/files.py`、`domain/models.py` |
+| 首要入口 | `api/app.py::create_app`（组合顺序）、`api/routes/<领域>.py`（领域路由）、`api/common.py`（来源校验与认证 transcript）、`storage/repository.py::SQLiteRepository`、`storage/files.py`、`domain/models.py` |
 | 必须联动 | AppState/服务、前端消费者、SSE 游标、文件编码、错误码和契约文档 |
 | 产物与消费者 | OpenAPI/HTTP、SQLite、JSON/CSV、SSE |
 | 最低自动化 | 完整 `tests/test_api_contract.py` + 命中业务测试；schema/事件变化再跑 monitoring/frontend |
 | 真实验收 | 只有用户可见/进程时序变化才需要 localhost/浏览器；纯仓储变更仍需并发和坏数据边界测试 |
-| 高风险提醒 | 路由不复制业务算法；SQLite settings/cache 当前无主要消费者；新增表不能变成发票主存储；原子写失败不能吞掉 |
+| 高风险提醒 | 路由不复制业务算法；新领域路由放 `api/routes/`、新领域用例放独立服务模块，不再向 `app.py` 或 `AppState` 堆加（ENG-03）；调整 `include_router` 顺序前核对重叠路径；SQLite settings/cache 当前无主要消费者；新增表不能变成发票主存储；原子写失败不能吞掉 |
 
 <a id="task-governance"></a>
 
@@ -429,6 +446,18 @@ Windows 项目环境：
 .\.venv\Scripts\python.exe -m pytest
 .\.venv\Scripts\python.exe -m compileall src tests
 ```
+
+静态检查、Rust 与 Vue 前端（与 CI 同口径）：
+
+```bash
+.venv/bin/python -m pip install --require-hashes --only-binary=:all: -r requirements/lint-tools-py314.lock
+.venv/bin/ruff check src tests scripts
+(cd src-tauri && cargo fmt --check && cargo clippy --locked --all-targets -- -D warnings && cargo test --locked)
+(cd frontend && pnpm install --frozen-lockfile && pnpm run typecheck && pnpm test && pnpm run build)
+node --test tests/*.test.cjs
+```
+
+本机若禁止回环 TCP 连接，`local_http`/`host_rpc` 的四个真实 socket 测试会失败（不会再挂起），以 GitHub CI 结果为准。
 
 macOS 壳增量：
 

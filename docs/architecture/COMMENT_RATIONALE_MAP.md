@@ -1,5 +1,14 @@
 # InvoiceHub 注释与设计原因地图
 
+## 2026-11-09 工程门禁、路由拆分与 Vue 前端
+
+- `api/app.py::create_app` 的 `include_router` 顺序：每个路由组放在其路由原来注册的位置，FastAPI 0.141 以 `_IncludedRouter` 按序惰性匹配，故重叠路径（发票详情与 trash-jobs、皮肤 `{skin_id}` 与固定动作）的命中顺序不变。守护：拆分时 OpenAPI 逐字节一致、792 个方法×路径样本命中同一端点，以及 `test_api_contract.py`。
+- `frontend/vite.config.ts::versionQuery`：构建产物提交在 `web/` 内，固定文件名让发布白名单、Core Build ID 文件集合与 FILE_MAP 不随每次构建漂移；缓存刷新改由 `?v=` 内容哈希承担，与旧页面同一缓存规则。守护：`test_workspace_frontend.py` 与 CI 的构建可复现检查。
+- `requirements/lint-tools-py314.lock` 独立于 `test-tools-py314.lock`：后者由 Windows 重打包配置引用，改动会牵动发布核对；lint 工具不进入任何成品。
+- `.github/workflows/ci.yml` 的 Windows clippy 不带 `-D warnings`：`cfg(windows)` 代码此前从未经过 clippy，本机 macOS 无法验证；清理后改为阻断（ENG-01）。
+- `projections/costs.py::save_reference_status` 的未使用工作簿读取以 `noqa` 保留：删除会改变工作簿损坏时的失败行为，是否应像 rebuild 一样合并工作簿状态待 ENG-02 判定。
+- `host_rpc.rs` 测试的 `accept_within`：阻塞 `accept()` 在发送线程无法连接时会让整个测试二进制挂起，改为有时限失败。
+
 ## 2026-10-09 双平台构建保护
 
 - `trash.py::post_delete`：Microsoft明确规定PostDeleteItem的psiNewlyCreated表示回收站中目标，NULL不能证实可恢复；在前置veto后仍验证结果。守护：COM成功/失败/取消/缺少目标测试。依据：[Microsoft PostDeleteItem](https://learn.microsoft.com/en-us/windows/win32/api/shobjidl_core/nf-shobjidl_core-ifileoperationprogresssink-postdeleteitem)。

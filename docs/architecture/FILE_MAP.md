@@ -126,12 +126,13 @@
 - `src/invoice_hub/extraction`：PDF/OFD/XML/OCR 轻量提取
 - `src/invoice_hub/projections`：CSV/XLSX/JSON 投影
 - `src/invoice_hub/targets`：路径解析与运行态自愈
-- `src/invoice_hub/api`：FastAPI 路由与错误模型
+- `src/invoice_hub/api`：FastAPI 应用工厂、页面与共享请求辅助；领域 API 路由放 `api/routes/<领域>.py`，不再写回 `app.py`
 - `src/invoice_hub/services`：业务服务
 - `src/invoice_hub/platform`：Windows 启停、进程、通知、原生选择器、打开文件
 - `src/invoice_hub/storage`：文件真值读写与 SQLite 任务/事件
 - `src/invoice_hub/release`：发布构建与验收辅助
-- `web`：模板与静态资源
+- `web`：模板与静态资源；`web/static/app/` 只放 `frontend/` 的提交构建产物，不手改
+- `frontend`：Vue 3 工作区前端源码（Vite/TypeScript/Pinia/Vue Router/Vitest），新界面功能在这里实现，构建到 `web/static/app/`
 - `scripts/windows`：正式 Windows 用户入口
 - `macos/InvoiceHubMac`：macOS SwiftUI/WKWebView 本地壳与 SwiftPM 工程，负责 macOS 窗口、菜单、目录选择和本地后端进程控制；不得承载发票解析主逻辑
 - `scripts/dev`：开发、Docker、门禁脚本
@@ -147,7 +148,8 @@
 | `.editorconfig` | 编辑器基础格式约定。 | 影响所有文本文件；变更需检查 PowerShell 5.1 的 BOM 特例。 |
 | `.gitattributes` | Git 文本和换行属性。 | 以 `text=auto` 固定自动识别的普通文本为 LF，保持二进制 `-text`，BAT/PS1 与 BOM CSV 保留 Windows 换行；与 clean checkout 及跨平台 Git archive/Core Build ID 一致性相关。 |
 | `.gitignore` | 排除 runtime、dist、缓存、快捷方式和投影。 | 与发布构建排除规则、工作区状态分类共同保护本机数据。 |
-| `.github/workflows/ci.yml` | Windows x64 与 macOS arm64 非发布 CI。 | 默认浅 checkout，运行源码/发行/文档/Swift/脚本门禁；发布 Git 夹具必须自行兼容浅边界；`contents: read`，不签名、不上传 Release。 |
+| `.github/workflows/ci.yml` | Windows x64 与 macOS arm64 非发布 CI，另含 ruff、Rust（macOS/Windows）与 Vue 前端作业。 | 默认浅 checkout，运行源码/发行/文档/脚本、Node 交互测试、`cargo fmt/clippy/test` 和前端类型检查/组件测试/提交构建可复现门禁；Windows clippy 暂只报告（ENG-01）；发布 Git 夹具必须自行兼容浅边界；`contents: read`，不签名、不上传 Release。 |
+| `.github/workflows/macos-reference-shell.yml` | SwiftUI 参考壳的 `swift test`。 | 仅在 `macos/**`、`version.py`、`build_manifest.py` 或本文件变化时触发；参考壳已冻结，Tauri 是发行宿主。 |
 | `.github/workflows/dco.yml` | 拉取请求的 DCO sign-off 检查。 | 遍历 PR 中的非 merge commits，缺少 `Signed-off-by` 即失败；合并前将其配置为 `main` 的 required check。 |
 | `.github/dependabot.yml` | Dependabot 的 GitHub Actions 与 pip 周期更新配置。 | 仓库公开后由 GitHub 读取；不修改产品包或 release identity。 |
 | `AGENTS.md` | 全仓库必读规则与按需阅读入口。 | 所有任务先读；跨模块任务再按本架构地图选读专题。 |
@@ -173,11 +175,13 @@
 | `requirements/dev.in` | 开发/测试依赖输入。 | 编译为开发哈希锁。 |
 | `requirements/release-tools.in` | pip-tools 与 CycloneDX 等发行工具输入。 | 只用于构建/审计，不进入用户 runtime。 |
 | `requirements/test-tools.in` | CI 测试工具输入。 | 让 CI 工具自身也经哈希固定。 |
+| `requirements/lint-tools.in` | 静态检查工具（ruff）输入。 | 与 test-tools 分开，避免改动 Windows 重打包配置绑定的测试锁。 |
 | `requirements/windows-x64-py314.lock` | Windows x64 Python 3.14 运行时哈希锁。 | runtime/package manifest、SBOM、wheelhouse 和验包共同核对。 |
 | `requirements/macos-arm64-py314.lock` | macOS arm64 Python 3.14 运行时哈希锁。 | Mac embedded runtime、SBOM 与发布验证共同核对。 |
 | `requirements/dev-py314.lock` | Python 3.14 开发依赖哈希锁。 | 开发环境与完整 pytest 使用。 |
 | `requirements/release-tools-py314.lock` | 发行工具哈希锁。 | 生成/验证锁和 SBOM 的受控环境使用。 |
 | `requirements/test-tools-py314.lock` | CI 测试工具哈希锁。 | CI bootstrap 使用，不进入成品。 |
+| `requirements/lint-tools-py314.lock` | ruff 的 macOS arm64 / Windows x64 / Linux x86_64 wheel 哈希锁。 | 仅 CI lint 作业与本地开发安装；规则集在 `pyproject.toml` 的 `[tool.ruff]`，不进入成品或发布源码必需清单。 |
 | `docker-compose.yml` | 开发/Mac 验证用测试容器。 | 调用 `scripts/dev/run_docker_tests.sh` 对应的 pytest 环境；不是 Windows 正式依赖。 |
 | `config/app.local.json`（ignored 本机文件） | localhost 本机配置结构；不存在时由 `targets.load_config` 或 Windows 首启生成。 | 可能含真实路径，不纳入 Git、对应源码或成品；core 构建另写脱敏 `config/app.default.json`。 |
 | `启动一站式发票汇总系统.bat` | 根目录正式启动入口。 | 转发到 `scripts/windows/启动localhost汇总页.bat`；修改后必须做正式 BAT 验收。 |
@@ -324,7 +328,19 @@
 | `src/invoice_hub/version.py` | 产品/包版本、API 契约、通道、链接、白名单和 package ID 单一真值。 | Python、Swift 脚本、manifest、About、Feed 与测试必须一致。 |
 | `src/invoice_hub/website.py` | 随包官网资源白名单、路径校验与精确复制。 | `/website/`、Core Build ID、源码快照、Windows/Tauri/Swift 组装共用；许可证随资源分发，维护脚本不公开。 |
 | `src/invoice_hub/api/__init__.py` | 惰性导出 `create_app`。 | 保持外部工厂入口，同时避免执行 `api.main` 前抢先实例化默认 AppState。 |
-| `src/invoice_hub/api/app.py` | FastAPI 应用、页面路由、API、错误码、静态资源、SSE，以及三条 monitor recovery route 的可选 authenticated response wrapper。 | 上游是浏览器；下游是 `AppState`、皮肤文件和模板。普通 bridge 调用保持原语义；只有带完整 recovery 认证头、空 body 且 challenge 未重放的 host 请求才执行 HMAC 校验并签名精确响应。四条 Tauri picker route 与 update install 继续把 private failure 映射为固定脱敏 503，install 只接受 `{}`。 |
+| `src/invoice_hub/api/app.py` | FastAPI 应用工厂：生命周期、静态资源与缓存中间件、页面/官网/打印页/`/workspace` 路由、health 与桌面握手，并按固定顺序组合 `api/routes/` 路由组。 | 上游是浏览器与桌面宿主；下游是 `AppState`、模板和路由组。路由组按原位置 `include_router`，改动顺序前须核对重叠路径（如 `/api/v1/invoices/{invoice_key}`、`/api/v1/skins/{skin_id}/…`）。 |
+| `src/invoice_hub/api/common.py` | 请求辅助：`_state`、同源/原生选择器/更新来源校验、桌面 host challenge、三条 monitor recovery route 的认证 transcript、做账错误映射、SSE 游标。 | 被 `app.py` 与全部路由组共用。普通 bridge 调用保持原语义；只有带完整 recovery 认证头、空 body 且 challenge 未重放的 host 请求才执行 HMAC 校验并签名精确响应；四条 picker route 与 update install 继续把 private failure 映射为固定脱敏 503。 |
+| `src/invoice_hub/api/routes/__init__.py` | 路由组包说明。 | 新领域 API 在此目录新增模块并由 `create_app` 显式组合。 |
+| `src/invoice_hub/api/routes/settings.py` | About、更新检查/安装、设置、偏好、诊断与 watch_dir 选择/校验/改名路由。 | `AppState` 设置与更新服务；picker 与 update install 走 `common` 的脱敏 503。 |
+| `src/invoice_hub/api/routes/invoices.py` | 发票列表、删除所选、勾选合计、原票预览、批量打印与详情/手改/打开路由。 | `AppState`、`invoice_trash`、`file_preview`、`invoice_printing`；预览内容使用 `PREVIEW_CONTENT_HEADERS`。 |
+| `src/invoice_hub/api/routes/costs.py` | 成本分析快照、分页视图、开票参考状态与打开汇总路由。 | `CostAnalysisService` 经 `AppState`。 |
+| `src/invoice_hub/api/routes/documents.py` | 入库/出库单据状态、索引、目录与预览/导出/打开路由。 | `document_index` 与单据投影。 |
+| `src/invoice_hub/api/routes/dossier.py` | 业务资料夹读取与打开路由。 | 做账与成本共用的公司资料夹。 |
+| `src/invoice_hub/api/routes/appearance.py` | 皮肤列表/导入/替换/启用/重置/文件与应用图标路由。 | `skins`、`app_icons`；图标更新经 Host RPC。 |
+| `src/invoice_hub/api/routes/monitor.py` | monitor bridge 状态、进度、健康检查、重建、启停与打开日志/运行目录路由。 | status/start/stop 经 `_monitor_recovery_response` 承载认证 transcript。 |
+| `src/invoice_hub/api/routes/bookkeeping.py` | 做账生成、科目、凭证审阅/决定、映射规则与迁移、导出与导入批次路由。 | `bookkeeping/` 安全协议；错误经 `_bookkeeping_error_response`。 |
+| `src/invoice_hub/api/routes/ocr.py` | OCR 设置、服务状态、选择与文本提取路由。 | 本地 OCR 正式包不内置。 |
+| `src/invoice_hub/api/routes/system.py` | 一致性报告、任务、SSE 事件流与关闭服务路由。 | SSE 在关闭已受理后结束；关闭经 `shutdown_scheduler`。 |
 | `src/invoice_hub/api/main.py` | 参数化 uvicorn CLI 入口。 | 读取 root/config/host/port 后通过模块应用只构造一个 AppState；正式 BAT 当前直接启动 uvicorn app。 |
 
 ## 6. 领域模型
@@ -478,6 +494,7 @@
 | `tests/test_file_preview_frontend_contract.py` | 首页预览 DOM、交互和静态资源契约。 | index.html、page-index.js、app.css。 |
 | `tests/test_documents.py` | 单据状态、预览、人民币大写、模板扩行、导出和路径限制。 | documents、AppState documents API。 |
 | `tests/test_frontend_contract.py` | 模板、JS、CSS、资源版本、表格、SSE、设置和皮肤静态契约。 | `web/**` 与 API 字段名称。 |
+| `tests/test_workspace_frontend.py` | `/workspace` 外壳路由、no-store、OpenAPI 隔离、提交构建的 `?v=` 内容哈希与文件集合、无 sourcemap/本机路径、前端依赖精确版本。 | `frontend/` 构建、`web/static/app/`、`api/app.py` 的 workspace 路由。 |
 | `tests/test_desktop_icon.py` | 图标生成一致性、native 配置继承、PNG 位深、ICO/ICNS 尺寸和透明度/对比度。 | 图标生成器、Tauri 配置与图标资源。 |
 | `tests/test_website.py` | 标准库官网资源、打包白名单、缺失资源、构建一致性和更新地址检查。 | 不依赖 pytest；实际执行 alpha 资源复制，不构建 App 或安装器。 |
 | `tests/test_invoice_printing.py` | 同票 PDF 选择、打印 job、分页、过期和容量边界。 | invoice_printing、document_rendering、AppState、API。 |
@@ -543,6 +560,33 @@
 | `web/static/js/page-settings.js` | 设置中心、运行控制、重命名、偏好与诊断。 | 消费设置/bridge/documents/skins/ocr/diagnostics；关闭入口委托先加载的 system-controls.js。 |
 | `web/static/js/page-skins.js` | 皮肤 ZIP 导入、替换、启用和重置。 | 消费 skins API；不执行包内 JS。 |
 | `web/static/js/page-bookkeeping.js` | 凭证人审、映射规则、账套设置和批次状态。 | 消费 `/api/v1/bookkeeping/*`，持续展示服务端 blockers。 |
+
+## 15.1 Vue 工作区前端
+
+新界面（多公司工作区等）在 `frontend/` 实现，构建产物提交到 `web/static/app/`，因此发布打包、白名单和 Core Build ID 继续只消费 `web/`。旧页面（`web/templates` + `web/static/js`）在迁移完成前保持原样。
+
+| 文件 | 职责与入口 | 关系与修改影响 |
+|---|---|---|
+| `frontend/package.json` | 前端依赖（精确版本）、pnpm 版本与 `build/typecheck/test` 脚本。 | 升级依赖须同步 `pnpm-lock.yaml`、THIRD_PARTY_NOTICES 并重建提交产物。 |
+| `frontend/pnpm-lock.yaml` | 前端依赖 integrity lock。 | CI `--frozen-lockfile` 安装；不含 registry tarball 地址。 |
+| `frontend/vite.config.ts` | Vite 构建：`base=/static/app/`、固定文件名、单 bundle、无 sourcemap、`?v=` 内容哈希插件、开发代理与 Vitest 配置。 | 输出到 `web/static/app/`；改文件名会改变发布包文件集合和 FILE_MAP。 |
+| `frontend/tsconfig.json` | TypeScript 严格模式配置。 | `vue-tsc --noEmit` 类型检查。 |
+| `frontend/env.d.ts` | Vite 客户端类型声明。 | 类型检查入口。 |
+| `frontend/index.html` | 开发与构建的 HTML 入口。 | 构建后成为 `web/static/app/index.html`。 |
+| `frontend/src/main.ts` | 创建 Vue 应用并挂载 Pinia 与路由。 | 全局插件入口。 |
+| `frontend/src/App.vue` | 工作区外框：模块列、错误横幅与 `KeepAlive` 包裹的路由视图。 | 模块切换保留各视图实例（页面缓存）。 |
+| `frontend/src/router.ts` | 客户端路由与 `/workspace/` history 基址。 | 新模块在此登记；深链接由 FastAPI 回落到同一外壳。 |
+| `frontend/src/api/client.ts` | 同源 `/api/v1` 请求封装：超时、JSON、`detail/message` 错误映射为 `ApiError`。 | 所有视图请求经此；与后端错误模型一致。 |
+| `frontend/src/api/types.ts` | 已消费 API 字段的类型子集。 | 后端字段变化时同步。 |
+| `frontend/src/stores/system.ts` | health/settings 只读快照；刷新失败保留上次结果并给出错误。 | Pinia 全局状态。 |
+| `frontend/src/views/OverviewView.vue` | 概览：版本、平台、后台状态与当前目录。 | 只读。 |
+| `frontend/src/views/DirectoryView.vue` | 目录：活动目录与目标档案（侧栏接入点）。 | 只读；单活动监控目录边界不变。 |
+| `frontend/src/styles.css` | 外框基础样式与窄屏布局。 | 仅作用于 `/workspace`。 |
+| `frontend/tests/client.spec.ts` | 请求封装的成功、错误、`ok:false`、请求体与超时测试。 | Vitest + happy-dom。 |
+| `frontend/tests/app.spec.ts` | 外框渲染、KeepAlive 保留实例、刷新失败保留快照测试。 | Vitest + Vue Test Utils。 |
+| `web/static/app/index.html` | 提交的构建外壳，引用带 `?v=` 的资源。 | 由 `/workspace/*` 以 no-store 返回；不手改。 |
+| `web/static/app/assets/app.js` | 提交的 Vue 应用 bundle（含 Vue/Pinia/Vue Router）。 | `?v=` 存在时按 immutable 缓存；CI 校验与源码构建逐字节一致。 |
+| `web/static/app/assets/app.css` | 提交的工作区样式。 | 同上。 |
 
 ## 16. 内置皮肤资产
 

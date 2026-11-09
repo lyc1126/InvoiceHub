@@ -321,11 +321,11 @@ BAT/页面/monitor 触发
 
 | 状态 | 事实 | 维护含义 |
 |---|---|---|
-| 架构债务 | `services/app_state.py` 聚合大量跨域用例 | 改动前必须按用例定位，避免把不相关逻辑一起重构 |
+| 架构债务 | `services/app_state.py` 聚合大量跨域用例 | 改动前必须按用例定位，避免把不相关逻辑一起重构；新领域用例不再加入 AppState，按领域拆分见 ENG-03。HTTP 层已按领域拆到 `api/routes/` |
 | 架构债务 | `cost_analysis.py` 与 `costs.py` 有参考键、加价和锁定快照的对应实现 | 修改公式必须双向核对并跑成本全链测试 |
 | 架构债务 | 路径规范化在 `targets`、`monitoring`、成本和选择合计中有不同语境实现 | 不能仅凭函数同名就机械合并 |
 | 架构债务 | `base_head.html` 存在，但页面仍各自维护 head 和资源版本 | 静态资源变更必须逐模板核对版本参数 |
-| 架构债务 | 当前前端自动化主要是静态契约测试 | UI 改动仍需要真实浏览器/DOM 验收 |
+| 架构债务 | 旧页面前端自动化主要是静态契约测试与 Node 交互测试；新 Vue 工作区有组件测试，但两者都没有真实浏览器 E2E | UI 改动仍需要真实浏览器/DOM 验收；E2E 见 ENG-05 |
 | 架构债务 | Windows 首版没有内置桌面 WebView 壳 | macOS development `.app` 的单次 L9 smoke 不改变这一事实；`startup_surface=desktop` 仍须在当前 Windows source/portable 路径 fail closed，不能让设置项暗示已实现 |
 | 发布阻断 | Windows 与 macOS 正式脚本已实现但真机/签名证据未齐 | 自动化通过不等于 ZIP/DMG 已放行，必须分别执行平台手册 |
 | 未启用能力 | OCR 页面和 API 保留候选文件入口 | core 包未内置正式本地 OCR，提取接口返回禁用状态 |

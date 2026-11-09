@@ -241,7 +241,7 @@ monitor 的两次启动同步和 `ready/observer_active` 时序见[接口与运�
 
 | 验证层 | 共通 | Windows 追加 | macOS 追加 |
 |---|---|---|---|
-| 静态/单元 | pytest、compileall、JS syntax、文档契约 | BAT/PS1 编码和语法 | `swift test`、脚本 `bash -n` |
+| 静态/单元 | pytest、compileall、ruff、JS syntax 与 Node 交互测试、Vue 类型检查/组件测试、Rust fmt/clippy/test、文档契约 | BAT/PS1 编码和语法；Rust 测试与 clippy（暂只报告） | 脚本 `bash -n`；SwiftUI 参考壳 `swift test` 仅在相关路径变化时运行 |
 | 构建 | 三类 manifest、依赖锁、SBOM、敏感路径、资源版本 | 配置/RC preflight、隔离测试环境、产品 `python/Doc` 裁剪与基线保留、固定安装时间、`python/Scripts`/RECORD 规范、联网与离线各两次确定性 portable ZIP 且 SHA 相同 | `--build-only`；developer-local internal 的三份 ad-hoc App + ad-hoc DMG；正式 Release/arm64 Developer ID/notarized `.app/DMG/Sparkle ZIP` |
 | 运行 | health、API、投影、monitor ready | 正式 BAT、浏览器前台、Tk | `--verify`、WKWebView、NSOpenPanel、owned/external |
 | 发布 | 不携带本机/业务数据；新 RC 同一 source/core identity；Feed finalizer 复核实际资产/收据/源码与 release Tag | `v0.3` 需要 NSIS 安装/启动/托盘/更新烟测 | `v0.3` 需要 DMG/更新归档、签名、quarantine 与 Tauri updater 烟测 |

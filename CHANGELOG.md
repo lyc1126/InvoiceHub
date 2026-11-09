@@ -2,6 +2,18 @@
 
 ## 未发布
 
+### 2026-11-09 工程门禁、API 路由拆分与 Vue 工作区前端基础
+
+- 需求：新界面原型落地前，用户请求评估工程防护与架构（含“Tauri 多层嵌套是架构灾难”的说法），并按评估建议实施；前端框架选定 Vue 3。
+- 起点：`codex/cost-select-all-transitions` 的 `ed90a2b`（该分支领先 `main` 9 个提交且未合并）；主工作区的未提交修改保持不动，本轮在独立 worktree 的 `codex/engineering-guardrails` 施工。
+- 评估结论：Tauri + Python 后端本身不是问题，WebView 无 IPC、业务只在 Python 的边界成立；主要风险是三套桌面入口并存、固定 TCP 端口带来的所有权代码、`AppState` 单体（约 5800 行）、`api/app.py` 单文件 127 条路由、前端缺少行为测试、约 1 万行 Rust 未进 CI、无静态检查。
+- CI 与静态检查：新增 hash 锁定的 ruff（独立 `lint-tools` 锁，不改动 Windows 重打包绑定的 test-tools 锁），规则 E9+F，修复 32 处（24 处未使用导入、3 处仅注解内的未定义名、未使用变量等，无行为变化）；`costs.py::save_reference_status` 的未使用工作簿读取保留并登记 ENG-02。新增 Rust 作业（macOS 以 `-D warnings` 阻断，Windows 暂只报告，ENG-01），清理 macOS 上的 12 处 clippy 警告（语义等价）。`host_rpc` 的 socket 测试在无法连接时改为 5 秒内失败，不再挂起整个测试二进制。Node 交互测试 `tests/*.test.cjs` 进入两平台 CI；Swift 参考壳测试改为路径触发。
+- 路由拆分：`api/app.py` 由 1546 行降为约 330 行；领域路由进入 `api/routes/{settings,invoices,costs,documents,dossier,appearance,monitor,bookkeeping,ocr,system}.py`，辅助进入 `api/common.py`，各路由组在原位置 `include_router`。拆分前后 OpenAPI 逐字节一致，792 个方法×路径样本命中同一端点。读取源码文本的契约测试改为读取全部 API 模块。
+- Vue 前端基础：`frontend/`（Vue 3.5、Vue Router 5、Pinia 4、Vite 8、TypeScript 5.9、Vitest 5，精确版本 + pnpm 锁）；构建以固定文件名提交到 `web/static/app/`，`?v=` 内容哈希刷新缓存，发布打包与白名单无需改动；FastAPI 新增 `/workspace/*`（no-store、不进 OpenAPI）。外框含模块列、`KeepAlive` 页面缓存、只读概览/目录视图；THIRD_PARTY_NOTICES 增加 Vue/Vue Router/Pinia。
+- 文档：FILE_MAP（目录规则、API 路由组、15.1 Vue 前端）、接口流程（`/workspace` 与路由分布）、任务导航（9.2 新任务、API 入口、常用命令）、WEB_UI 规则（Vue 工作区前端）、设计原因、平台验证分工、架构债务表、AGENTS.md 一条全局约束；未来工作总览新增 ENG-01—06（含延后的 AppState 拆分、入口文档去日志化、真实浏览器 E2E）。
+- 验证：全量 pytest 通过（Windows 专用用例跳过）；ruff 通过；`cargo fmt --check` 与 macOS `clippy -D warnings` 通过；`cargo test` 97 项通过，4 项真实回环 socket 测试因本机网络策略禁止回环 TCP 连接而失败（Python 同样无法连接回环端口，非代码问题）；Node 交互测试 30 项通过；前端类型检查、8 项组件测试通过，构建两次逐字节一致；release 内容扫描对构建产物通过；临时后端（临时目录、端口 8899）+ 专用 Chrome 核对 `/workspace` 概览/目录/深链接、`?v=` 资源、390px 无横向溢出、旧首页可加载。
+- 未覆盖：GitHub CI 未实际运行（未推送）；Windows clippy 结果未知；未重建 Windows/macOS/Tauri 打包产物；未覆盖正式 Windows BAT、原生选择器、皮肤与 `?no_skin=1`（`/workspace` 不注入皮肤）；`KeepAlive` 在真实浏览器只能间接核对（生产构建不暴露组件实例），由组件测试覆盖。
+
 ### 2026-11-09 Agent 接入设计提案
 
 - 需求：用户希望未来设计中 InvoiceHub 能让各个 Agent 接入并即时读取、操作，接入方式以 Vibe Island 这类软件为例。

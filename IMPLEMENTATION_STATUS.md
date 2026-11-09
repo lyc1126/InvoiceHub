@@ -1,5 +1,12 @@
 # IMPLEMENTATION_STATUS
 
+## 2026-11-09 工程门禁、API 路由拆分与 Vue 工作区前端基础（工作分支 `codex/engineering-guardrails`，基于未合并的 `codex/cost-select-all-transitions`）
+
+- CI：新增 ruff（E9+F）、Rust（macOS/Windows 的 `cargo fmt --check`、clippy、`cargo test`；Windows clippy 暂只报告）、两平台 Node 交互测试、Vue 前端（类型检查、组件测试、提交构建逐字节可复现）作业；SwiftUI 参考壳的 `swift test` 改为路径触发的独立 workflow。
+- 后端：113 条领域路由从 `api/app.py` 拆到 `api/routes/` 的 10 个模块，共享辅助在 `api/common.py`；OpenAPI 与路由匹配结果与拆分前一致。`AppState` 尚未拆分（ENG-03）。
+- 前端：`frontend/`（Vue 3 + TypeScript + Pinia + Vue Router + Vitest）提交构建到 `web/static/app/`，`/workspace` 只读预览外框（概览、目录）；旧页面不变。多公司工作区（WS-01 起）在此基础上实现。
+- 未覆盖：GitHub CI 尚未实际运行（未推送）；Windows 与 Tauri 打包产物未重建；本机回环网络策略下 4 个 Rust socket 测试无法在本地通过。
+
 ## 2026-11-08 开票参考全选、sheet 平滑切换与工作区原型成本分析模块（工作分支 `codex/cost-select-all-transitions`，基于未合并的 `codex/cost-reference-exclusions-ui`）
 
 - `/costs` 开票参考新增“全选（N 行）/ 清空全选”，全选覆盖全部页；切换 sheet 与翻页不再显示进度条、不整页重绘、不把滚动拉回顶部，已看过的 sheet 立即显示并淡入；后台刷新数据未变时不重建表格。资源版本 `20261108-cost-smooth-tabs-3`。多公司工作区原型新增可交互的“成本分析”模块（按公司：纳税人身份取自公司资料夹、销项读同公司开具发票、数量在前的开票参考、全选 / 按销项更新 / 移除与恢复、品目表、来源发票、底部操作条）。全量测试与真实目录副本页面 A/B 验收通过；未覆盖 Windows、其他皮肤与打包产物。
