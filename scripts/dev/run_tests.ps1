@@ -50,6 +50,11 @@ try {
         & $node.Source --check $_.FullName
         if ($LASTEXITCODE -ne 0) { throw "JavaScript syntax check failed: $($_.FullName)" }
     }
+    $interactionTests = @(Get-ChildItem -LiteralPath (Join-Path $root "tests") -Filter "*.test.cjs" -File | ForEach-Object { $_.FullName })
+    if ($interactionTests.Count -gt 0) {
+        & $node.Source --test @interactionTests
+        if ($LASTEXITCODE -ne 0) { throw "JavaScript interaction tests failed." }
+    }
 } finally {
     $env:PYTHONPATH = $previousPythonPath
     Pop-Location

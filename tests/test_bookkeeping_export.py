@@ -14,7 +14,7 @@ from invoice_hub.bookkeeping.mapping import MappingStoreBinding, write_mapping
 from invoice_hub.bookkeeping.paths import company_bookkeeping_paths
 from invoice_hub.bookkeeping.repository import canonical_sha256, file_sha256
 from invoice_hub.bookkeeping.status import load_voucher_status, write_voucher_status
-from invoice_hub.domain.models import AccountMappingRule, VoucherDraft, VoucherLine, VoucherStatusItem
+from invoice_hub.domain.models import AccountMappingRule, VoucherDraft, VoucherLine
 from invoice_hub.projections.cost_analysis import DETAIL_HEADERS
 from invoice_hub.services.app_state import AppState
 

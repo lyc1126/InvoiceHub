@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import os
 import re
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
@@ -604,7 +603,9 @@ class CostProjectionService:
     def save_reference_status(self, payload: dict) -> dict:
         current = _read_reference_status(self.status_json)
         fallback_markup = self._markup_meta()
-        workbook_status = self._read_reference_status_from_workbook()
+        # Unconsumed workbook read kept as-is until ENG-02 decides whether save should
+        # merge workbook-only statuses like rebuild() does; removing it changes failure behaviour.
+        workbook_status = self._read_reference_status_from_workbook()  # noqa: F841
         tax_profile_changed = "tax_profile" in payload
         tax_profile = parse_reference_tax_profile(payload.get("tax_profile")) if tax_profile_changed else self._tax_profile()
         catalog_changed = "item_catalog" in payload

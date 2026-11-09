@@ -22,7 +22,7 @@ from typing import Any
 from invoice_hub.release.build_manifest import deterministic_build_id, load_build_manifest
 from invoice_hub.release.content_scan import ReleaseContentError, scan_release_text
 from invoice_hub.release.package_manifest import SHA256_PATTERN, load_package_manifest
-from invoice_hub.release.runtime_manifest import RUNTIME_MANIFEST_NAME, validate_runtime_manifest
+from invoice_hub.release.runtime_manifest import validate_runtime_manifest
 from invoice_hub.version import PRODUCT_VERSION, RELEASE_PYTHON_VERSION, WINDOWS_PACKAGE_ID
 from invoice_hub.website import WEBSITE_BUILD_INPUTS
 

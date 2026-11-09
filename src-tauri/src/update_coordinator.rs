@@ -103,8 +103,8 @@ pub trait RecoveryController {
     fn restore_owned_monitor(&mut self) -> Result<RestoreOutcome, Self::Error>;
 }
 
-impl<'a, A, B, S> RecoveryController
-    for crate::monitor_recovery::MonitorRecoveryTransaction<'a, A, B, S>
+impl<A, B, S> RecoveryController
+    for crate::monitor_recovery::MonitorRecoveryTransaction<'_, A, B, S>
 where
     A: crate::monitor_recovery::LifecycleAuthority,
     B: crate::monitor_recovery::MonitorRecoveryBridge,
@@ -226,6 +226,7 @@ where
     /// Every failure after a marker-producing pause gets one best-effort
     /// restore.  A restore failure is retained in the returned error, while a
     /// successful cross-process handoff deliberately skips restoration.
+    #[allow(clippy::type_complexity)]
     pub fn execute(
         &mut self,
         candidate: &UpdateCandidate,
@@ -270,6 +271,7 @@ where
     }
 
     /// Readable alias for callers that use “run” for an in-memory transaction.
+    #[allow(clippy::type_complexity)]
     pub fn run(
         &mut self,
         candidate: &UpdateCandidate,

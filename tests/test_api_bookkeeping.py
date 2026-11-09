@@ -32,7 +32,7 @@ from invoice_hub.bookkeeping.status import (
     write_voucher_status,
 )
 from invoice_hub.bookkeeping.vouchers import generate_voucher_drafts
-from invoice_hub.domain.models import AccountMappingRule, VoucherStatusItem
+from invoice_hub.domain.models import AccountMappingRule
 from invoice_hub.projections.cost_analysis import DETAIL_HEADERS
 from invoice_hub.services.app_state import AppState
 

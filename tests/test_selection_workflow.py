@@ -1,4 +1,3 @@
-import json
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -11,7 +10,7 @@ from invoice_hub.platform.trash import recycle_guard
 from invoice_hub.projections.cost_analysis import selection_cost_breakdown
 from invoice_hub.projections.summary import SUMMARY_HEADERS
 from invoice_hub.services.invoice_trash import InvoiceTrashService
-from invoice_hub.storage import atomic_write_json, write_csv_rows
+from invoice_hub.storage import write_csv_rows
 
 
 @pytest.fixture

@@ -1,0 +1,7 @@
+# Static-analysis tools for CI and local development only.
+# Kept separate from test-tools-py314.lock, which the Windows repackage config pins.
+# Never installed into a product runtime. Install with --require-hashes --only-binary=:all:.
+ruff==0.17.4 \
+    --hash=sha256:7ed2f416349944f908f9574215994602242b0836844eba48eec61473033afca0 \
+    --hash=sha256:2cd025509b2e15721b426fc70fd946d71f43b3db3b08e946dfec2d696d911690 \
+    --hash=sha256:67c5a894fc054cf41f75f7afa24815de5a74329d97634126c2a1015740ff4e8c

@@ -463,7 +463,7 @@ def create_app(
 ) -> FastAPI:
     # Prime the bookkeeping package before FastAPI dispatches sync routes to
     # multiple worker threads. Concurrent first imports can deadlock on Python 3.14.
-    import invoice_hub.bookkeeping
+    import invoice_hub.bookkeeping  # noqa: F401 -- import for its side effect only
 
     host_rpc.capture_environment()
     desktop_host_secret = _consume_desktop_host_secret()

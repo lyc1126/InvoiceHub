@@ -102,7 +102,7 @@ def _configuration() -> tuple[str, str] | None:
     parsed = parse.urlsplit(url)
     try:
         port = parsed.port
-    except ValueError as exc:
+    except ValueError:
         raise HostRpcError("Tauri host native picker is unavailable") from None
     if (
         parsed.scheme != "http"
@@ -123,7 +123,7 @@ def _configuration() -> tuple[str, str] | None:
 def _validated_response(raw: bytes) -> dict[str, Any]:
     try:
         payload = json.loads(raw.decode("utf-8"))
-    except (UnicodeDecodeError, ValueError, TypeError) as exc:
+    except (UnicodeDecodeError, ValueError, TypeError):
         raise HostRpcError("Tauri host native picker is unavailable") from None
     if not isinstance(payload, dict) or payload.get("ok") is not True:
         raise HostRpcError("Tauri host native picker is unavailable")

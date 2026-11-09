@@ -10,7 +10,6 @@ from invoice_hub.projections.costs import CostProjectionService
 from invoice_hub.projections.summary import build_summary
 from invoice_hub.storage.files import read_csv_rows, read_json_object, write_csv_rows
 from invoice_hub.storage import write_csv_rows as write_summary_rows
-from invoice_hub.targets import load_config, target_profile_for
 
 
 def test_xml_summary_and_duplicate_marker(tmp_path: Path) -> None:

@@ -265,7 +265,7 @@ fn decode_snapshot(response: &HttpResponse) -> Result<MonitorSnapshot, ResponseE
     let value: Value =
         serde_json::from_slice(&response.body).map_err(|_| ResponseError::Malformed)?;
     let fields = value.as_object().ok_or(ResponseError::Malformed)?;
-    if required_bool(fields, "ok")? != true {
+    if !required_bool(fields, "ok")? {
         return Err(ResponseError::Rejected);
     }
 

@@ -7,7 +7,6 @@ import argparse
 import json
 import re
 import runpy
-import sys
 from pathlib import Path
 from typing import Any
 

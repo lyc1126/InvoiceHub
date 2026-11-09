@@ -674,7 +674,7 @@ impl RelaunchRequester for HostRelaunchRequester {
                 .prepare_relaunch()
                 .map_err(|_| HostRelaunchError::StateTransitionRejected)?;
             self.app_handle.request_restart();
-            return Ok(());
+            Ok(())
         }
         #[cfg(not(target_os = "macos"))]
         {
@@ -1329,6 +1329,31 @@ mod tests {
         }
     }
 
+    // A blocking accept() hangs the whole test binary when the sender thread
+    // cannot connect (for example a host firewall blocking loopback); fail instead.
+    fn accept_within(listener: &TcpListener, limit: Duration) -> TcpStream {
+        listener
+            .set_nonblocking(true)
+            .expect("nonblocking listener");
+        let deadline = Instant::now() + limit;
+        loop {
+            match listener.accept() {
+                Ok((stream, _)) => {
+                    stream.set_nonblocking(false).expect("blocking stream");
+                    return stream;
+                }
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                    assert!(
+                        Instant::now() < deadline,
+                        "no loopback connection within {limit:?}"
+                    );
+                    thread::sleep(Duration::from_millis(10));
+                }
+                Err(error) => panic!("accept failed: {error}"),
+            }
+        }
+    }
+
     fn reserved_runtime_gate() -> Arc<UpdaterRuntimeGate> {
         let gate = Arc::new(UpdaterRuntimeGate::new(true));
         assert!(gate.begin_activation().expect("activation begins"));
@@ -1350,7 +1375,7 @@ mod tests {
             let mut stream = TcpStream::connect(address).expect("connect test listener");
             stream.write_all(request.as_bytes()).expect("send request");
         });
-        let (mut stream, _) = listener.accept().expect("accept request");
+        let mut stream = accept_within(&listener, Duration::from_secs(5));
         let parsed = read_request(&mut stream).expect("urllib-shaped request is accepted");
         sender.join().expect("sender exits");
 
@@ -1367,7 +1392,7 @@ mod tests {
                 .write_all(b"POST /v1/host-rpc HTTP/1.1 extra\r\nContent-Length: 0\r\n\r\n")
                 .expect("send invalid request");
         });
-        let (mut invalid_stream, _) = invalid_listener.accept().expect("accept invalid request");
+        let mut invalid_stream = accept_within(&invalid_listener, Duration::from_secs(5));
         assert!(read_request(&mut invalid_stream).is_err());
         invalid_sender.join().expect("invalid sender exits");
     }

@@ -16,7 +16,7 @@ from invoice_hub.bookkeeping.mapping import (
     resolve_account_mapping,
 )
 from invoice_hub.bookkeeping.paths import company_bookkeeping_paths, ensure_bookkeeping_layout
-from invoice_hub.bookkeeping.repository import BookkeepingRevisionConflict, BookkeepingStateCorruptionError
+from invoice_hub.bookkeeping.repository import BookkeepingRevisionConflict
 from invoice_hub.domain.models import AccountMappingRule, utc_now_text
 from invoice_hub.targets import load_config
 

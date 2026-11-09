@@ -58,7 +58,7 @@ def _package(platform: str = "windows", package_type: str = "portable") -> dict:
 
 
 def _feed(version: str = "0.3.0-alpha.3") -> dict:
-    release_root = f"https://github.com/lyc1126/InvoiceHub/releases"
+    release_root = "https://github.com/lyc1126/InvoiceHub/releases"
     return {
         "schema_version": 1,
         "channel": "alpha",

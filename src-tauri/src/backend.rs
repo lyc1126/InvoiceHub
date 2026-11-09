@@ -437,16 +437,16 @@ fn desktop_state_paths() -> Result<DesktopStatePaths, BackendError> {
     #[cfg(target_os = "windows")]
     {
         let local_app_data = env::var_os("LOCALAPPDATA").map(PathBuf::from);
-        return desktop_state_paths_for(
+        desktop_state_paths_for(
             DesktopStatePlatform::Windows,
             local_app_data.as_deref(),
             None,
-        );
+        )
     }
     #[cfg(target_os = "macos")]
     {
         let home = env::var_os("HOME").map(PathBuf::from);
-        return desktop_state_paths_for(DesktopStatePlatform::Macos, None, home.as_deref());
+        desktop_state_paths_for(DesktopStatePlatform::Macos, None, home.as_deref())
     }
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     {
@@ -463,7 +463,7 @@ pub fn assert_loopback_port_available(address: SocketAddr) -> Result<(), Backend
         return Err(BackendError::FixedPortRequiresLoopback);
     }
     TcpListener::bind(address)
-        .map(|listener| drop(listener))
+        .map(drop)
         .map_err(|_| BackendError::FixedPortUnavailable)
 }
 
@@ -2569,8 +2569,11 @@ mod tests {
         let manifest = br#"{\"schema_version\":3}"#;
         let digest = Sha256::digest(manifest)
             .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect::<String>();
+            .fold(String::new(), |mut hex, byte| {
+                use std::fmt::Write;
+                let _ = write!(hex, "{byte:02x}");
+                hex
+            });
 
         assert!(bundle_manifest_hash_matches(manifest, &digest));
         assert!(!bundle_manifest_hash_matches(

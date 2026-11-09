@@ -7,7 +7,6 @@ import argparse
 import hashlib
 import importlib.util
 import json
-import os
 import platform
 import shutil
 import subprocess
@@ -68,7 +67,7 @@ def _sha256_file(path: Path) -> str:
 
 
 def _launcher_text() -> str:
-    return f'''#!/bin/sh
+    return '''#!/bin/sh
 set -eu
 
 RESOURCE_ROOT=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)

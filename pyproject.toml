@@ -46,3 +46,13 @@ invoice_hub = ["projections/document_templates/*.xlsx"]
 testpaths = ["tests"]
 pythonpath = ["src"]
 addopts = "-q"
+
+[tool.ruff]
+target-version = "py314"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+# Correctness-only gate: syntax errors (E9) and pyflakes (F) catch undefined names,
+# unused imports and dead assignments without reformatting code shared by open branches.
+# Style families (E4/E7, B, I) stay off until a dedicated formatting pass.
+select = ["E9", "F"]

@@ -12,6 +12,7 @@ from decimal import Decimal, InvalidOperation
 from datetime import datetime
 from pathlib import Path
 import re
+from typing import TYPE_CHECKING, Any
 
 from invoice_hub.domain.models import TargetProfile, utc_now_text
 from invoice_hub.monitoring.state import MonitorState, is_pid_alive
@@ -25,10 +26,8 @@ from invoice_hub.projections.documents import (
     build_outbound_preview,
     clean_document_defaults,
     inbound_export_path,
-    inbound_invoice_options,
     merge_document_defaults,
     outbound_export_path,
-    outbound_invoice_options,
     write_inbound_workbook,
     write_outbound_workbook,
 )
@@ -67,6 +66,9 @@ from invoice_hub.storage.read_views import ReadViews, COST_FIELDS, file_signatur
 from invoice_hub.targets import AppConfig, ensure_runtime_layout, load_config, target_profile_for
 from invoice_hub.targets.paths import Layout, serialize_config_path
 from invoice_hub.version import CHANGELOG_URL, LOCAL_WEBSITE_PATH, PRODUCT_DISPLAY_NAME, PRODUCT_NAME, PUBLIC_SOURCE_URL
+
+if TYPE_CHECKING:
+    from invoice_hub.domain.models import VoucherDecisionPatch, VoucherReviewPatch
 
 
 RECENT_WATCH_DIRS_KEY = "recent_watch_dirs"
@@ -4551,7 +4553,7 @@ class AppState:
         from collections import Counter
 
         from invoice_hub.bookkeeping.mapping import load_mapping, write_mapping
-        from invoice_hub.bookkeeping.repository import BookkeepingRevisionConflict, bookkeeping_write_lock, canonical_sha256
+        from invoice_hub.bookkeeping.repository import bookkeeping_write_lock
         from invoice_hub.bookkeeping.status import load_voucher_status, merge_voucher_drafts, write_voucher_status
         from invoice_hub.bookkeeping.vouchers import generate_voucher_drafts
 

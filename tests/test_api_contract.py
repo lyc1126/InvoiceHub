@@ -26,7 +26,7 @@ from invoice_hub.services.skins import MAX_SKIN_FILE_BYTES, MAX_SKIN_FILES
 from invoice_hub.storage.files import write_csv_rows
 from invoice_hub.targets import target_profile_for
 from invoice_hub.website import WEBSITE_ASSETS, copy_website
-from invoice_hub.version import CHANGELOG_URL, PUBLIC_SOURCE_URL, WEBSITE_URL
+from invoice_hub.version import CHANGELOG_URL, PUBLIC_SOURCE_URL
 
 
 def _slow_background_sync_worker(

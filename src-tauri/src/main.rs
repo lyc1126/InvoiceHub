@@ -264,7 +264,7 @@ fn main() -> ExitCode {
                         startup_diagnostics::offer_browser_fallback()
                     },
                     || backend.verify_surface_ownership().map_err(Into::into),
-                    || { open_backend_in_browser(&app.handle())?; Ok(()) },
+                    || { open_backend_in_browser(app.handle())?; Ok(()) },
                 )?;
                 Ok(())
             })();
@@ -420,7 +420,7 @@ fn create_desktop_window(
         if let tauri::WebviewEvent::DragDrop(tauri::DragDropEvent::Drop { paths, .. }) = event {
             let paths: Vec<String> = paths.iter().map(|path| path.to_string_lossy().into_owned()).collect();
             if let Ok(payload) = serde_json::to_string(&paths) {
-                let _ = drop_window.eval(&format!("window.dispatchEvent(new CustomEvent('invoicehub:temporary-drop', {{detail:{payload}}}));"));
+                let _ = drop_window.eval(format!("window.dispatchEvent(new CustomEvent('invoicehub:temporary-drop', {{detail:{payload}}}));"));
             }
         }
     });
