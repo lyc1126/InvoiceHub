@@ -5,6 +5,13 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def _api_source() -> str:
+    """app.py composes the route groups in api/routes/ and shares helpers from api/common.py."""
+    api = ROOT / "src" / "invoice_hub" / "api"
+    files = [api / "app.py", api / "common.py", *sorted((api / "routes").glob("*.py"))]
+    return "\n".join(path.read_text(encoding="utf-8") for path in files)
+
+
 def test_default_appearance_assets_and_reduced_motion_contract() -> None:
     css = (ROOT / "web/static/css/app.css").read_text(encoding="utf-8")
     dark = ROOT / "web/static/skins/website-dark"
@@ -949,7 +956,7 @@ def test_documents_page_contract() -> None:
     js = (ROOT / "web" / "static" / "js" / "page-documents.js").read_text(encoding="utf-8")
     css = (ROOT / "web" / "static" / "css" / "app.css").read_text(encoding="utf-8")
     skin_css = (ROOT / "web" / "static" / "skins" / "animal-island" / "skin.css").read_text(encoding="utf-8")
-    api_app = (ROOT / "src" / "invoice_hub" / "api" / "app.py").read_text(encoding="utf-8")
+    api_app = _api_source()
 
     assert 'body data-page="documents"' in html
     assert 'aria-current="page" href="/documents"' in html
@@ -1083,7 +1090,7 @@ def test_bookkeeping_page_static_contract() -> None:
     base_head = (ROOT / "web" / "templates" / "base_head.html").read_text(encoding="utf-8")
     js = (ROOT / "web" / "static" / "js" / "page-bookkeeping.js").read_text(encoding="utf-8")
     css = (ROOT / "web" / "static" / "css" / "app.css").read_text(encoding="utf-8")
-    api_app = (ROOT / "src" / "invoice_hub" / "api" / "app.py").read_text(encoding="utf-8")
+    api_app = _api_source()
     backend = (ROOT / "web" / "templates" / "backend.html").read_text(encoding="utf-8")
 
     assert 'body data-page="bookkeeping"' in html
@@ -1271,7 +1278,7 @@ def test_settings_page_contract() -> None:
     js += (ROOT / "web/static/js/system-controls.js").read_text(encoding="utf-8")
     css = (ROOT / "web" / "static" / "css" / "app.css").read_text(encoding="utf-8")
     settings_actions_css = (ROOT / "web" / "static" / "css" / "settings-actions.css").read_text(encoding="utf-8")
-    api_app = (ROOT / "src" / "invoice_hub" / "api" / "app.py").read_text(encoding="utf-8")
+    api_app = _api_source()
     app_state = (ROOT / "src" / "invoice_hub" / "services" / "app_state.py").read_text(encoding="utf-8")
     bridge = (ROOT / "src" / "invoice_hub" / "services" / "monitor_bridge.py").read_text(encoding="utf-8")
 
@@ -1565,7 +1572,7 @@ def test_skin_page_contract_and_common_skin_loader() -> None:
     js = (ROOT / "web" / "static" / "js" / "page-skins.js").read_text(encoding="utf-8")
     common = (ROOT / "web" / "static" / "js" / "common.js").read_text(encoding="utf-8")
     css = (ROOT / "web" / "static" / "css" / "app.css").read_text(encoding="utf-8")
-    api_app = (ROOT / "src" / "invoice_hub" / "api" / "app.py").read_text(encoding="utf-8")
+    api_app = _api_source()
 
     assert 'body data-page="skins"' in html
     assert 'href="/settings"' in html

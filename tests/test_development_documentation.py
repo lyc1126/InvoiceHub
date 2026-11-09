@@ -663,14 +663,16 @@ def test_current_architecture_docs_do_not_expose_absolute_machine_paths() -> Non
 
 
 def test_all_fastapi_routes_are_registered_in_flow_map() -> None:
-    api_source = (ROOT / "src" / "invoice_hub" / "api" / "app.py").read_text(
-        encoding="utf-8"
+    api_dir = ROOT / "src" / "invoice_hub" / "api"
+    api_source = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in [api_dir / "app.py", *sorted((api_dir / "routes").glob("*.py"))]
     )
     flow_map = (
         ROOT / "docs" / "architecture" / "INTERFACES_AND_FLOWS.md"
     ).read_text(encoding="utf-8")
     route_pattern = re.compile(
-        r'''@app\.(?:get|post|put|delete|patch|api_route)\(\s*["']([^"']+)["']'''
+        r'''@(?:app|routes)\.(?:get|post|put|delete|patch|api_route)\(\s*["']([^"']+)["']'''
     )
     routes = sorted(set(route_pattern.findall(api_source)))
     missing = [route for route in routes if route not in flow_map]

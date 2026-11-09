@@ -1175,7 +1175,7 @@ def test_business_dossier_open_runs_in_threadpool(tmp_path: Path, monkeypatch) -
         ),
         encoding="utf-8",
     )
-    api_module = importlib.import_module("invoice_hub.api.app")
+    api_module = importlib.import_module("invoice_hub.api.routes.dossier")
     calls: list[tuple[str, tuple[object, ...]]] = []
 
     async def capture_threadpool(function, *args, **kwargs):

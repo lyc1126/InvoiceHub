@@ -18,6 +18,13 @@ RPC_URL = "http://127.0.0.1:43123/v1/host-rpc"
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def _api_source() -> str:
+    """app.py composes the route groups in api/routes/ and shares helpers from api/common.py."""
+    api = ROOT / "src" / "invoice_hub" / "api"
+    files = [api / "app.py", api / "common.py", *sorted((api / "routes").glob("*.py"))]
+    return "\n".join(path.read_text(encoding="utf-8") for path in files)
+
+
 class _Response:
     def __init__(self, payload: dict) -> None:
         self._payload = payload
@@ -110,7 +117,7 @@ def test_host_rpc_delegates_native_picker_main_thread_dispatch_to_the_plugin() -
 
 
 def test_picker_routes_map_host_rpc_errors_to_a_stable_redacted_5xx_contract() -> None:
-    app = (ROOT / "src" / "invoice_hub" / "api" / "app.py").read_text(encoding="utf-8")
+    app = _api_source()
 
     assert "NATIVE_PICKER_FAILURE_STATUS = 503" in app
     assert 'NATIVE_PICKER_FAILURE_DETAIL = "Native picker unavailable"' in app

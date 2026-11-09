@@ -158,7 +158,7 @@ def test_tauri_setup_cleans_up_an_owned_backend_before_returning_surface_failure
     assert "app_icon_id," in setup
     assert "backend.webview_data_directory()," in setup
     assert "backend.allow_print_popups()," in setup
-    assert "open_backend_in_browser(&app.handle())?" in setup
+    assert "open_backend_in_browser(app.handle())?" in setup
     assert "if let Err(error) = setup_result" in setup
     assert "complete_setup_failure_cleanup(&backend);" in setup
     assert "if let Err(cleanup_error)" not in setup
@@ -171,7 +171,7 @@ def test_tauri_setup_cleans_up_an_owned_backend_before_returning_surface_failure
     )
     assert setup.index("install_tray(app, app_icon_id)?;") < setup.index("app.manage(backend);")
     assert setup.index("create_desktop_window(") < setup.index("app.manage(backend);")
-    assert setup.index("open_backend_in_browser(&app.handle())?") < setup.index(
+    assert setup.index("open_backend_in_browser(app.handle())?") < setup.index(
         "app.manage(backend);"
     )
     assert setup.index("app.manage(backend);") < setup.index("app.manage(startup_surface);")

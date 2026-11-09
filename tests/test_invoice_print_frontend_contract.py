@@ -5,6 +5,13 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def _api_source() -> str:
+    """app.py composes the route groups in api/routes/ and shares helpers from api/common.py."""
+    api = ROOT / "src" / "invoice_hub" / "api"
+    files = [api / "app.py", api / "common.py", *sorted((api / "routes").glob("*.py"))]
+    return "\n".join(path.read_text(encoding="utf-8") for path in files)
+
+
 def test_invoice_selection_menu_exposes_batch_print_action() -> None:
     html = (ROOT / "web" / "templates" / "index.html").read_text(encoding="utf-8")
     js = (ROOT / "web" / "static" / "js" / "page-index.js").read_text(encoding="utf-8")
@@ -42,7 +49,7 @@ def test_invoice_selection_menu_exposes_batch_print_action() -> None:
 
 def test_invoice_print_page_uses_native_print_and_one_sheet_per_source_page() -> None:
     html = (ROOT / "web" / "templates" / "invoice_print.html").read_text(encoding="utf-8")
-    api = (ROOT / "src" / "invoice_hub" / "api" / "app.py").read_text(encoding="utf-8")
+    api = _api_source()
     service = (ROOT / "src" / "invoice_hub" / "services" / "invoice_printing.py").read_text(encoding="utf-8")
 
     assert "@page invoice-landscape { size: landscape; margin: 0; }" in html
@@ -70,9 +77,9 @@ def test_invoice_print_page_uses_native_print_and_one_sheet_per_source_page() ->
     assert 'window.addEventListener("afterprint"' in html
     assert 'id="printAgainBtn"' in html
     assert "当前浏览器不提供打印功能" in html
-    assert '@app.post("/api/v1/invoices/print-jobs")' in api
+    assert '@routes.post("/api/v1/invoices/print-jobs")' in api
     assert '@app.get("/invoices/print/{job_id}"' in api
-    assert '@app.get("/api/v1/invoices/print-jobs/{job_id}/pages/{page_number}")' in api
+    assert '@routes.get("/api/v1/invoices/print-jobs/{job_id}/pages/{page_number}")' in api
     assert "MAX_PRINT_SELECTION_RECORDS = 100" in service
     assert "MAX_PRINT_PAGES = 200" in service
     assert "MAX_PRINT_JOB_BYTES" in service
