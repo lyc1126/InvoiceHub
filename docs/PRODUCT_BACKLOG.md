@@ -72,6 +72,7 @@
 | [ENG-04](#eng-04) | 架构入口文档只描述当前状态 | P2 | 待评估 | 待定 |
 | [ENG-05](#eng-05) | 真实浏览器 E2E（合成目录 + 本机后端） | P1 | 待评估 | 待定 |
 | [ENG-06](#eng-06) | 扩大静态检查（ruff B/E7、新模块类型检查） | P3 | 待评估 | 待定 |
+| [ENG-07](#eng-07) | 测试导入 `api.app` 时不再对仓库默认配置做启动同步 | P2 | 待评估 | 待定 |
 
 ## 成本分析与开票参考（COST）
 
@@ -373,6 +374,16 @@
 - 方案：在一次专门的格式化提交中启用 E7 与部分 B 规则；新服务模块（ENG-03 拆出的）启用类型检查。
 - 验收标准：CI 规则集扩大且通过；格式化提交不含行为变化。
 - 影响范围：`pyproject.toml`、相关源码、CI。
+
+<a id="eng-07"></a>
+
+### ENG-07 测试导入 `api.app` 时不再对仓库默认配置做启动同步
+
+- 优先级 / 状态 / 目标版本：P2 / 待评估 / 待定
+- 问题与证据：`api/app.py` 末尾的模块级 `app = create_app()` 会在导入时用仓库根的 `config/app.local.json` 构造 AppState 并执行启动同步。2026-11-09 在主工作区跑全量 pytest 后，`runtime/`（`server_state.json`、`invoice_hub.db`、默认 target 的汇总与监控状态）和 `发票文件/` 下的空成本产物被改写；仓库默认 `watch_dir` 是空的 `./发票文件`，所以没有业务数据受影响，但如果有人把本机配置指向真实目录，跑测试就会对真实目录做同步。
+- 方案：BAT、Tauri 与 Swift 都经 `python -m invoice_hub.api.main` 启动，`main.py` 先设置 `INVOICE_HUB_ROOT/CONFIG` 再 `from invoice_hub.api.app import app`；可改为 `main.py` 在该处调用 `create_app()`，删除模块级实例，去掉导入副作用（需保持“只构造一份 AppState 与一条 startup sync”的 macOS 规则）。备选是在测试 `conftest.py` 中把 `INVOICE_HUB_ROOT`/配置指向临时目录。
+- 验收标准：全量 pytest 前后仓库内 `runtime/`、`发票文件/` 与 `config/` 无变化（可加一个快照比对的测试或 CI 检查）；各启动入口的 ready 与握手测试通过。
+- 影响范围：`api/app.py`、`api/main.py`、测试夹具、MACOS/MONITORING 规则（单 AppState 与启动同步）。
 
 ## 待修复（缺陷）
 
