@@ -323,6 +323,3 @@ def create_app(
     app.include_router(system_routes.router())
 
     return app
-
-
-app = create_app()

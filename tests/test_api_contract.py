@@ -58,6 +58,30 @@ def _slow_background_sync_worker(
         result_sender.close()
 
 
+def test_importing_the_api_module_builds_no_app_state(tmp_path: Path) -> None:
+    # A module-level instance used to sync the checkout's default target on import (ENG-07).
+    script = r"""
+import json
+
+from invoice_hub.services.app_state import AppState
+
+constructed = []
+original_init = AppState.__init__
+AppState.__init__ = lambda self, *args, **kwargs: (constructed.append(1), original_init(self, *args, **kwargs))[1]
+
+import invoice_hub.api.app as api_app
+
+print(json.dumps({"constructed": len(constructed), "has_app": hasattr(api_app, "app")}))
+"""
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(Path(__file__).resolve().parents[1] / "src")
+    result = subprocess.run(
+        [sys.executable, "-c", script], check=True, capture_output=True, text=True, env=env, cwd=tmp_path
+    )
+
+    assert json.loads(result.stdout.strip().splitlines()[-1]) == {"constructed": 0, "has_app": False}
+
+
 def test_cli_creates_exactly_one_app_state(tmp_path: Path) -> None:
     script = r"""
 import json
