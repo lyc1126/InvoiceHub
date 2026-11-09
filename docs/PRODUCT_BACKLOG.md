@@ -15,6 +15,7 @@
 | [成本分析 v2 设计](COST_ANALYSIS_V2_DESIGN.md) | 公司级品目台账、成本口径、灵活定价规则、页面结构与迁移 | 设计提案 | [COST-06](#cost-06)，[成本规则](architecture/rules/COST_ANALYSIS.md) |
 | [税务工作台设计](TAX_WORKBENCH_DESIGN.md)、[算法与政策](TAX_ALGORITHMS_AND_POLICY.md)、[政策来源与核验](TAX_POLICY_SOURCES_AND_REVIEW.md)、[价值与就绪度](TAX_WORKBENCH_VALUE_AND_READINESS.md) | 税费测算、政策中心与分阶段计划 | 设计阶段 | [税务规则](architecture/rules/TAX_WORKBENCH.md) |
 | [税费计算器原型](design/tax-calculator-prototype.html) | 计算器入口与交互 | 合成数据交互原型 | 同上 |
+| [Agent 接入设计](AGENT_ACCESS_DESIGN.md) | 以 Vibe Island 的接入形态为参照：MCP 主通道、本机 socket 与配对令牌、能力分级、灵活控制模型（预设 / 询问卡片 / 规则表）、Agent 辅助导入（对账单 / 回单等）、Agent 活动面板、一键安装适配器 | 设计提案（2026-11-09 已确认：先只读，WorkBuddy 优先） | [AGENT-01—04](#agent-01) |
 
 旧能力迁移缺口不在本页重复登记，见[迁移缺口清单](MIGRATION_GAP_CHECKLIST.md)。
 
@@ -61,6 +62,10 @@
 | [BANK-01](#bank-01) | 通用银行对账单版式引擎（无模型，余额链自校验） | P1 | 待评估 | 待定 |
 | [BK-01](#bk-01) | 凭证导出改为通用格式，记账软件按导入模板适配 | P1 | 待评估 | 待定 |
 | [OCR-01](#ocr-01) | OCR 接入 PaddleOCR（官方 API / 自建服务） | P1 | 待评估 | 待定 |
+| [AGENT-01](#agent-01) | Agent 只读接入：MCP 网关、灵活控制与一键安装（WorkBuddy 优先） | P2 | 待评估 | 待定 |
+| [AGENT-02](#agent-02) | Agent 事件订阅、活动面板与审计 | P2 | 待评估 | 待定 |
+| [AGENT-04](#agent-04) | Agent 辅助导入：识别失败的表格 / PDF 由 Agent 起草版式或纠错，软件校验后进暂存 | P2 | 待评估 | 待定 |
+| [AGENT-03](#agent-03) | Agent 写入：应用内审批与 L1/L2 写工具 | P3 | 暂缓（先只读） | 待定 |
 
 ## 成本分析与开票参考（COST）
 
@@ -228,6 +233,7 @@
   6. 新版式只需人工确认一次列映射，保存为声明式版式档案（指纹 → 列映射、方向规则、日期格式），以后同版式自动识别；档案不含业务数据，可以分享。
   7. 回单：按标签词典（付款人 / 付款方户名 / 付款账户名称……）与坐标配对标签和值，一页多张时按标题重复切分；户名归一（全半角、括号、空白）后再参与匹配。
 - 验收标准：合成的三种借贷写法与正倒序样本都能自动判出方向；故意错一列或缺一个月时，余额链能定位到具体行；同一版式第二次导入无需人工；现有中国银行样本的结果与 `boc.py` 完全一致。
+- 关联：未命中版式时，除人工确认列映射外，可由已接入的 Agent 起草版式档案草案、软件校验后供用户确认，见 [AGENT-04](#agent-04)。
 - 影响范围：`src/invoice_hub/bank/`（新增通用引擎与版式档案，保留 boc 适配器作为内置档案）、相关测试、BOOKKEEPING 规则；版式档案存放在公司资料夹或私有配置，不进入公开仓库。
 
 ## 做账导出（BK）
@@ -253,6 +259,50 @@
 - 方案：OCR 服务抽象为可切换的提供方：`disabled`（默认）/ PaddleOCR 官方在线 API（用户填写自己的 Access Token）/ 用户自建的 PaddleOCR 服务地址（开源，可本机或内网部署，不随包内置，因此不违反“不做本地 OCR 打包版”）。识别结果走与 PDF 相同的字段规则：版面 / 坐标定位发票字段，校验“金额 + 税额 = 价税合计”、税率合法、发票号码位数，不通过的字段留空待核（宁可空，不要脏值）；记录提供方、模型版本与置信度；同一文件按内容哈希缓存结果，避免重复计费。云端调用会把图片发出，必须按公司单独开启并在页面明示；Token 存系统凭据库，不进配置明文、日志或诊断包。
 - 验收标准：合成图片样本的字段准确率与校验规则有测试；无 Token、断网、401、429、超时都有可诊断提示且不影响其他文件；日志与诊断包不含 Token 和图片内容；关闭时行为与现在一致。
 - 影响范围：`services/app_state.py` OCR 部分、OCR 页面与设置、`api/app.py`、INVOICE_EXTRACTION 规则；若改变“本地 OCR”边界须同步 AGENTS.md。
+
+## Agent 接入（AGENT）
+
+设计：[Agent 接入设计](AGENT_ACCESS_DESIGN.md)。2026-11-09 用户确认：接入形态参照 Vibe Island；先只读，目标是灵活控制；首批 WorkBuddy 优先，其次 Codex、Claude Code。相关规则：[页面](architecture/rules/WEB_UI.md)、[做账](architecture/rules/BOOKKEEPING.md)、[监控](architecture/rules/MONITORING.md)。
+
+<a id="agent-01"></a>
+
+### AGENT-01 Agent 只读接入：MCP 网关、灵活控制与一键安装（WorkBuddy 优先）
+
+- 优先级 / 状态 / 目标版本：P2 / 待评估 / 待定
+- 问题与证据：2026-11-09 用户希望 Claude Code、Codex 等 Agent 能接入 InvoiceHub 即时读取和操作，接入形态参照 Vibe Island。现在 Agent 只能读 `watch_dir` 下的 CSV / XLSX 或调用只服务浏览器的 HTTP 接口：写接口要求同源 `Origin`，读接口没有面向 Agent 的身份、分页约定与范围控制。
+- 方案：新增 `invoicehub mcp`（stdio MCP，按会话启动）与后端 Agent 网关，经本机 socket 与配对令牌通信，调用与 HTTP 相同的 `AppState` 方法；只开放 L0 只读工具（发票列表 / 详情、成本视图、一致性、单据预览、业务资料夹、做账状态等）；同时落地灵活控制模型：规则 = Agent × 目录 / 期间 × 模块 × 明细粒度（只看汇总 / 脱敏 / 完整）→ 允许 / 询问 / 拒绝，界面分预设、询问卡片（仅一次 / 本会话 / 1 小时 / 始终）、规则表与模拟三层；设置页“Agent 接入”按 WorkBuddy → Codex → Claude Code 顺序一键写入 / 移除 MCP 配置，写前 dry-run 与备份，并安装 InvoiceHub skill。WorkBuddy 落地前核实是否支持 stdio 型 MCP 条目。详见设计 §3—§5、§5.6、§7。
+- 验收标准：未配对或已吊销连接被拒；无规则时询问、拒绝优先、“只看汇总”不返回逐张明细、活动目录不在范围内返回 `SCOPE_DENIED`、“始终允许”生成的规则可在规则表删除并立即恢复询问；L0 工具与对应 HTTP 接口逐字段一致；InvoiceHub 未运行时返回 `HUB_NOT_RUNNING` 且 Agent 不卡住；接入 / 移除前后 Agent 配置除本条目外逐字节一致。
+- 影响范围：`api/`（网关）、新增 MCP 入口、`services/app_state.py`、设置存储与设置页、Tauri 打包入口、INTERFACES_AND_FLOWS、FILE_MAP；落地时在 AGENTS.md 项目边界写明“本机 Agent 授权”例外。
+
+<a id="agent-02"></a>
+
+### AGENT-02 Agent 事件订阅、活动面板与审计
+
+- 优先级 / 状态 / 目标版本：P2 / 待评估 / 待定
+- 问题与证据：AGENT-01 只能拉取；Agent 不知道新发票入库、重新汇总完成或成本状态变化，只能轮询。用户也看不到哪个 Agent 正在读写什么。
+- 方案：把 SQLite `events` 映射为 MCP 资源更新通知，并提供 `wait_for_events`（有界等待 ≤60 秒）；新增事件 `agent.session_*`、`agent.tool_called`；页面新增 Agent 活动面板（已接入 Agent、在线会话、最近调用、吊销），审计只记工具名与参数摘要。详见设计 §3、§6。
+- 验收标准：合成目录新增一张发票后，已订阅的 Agent 在一次同步完成内收到通知；面板与事件一致；审计不含票面正文。
+- 影响范围：事件生产者与 SSE、`common.js`、设置页或新 `/agents` 页、INTERFACES_AND_FLOWS §5、WEB_UI 规则。
+
+<a id="agent-04"></a>
+
+### AGENT-04 Agent 辅助导入：识别失败的表格 / PDF 由 Agent 起草版式或纠错
+
+- 优先级 / 状态 / 目标版本：P2 / 待评估 / 待定（依赖 BANK-01、AGENT-01、AGENT-02）
+- 问题与证据：2026-11-09 用户提出：用户放入 Excel、PDF 等数据表（对账单、回单等）时，软件未必能识别好；软件能做好最好，做不好时让 Agent 辅助识别并纠错。现有 `bank/` 只有单一银行的硬编码适配器，换版式即失败；BANK-01 的通用引擎对未命中的版式仍需人工确认列映射。
+- 方案：软件先识别，成功则不叫 Agent；失败或有低置信列时生成“需要协助”的导入任务。Agent 用只读工具取带坐标的原始提取与失败项，优先提交**版式档案草案**（列映射、方向规则、日期格式），兜底提交**逐格更正**（必须指向原文页码与坐标、写明原值与新值，不得凭空加行）；软件按草案重新解析并跑余额链、合计、笔数、衔接、回单匹配等全部校验，零写入返回结果，Agent 可反复修改；通过后只写导入暂存，用户在页面对照“软件结果 / Agent 结果 / 改动来源”后确认入底稿，版式档案入库，同版式下次由软件自动识别。没有自检结构的表标“未经机器核对”，逐行由用户确认。详见 [Agent 接入设计](AGENT_ACCESS_DESIGN.md) §8。
+- 验收标准：合成对账单错一列 / 缺一行时进入“需要协助”；未通过校验的草案不能进暂存；确认前底稿零变化；同版式第二次导入不再需要 Agent；缺坐标的逐格更正被拒；底稿行保留“来源：Agent 更正”；未接入 Agent 时同一任务可由用户手工完成。
+- 影响范围：`bank/`（引擎、版式档案、校验）、导入任务与暂存目录、Agent 网关工具、导入页面、BOOKKEEPING 规则、INTERFACES_AND_FLOWS、DATA_AND_ALGORITHMS。
+
+<a id="agent-03"></a>
+
+### AGENT-03 Agent 写入：应用内审批与 L1/L2 写工具
+
+- 优先级 / 状态 / 目标版本：P3 / 暂缓 / 待定（2026-11-09 用户决定先只读，AGENT-01 的控制模型用顺手后再评估）
+- 问题与证据：客户端自带的工具权限提示可被用户关闭（跳过权限模式），不能作为业务写入的最终关口；写入还必须遵守现有 revision、写锁与手改保护。
+- 方案：L1（手改字段、开票参考状态、做账决定、重算、重新汇总）与 L2（单据导出、凭证导出、映射迁移、批量改名、切换活动目录）先零写入预演，进入审批队列，页面卡片显示差异，批准后在写锁内重验 revision 再执行；Agent 侧同步等待，超时返回审批 ID 供查询，不自动重提。真实账套录入、删除、关闭服务、更新安装不开放。审批复用 AGENT-01 的规则与询问卡片，只增加“动作”维度，L2 永远询问；Windows 改用命名管道。详见设计 §4—§6。
+- 验收标准：批准前文件零变化；批准后结果与页面同一操作逐字节一致；revision 变化时拒绝；超时后可查到最终状态且无重复写入。
+- 影响范围：网关、审批任务、`bookkeeping/`、`projections/`、`services/`、设置页、BOOKKEEPING / WEB_UI / WINDOWS 规则、INTERFACES_AND_FLOWS、DATA_AND_ALGORITHMS（审批任务字段）。
 
 ## 待修复（缺陷）
 

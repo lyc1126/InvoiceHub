@@ -221,6 +221,7 @@
 | `docs/MIGRATION_GAP_CHECKLIST.md` | 旧能力迁移缺口和验收状态。 | 功能迁移、验收口径变化时更新。 |
 | `docs/PRODUCT_BACKLOG.md` | 未来工作总览：设计稿与原型索引、已确认但未排期的优化与新功能、待修复缺陷，含编号、优先级、状态、证据、方案、验收标准与影响范围。 | 发现值得做但本轮不做的改进时登记；排期、完成或放弃时更新状态并链接 CHANGELOG；证据不得含真实业务数据。 |
 | `docs/COST_ANALYSIS_V2_DESIGN.md` | 成本分析 v2 设计提案：已确认决策、公司级品目表（别名、库存科目、类型、税率）、成本基数（进项税是否计入、结存加权单价）、销项税率与计税方式、灵活定价规则（加价率 / 目标毛利 / 固定加价 / 合同价 / 阶梯 / 市场价底线）与 4 层优先级、页面结构、兼容迁移与落地顺序。 | 未实现；现行规则以 COST_ANALYSIS 规则页为准；落地拆分见 PRODUCT_BACKLOG 的 COST-06、COST-01—05 与 BUG-01。 |
+| `docs/AGENT_ACCESS_DESIGN.md` | Agent 接入设计提案：参照 Vibe Island 接入形态，MCP 主通道与命令行兜底、本机 socket / 命名管道与配对令牌、L0—L2 能力分级与禁止项、灵活控制模型（预设 / 询问卡片 / 规则表）、辅助导入（Agent 起草版式档案或逐格更正、软件校验、暂存确认）、应用内审批与活动面板、一键安装适配器、分阶段与验收要点。 | 未实现；2026-11-09 确认先只读、WorkBuddy 优先；现行接口以 INTERFACES_AND_FLOWS 为准；落地拆分见 PRODUCT_BACKLOG 的 AGENT-01—04。 |
 | `docs/MONITORING_AND_LOGGING.md` | monitor 状态、日志和诊断说明。 | 与 `monitoring/*`、MonitorBridge 和设置页运行状态联动。 |
 | `docs/release/HISTORY_SANITIZATION_EXECUTION.md` | 公开历史净化、私有备份、候选内容审计、全 ref 验证和托管面复核的执行记录。 | 公开 Git 图、发布资产、仓库可见性或 Tauri 开发线变化前必须更新。 |
 | `docs/release/TAURI2_EXECUTION_PLAN.md` | 公开 Tauri 2 分阶段计划、实验决策记录、重打边界和当前阻断项。 | 改动 Tauri host、依赖锁、生命周期、更新或平台验收时先更新实验记录。 |
