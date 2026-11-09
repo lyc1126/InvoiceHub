@@ -457,7 +457,7 @@ Windows 项目环境：
 node --test tests/*.test.cjs
 ```
 
-本机若禁止回环 TCP 连接，`local_http`/`host_rpc` 的四个真实 socket 测试会失败（不会再挂起），以 GitHub CI 结果为准。
+本机若禁止回环 TCP 连接，`local_http`/`host_rpc` 的四个真实 socket 测试会失败（不会再挂起），以 GitHub CI 结果为准。pytest 结束时 `tests/conftest.py` 会核对仓库 `runtime/`、`发票文件/`、`config/` 未被改写；只有本 checkout 正在运行服务时才设 `INVOICE_HUB_SKIP_REPO_STATE_GUARD=1`。
 
 macOS 壳增量：
 

@@ -341,7 +341,7 @@
 | `src/invoice_hub/api/routes/bookkeeping.py` | 做账生成、科目、凭证审阅/决定、映射规则与迁移、导出与导入批次路由。 | `bookkeeping/` 安全协议；错误经 `_bookkeeping_error_response`。 |
 | `src/invoice_hub/api/routes/ocr.py` | OCR 设置、服务状态、选择与文本提取路由。 | 本地 OCR 正式包不内置。 |
 | `src/invoice_hub/api/routes/system.py` | 一致性报告、任务、SSE 事件流与关闭服务路由。 | SSE 在关闭已受理后结束；关闭经 `shutdown_scheduler`。 |
-| `src/invoice_hub/api/main.py` | 参数化 uvicorn CLI 入口。 | 读取 root/config/host/port 后通过模块应用只构造一个 AppState；正式 BAT 当前直接启动 uvicorn app。 |
+| `src/invoice_hub/api/main.py` | 参数化 uvicorn CLI 入口。 | 读取 root/config/host/port 并设置环境后调用 `create_app()`，只构造一个 AppState（`api/app.py` 没有模块级实例，导入不会触发启动同步）；正式 BAT 当前直接启动 uvicorn app。 |
 
 ## 6. 领域模型
 
@@ -494,6 +494,7 @@
 | `tests/test_file_preview_frontend_contract.py` | 首页预览 DOM、交互和静态资源契约。 | index.html、page-index.js、app.css。 |
 | `tests/test_documents.py` | 单据状态、预览、人民币大写、模板扩行、导出和路径限制。 | documents、AppState documents API。 |
 | `tests/test_frontend_contract.py` | 模板、JS、CSS、资源版本、表格、SSE、设置和皮肤静态契约。 | `web/**` 与 API 字段名称。 |
+| `tests/conftest.py` | 会话级守护：测试前后对仓库 `runtime/`、`发票文件/`、`config/` 做快照，任一文件变化即让整轮失败。 | 测试必须用 `tmp_path` 配置；本 checkout 有在运行的服务时可设 `INVOICE_HUB_SKIP_REPO_STATE_GUARD=1` 跳过。 |
 | `tests/test_workspace_frontend.py` | `/workspace` 外壳路由、no-store、OpenAPI 隔离、提交构建的 `?v=` 内容哈希与文件集合、无 sourcemap/本机路径、前端依赖精确版本。 | `frontend/` 构建、`web/static/app/`、`api/app.py` 的 workspace 路由。 |
 | `tests/test_desktop_icon.py` | 图标生成一致性、native 配置继承、PNG 位深、ICO/ICNS 尺寸和透明度/对比度。 | 图标生成器、Tauri 配置与图标资源。 |
 | `tests/test_website.py` | 标准库官网资源、打包白名单、缺失资源、构建一致性和更新地址检查。 | 不依赖 pytest；实际执行 alpha 资源复制，不构建 App 或安装器。 |

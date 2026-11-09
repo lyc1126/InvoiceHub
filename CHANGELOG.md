@@ -2,6 +2,14 @@
 
 ## 未发布
 
+### 2026-11-09 修复测试导入 api.app 时改写仓库运行态（ENG-07）
+
+- 需求：用户要求先修复 ENG-07。现象：在主工作区跑全量 pytest 会改写仓库自身的 `runtime/`（`server_state.json`、`invoice_hub.db`、默认 target 汇总与监控状态）和 `发票文件/` 下的空成本产物；若本机配置指向真实目录，跑测试就会同步真实发票目录。
+- 原因：`api/app.py` 末尾的模块级 `app = create_app()`，任何 `import invoice_hub.api.app`（11 个测试文件在进程内导入）都会按仓库默认配置构造 AppState 并执行启动同步。
+- 方案：删除模块级实例；`api/main.py` 在设置 `INVOICE_HUB_ROOT/CONFIG` 并做端口预检后调用 `create_app()`，仍只构造一份 AppState 与一条 startup sync（BAT、Tauri、Swift 均经 `python -m invoice_hub.api.main` 启动，无其它 `api.app:app` 引用）。新增 `tests/conftest.py` 会话级守护：测试前后快照 `runtime/`、`发票文件/`、`config/`，任一文件变化即让整轮失败（`INVOICE_HUB_SKIP_REPO_STATE_GUARD=1` 仅供本 checkout 有服务在运行时跳过）；新增子进程测试断言导入模块不构造 AppState。工作分支 `codex/fix-api-import-side-effect`，基于本地开发线 `codex/cost-select-all-transitions`。
+- 验证：全量 pytest 840 通过、16 跳过，前后快照无变化；新测试在旧代码上失败、新代码上通过；守护在“测试全部通过但写入 `config/` 探针文件”时使退出码为 1，并列出文件；ruff 通过；既有 CLI 单 AppState、初始状态目录与参数缩写测试通过。
+- 未覆盖：未重新运行真实 BAT/Tauri/Swift 启动（入口命令未变，仅 `main.py` 内部构造方式变化，由 CLI 子进程测试覆盖）；验证旧代码时又对仓库默认空目标做过两次同步，内容仍是空汇总，未恢复。
+
 ### 2026-11-09 工程门禁、API 路由拆分与 Vue 工作区前端基础
 
 - 需求：新界面原型落地前，用户请求评估工程防护与架构（含“Tauri 多层嵌套是架构灾难”的说法），并按评估建议实施；前端框架选定 Vue 3。

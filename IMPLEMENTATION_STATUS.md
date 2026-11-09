@@ -6,6 +6,7 @@
 - 后端：113 条领域路由从 `api/app.py` 拆到 `api/routes/` 的 10 个模块，共享辅助在 `api/common.py`；OpenAPI 与路由匹配结果与拆分前一致。`AppState` 尚未拆分（ENG-03）。
 - 前端：`frontend/`（Vue 3 + TypeScript + Pinia + Vue Router + Vitest）提交构建到 `web/static/app/`，`/workspace` 只读预览外框（概览、目录）；旧页面不变。多公司工作区（WS-01 起）在此基础上实现。
 - 未覆盖：GitHub CI 尚未实际运行（未推送）；Windows 与 Tauri 打包产物未重建；本机回环网络策略下 4 个 Rust socket 测试无法在本地通过。
+- 同日修复 ENG-07：`api/app.py` 去掉模块级实例，`api/main.py` 显式 `create_app()`；pytest 增加仓库运行态守护，全量测试不再改写 checkout 的 `runtime/`、`发票文件/`、`config/`。
 
 ## 2026-11-08 开票参考全选、sheet 平滑切换与工作区原型成本分析模块（工作分支 `codex/cost-select-all-transitions`，基于未合并的 `codex/cost-reference-exclusions-ui`）
 

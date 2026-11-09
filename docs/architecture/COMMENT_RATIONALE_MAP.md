@@ -7,6 +7,7 @@
 - `requirements/lint-tools-py314.lock` 独立于 `test-tools-py314.lock`：后者由 Windows 重打包配置引用，改动会牵动发布核对；lint 工具不进入任何成品。
 - `.github/workflows/ci.yml` 的 Windows clippy 不带 `-D warnings`：`cfg(windows)` 代码此前从未经过 clippy，本机 macOS 无法验证；清理后改为阻断（ENG-01）。
 - `projections/costs.py::save_reference_status` 的未使用工作簿读取以 `noqa` 保留：删除会改变工作簿损坏时的失败行为，是否应像 rebuild 一样合并工作簿状态待 ENG-02 判定。
+- `api/main.py` 在设置 `INVOICE_HUB_ROOT/CONFIG` 后才调用 `create_app()`，`api/app.py` 不再有模块级实例：旧实例让任何导入都按仓库默认配置做启动同步，测试会改写 checkout 的 `runtime/` 与 `发票文件/`（ENG-07）。守护：`test_importing_the_api_module_builds_no_app_state`、`test_cli_creates_exactly_one_app_state` 与 `tests/conftest.py` 的仓库状态快照。
 - `host_rpc.rs` 测试的 `accept_within`：阻塞 `accept()` 在发送线程无法连接时会让整个测试二进制挂起，改为有时限失败。
 
 ## 2026-10-09 双平台构建保护
