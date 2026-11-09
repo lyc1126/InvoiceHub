@@ -1,5 +1,9 @@
 # 分支整理、main 同步与双平台候选准备
 
+## 工程门禁并入本地成本开发线（2026-11-09）
+
+`codex/engineering-guardrails`（CI 门禁、API 路由拆分、Vue 工作区前端基础，4 个 DCO 提交）由用户授权在本地合并：以快进方式并入 `codex/cost-select-all-transitions`，该开发线仍领先 `main` 且未推送、未开 PR；用户决定功能稳定后再开 PR，`main` 不变。合并前主工作区的未提交修改（成本页、银行模块、交接工具及相关文档）先备份到仓库外并 stash，快进后原样恢复为未提交状态，逐文件核对无丢失；合并后在该工作区运行全量 pytest、ruff、Node 交互测试与前端类型检查/组件测试/构建可复现检查。精确提交以实时 Git 为准。
+
 ## 优化版 1 来源与发布（2026-09-10）
 
 Windows 来源分支 `codex/windows-alpha2-release-source` 已取得，精确提交 `0d5239f113ac5017174fbbf09dd30817ebeed432`，与两端制品收据一致；此前缺少对象的阻塞已经解除。发布源码固定在 `v0.3.0-alpha.2-opt.1`，内嵌产品版本仍为 alpha.2，核心身份 `0f41b453964c635dc6d0623c98d7abffef8614f6d65709853da877d7733b53b0`。
