@@ -18,9 +18,8 @@ from invoice_hub.domain.models import TargetProfile, utc_now_text
 from invoice_hub.monitoring.state import MonitorState, is_pid_alive
 from invoice_hub.monitoring.sync import MonitorSynchronizer
 from invoice_hub.platform import HostRpcCommand, OCR_EXTENSIONS, host_rpc, open_external_url, open_local_path, pick_directory, pick_file
-from invoice_hub.projections.cost_analysis import invoice_cost_breakdown, selection_cost_breakdown
+from invoice_hub.projections.cost_analysis import invoice_cost_breakdown
 from invoice_hub.projections.costs import CostProjectionService
-from invoice_hub.projections.documents import DocumentError
 from invoice_hub.projections.summary import SUMMARY_HEADERS, build_summary, write_summary_xlsx
 from invoice_hub.extraction import BUSINESS_TYPES, INVOICE_TYPES, is_valid_money, supported_invoice_files
 from invoice_hub.extraction.classification import (
@@ -37,9 +36,9 @@ from invoice_hub.services.preview_print import InvoicePreviewPrintService
 from invoice_hub.services.document_index import DocumentIndex, InboundDetails
 from invoice_hub.services.dossier import BusinessDossierService
 from invoice_hub.services.documents import DocumentService
-from invoice_hub.services.errors import StaleInvoiceSelectionError
 from invoice_hub.services.file_preview import FilePreviewService
 from invoice_hub.services.invoice_printing import InvoicePrintService
+from invoice_hub.services.invoice_selection import InvoiceSelectionService, file_format_from_source, invoice_number_from_filename
 from invoice_hub.services.invoice_trash import InvoiceTrashService, TrashError
 from invoice_hub.services.app_icons import AppIconService
 from invoice_hub.services.skins import SkinService
@@ -174,18 +173,22 @@ class AppState:
         self._invoice_print_service = InvoicePrintService()
         self._file_preview_service = FilePreviewService()
         self._invoice_trash = InvoiceTrashService(layout.runtime_dir / "local_state" / "invoice-trash")
-        # Selection identity stays with the invoice list; the preview/print layer asks for it
-        # per call, and reads the active profile per call, so watch_dir switches apply at once.
+        # Built first: documents and preview/print revalidate homepage selections through it.
+        # list_invoices stays here (cache, consistency) and is looked up per call.
+        self._selection = InvoiceSelectionService(
+            lock=self._lock,
+            active_profile=lambda: self.active_profile,
+            list_invoices=lambda: self.list_invoices(),
+            cost_detail_csv=lambda: self.cost_service().detail_csv,
+        )
+        # The active profile is read per call, so watch_dir switches apply at once.
         self._preview_print = InvoicePreviewPrintService(
             lock=self._lock,
             repo=self.repo,
             preview_service=self._file_preview_service,
             print_service=self._invoice_print_service,
             active_profile=lambda: self.active_profile,
-            validate_selection=lambda payload, **kwargs: self._validated_invoice_selection(payload, **kwargs),
-            family_key=lambda item: self._selection_family_key(item),
-            source_identity=lambda value: self._selection_source_identity(value),
-            file_format=lambda source_file, source_path="": self._file_format_from_source(source_file, source_path),
+            selection=self._selection,
         )
         # Built before bookkeeping, which resolves the company folder through it on every call.
         self._dossier = BusinessDossierService(
@@ -216,7 +219,7 @@ class AppState:
             cost_detail_csv=lambda: self.cost_service().detail_csv,
             outbound_dir=lambda: self._outbound_invoice_dir_text(),
             recent_outbound_dirs=lambda: self._recent_outbound_invoice_dirs(),
-            validate_inbound_selection=lambda payload: self._validated_inbound_selection(payload),
+            selection=self._selection,
         )
         # Providers, not snapshots: settings and watch_dir switches replace config and the
         # active TargetProfile, and the next bookkeeping call must follow the new company folder.
@@ -1949,101 +1952,9 @@ class AppState:
             return f"filename:{filename_number}"
         return ""
 
-    @staticmethod
-    def _invoice_number_from_filename(item: dict) -> str:
-        file_name = str(item.get("file_name") or item.get("source_file") or "").strip()
-        matched = re.search(r"(?<!\d)(\d{20})(?!\d)", file_name)
-        return matched.group(1) if matched else ""
-
-    @staticmethod
-    def _selection_source_identity(value: object) -> str:
-        text = str(value or "").strip()
-        if not text:
-            return ""
-        normalized = text.replace("\\", "/").rstrip("/")
-        try:
-            path = Path(text)
-            if path.is_absolute():
-                normalized = str(path.resolve(strict=False)).replace("\\", "/").rstrip("/")
-        except (OSError, RuntimeError):
-            pass
-        return normalized.casefold()
-
-    def _selection_family_key(self, item: dict) -> str:
-        invoice_number = str(item.get("invoice_number") or "").strip()
-        if invoice_number:
-            return f"number:{invoice_number}"
-        filename_number = self._invoice_number_from_filename(item)
-        if filename_number:
-            return f"number:{filename_number}"
-        source_identity = self._selection_source_identity(item.get("source_path") or item.get("file_path"))
-        if not source_identity:
-            source_identity = self._selection_source_identity(item.get("source_file") or item.get("file_name"))
-        return f"source:{source_identity}"
-
-    @staticmethod
-    def _selection_money_value(value: object) -> Decimal | None:
-        text = str(value or "").strip()
-        if not is_valid_money(text):
-            return None
-        normalized = text.replace(",", "").replace("¥", "").replace("￥", "")
-        matched = re.search(r"-?\d+(?:\.\d+)?", normalized)
-        if not matched:
-            return None
-        try:
-            return Decimal(matched.group(0))
-        except InvalidOperation:
-            return None
-
-    def _selection_metric_total(self, families: list[list[dict]], field: str) -> dict:
-        total = Decimal("0")
-        valid_invoice_count = 0
-        missing_invoice_count = 0
-        conflict_invoice_count = 0
-        for family_items in families:
-            values = {
-                value
-                for item in family_items
-                if (value := self._selection_money_value(item.get(field))) is not None
-            }
-            if not values:
-                missing_invoice_count += 1
-            elif len(values) > 1:
-                conflict_invoice_count += 1
-            else:
-                total += next(iter(values))
-                valid_invoice_count += 1
-        return {
-            "value": float(total.quantize(Decimal("0.01"))),
-            "valid_invoice_count": valid_invoice_count,
-            "missing_invoice_count": missing_invoice_count,
-            "conflict_invoice_count": conflict_invoice_count,
-        }
-
-    def _selection_cost_family(self, family_key: str, items: list[dict]) -> dict:
-        extracted_numbers = []
-        for item in items:
-            number = str(item.get("invoice_number") or "").strip()
-            if number and number not in extracted_numbers:
-                extracted_numbers.append(number)
-        invoice_numbers = extracted_numbers
-        if not invoice_numbers:
-            invoice_numbers = []
-            for item in items:
-                number = self._invoice_number_from_filename(item)
-                if number and number not in invoice_numbers:
-                    invoice_numbers.append(number)
-        return {
-            "family_key": family_key,
-            "source_invoices": [{"invoice_key": str(item["invoice_key"]),
-                "source_path": str(item.get("source_path") or item.get("file_path") or ""),
-                "file_name": str(item.get("source_file") or item.get("file_name") or ""),
-                "invoice_number": str(item.get("invoice_number") or ""),
-                "target_id": self.active_profile.id} for item in items],
-            "invoice_numbers": invoice_numbers,
-            "source_paths": [str(item.get("source_path") or item.get("file_path") or "") for item in items],
-            "source_files": [str(item.get("source_file") or item.get("file_name") or "") for item in items],
-        }
+    # Invoice-family rules live in services/invoice_selection.py (ENG-03); the list and
+    # consistency code here still use these two helpers.
+    _invoice_number_from_filename = staticmethod(invoice_number_from_filename)
 
     @staticmethod
     def _first_non_empty(items: list[dict], field: str) -> str:
@@ -2057,13 +1968,7 @@ class AppState:
     def _invoice_number_from_pair_key(pair_key: str) -> str:
         return pair_key.split(":", 1)[1] if ":" in pair_key else pair_key
 
-    @staticmethod
-    def _file_format_from_source(source_file: str, source_path: str = "") -> str:
-        for raw in (source_file, source_path):
-            suffix = Path(str(raw or "").strip()).suffix.lower().lstrip(".")
-            if suffix in {"pdf", "ofd", "xml"}:
-                return suffix
-        return ""
+    _file_format_from_source = staticmethod(file_format_from_source)
 
     @staticmethod
     def _invoice_type_from_row(value: str, file_format: str) -> str:
@@ -2267,43 +2172,10 @@ class AppState:
             "watch_dir": self.active_profile.watch_dir,
         }
 
+    # Selection revalidation lives in services/invoice_selection.py (ENG-03); the invoice
+    # detail route and delete-selected still call it through this name.
     def _validated_invoice_selection(self, payload: dict, *, max_items: int, operation: str) -> tuple[dict, list[dict]]:
-        if not isinstance(payload, dict):
-            raise ValueError("请求体必须是 JSON 对象。")
-        if payload.get("target_id") is not None and payload["target_id"] != self.active_profile.id:
-            raise StaleInvoiceSelectionError("活动目录已切换，请刷新后重新勾选。")
-        requested_items = payload.get("items")
-        if not isinstance(requested_items, list) or not requested_items:
-            raise ValueError("请至少勾选一张发票。")
-        if len(requested_items) > max_items:
-            raise ValueError(f"单次最多{operation} {max_items} 条发票记录。")
-
-        current_payload = self.list_invoices()
-        current_by_key = {str(item.get("invoice_key") or ""): item for item in current_payload["items"]}
-        selected_items = []
-        seen_keys: set[str] = set()
-        for requested in requested_items:
-            if not isinstance(requested, dict):
-                raise ValueError("每条勾选记录必须包含 invoice_key 和 source_path。")
-            raw_key = requested.get("invoice_key")
-            source_path = requested.get("source_path")
-            if isinstance(raw_key, bool) or not isinstance(raw_key, (str, int)):
-                raise ValueError("invoice_key 格式不正确。")
-            if not isinstance(source_path, str) or not source_path.strip():
-                raise ValueError("source_path 不能为空。")
-            invoice_key = str(raw_key).strip()
-            if not invoice_key:
-                raise ValueError("invoice_key 不能为空。")
-            if invoice_key in seen_keys:
-                raise ValueError("同一发票记录不能重复提交。")
-            seen_keys.add(invoice_key)
-
-            current = current_by_key.get(invoice_key)
-            current_path = str((current or {}).get("source_path") or (current or {}).get("file_path") or "")
-            if current is None or self._selection_source_identity(current_path) != self._selection_source_identity(source_path):
-                raise StaleInvoiceSelectionError("勾选内容已过期，请刷新发票列表后重新勾选。")
-            selected_items.append(current)
-        return current_payload, selected_items
+        return self._selection.validated_invoice_selection(payload, max_items=max_items, operation=operation)
 
     def prepare_invoice_trash(self, payload: dict) -> dict:
         with self._lock:
@@ -2340,35 +2212,7 @@ class AppState:
             return self._invoice_trash.public(job)
 
     def invoice_selection_summary(self, payload: dict) -> dict:
-        # Keep captured target, source validation and the published result in one directory generation.
-        with self._lock:
-            current_payload, selected_items = self._validated_invoice_selection(
-                payload, max_items=1000, operation="汇总"
-            )
-
-            grouped: dict[str, list[dict]] = {}
-            for item in selected_items:
-                family_key = self._selection_family_key(item)
-                grouped.setdefault(family_key, []).append(item)
-            families = list(grouped.values())
-            cost_families = [self._selection_cost_family(key, items) for key, items in grouped.items()]
-            cost_rows = read_csv_rows(self.cost_service().detail_csv)
-
-            return {
-                "ok": True,
-                "selection": {
-                    "record_count": len(selected_items),
-                    "invoice_count": len(families),
-                    "collapsed_record_count": len(selected_items) - len(families),
-                },
-                "totals": {
-                    "pretax_amount": self._selection_metric_total(families, "pretax_amount"),
-                    "tax_amount": self._selection_metric_total(families, "tax_amount"),
-                    "total_with_tax": self._selection_metric_total(families, "amount"),
-                },
-                "cost_breakdown": selection_cost_breakdown(cost_rows, cost_families),
-                "snapshot": current_payload["snapshot"],
-            }
+        return self._selection.invoice_selection_summary(payload)
 
     # Preview and print orchestration lives in services/preview_print.py (ENG-03); these keep the public names.
     def prepare_invoice_print(self, payload: dict) -> dict:
@@ -2914,21 +2758,6 @@ class AppState:
 
     def open_outbound_document_location(self, payload: dict | None = None) -> dict:
         return self._documents.open_outbound_document_location(payload)
-
-    def _validated_inbound_selection(self, payload: dict) -> dict[str, list[dict]]:
-        if not isinstance(payload, dict) or not payload.get("target_id"):
-            raise DocumentError("缺少当前发票目录标识，请返回首页重新勾选。")
-        if payload["target_id"] != self.active_profile.id:
-            raise StaleInvoiceSelectionError("发票目录已切换，请返回首页重新勾选。")
-        _, selected = self._validated_invoice_selection(payload, max_items=1000, operation="开具入库单")
-        root = Path(self.active_profile.watch_dir).resolve()
-        grouped: dict[str, list[dict]] = {}
-        for item in selected:
-            source = Path(item.get("source_path") or item.get("file_path") or "").resolve()
-            if not source.is_relative_to(root) or not source.is_file():
-                raise StaleInvoiceSelectionError("勾选源文件已移除或超出当前目录，请重新勾选。")
-            grouped.setdefault(self._selection_family_key(item), []).append(item)
-        return grouped
 
     def ocr_settings(self) -> dict:
         return {

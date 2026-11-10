@@ -132,9 +132,9 @@ Windows验包测试中的假凭据在运行时拼接：保持生成文件的扫�
 | 文件与符号 | 应说明的原因 | 不能破坏的不变量 | 守护测试 |
 |---|---|---|---|
 | `services/app_state.py::_run_background_sync_process` 与 `AppState.run_background_diagnostics` | PyMuPDF 等原生解析可能长时间占用 GIL；首轮同步必须在 `spawn` 子进程，而不是把重解析留在 API 进程线程中。retire 和 worker 清理可以并发，`Process.close()` 后读取 `pid/exitcode` 会抛错 | `/` 和 health 不被重解析阻塞；子进程以 `emit_events=false/notify=false` 返回结果，父进程只有在 generation 与完整 TargetProfile 身份仍匹配时才清缓存、更新状态并补发普通同步事件；过期结果只能记 `server.background_stale`；超时事件使用关闭前安全捕获的进程诊断值 | startup child、慢 worker、过期 TargetProfile、关闭后 PID 快照与失败路径 API 测试 |
-| `api/app.py::invoice_selection_summary` 与 `AppState.invoice_selection_summary` | `invoice_key` 是行位置，会在重建后复用，所以请求必须带并复核 `source_path`；业务方法还会做同步文件 I/O 和聚合，必须由异步路由卸载到线程池 | 旧选择不能落到新文件；过期返回 409；selection-summary 进行中 health 仍可调度 | selection-summary 过期/非法/并发 health 测试 |
+| `api/app.py::invoice_selection_summary` 与 `InvoiceSelectionService.invoice_selection_summary`（AppState 转发） | `invoice_key` 是行位置，会在重建后复用，所以请求必须带并复核 `source_path`；业务方法还会做同步文件 I/O 和聚合，必须由异步路由卸载到线程池 | 旧选择不能落到新文件；过期返回 409；selection-summary 进行中 health 仍可调度 | selection-summary 过期/非法/并发 health 测试 |
 | `api/app.py::manual_fields/cost_analysis/reference_status` 与 `AppState.update_manual_fields`、`CostService.cost_snapshot/save_cost_reference_status`（AppState 转发） | 手改、schema 自愈和状态/工作簿写入都会等待文件锁；留在事件循环会让 health 与其他轻请求饥饿，脱离 profile 锁又会与 monitor 竞争 | JSON 解析后在线程池运行；所有会写投影的路径使用捕获 profile 的写锁；profile 已切换时旧目录可完成自身真值，但不得清当前缓存或发出当前目录事件 | manual fields、cost snapshot、reference status 的 lock/health/stale-profile API 测试 |
-| `_selection_family_key/_selection_metric_total` | 票头号码和文件名号码必须进入同一命名空间；每个金额字段独立判断冲突 | 同票多格式只计一次；同字段多值整票不计 | selection-summary 去重/冲突/回退测试 |
+| `invoice_selection.py::selection_family_key` / `InvoiceSelectionService._selection_metric_total` | 票头号码和文件名号码必须进入同一命名空间；每个金额字段独立判断冲突 | 同票多格式只计一次；同字段多值整票不计 | selection-summary 去重/冲突/回退测试 |
 | `AppState.rename_invoice_files` 第一阶段 | 临时名先释放所有源名称，避免 A/B 目标互占和顺序覆盖 | 任何 staging 失败都逆序回滚；不覆盖已有非计划文件 | 重命名保持手改与重复目标测试 |
 | `rename_invoice_files` 第二阶段 | 全部临时名再提交为最终名，失败时需要同时回滚已提交与未提交项 | 结果必须区分文件已改名但投影重建失败 | 同上；真实目录验收另行执行 |
 | `_migrate_renamed_manual_overrides` | 手改状态用源路径作身份，文件改名必须迁移 key | 不丢三项手改，不把旧 invoice_key 当长期身份 | 手改迁移/重建测试 |
@@ -144,7 +144,7 @@ Windows验包测试中的假凭据在运行时拼接：保持生成文件的扫�
 | `finalize_server_shutdown` | 正式启动器 PID 可能不是 Uvicorn `os.getpid()`，且关闭期间可能启动新实例 | 仅当 PID 文件内容仍等于请求快照时删除 | shutdown finalize 测试 |
 | `BusinessDossierService._scan_business_dossier/business_dossier/open_business_dossier`（`services/dossier.py`，AppState 转发） | 公司资料夹是导航边界，不是新的扫描根；完整递归和每链接重复扫描会拖住页面，即使前端超时服务端仍会继续工作 | 单次 `os.scandir` 有目录项/时间上限、跳过符号链接；迭代途中 `OSError` 保留已累计项并以 `unreadable_entries` 标为下界；只打开业务资料夹或当前 watch_dir 内路径，open 同步路径经线程池 | business dossier API/有界扫描/iterator-OSError/线程池与首页刷新容错测试 |
 | `AppState.bookkeeping_*` 与 bookkeeping repository | 做账状态写入跨进程且必须绑定当前资源 revision | 只经严格仓储/写锁/CAS；坏 schema 保留原文件并 fail closed | 全部 bookkeeping 状态/API 测试 |
-| `AppState.__init__` 构造 `BookkeepingService` / `DocumentService` / `CostService` / `BusinessDossierService` / `InvoicePreviewPrintService` 的回调参数 | 切换 watch_dir 会替换 AppState 的 TargetProfile 与 config；服务若在构造时捕获对象，后续做账会落到旧公司资料夹。服务若自建锁，做账写入就不再与目录切换和其它 AppState 写入串行 | 活动目标、config、公司资料夹与成本明细路径一律经回调实时读取；传入的是 AppState 同一把 RLock；单据另经回调读取出库目录与首页勾选校验，切换出库目录后预览/导出不得落到旧目录 | `test_bookkeeping_service_follows_watch_dir_switch`、`test_bookkeeping_writes_wait_for_the_app_state_lock`、`test_document_service_follows_watch_dir_and_outbound_switch`、`test_document_export_waits_for_the_app_state_lock`、`test_cost_service_follows_watch_dir_switch`、`test_cost_view_waits_for_the_app_state_lock`、`test_business_dossier_follows_watch_dir_switch`（资料夹不取锁，只守护目录跟随；做账经它取公司目录，做账那条测试同时覆盖）、`test_preview_print_service_follows_watch_dir_switch`、`test_preview_creation_waits_for_the_app_state_lock` |
+| `AppState.__init__` 构造 `BookkeepingService` / `DocumentService` / `CostService` / `BusinessDossierService` / `InvoicePreviewPrintService` / `InvoiceSelectionService` 的回调参数 | 切换 watch_dir 会替换 AppState 的 TargetProfile 与 config；服务若在构造时捕获对象，后续做账会落到旧公司资料夹。服务若自建锁，做账写入就不再与目录切换和其它 AppState 写入串行 | 活动目标、config、公司资料夹与成本明细路径一律经回调实时读取；传入的是 AppState 同一把 RLock；单据另经回调读取出库目录与首页勾选校验，切换出库目录后预览/导出不得落到旧目录 | `test_bookkeeping_service_follows_watch_dir_switch`、`test_bookkeeping_writes_wait_for_the_app_state_lock`、`test_document_service_follows_watch_dir_and_outbound_switch`、`test_document_export_waits_for_the_app_state_lock`、`test_cost_service_follows_watch_dir_switch`、`test_cost_view_waits_for_the_app_state_lock`、`test_business_dossier_follows_watch_dir_switch`（资料夹不取锁，只守护目录跟随；做账经它取公司目录，做账那条测试同时覆盖）、`test_preview_print_service_follows_watch_dir_switch`、`test_preview_creation_waits_for_the_app_state_lock`、`test_selection_service_follows_watch_dir_switch_and_live_invoice_list`（另守护发票列表回调每次现取）、`test_selection_summary_waits_for_the_app_state_lock` |
 
 ## 5. P0：票头、金额与同票纠偏
 
@@ -209,7 +209,7 @@ Windows验包测试中的假凭据在运行时拼接：保持生成文件的扫�
 | `ink-pulse/skin.css::ink-pulse-page-in` | Chromium 可在 transform 动画终止帧为 `none` 时仍保留 identity matrix，让 `body` 成为 fixed containing block | `body` 入场 keyframes 只允许 opacity，不得使用 transform/filter/perspective/will-change 等可建立 containing block 的属性 | Ink Pulse CSS 完整 keyframes 属性契约；滚动后真实浏览器验收 |
 | `documents.py::_ensure_detail_rows/_finish_document_layout/document_layout` | 插行不会自动移动行高和打印范围；合并单元格不能按 nth-child 分配列宽 | 移动合并与行高、复制行样式、扩展打印范围；预览消费模板真实列宽 | 5/15 行双单据布局测试 |
 | `documents.py::_inbound_detail_rows` | 同票副本不能重复增加入库数量；相同来源内重复行仍是真实明细 | 仅折叠完整明细一致的不同来源，冲突阻断且不重写 CSV | 重复来源与冲突导出测试 |
-| `DocumentService.document_inbound_selection/export_inbound_document`（AppState 转发；勾选身份由 `AppState._validated_inbound_selection` 校验） | 页面草稿可能跨目录或列表身份已变化 | 同一锁内验证 target、key/path、真实源文件到逐票写出；已有文件跳过/副本 | 批量身份、缺明细、已有文件保护测试 |
+| `DocumentService.document_inbound_selection/export_inbound_document`（AppState 转发；勾选身份由 `DocumentService._validated_inbound_selection` 经 `InvoiceSelectionService` 校验） | 页面草稿可能跨目录或列表身份已变化 | 同一锁内验证 target、key/path、真实源文件到逐票写出；已有文件跳过/副本 | 批量身份、缺明细、已有文件保护测试 |
 | `page-documents.js::exportBatchInbound/loadPreview` | 写请求结果不确定时重试可能重复生成；旧预览可能迟到 | 不确定结果停止剩余且保留；请求序号拒绝迟到预览 | Node 停止、断网与预览竞态检查 |
 | `documents.py::rmb_uppercase` | “零”的跨四位组规则非直觉，普通数字格式化不能替代 | HALF_UP 到分；万/亿跨组零正确 | RMB 零位测试 |
 | `documents.py::_save_workbook` | 直接保存目标可能留下半写工作簿 | 同目录临时文件后 replace；占用错误上抛给用例层 | 单据导出/占用测试 |
@@ -338,7 +338,7 @@ Windows验包测试中的假凭据在运行时拼接：保持生成文件的扫�
 
 这些注释适合在未来拆分模块时增加短区块标题，不应单独制造批量 diff：
 
-- `services/app_state.py`：配置与诊断、出库目录设置、普通汇总/重命名、列表/一致性/选择合计、monitor/关闭、成本/皮肤、OCR/平台等用例区；做账用例在 `services/bookkeeping.py`，单据用例在 `services/documents.py`，成本用例在 `services/costs.py`，业务资料夹在 `services/dossier.py`，预览/打印编排在 `services/preview_print.py`。
+- `services/app_state.py`：配置与诊断、出库目录设置、普通汇总/重命名、列表/一致性/选择合计、monitor/关闭、成本/皮肤、OCR/平台等用例区；做账用例在 `services/bookkeeping.py`，单据用例在 `services/documents.py`，成本用例在 `services/costs.py`，业务资料夹在 `services/dossier.py`，预览/打印编排在 `services/preview_print.py`，发票勾选复核与合计在 `services/invoice_selection.py`。
 - `projections/cost_analysis.py`：格式清洗、均价/详情拆分、加价/快照、PDF 坐标、XML/OFD 明细、状态兼容、分组/工作簿七个算法区。
 - `web/static/js/page-settings.js`：只在真实拆分模块时为目录、运行、皮肤、偏好、关闭、诊断区保留导航标题。
 - Windows 启动器：预检、判重、进程启动、就绪探测、状态写入、浏览器派发的阶段标题。

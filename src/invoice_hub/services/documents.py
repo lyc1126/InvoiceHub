@@ -4,8 +4,8 @@ Moved out of ``AppState`` (ENG-03) without behaviour changes; ``AppState`` keeps
 method names and forwards here, so routes and callers are unchanged.
 
 What stays in AppState and arrives as a callback: the active TargetProfile, the cost detail
-path, the configured outbound directory (settings own its persistence) and the homepage
-selection check (invoice-list identity rules). Each is read on every call, never captured,
+path and the configured outbound directory (settings own its persistence); homepage
+selections are rechecked through ``InvoiceSelectionService``. Each is read on every call, never captured,
 because watch_dir/outbound switches replace them and a stale value would export documents
 for the previous directory. Writers take AppState's own RLock, so exports stay serialised
 with directory switches.
@@ -33,6 +33,7 @@ from invoice_hub.projections.documents import (
 )
 from invoice_hub.services.document_index import DocumentIndex, InboundDetails
 from invoice_hub.services.errors import StaleInvoiceSelectionError
+from invoice_hub.services.invoice_selection import InvoiceSelectionService, selection_family_key
 from invoice_hub.storage import SQLiteRepository, atomic_write_json, read_json_object
 from invoice_hub.storage.read_views import file_signature
 from invoice_hub.targets.paths import path_is_under_root
@@ -51,7 +52,7 @@ class DocumentService:
         cost_detail_csv: Callable[[], Path],
         outbound_dir: Callable[[], str],
         recent_outbound_dirs: Callable[[], list[str]],
-        validate_inbound_selection: Callable[[dict], dict[str, list[dict]]],
+        selection: InvoiceSelectionService,
     ) -> None:
         self._lock = lock
         self.repo = repo
@@ -65,7 +66,7 @@ class DocumentService:
         self._cost_detail_csv = cost_detail_csv
         self._outbound_dir = outbound_dir
         self._recent_outbound_dirs = recent_outbound_dirs
-        self._validate_inbound_selection = validate_inbound_selection
+        self._selection = selection
 
     @property
     def active_profile(self) -> TargetProfile:
@@ -165,11 +166,26 @@ class DocumentService:
     def _document_defaults_from_payload(self, payload: dict | None) -> dict:
         return payload.get("defaults") if isinstance((payload or {}).get("defaults"), dict) else {}
 
+    def _validated_inbound_selection(self, payload: dict) -> dict[str, list[dict]]:
+        if not isinstance(payload, dict) or not payload.get("target_id"):
+            raise DocumentError("缺少当前发票目录标识，请返回首页重新勾选。")
+        if payload["target_id"] != self.active_profile.id:
+            raise StaleInvoiceSelectionError("发票目录已切换，请返回首页重新勾选。")
+        _, selected = self._selection.validated_invoice_selection(payload, max_items=1000, operation="开具入库单")
+        root = Path(self.active_profile.watch_dir).resolve()
+        grouped: dict[str, list[dict]] = {}
+        for item in selected:
+            source = Path(item.get("source_path") or item.get("file_path") or "").resolve()
+            if not source.is_relative_to(root) or not source.is_file():
+                raise StaleInvoiceSelectionError("勾选源文件已移除或超出当前目录，请重新勾选。")
+            grouped.setdefault(selection_family_key(item), []).append(item)
+        return grouped
+
     def document_inbound_selection(self, payload: dict) -> dict:
         # The homepage handoff is only a draft. Recheck identities in the current target
         # here and again at export, so a directory switch cannot export another invoice.
         with self._lock:
-            grouped = self._validate_inbound_selection(payload)
+            grouped = self._validated_inbound_selection(payload)
             numbers = [family.removeprefix("number:") for family in grouped if family.startswith("number:")]
             options = {item["invoice_number"]: item for item in self._inbound_details.read(self._cost_detail_csv(), numbers)}
             entries = []
@@ -326,7 +342,7 @@ class DocumentService:
     def _export_inbound_document_locked(self, payload: dict | None = None) -> dict:
         payload = payload or {}
         if "selection" in payload:
-            grouped = self._validate_inbound_selection(payload["selection"])
+            grouped = self._validated_inbound_selection(payload["selection"])
             if list(grouped) != [f"number:{str(payload.get('invoice_number') or '').strip()}"]:
                 raise StaleInvoiceSelectionError("入库单与勾选发票不一致，请重新核对。")
             if payload.get("mode") not in {"skip_existing", "copy_existing"}:

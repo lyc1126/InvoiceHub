@@ -242,3 +242,50 @@ def test_confirmed_trash_flows_into_existing_projection_sync_and_keeps_manual_fi
     assert next(row for row in rows if row['文件路径'] == str(paths[2]))['销售方'] == '人工保留销售方'
     assert monitor.load_manual_overrides() == before
     assert paths[1].exists() and paths[2].exists()
+
+
+def test_selection_service_follows_watch_dir_switch_and_live_invoice_list(tmp_path, monkeypatch):
+    from invoice_hub.services.errors import StaleInvoiceSelectionError
+
+    monkeypatch.setattr("invoice_hub.services.app_state.AppState.run_background_diagnostics", lambda *args: None)
+    state = create_app(tmp_path).state.invoice_hub
+    source = tmp_path / "a.pdf"
+    source.write_bytes(b"%PDF")
+    listed = {"items": [{"invoice_key": "0", "source_path": str(source), "invoice_number": "1" * 20}], "snapshot": {}}
+    # The service must ask AppState for the invoice list on every call, so instance patches apply.
+    monkeypatch.setattr(state, "list_invoices", lambda: listed)
+    old_target = state.active_profile.id
+    request = {"target_id": old_target, "items": [{"invoice_key": "0", "source_path": str(source)}]}
+    _, selected = state._validated_invoice_selection(request, max_items=1, operation="测试")
+    assert selected == listed["items"]
+
+    other = tmp_path / "other"
+    other.mkdir()
+    state.update_settings({"watch_dir": str(other)})
+
+    assert state._selection.active_profile.id == state.active_profile.id != old_target
+    with pytest.raises(StaleInvoiceSelectionError):
+        state.invoice_selection_summary(request)
+
+
+def test_selection_summary_waits_for_the_app_state_lock(tmp_path, monkeypatch):
+    import threading
+
+    monkeypatch.setattr("invoice_hub.services.app_state.AppState.run_background_diagnostics", lambda *args: None)
+    state = create_app(tmp_path).state.invoice_hub
+    finished = threading.Event()
+
+    def summarize() -> None:
+        try:
+            state.invoice_selection_summary({"items": []})
+        except Exception:
+            pass
+        finished.set()
+
+    with state._lock:
+        worker = threading.Thread(target=summarize)
+        worker.start()
+        # The split service must reuse AppState's RLock, not a private one.
+        assert not finished.wait(0.3)
+    worker.join(timeout=10)
+    assert finished.is_set()

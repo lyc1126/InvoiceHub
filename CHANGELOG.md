@@ -2,6 +2,15 @@
 
 ## 未发布
 
+### 2026-11-10 AppState 拆出发票勾选服务（ENG-03 第六步）
+
+- 需求：用户要求继续 ENG-03。上一轮建议把勾选合计连同勾选复核辅助方法拆成发票勾选服务，让单据、预览/打印直接依赖它，去掉第二、五步留下的勾选回调。
+- 起点：本地开发线 `codex/cost-select-all-transitions` 的 `829cb00`；在独立 worktree 的 `codex/appstate-selection-service` 施工，主工作区未改动。
+- 方案：新文件 `services/invoice_selection.py`。AppState 原有的 5 个勾选规则静态方法（文件名 20 位号码、来源身份、同票分组键、金额解析、文件格式）改为模块级纯函数；勾选复核（`validated_invoice_selection`）、勾选合计及其两个辅助方法迁入 `InvoiceSelectionService`。单据专用的入库勾选核对 `_validated_inbound_selection` 从 AppState 移入 `DocumentService`；单据与预览/打印改为直接依赖勾选服务和纯函数，原先的 5 个勾选回调删除。发票列表 `list_invoices`（缓存、一致性、重建）仍在 AppState，以回调交给勾选服务，每次调用现取（`test_documents.py` 会在实例上替换它）。AppState 保留 `_validated_invoice_selection` 转发（发票详情路由与删除所选仍调用）、`invoice_selection_summary` 转发，以及列表/一致性代码仍在用的 `_invoice_number_from_filename`、`_file_format_from_source` 两个别名。`services/__init__.py` 改为直接从 `errors.py` 导出 `StaleInvoiceSelectionError`（同一个类，`app_state` 不再导入它）。
+- 结果：`app_state.py` 3216 → 3045 行，方法 197 → 189；新文件 `invoice_selection.py` 221 行；`documents.py`、`preview_print.py` 只改构造参数与调用名。
+- 验证：搬移前后逐函数/方法对比，只有名称替换（去掉 `self.` 与下划线前缀、回调改为直接调用）；OpenAPI 与路由表 JSON 逐字节一致；ruff 通过；新增两条测试——切换 watch_dir 后旧目录的勾选被判为过期、服务读到新目标，且发票列表经 AppState 实例现取；勾选合计会等待 AppState 的锁。变异核对三种：活动目标改为构造时快照、锁换成私有 RLock、发票列表在构造时绑定，各自被对应测试抓住。既有的单据、预览/打印守护测试照常通过。全量 pytest 774 通过、16 跳过，基线 772 通过（差额即两条新测试）。
+- 未覆盖：未在真实浏览器操作首页勾选合计、批量入库、预览与打印；未重建打包产物。`INTERFACES_AND_FLOWS.md` 中 `AppState.invoice_selection_summary()` 的表述经转发仍成立，且该文件在主工作区有未提交修改，本轮未改。
+
 ### 2026-11-10 AppState 拆出预览/打印编排服务（ENG-03 第五步）
 
 - 需求：用户要求继续 ENG-03 下一步，即上一轮建议的预览/打印。

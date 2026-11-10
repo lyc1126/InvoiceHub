@@ -8,7 +8,7 @@ AppState and passed in, because AppState clears them on watch_dir switches and t
 recognition shares the preview pool.
 
 Selection identity rules (validation, invoice-family key, source identity, file format)
-belong to the invoice list and stay in AppState; they arrive as callbacks. The active
+come from ``InvoiceSelectionService`` and its module helpers. The active
 profile is read on every call, and preview creation holds AppState's own RLock so a
 directory switch cannot publish a job built from the previous watch_dir.
 """
@@ -36,6 +36,12 @@ from invoice_hub.services.invoice_printing import (
     InvoicePrintService,
     InvoicePrintSource,
 )
+from invoice_hub.services.invoice_selection import (
+    InvoiceSelectionService,
+    file_format_from_source,
+    selection_family_key,
+    selection_source_identity,
+)
 from invoice_hub.storage import SQLiteRepository
 from invoice_hub.targets.paths import path_is_under_root
 
@@ -49,20 +55,14 @@ class InvoicePreviewPrintService:
         preview_service: FilePreviewService,
         print_service: InvoicePrintService,
         active_profile: Callable[[], TargetProfile],
-        validate_selection: Callable[..., tuple[dict, list[dict]]],
-        family_key: Callable[[dict], str],
-        source_identity: Callable[[object], str],
-        file_format: Callable[..., str],
+        selection: InvoiceSelectionService,
     ) -> None:
         self._lock = lock
         self.repo = repo
         self._file_preview_service = preview_service
         self._invoice_print_service = print_service
         self._active_profile = active_profile
-        self._validate_selection = validate_selection
-        self._family_key = family_key
-        self._source_identity = source_identity
-        self._file_format = file_format
+        self._selection = selection
 
     @property
     def active_profile(self) -> TargetProfile:
@@ -85,7 +85,7 @@ class InvoicePreviewPrintService:
 
     def _print_pdf_path(self, item: dict) -> Path | None:
         source_text = str(item.get("source_path") or item.get("file_path") or "").strip()
-        if not source_text or self._file_format("", source_text) != "pdf":
+        if not source_text or file_format_from_source("", source_text) != "pdf":
             return None
         source = Path(source_text).expanduser()
         if not source.is_absolute():
@@ -130,17 +130,17 @@ class InvoicePreviewPrintService:
         }
 
     def prepare_invoice_print(self, payload: dict) -> dict:
-        current_payload, selected_items = self._validate_selection(
+        current_payload, selected_items = self._selection.validated_invoice_selection(
             payload,
             max_items=MAX_PRINT_SELECTION_RECORDS,
             operation="打印",
         )
         selected_families: dict[str, list[dict]] = {}
         for item in selected_items:
-            selected_families.setdefault(self._family_key(item), []).append(item)
+            selected_families.setdefault(selection_family_key(item), []).append(item)
         current_families: dict[str, list[dict]] = {}
         for item in current_payload["items"]:
-            current_families.setdefault(self._family_key(item), []).append(item)
+            current_families.setdefault(selection_family_key(item), []).append(item)
 
         sources: list[InvoicePrintSource] = []
         issues: list[str] = []
@@ -150,7 +150,7 @@ class InvoicePreviewPrintService:
             selected_pdf_items = [
                 item
                 for item in family_items
-                if self._file_format(
+                if file_format_from_source(
                     str(item.get("source_file") or item.get("file_name") or ""),
                     str(item.get("source_path") or item.get("file_path") or ""),
                 )
@@ -159,7 +159,7 @@ class InvoicePreviewPrintService:
             all_pdf_items = [
                 item
                 for item in current_families.get(family_key, [])
-                if self._file_format(
+                if file_format_from_source(
                     str(item.get("source_file") or item.get("file_name") or ""),
                     str(item.get("source_path") or item.get("file_path") or ""),
                 )
@@ -168,7 +168,7 @@ class InvoicePreviewPrintService:
             candidates: list[dict] = []
             candidate_identities: set[str] = set()
             for candidate in [*selected_pdf_items, *all_pdf_items]:
-                identity = self._source_identity(candidate.get("source_path") or candidate.get("file_path"))
+                identity = selection_source_identity(candidate.get("source_path") or candidate.get("file_path"))
                 if identity and identity not in candidate_identities:
                     candidate_identities.add(identity)
                     candidates.append(candidate)
@@ -188,15 +188,15 @@ class InvoicePreviewPrintService:
                 else:
                     issues.append(f"{label} 仅有 OFD/XML，且同票家族没有可用 PDF")
                 continue
-            path_identity = self._source_identity(chosen_path)
+            path_identity = selection_source_identity(chosen_path)
             if path_identity in used_paths:
                 continue
             used_paths.add(path_identity)
             selected_pdf_identities = {
-                self._source_identity(item.get("source_path") or item.get("file_path"))
+                selection_source_identity(item.get("source_path") or item.get("file_path"))
                 for item in selected_pdf_items
             }
-            if self._source_identity(chosen_item.get("source_path") or chosen_item.get("file_path")) not in selected_pdf_identities:
+            if selection_source_identity(chosen_item.get("source_path") or chosen_item.get("file_path")) not in selected_pdf_identities:
                 format_fallback_count += 1
             sources.append(InvoicePrintSource(path=chosen_path, label=label))
 
@@ -319,7 +319,7 @@ class InvoicePreviewPrintService:
     def prepare_invoice_preview(self, payload: dict) -> dict:
         # Keep captured target, source validation and the published result in one directory generation.
         with self._lock:
-            _current_payload, selected_items = self._validate_selection(
+            _current_payload, selected_items = self._selection.validated_invoice_selection(
                 payload,
                 max_items=MAX_PREVIEW_SELECTION_RECORDS,
                 operation="预览",
