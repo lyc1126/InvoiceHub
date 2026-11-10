@@ -332,7 +332,7 @@
 | `src/invoice_hub/api/common.py` | 请求辅助：`_state`、同源/原生选择器/更新来源校验、桌面 host challenge、三条 monitor recovery route 的认证 transcript、做账错误映射、SSE 游标。 | 被 `app.py` 与全部路由组共用。普通 bridge 调用保持原语义；只有带完整 recovery 认证头、空 body 且 challenge 未重放的 host 请求才执行 HMAC 校验并签名精确响应；四条 picker route 与 update install 继续把 private failure 映射为固定脱敏 503。 |
 | `src/invoice_hub/api/routes/__init__.py` | 路由组包说明。 | 新领域 API 在此目录新增模块并由 `create_app` 显式组合。 |
 | `src/invoice_hub/api/routes/settings.py` | About、更新检查/安装、设置、偏好、诊断与 watch_dir 选择/校验/改名路由。 | `AppState` 设置与更新服务；picker 与 update install 走 `common` 的脱敏 503。 |
-| `src/invoice_hub/api/routes/invoices.py` | 发票列表、删除所选、勾选合计、原票预览、批量打印与详情/手改/打开路由。 | `AppState`、`invoice_trash`、`file_preview`、`invoice_printing`；预览内容使用 `PREVIEW_CONTENT_HEADERS`。 |
+| `src/invoice_hub/api/routes/invoices.py` | 发票列表、删除所选、勾选合计、原票预览、批量打印与详情/手改/打开路由。 | `AppState`（预览/打印经 `preview_print` 转发）、`invoice_trash`、`file_preview`、`invoice_printing`；预览内容使用 `PREVIEW_CONTENT_HEADERS`。 |
 | `src/invoice_hub/api/routes/costs.py` | 成本分析快照、分页视图、开票参考状态与打开汇总路由。 | `CostAnalysisService` 经 `AppState`。 |
 | `src/invoice_hub/api/routes/documents.py` | 入库/出库单据状态、索引、目录与预览/导出/打开路由。 | `document_index` 与单据投影。 |
 | `src/invoice_hub/api/routes/dossier.py` | 业务资料夹读取与打开路由。 | 做账与成本共用的公司资料夹。 |
@@ -421,11 +421,12 @@
 | 文件 | 职责与入口 | 关系与修改影响 |
 |---|---|---|
 | `src/invoice_hub/services/__init__.py` | 导出 `AppState`、过期选择、预览和打印异常及 `create_state`。 | API 应用工厂依赖。 |
-| `src/invoice_hub/services/app_state.py` | 当前统一用例门面：设置、诊断、发票、预览/打印、成本、单据、monitor、皮肤、OCR 占位、更新 metadata/host approval 和关闭；做账、单据、成本、业务资料夹用例已拆到 `services/bookkeeping.py`、`services/documents.py`、`services/costs.py`、`services/dossier.py`，这里只保留同名转发。 | 上接 API，下接几乎全部子系统；`_host_update_lock` 串行化 allowlisted Feed gate、host candidate 和一次性 install approval，改动必须按用例做相邻回归。 |
+| `src/invoice_hub/services/app_state.py` | 当前统一用例门面：设置、诊断、发票、预览/打印、成本、单据、monitor、皮肤、OCR 占位、更新 metadata/host approval 和关闭；做账、单据、成本、业务资料夹、预览/打印用例已拆到 `services/bookkeeping.py`、`services/documents.py`、`services/costs.py`、`services/dossier.py`、`services/preview_print.py`，这里只保留同名转发。 | 上接 API，下接几乎全部子系统；`_host_update_lock` 串行化 allowlisted Feed gate、host candidate 和一次性 install approval，改动必须按用例做相邻回归。 |
 | `src/invoice_hub/services/dossier.py` | `BusinessDossierService`：解析当前公司资料夹、一次有界扫描快捷入口/统计并限制打开路径（ENG-03 从 AppState 原样迁出；扫描上限常量也在此）。AppState 保留 `business_dossier/open_business_dossier` 转发，做账经 `business_dossier_root()` 取公司目录。 | `/api/v1/business-dossier*` 和首页消费；不得改变 `watch_dir` 扫描语义；截断统计必须明确为下界。 |
 | `src/invoice_hub/services/document_rendering.py` | MuPDF 文档打开和安全分页 PNG 渲染的共享适配。 | preview/print 共用；缺依赖、加密、空文档、页尺寸和渲染失败保持结构化错误。 |
 | `src/invoice_hub/services/file_preview.py` | 短期源文件预览 job、闲置续租、页面/文本缓存、SVG/XML/图片安全边界。 | 保留已选源文件顺序；15 分钟闲置 TTL、页数、像素、作业数和缓存上限防止内存滥用。 |
 | `src/invoice_hub/services/invoice_printing.py` | 短期同票 PDF 打印 job 和分页 PNG 缓存。 | 不持久化票面；只接收受控 PDF，过期/容量/加密失败明确返回。 |
+| `src/invoice_hub/services/preview_print.py` | `InvoicePreviewPrintService`：把首页勾选转成当前 watch_dir 内的预览源/同票 PDF 打印源，创建 job、续租、读页与受限打开，并记录事件（ENG-03 从 AppState 原样迁出）。 | AppState 创建 `FilePreviewService`/`InvoicePrintService` 后传入（目录切换时由 AppState 清空；临时识别共用预览池）；勾选校验、同票分组、来源身份与文件格式仍属发票列表，经回调注入；创建预览持 AppState 同一把 RLock。 |
 | `src/invoice_hub/services/bookkeeping.py` | `BookkeepingService`：账套确认、科目/辅助核算查询、凭证生成/决定/审核、映射规则预览与保存、定向重算、捷锐导出与导入批次、状态/映射迁移（ENG-03 从 AppState 原样迁出）。 | AppState 构造并以同名方法转发，路由不变。活动 TargetProfile、config、公司资料夹与成本明细路径经回调实时读取，不缓存快照；写入先取 AppState 同一把 `_lock`，再取 `bookkeeping_write_lock`。 |
 | `src/invoice_hub/services/costs.py` | `CostService`：`CostProjectionService` 工厂、成本快照、分页视图、开票参考状态保存与打开成本汇总（ENG-03 从 AppState 原样迁出）。 | 与 `projections/costs.py` 分工：这里只决定读哪个 TargetProfile、持哪把锁，算法在投影层。每次调用在 AppState 同一把 RLock 下复制活动目标与加价率，再在该目标的 monitor 同步锁内读写；保存后清发票缓存经 AppState 回调。 |
 | `src/invoice_hub/services/documents.py` | `DocumentService`：单据默认值、单据目录状态、首页批量入库核对、入/出库预览、导出状态、导出与打开（ENG-03 从 AppState 原样迁出）。 | AppState 构造并以同名方法转发，路由不变；`_document_index` 与 `_inbound_details` 仍由 AppState 创建后传入（documents 路由直接读索引状态）。活动 TargetProfile、成本明细路径、出库目录与首页勾选校验经回调实时读取；出库目录的保存/最近记录仍属设置用例留在 AppState。 |

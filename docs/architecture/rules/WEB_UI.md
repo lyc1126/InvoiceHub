@@ -3,7 +3,7 @@
 本页是 [AGENTS.md](../../../AGENTS.md) 按任务引用的强制功能规则；命中本专题时须在修改前完整读取。规则维护在本页，入口摘要不能替代正文。
 
 - 适用问题：API 消费、JS/CSS、目录草稿、SSE、大列表、勾选合计、预览、打印、皮肤。
-- 代码与验收定位：web/templates/、web/static/、services/document_index.py、documents.py、file_preview.py、invoice_printing.py；任务导航第 9—11 节。Python 模块目录（extraction/projections/monitoring/services/bookkeeping/runners/platform/release）相对 `src/invoice_hub/`，其余路径相对仓库根。
+- 代码与验收定位：web/templates/、web/static/、services/document_index.py、documents.py、file_preview.py、invoice_printing.py、preview_print.py；任务导航第 9—11 节。Python 模块目录（extraction/projections/monitoring/services/bookkeeping/runners/platform/release）相对 `src/invoice_hub/`，其余路径相对仓库根。
 - 导航：[任务入口](../AGENT_TASK_MAP.md#task-web) · [架构总入口](../../DEVELOPMENT_ARCHITECTURE.md) · [文件地图](../FILE_MAP.md) · [接口与流程](../INTERFACES_AND_FLOWS.md) · [数据与算法](../DATA_AND_ALGORITHMS.md) · [设计原因](../COMMENT_RATIONALE_MAP.md)。
 
 ## 接口、资源与交互

@@ -301,9 +301,9 @@ BAT/页面/monitor 触发
 
 接口、错误和完整时序见 [INTERFACES_AND_FLOWS.md](architecture/INTERFACES_AND_FLOWS.md)。算法和数据校验见 [DATA_AND_ALGORITHMS.md](architecture/DATA_AND_ALGORITHMS.md)。
 
-源文件预览也是主数据链旁边的只读流程：`AppState` 逐条复核选择身份和 `watch_dir` 边界，`FilePreviewService` 保存短期不透明作业、文件签名和按需 PNG/纯文本缓存；PDF/OFD/SVG 与打印复用 `document_rendering.py` 的 MuPDF 层，常见图片由 Pillow 解码，未知格式只提供元信息。浏览器不接收绝对路径，主动内容不进入 DOM，流程不写源票、投影、runtime 文件或 SQLite 发票主数据。
+源文件预览也是主数据链旁边的只读流程：`services/preview_print.py`（经 AppState 转发）逐条复核选择身份和 `watch_dir` 边界，`FilePreviewService` 保存短期不透明作业、文件签名和按需 PNG/纯文本缓存；PDF/OFD/SVG 与打印复用 `document_rendering.py` 的 MuPDF 层，常见图片由 Pillow 解码，未知格式只提供元信息。浏览器不接收绝对路径，主动内容不进入 DOM，流程不写源票、投影、runtime 文件或 SQLite 发票主数据。
 
-批量打印是主数据链旁边的只读流程：`AppState` 重新校验勾选身份并按同票家族选出当前 `watch_dir` 内的 PDF，`InvoicePrintService` 在工作线程中生成有时限和容量上限的内存 PNG 页。独立打印页等待全部票面完成 `load + decode` 和两次浏览器渲染帧，再调用 `window.print()`；命名页只声明横/纵方向，纸型沿用打印机或用户选择，票面盒使用页框百分比而非固定 A4 或动态打印视口尺寸，避免预览重排反馈。该流程不写源发票、普通/成本投影或 SQLite 发票主数据，也不能把浏览器对话框状态解释为实体打印结果。
+批量打印是主数据链旁边的只读流程：`services/preview_print.py`（经 AppState 转发）重新校验勾选身份并按同票家族选出当前 `watch_dir` 内的 PDF，`InvoicePrintService` 在工作线程中生成有时限和容量上限的内存 PNG 页。独立打印页等待全部票面完成 `load + decode` 和两次浏览器渲染帧，再调用 `window.print()`；命名页只声明横/纵方向，纸型沿用打印机或用户选择，票面盒使用页框百分比而非固定 A4 或动态打印视口尺寸，避免预览重排反馈。该流程不写源发票、普通/成本投影或 SQLite 发票主数据，也不能把浏览器对话框状态解释为实体打印结果。
 
 ## 9. 新开发者阅读顺序
 
@@ -321,7 +321,7 @@ BAT/页面/monitor 触发
 
 | 状态 | 事实 | 维护含义 |
 |---|---|---|
-| 架构债务 | `services/app_state.py` 聚合大量跨域用例 | 改动前必须按用例定位，避免把不相关逻辑一起重构；新领域用例不再加入 AppState，按领域拆分见 ENG-03（做账、单据、成本、业务资料夹已拆到 `services/bookkeeping.py`、`services/documents.py`、`services/costs.py`、`services/dossier.py`，AppState 保留同名转发）。HTTP 层已按领域拆到 `api/routes/` |
+| 架构债务 | `services/app_state.py` 聚合大量跨域用例 | 改动前必须按用例定位，避免把不相关逻辑一起重构；新领域用例不再加入 AppState，按领域拆分见 ENG-03（做账、单据、成本、业务资料夹、预览/打印已拆到 `services/` 下的 `bookkeeping.py`、`documents.py`、`costs.py`、`dossier.py`、`preview_print.py`，AppState 保留同名转发）。HTTP 层已按领域拆到 `api/routes/` |
 | 架构债务 | `cost_analysis.py` 与 `costs.py` 有参考键、加价和锁定快照的对应实现 | 修改公式必须双向核对并跑成本全链测试 |
 | 架构债务 | 路径规范化在 `targets`、`monitoring`、成本和选择合计中有不同语境实现 | 不能仅凭函数同名就机械合并 |
 | 架构债务 | `base_head.html` 存在，但页面仍各自维护 head 和资源版本 | 静态资源变更必须逐模板核对版本参数 |

@@ -2,6 +2,16 @@
 
 ## 未发布
 
+### 2026-11-10 AppState 拆出预览/打印编排服务（ENG-03 第五步）
+
+- 需求：用户要求继续 ENG-03 下一步，即上一轮建议的预览/打印。
+- 起点：本地开发线 `codex/cost-select-all-transitions` 的 `b20b030`；在独立 worktree 的 `codex/appstate-preview-service` 施工，主工作区未改动。
+- 方案：把首页勾选转成预览源与同票 PDF 打印源、创建/读取/续租 job、受限打开的 16 个方法原样迁到新的 `services/preview_print.py::InvoicePreviewPrintService`，AppState 保留 9 个同名转发。`FilePreviewService` 与 `InvoicePrintService` 实例仍由 AppState 创建后传入：AppState 在切换目录与重建时清空它们，临时识别共用预览池，测试也直接读取 `state._file_preview_service`。勾选校验、同票分组键、来源身份与文件格式这 4 个辅助方法属于发票列表/勾选规则，仍在 AppState，以回调注入；创建预览仍持 AppState 同一把 RLock，活动目标经回调实时读取。预览拆走后 `AppState._path_is_under_root` 别名已无调用，随之删除。
+- 测试迁移：`test_file_preview.py` 预览“打开文件/位置”用例的 `open_local_path` 打桩目标从 `services.app_state` 改为 `services.preview_print`，断言不变。
+- 结果：`app_state.py` 3515 → 3216 行，方法 204 → 197；新文件 `preview_print.py` 398 行。
+- 验证：搬移前后逐方法对比，只有回调与受控根判断的名称替换；OpenAPI 与路由表 JSON 逐字节一致；ruff 通过；新增两条测试——切换 watch_dir 后旧目录源文件被预览拒绝（`source_changed`）、打印不再选用、服务读到的是新目标；预览创建会等待 AppState 的锁——变异核对时（构造时快照、私有 RLock）各自失败。全量 pytest 772 通过、16 跳过，基线 770 通过（差额即两条新测试）。
+- 未覆盖：未在真实浏览器打开预览弹窗或打印页；未重建打包产物。
+
 ### 2026-11-10 AppState 拆出业务资料夹服务（ENG-03 第四步）
 
 - 需求：用户要求继续 ENG-03，拆业务资料夹。做账已依赖它推断公司目录，多公司工作区（WS-02/WS-07）也会直接复用。
