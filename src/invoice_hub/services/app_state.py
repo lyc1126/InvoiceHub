@@ -1,3 +1,11 @@
+"""AppState: composition root and facade for the localhost backend.
+
+ENG-03 split every use case into ``services/<domain>.py``. AppState now builds those services,
+owns the shared config, active TargetProfile and RLock, runs the two cross-domain workflows
+(switching watch_dir, deleting selected invoices) and keeps the public method names the API
+routes and tests call, forwarding each to its service.
+"""
+
 from __future__ import annotations
 
 import os
@@ -11,26 +19,26 @@ from invoice_hub.platform import host_rpc
 from invoice_hub.projections.costs import CostProjectionService
 from invoice_hub.release.build_manifest import load_build_manifest
 from invoice_hub.release.package_manifest import load_package_manifest
+from invoice_hub.services.about import AboutService
+from invoice_hub.services.app_icons import AppIconService
+from invoice_hub.services.appearance import AppearanceService
 from invoice_hub.services.background_sync import BackgroundSyncService
 from invoice_hub.services.bookkeeping import BookkeepingService
 from invoice_hub.services.costs import CostService
+from invoice_hub.services.diagnostics import DiagnosticsService
+from invoice_hub.services.document_index import DocumentIndex, InboundDetails
+from invoice_hub.services.documents import DocumentService
+from invoice_hub.services.dossier import BusinessDossierService
+from invoice_hub.services.file_preview import FilePreviewService
+from invoice_hub.services.invoice_list import InvoiceListService
+from invoice_hub.services.invoice_printing import InvoicePrintService
+from invoice_hub.services.invoice_rename import InvoiceRenameService
+from invoice_hub.services.invoice_selection import InvoiceSelectionService
+from invoice_hub.services.invoice_trash import InvoiceTrashService, TrashError
 from invoice_hub.services.monitor_bridge import MonitorBridge
 from invoice_hub.services.monitor_control import MonitorControlService
 from invoice_hub.services.ocr import OcrService
 from invoice_hub.services.preview_print import InvoicePreviewPrintService
-from invoice_hub.services.document_index import DocumentIndex, InboundDetails
-from invoice_hub.services.diagnostics import DiagnosticsService
-from invoice_hub.services.dossier import BusinessDossierService
-from invoice_hub.services.documents import DocumentService
-from invoice_hub.services.file_preview import FilePreviewService
-from invoice_hub.services.invoice_printing import InvoicePrintService
-from invoice_hub.services.invoice_list import InvoiceListService
-from invoice_hub.services.invoice_rename import InvoiceRenameService
-from invoice_hub.services.invoice_selection import InvoiceSelectionService
-from invoice_hub.services.invoice_trash import InvoiceTrashService, TrashError
-from invoice_hub.services.about import AboutService
-from invoice_hub.services.app_icons import AppIconService
-from invoice_hub.services.appearance import AppearanceService
 from invoice_hub.services.server_shutdown import ServerShutdownService
 from invoice_hub.services.settings import SettingsService
 from invoice_hub.services.skins import SkinService
@@ -38,11 +46,9 @@ from invoice_hub.services.update_service import UpdateService
 from invoice_hub.storage import SQLiteRepository, atomic_write_json
 from invoice_hub.targets import AppConfig, ensure_runtime_layout, load_config, target_profile_for
 from invoice_hub.targets.paths import Layout
-# Keep a completed startup worker (or a cost save) scoped to the TargetProfile it captured.
 
 if TYPE_CHECKING:
     from invoice_hub.domain.models import VoucherDecisionPatch, VoucherReviewPatch
-
 
 
 class AppState:
@@ -71,15 +77,92 @@ class AppState:
         self._invoice_print_service = InvoicePrintService()
         self._file_preview_service = FilePreviewService()
         self._invoice_trash = InvoiceTrashService(layout.runtime_dir / "local_state" / "invoice-trash")
-        self._shutdown = ServerShutdownService(
+        # Domain services split out of AppState (ENG-03). AppState still owns the config, the
+        # active TargetProfile and the RLock; services get them as providers (read per call,
+        # never copied) because watch_dir and settings changes replace them. Cross-service
+        # collaborators are AppState methods passed as callbacks, so class-level patches on
+        # AppState apply everywhere. The selection service is built before documents and
+        # preview/print, which receive it directly; every other link is a callback.
+        self._invoices = InvoiceListService(
+            lock=self._lock,
+            repo=self.repo,
+            db_path=layout.db_path,
+            active_profile=lambda: self._active_profile,
+            cost_service=lambda: self.cost_service(),
+        )
+        self._selection = InvoiceSelectionService(
+            lock=self._lock,
+            active_profile=lambda: self.active_profile,
+            list_invoices=lambda: self.list_invoices(),
+            cost_detail_csv=lambda: self.cost_service().detail_csv,
+        )
+        self._preview_print = InvoicePreviewPrintService(
+            lock=self._lock,
+            repo=self.repo,
+            preview_service=self._file_preview_service,
+            print_service=self._invoice_print_service,
+            active_profile=lambda: self.active_profile,
+            selection=self._selection,
+        )
+        self._documents = DocumentService(
+            lock=self._lock,
+            repo=self.repo,
+            document_index=self._document_index,
+            inbound_details=self._inbound_details,
+            defaults_path=layout.runtime_dir / "local_state" / "documents" / "defaults.json",
+            active_profile=lambda: self.active_profile,
+            cost_detail_csv=lambda: self.cost_service().detail_csv,
+            outbound_dir=lambda: self._outbound_invoice_dir_text(),
+            recent_outbound_dirs=lambda: self._recent_outbound_invoice_dirs(),
+            selection=self._selection,
+        )
+        self._costs = CostService(
+            lock=self._lock,
+            repo=self.repo,
+            db_path=layout.db_path,
+            config=lambda: self.config,
+            active_profile=lambda: self._active_profile,
+            recent_watch_dirs=lambda: self._recent_watch_dirs(),
+            clear_invoice_cache=lambda: self._clear_invoice_cache(),
+        )
+        self._dossier = BusinessDossierService(
+            repo=self.repo,
+            config=lambda: self.config,
+            active_profile=lambda: self.active_profile,
+        )
+        self._bookkeeping = BookkeepingService(
+            lock=self._lock,
+            repo=self.repo,
+            config=lambda: self.config,
+            active_profile=lambda: self.active_profile,
+            company_dir=lambda: self._dossier.business_dossier_root(),
+            cost_detail_csv=lambda: self.cost_service().detail_csv,
+        )
+        self._rename = InvoiceRenameService(
+            lock=self._lock,
+            repo=self.repo,
+            active_profile=lambda: self.active_profile,
+            list_invoices=lambda *args, **kwargs: self.list_invoices(*args, **kwargs),
+            monitor_state=lambda: self._monitor_state(),
+            bridge_rebuild=lambda: self.bridge_rebuild(),
+            inspect_watch_dir=lambda path: self.inspect_watch_dir(path),
+            manual_overrides_path=lambda: self._manual_overrides_path(),
+            clear_invoice_cache=lambda: self._clear_invoice_cache(),
+        )
+        self._settings = SettingsService(
             lock=self._lock,
             repo=self.repo,
             layout=layout,
-            document_index=self._document_index,
+            package_manifest=self._package_manifest,
             config=lambda: self.config,
-            bridge_status=lambda *args, **kwargs: self.bridge_status(*args, **kwargs),
-            bridge_stop=lambda *args, **kwargs: self.bridge_stop(*args, **kwargs),
-            save_preferences=lambda *args, **kwargs: self.save_preferences(*args, **kwargs),
+            reload_config=lambda: self._reload_config(),
+            active_profile=lambda: self.active_profile,
+            bridge_status=lambda: self.bridge_status(),
+            cost_service=lambda: self.cost_service(),
+            invoice_summary_csv=lambda: self.invoice_summary_csv(),
+            invoice_summary_xlsx=lambda: self.invoice_summary_xlsx(),
+            document_state=lambda *args, **kwargs: self.document_state(*args, **kwargs),
+            inspect_document_dir=lambda directory: self.inspect_document_dir(directory),
         )
         self._monitor = MonitorControlService(
             lock=self._lock,
@@ -119,39 +202,6 @@ class AppState:
             invoice_summary_csv=lambda *args, **kwargs: self.invoice_summary_csv(*args, **kwargs),
             invoice_summary_xlsx=lambda *args, **kwargs: self.invoice_summary_xlsx(*args, **kwargs),
         )
-        self._settings = SettingsService(
-            lock=self._lock,
-            repo=self.repo,
-            layout=layout,
-            package_manifest=self._package_manifest,
-            config=lambda: self.config,
-            reload_config=lambda: self._reload_config(),
-            active_profile=lambda: self.active_profile,
-            bridge_status=lambda: self.bridge_status(),
-            cost_service=lambda: self.cost_service(),
-            invoice_summary_csv=lambda: self.invoice_summary_csv(),
-            invoice_summary_xlsx=lambda: self.invoice_summary_xlsx(),
-            document_state=lambda *args, **kwargs: self.document_state(*args, **kwargs),
-            inspect_document_dir=lambda directory: self.inspect_document_dir(directory),
-        )
-        self._rename = InvoiceRenameService(
-            lock=self._lock,
-            repo=self.repo,
-            active_profile=lambda: self.active_profile,
-            list_invoices=lambda *args, **kwargs: self.list_invoices(*args, **kwargs),
-            monitor_state=lambda: self._monitor_state(),
-            bridge_rebuild=lambda: self.bridge_rebuild(),
-            inspect_watch_dir=lambda path: self.inspect_watch_dir(path),
-            manual_overrides_path=lambda: self._manual_overrides_path(),
-            clear_invoice_cache=lambda: self._clear_invoice_cache(),
-        )
-        self._invoices = InvoiceListService(
-            lock=self._lock,
-            repo=self.repo,
-            db_path=layout.db_path,
-            active_profile=lambda: self._active_profile,
-            cost_service=lambda: self.cost_service(),
-        )
         self._about = AboutService(
             lock=self._lock,
             repo=self.repo,
@@ -160,70 +210,22 @@ class AppState:
             package_manifest=self._package_manifest,
             preferences=lambda: self.preferences(),
         )
-        self._ocr = OcrService(
-            layout=layout, config=lambda: self.config, active_profile=lambda: self.active_profile,
-        )
         self._appearance = AppearanceService(
             lock=self._lock, repo=self.repo, layout=layout,
             desktop_host_enabled=lambda: self._tauri_desktop_host_enabled(),
         )
-        # Built first: documents and preview/print revalidate homepage selections through it.
-        # list_invoices stays here (cache, consistency) and is looked up per call.
-        self._selection = InvoiceSelectionService(
-            lock=self._lock,
-            active_profile=lambda: self.active_profile,
-            list_invoices=lambda: self.list_invoices(),
-            cost_detail_csv=lambda: self.cost_service().detail_csv,
+        self._ocr = OcrService(
+            layout=layout, config=lambda: self.config, active_profile=lambda: self.active_profile,
         )
-        # The active profile is read per call, so watch_dir switches apply at once.
-        self._preview_print = InvoicePreviewPrintService(
+        self._shutdown = ServerShutdownService(
             lock=self._lock,
             repo=self.repo,
-            preview_service=self._file_preview_service,
-            print_service=self._invoice_print_service,
-            active_profile=lambda: self.active_profile,
-            selection=self._selection,
-        )
-        # Built before bookkeeping, which resolves the company folder through it on every call.
-        self._dossier = BusinessDossierService(
-            repo=self.repo,
-            config=lambda: self.config,
-            active_profile=lambda: self.active_profile,
-        )
-        # The cost service copies the active profile and markup rate under this lock per call;
-        # it must not hold its own copies, because watch_dir and settings changes replace them.
-        self._costs = CostService(
-            lock=self._lock,
-            repo=self.repo,
-            db_path=layout.db_path,
-            config=lambda: self.config,
-            active_profile=lambda: self._active_profile,
-            recent_watch_dirs=lambda: self._recent_watch_dirs(),
-            clear_invoice_cache=lambda: self._clear_invoice_cache(),
-        )
-        # Providers, not snapshots: watch_dir and outbound-dir switches replace these values,
-        # and the next preview/export must follow the new directories.
-        self._documents = DocumentService(
-            lock=self._lock,
-            repo=self.repo,
+            layout=layout,
             document_index=self._document_index,
-            inbound_details=self._inbound_details,
-            defaults_path=layout.runtime_dir / "local_state" / "documents" / "defaults.json",
-            active_profile=lambda: self.active_profile,
-            cost_detail_csv=lambda: self.cost_service().detail_csv,
-            outbound_dir=lambda: self._outbound_invoice_dir_text(),
-            recent_outbound_dirs=lambda: self._recent_outbound_invoice_dirs(),
-            selection=self._selection,
-        )
-        # Providers, not snapshots: settings and watch_dir switches replace config and the
-        # active TargetProfile, and the next bookkeeping call must follow the new company folder.
-        self._bookkeeping = BookkeepingService(
-            lock=self._lock,
-            repo=self.repo,
             config=lambda: self.config,
-            active_profile=lambda: self.active_profile,
-            company_dir=lambda: self._dossier.business_dossier_root(),
-            cost_detail_csv=lambda: self.cost_service().detail_csv,
+            bridge_status=lambda *args, **kwargs: self.bridge_status(*args, **kwargs),
+            bridge_stop=lambda *args, **kwargs: self.bridge_stop(*args, **kwargs),
+            save_preferences=lambda *args, **kwargs: self.save_preferences(*args, **kwargs),
         )
         self.ensure_active_dirs()
         self.append_event("server.started", {"phase": "fast_ready"})
@@ -237,12 +239,17 @@ class AppState:
         for raw in (profile.workspace_dir, profile.state_dir, profile.localappdata_dir):
             Path(raw).mkdir(parents=True, exist_ok=True)
 
-    # Background startup sync lives in services/background_sync.py (ENG-03); tests patch this name on AppState.
-    def run_background_diagnostics(self, trigger: str = "startup_sync") -> None:
-        return self._background.run_background_diagnostics(trigger)
-
     def append_event(self, event_type: str, payload: dict | None = None, error: dict | None = None, task_id: str | None = None) -> dict:
         return self.repo.append_event(event_type, payload=payload, error=error, task_id=task_id)
+
+    def get_task(self, task_id: str) -> dict:
+        return self.repo.get_task(task_id)
+
+    def wait_events(self, after_seq: int) -> list[dict]:
+        return self.repo.list_events_after(after_seq)
+
+    def event_bounds(self) -> dict[str, int]:
+        return self.repo.event_bounds()
 
     def health(self) -> dict:
         build = self._build_manifest
@@ -274,10 +281,11 @@ class AppState:
             "runtime_dir": str(self.layout.runtime_dir.resolve()),
         }
 
-    # Settings, preferences and directory persistence live in services/settings.py (ENG-03); these keep the names.
-    def settings(self) -> dict:
-        return self._settings.settings()
+    def _tauri_desktop_host_enabled(self) -> bool:
+        return host_rpc.desktop_host_mode_enabled()
 
+    # Cross-domain orchestration stays here: switching watch_dir and deleting selected invoices
+    # both touch the monitor, the caches, the active profile and startup sync.
     def _reload_config(self) -> None:
         # Every service reads config through AppState; settings writes call back here.
         self.config = load_config(self.config.root_dir, str(self.config.config_path))
@@ -307,115 +315,6 @@ class AppState:
         settings = self.settings()
         settings["message"] = self._watch_dir_message(settings["path_validation"], saved=True)
         return settings
-
-    def _recent_watch_dirs(self) -> list[str]:
-        return self._settings._recent_watch_dirs()
-
-    def _outbound_invoice_dir_text(self) -> str:
-        return self._settings._outbound_invoice_dir_text()
-
-    def _recent_outbound_invoice_dirs(self) -> list[str]:
-        return self._settings._recent_outbound_invoice_dirs()
-
-    def remove_recent_watch_dir(self, payload: dict | None) -> dict:
-        return self._settings.remove_recent_watch_dir(payload)
-
-    def _persist_watch_dir_config(self, watch_dir: Path) -> None:
-        return self._settings._persist_watch_dir_config(watch_dir)
-
-    def _preferences_path(self) -> Path:
-        return self._settings._preferences_path()
-
-    def _tauri_desktop_host_enabled(self) -> bool:
-        return host_rpc.desktop_host_mode_enabled()
-
-    def preferences(self) -> dict:
-        return self._settings.preferences()
-
-    def save_preferences(self, payload: dict | None) -> dict:
-        return self._settings.save_preferences(payload)
-
-    # About and update lifecycle live in services/about.py (ENG-03); these keep the public names.
-    def about(self) -> dict:
-        return self._about.about()
-
-    def open_about_link(self, link_key: str) -> dict:
-        return self._about.open_about_link(link_key)
-
-    def check_for_updates(self, *, force: bool = False) -> dict:
-        # API, settings, and scheduled checks share this method. In a configured
-        # Tauri host process they are all delegated-install preflight, not an
-        # ordinary cache-only public check.
-        return self._about.check_for_updates(force=force)
-
-    def install_update(self) -> dict:
-        return self._about.install_update()
-
-    def schedule_background_update_check(self, delay_seconds: float = 15.0) -> bool:
-        return self._about.schedule_background_update_check(delay_seconds)
-
-    # Diagnostics and the support package live in services/diagnostics.py (ENG-03); these keep the public names.
-    def diagnostic_summary(self) -> dict:
-        return self._diagnostics.diagnostic_summary()
-
-    def config_health(self) -> dict:
-        return self._diagnostics.config_health()
-
-    def export_support_package(self) -> dict:
-        return self._diagnostics.export_support_package()
-
-    # Document use cases live in services/documents.py (ENG-03); these keep the public names.
-    def document_defaults(self) -> dict[str, dict[str, str]]:
-        return self._documents.document_defaults()
-
-    def save_document_defaults(self, payload: dict | None) -> dict:
-        return self._documents.save_document_defaults(payload)
-
-    def document_state(self, *, restart: bool = False, revalidate: bool = True, selection_only: bool = False) -> dict:
-        return self._documents.document_state(restart=restart, revalidate=revalidate, selection_only=selection_only)
-
-    def inspect_document_dir(self, directory: Path | None) -> dict:
-        return self._documents.inspect_document_dir(directory)
-
-    def pick_outbound_invoice_dir(self) -> dict:
-        return self._settings.pick_outbound_invoice_dir()
-
-    def validate_outbound_invoice_dir(self, payload: dict | None = None) -> dict:
-        return self._settings.validate_outbound_invoice_dir(payload)
-
-    def update_outbound_invoice_dir(self, payload: dict | None) -> dict:
-        return self._settings.update_outbound_invoice_dir(payload)
-
-    def remove_recent_outbound_invoice_dir(self, payload: dict | None) -> dict:
-        return self._settings.remove_recent_outbound_invoice_dir(payload)
-
-    # Invoice list, manual edits and consistency live in services/invoice_list.py (ENG-03); these keep the names.
-    def invoice_summary_csv(self) -> Path:
-        return self._invoices.invoice_summary_csv()
-
-    def invoice_summary_xlsx(self) -> Path:
-        return self._invoices.invoice_summary_xlsx()
-
-    def _manual_overrides_path(self) -> Path:
-        return self._invoices._manual_overrides_path()
-
-    def _clear_invoice_cache(self) -> None:
-        return self._invoices._clear_invoice_cache()
-
-    # Source-invoice renaming lives in services/invoice_rename.py (ENG-03); this keeps the public name.
-    def rename_invoice_files(self) -> dict:
-        return self._rename.rename_invoice_files()
-
-    def consistency_report(self, only_mismatch: bool = False) -> dict:
-        return self._invoices.consistency_report(only_mismatch)
-
-    def list_invoices(self, filters: dict | None = None) -> dict:
-        return self._invoices.list_invoices(filters)
-
-    # Selection revalidation lives in services/invoice_selection.py (ENG-03); the invoice
-    # detail route and delete-selected still call it through this name.
-    def _validated_invoice_selection(self, payload: dict, *, max_items: int, operation: str) -> tuple[dict, list[dict]]:
-        return self._selection.validated_invoice_selection(payload, max_items=max_items, operation=operation)
 
     def prepare_invoice_trash(self, payload: dict) -> dict:
         with self._lock:
@@ -451,10 +350,47 @@ class AppState:
                 self.run_background_diagnostics("startup_sync")
             return self._invoice_trash.public(job)
 
+    # --- Invoice list, manual edits, consistency, detail and opening sources: services/invoice_list.py.
+    # Background sync, rebuild, rename, delete and diagnostics reach the cache and override path here.
+    def invoice_summary_csv(self) -> Path:
+        return self._invoices.invoice_summary_csv()
+
+    def invoice_summary_xlsx(self) -> Path:
+        return self._invoices.invoice_summary_xlsx()
+
+    def _manual_overrides_path(self) -> Path:
+        return self._invoices._manual_overrides_path()
+
+    def _clear_invoice_cache(self) -> None:
+        return self._invoices._clear_invoice_cache()
+
+    def consistency_report(self, only_mismatch: bool = False) -> dict:
+        return self._invoices.consistency_report(only_mismatch)
+
+    def list_invoices(self, filters: dict | None = None) -> dict:
+        return self._invoices.list_invoices(filters)
+
+    def invoice_detail(self, invoice_key: str) -> dict:
+        return self._invoices.invoice_detail(invoice_key)
+
+    def update_manual_fields(self, invoice_key: str, payload: dict | None) -> dict:
+        return self._invoices.update_manual_fields(invoice_key, payload)
+
+    def open_invoice_file(self, invoice_key: str) -> dict:
+        return self._invoices.open_invoice_file(invoice_key)
+
+    def open_invoice_location(self, invoice_key: str) -> dict:
+        return self._invoices.open_invoice_location(invoice_key)
+
+    # --- Homepage selection revalidation and totals: services/invoice_selection.py.
+    # The invoice detail route and delete-selected call _validated_invoice_selection.
+    def _validated_invoice_selection(self, payload: dict, *, max_items: int, operation: str) -> tuple[dict, list[dict]]:
+        return self._selection.validated_invoice_selection(payload, max_items=max_items, operation=operation)
+
     def invoice_selection_summary(self, payload: dict) -> dict:
         return self._selection.invoice_selection_summary(payload)
 
-    # Preview and print orchestration lives in services/preview_print.py (ENG-03); these keep the public names.
+    # --- Source preview and batch print: services/preview_print.py.
     def prepare_invoice_print(self, payload: dict) -> dict:
         return self._preview_print.prepare_invoice_print(payload)
 
@@ -482,109 +418,19 @@ class AppState:
     def open_invoice_preview_location(self, job_id: str, file_number: int) -> dict:
         return self._preview_print.open_invoice_preview_location(job_id, file_number)
 
-    def invoice_detail(self, invoice_key: str) -> dict:
-        return self._invoices.invoice_detail(invoice_key)
+    # --- Inbound/outbound documents: services/documents.py.
+    def document_defaults(self) -> dict[str, dict[str, str]]:
+        return self._documents.document_defaults()
 
-    # Monitor control and manual rebuild live in services/monitor_control.py (ENG-03); these keep the names.
-    def _monitor_state(self) -> MonitorState:
-        return self._monitor._monitor_state()
+    def save_document_defaults(self, payload: dict | None) -> dict:
+        return self._documents.save_document_defaults(payload)
 
-    def _monitor_bridge(self) -> MonitorBridge:
-        return self._monitor._monitor_bridge()
+    def document_state(self, *, restart: bool = False, revalidate: bool = True, selection_only: bool = False) -> dict:
+        return self._documents.document_state(restart=restart, revalidate=revalidate, selection_only=selection_only)
 
-    def bridge_status(self) -> dict:
-        return self._monitor.bridge_status()
+    def inspect_document_dir(self, directory: Path | None) -> dict:
+        return self._documents.inspect_document_dir(directory)
 
-    def bridge_progress(self) -> dict:
-        return self._monitor.bridge_progress()
-
-    def bridge_health_check(self) -> dict:
-        return self._monitor.bridge_health_check()
-
-    def _watch_dir_message(self, validation: dict, saved: bool = False) -> str:
-        return self._settings._watch_dir_message(validation, saved)
-
-    def bridge_rebuild(self) -> dict:
-        return self._monitor.bridge_rebuild()
-
-    def bridge_start(self) -> dict:
-        return self._monitor.bridge_start()
-
-    def bridge_stop(self) -> dict:
-        return self._monitor.bridge_stop()
-
-    # Structured shutdown lives in services/server_shutdown.py (ENG-03); these keep the public names.
-    @property
-    def server_shutdown_requested(self) -> bool:
-        return self._shutdown.server_shutdown_requested
-
-    def request_server_shutdown(self, behavior: str, remember: bool = False) -> dict:
-        return self._shutdown.request_server_shutdown(behavior, remember)
-
-    def finalize_server_shutdown(self) -> None:
-        return self._shutdown.finalize_server_shutdown()
-
-    def open_monitor_log(self) -> dict:
-        return self._monitor.open_monitor_log()
-
-    def open_runtime_dir(self) -> dict:
-        return self._monitor.open_runtime_dir()
-
-    # Cost use cases live in services/costs.py (ENG-03); this keeps the public name.
-    def cost_service(self) -> CostProjectionService:
-        return self._costs.cost_service()
-
-    # Skin and app-icon use cases live in services/appearance.py (ENG-03); these keep the public names.
-    def skin_service(self) -> SkinService:
-        return self._appearance.skin_service()
-
-    def app_icon_service(self) -> AppIconService:
-        return self._appearance.app_icon_service()
-
-    def app_icon(self) -> dict:
-        return self._appearance.app_icon()
-
-    def update_app_icon(self, icon_id: str) -> dict:
-        return self._appearance.update_app_icon(icon_id)
-
-    def skins(self) -> dict:
-        return self._appearance.skins()
-
-    def import_skin(self, payload: bytes) -> dict:
-        return self._appearance.import_skin(payload)
-
-    def replace_skin(self, payload: bytes, expected_skin_id: str | None = None) -> dict:
-        return self._appearance.replace_skin(payload, expected_skin_id)
-
-    def enable_skin(self, skin_id: str) -> dict:
-        return self._appearance.enable_skin(skin_id)
-
-    def reset_skin(self) -> dict:
-        return self._appearance.reset_skin()
-
-    def skin_file(self, skin_id: str, path: str):
-        return self._appearance.skin_file(skin_id, path)
-
-    # Cost use cases live in services/costs.py (ENG-03); this keeps the public name.
-    def cost_snapshot(self) -> dict:
-        return self._costs.cost_snapshot()
-
-    # Cost use cases live in services/costs.py (ENG-03); this keeps the public name.
-    def cost_view(self, view: str, page: int = 1, page_size: int = 100, revision: str = "") -> dict:
-        return self._costs.cost_view(view, page, page_size, revision)
-
-    # Business dossier use cases live in services/dossier.py (ENG-03); these keep the public names.
-    def business_dossier(self) -> dict:
-        return self._dossier.business_dossier()
-
-    def open_business_dossier(self, payload: dict | None = None) -> dict:
-        return self._dossier.open_business_dossier(payload)
-
-    # Cost use cases live in services/costs.py (ENG-03); this keeps the public name.
-    def save_cost_reference_status(self, payload: dict) -> dict:
-        return self._costs.save_cost_reference_status(payload)
-
-    # Document use cases live in services/documents.py (ENG-03); these keep the public names.
     def document_inbound_selection(self, payload: dict) -> dict:
         return self._documents.document_inbound_selection(payload)
 
@@ -618,51 +464,30 @@ class AppState:
     def open_outbound_document_location(self, payload: dict | None = None) -> dict:
         return self._documents.open_outbound_document_location(payload)
 
-    # OCR page use cases live in services/ocr.py (ENG-03); these keep the public names.
-    def ocr_settings(self) -> dict:
-        return self._ocr.ocr_settings()
+    # --- Cost analysis orchestration: services/costs.py.
+    def cost_service(self) -> CostProjectionService:
+        return self._costs.cost_service()
 
-    def ocr_service_status(self) -> dict:
-        return self._ocr.ocr_service_status()
+    def cost_snapshot(self) -> dict:
+        return self._costs.cost_snapshot()
 
-    def inspect_watch_dir(self, watch_dir: Path) -> dict:
-        return self._settings.inspect_watch_dir(watch_dir)
+    def cost_view(self, view: str, page: int = 1, page_size: int = 100, revision: str = "") -> dict:
+        return self._costs.cost_view(view, page, page_size, revision)
 
-    def pick_watch_dir(self) -> dict:
-        return self._settings.pick_watch_dir()
+    def save_cost_reference_status(self, payload: dict) -> dict:
+        return self._costs.save_cost_reference_status(payload)
 
-    def validate_watch_dir(self, payload: dict | None = None) -> dict:
-        return self._settings.validate_watch_dir(payload)
-
-    def update_manual_fields(self, invoice_key: str, payload: dict | None) -> dict:
-        return self._invoices.update_manual_fields(invoice_key, payload)
-
-    def open_invoice_file(self, invoice_key: str) -> dict:
-        return self._invoices.open_invoice_file(invoice_key)
-
-    def open_invoice_location(self, invoice_key: str) -> dict:
-        return self._invoices.open_invoice_location(invoice_key)
-
-    # Cost use cases live in services/costs.py (ENG-03); this keeps the public name.
     def open_cost_summary(self) -> dict:
         return self._costs.open_cost_summary()
 
-    def pick_ocr_file(self) -> dict:
-        return self._ocr.pick_ocr_file()
+    # --- Business dossier (company folder): services/dossier.py.
+    def business_dossier(self) -> dict:
+        return self._dossier.business_dossier()
 
-    def pick_ocr_folder(self) -> dict:
-        return self._ocr.pick_ocr_folder()
+    def open_business_dossier(self, payload: dict | None = None) -> dict:
+        return self._dossier.open_business_dossier(payload)
 
-    def list_ocr_files(self, payload: dict | None = None) -> dict:
-        return self._ocr.list_ocr_files(payload)
-
-    def ocr_extract_text(self, payload: dict | None = None) -> dict:
-        return self._ocr.ocr_extract_text(payload)
-
-    def open_ocr_log_dir(self) -> dict:
-        return self._ocr.open_ocr_log_dir()
-
-    # Bookkeeping use cases live in services/bookkeeping.py (ENG-03); these keep the public names.
+    # --- Bookkeeping: services/bookkeeping.py.
     def bookkeeping_setup(self) -> dict:
         return self._bookkeeping.bookkeeping_setup()
 
@@ -732,14 +557,191 @@ class AppState:
     def patch_voucher_import_result(self, payload: dict | None) -> dict:
         return self._bookkeeping.patch_voucher_import_result(payload)
 
-    def get_task(self, task_id: str) -> dict:
-        return self.repo.get_task(task_id)
+    # --- Source-invoice renaming: services/invoice_rename.py.
+    def rename_invoice_files(self) -> dict:
+        return self._rename.rename_invoice_files()
 
-    def wait_events(self, after_seq: int) -> list[dict]:
-        return self.repo.list_events_after(after_seq)
+    # --- Settings, preferences and directory persistence: services/settings.py.
+    def settings(self) -> dict:
+        return self._settings.settings()
 
-    def event_bounds(self) -> dict[str, int]:
-        return self.repo.event_bounds()
+    def _recent_watch_dirs(self) -> list[str]:
+        return self._settings._recent_watch_dirs()
+
+    def _outbound_invoice_dir_text(self) -> str:
+        return self._settings._outbound_invoice_dir_text()
+
+    def _recent_outbound_invoice_dirs(self) -> list[str]:
+        return self._settings._recent_outbound_invoice_dirs()
+
+    def remove_recent_watch_dir(self, payload: dict | None) -> dict:
+        return self._settings.remove_recent_watch_dir(payload)
+
+    def _persist_watch_dir_config(self, watch_dir: Path) -> None:
+        return self._settings._persist_watch_dir_config(watch_dir)
+
+    def _preferences_path(self) -> Path:
+        return self._settings._preferences_path()
+
+    def preferences(self) -> dict:
+        return self._settings.preferences()
+
+    def save_preferences(self, payload: dict | None) -> dict:
+        return self._settings.save_preferences(payload)
+
+    def pick_outbound_invoice_dir(self) -> dict:
+        return self._settings.pick_outbound_invoice_dir()
+
+    def validate_outbound_invoice_dir(self, payload: dict | None = None) -> dict:
+        return self._settings.validate_outbound_invoice_dir(payload)
+
+    def update_outbound_invoice_dir(self, payload: dict | None) -> dict:
+        return self._settings.update_outbound_invoice_dir(payload)
+
+    def remove_recent_outbound_invoice_dir(self, payload: dict | None) -> dict:
+        return self._settings.remove_recent_outbound_invoice_dir(payload)
+
+    def _watch_dir_message(self, validation: dict, saved: bool = False) -> str:
+        return self._settings._watch_dir_message(validation, saved)
+
+    def inspect_watch_dir(self, watch_dir: Path) -> dict:
+        return self._settings.inspect_watch_dir(watch_dir)
+
+    def pick_watch_dir(self) -> dict:
+        return self._settings.pick_watch_dir()
+
+    def validate_watch_dir(self, payload: dict | None = None) -> dict:
+        return self._settings.validate_watch_dir(payload)
+
+    # --- Monitor control and manual rebuild: services/monitor_control.py.
+    # Tests patch bridge_status/bridge_stop on this class; shutdown and settings call them here.
+    def _monitor_state(self) -> MonitorState:
+        return self._monitor._monitor_state()
+
+    def _monitor_bridge(self) -> MonitorBridge:
+        return self._monitor._monitor_bridge()
+
+    def bridge_status(self) -> dict:
+        return self._monitor.bridge_status()
+
+    def bridge_progress(self) -> dict:
+        return self._monitor.bridge_progress()
+
+    def bridge_health_check(self) -> dict:
+        return self._monitor.bridge_health_check()
+
+    def bridge_rebuild(self) -> dict:
+        return self._monitor.bridge_rebuild()
+
+    def bridge_start(self) -> dict:
+        return self._monitor.bridge_start()
+
+    def bridge_stop(self) -> dict:
+        return self._monitor.bridge_stop()
+
+    def open_monitor_log(self) -> dict:
+        return self._monitor.open_monitor_log()
+
+    def open_runtime_dir(self) -> dict:
+        return self._monitor.open_runtime_dir()
+
+    # --- Background startup sync: services/background_sync.py.
+    # Tests patch run_background_diagnostics on this class to skip startup sync.
+    def run_background_diagnostics(self, trigger: str = "startup_sync") -> None:
+        return self._background.run_background_diagnostics(trigger)
+
+    # --- Diagnostics and the support package: services/diagnostics.py.
+    def diagnostic_summary(self) -> dict:
+        return self._diagnostics.diagnostic_summary()
+
+    def config_health(self) -> dict:
+        return self._diagnostics.config_health()
+
+    def export_support_package(self) -> dict:
+        return self._diagnostics.export_support_package()
+
+    # --- About page and update lifecycle: services/about.py.
+    def about(self) -> dict:
+        return self._about.about()
+
+    def open_about_link(self, link_key: str) -> dict:
+        return self._about.open_about_link(link_key)
+
+    def check_for_updates(self, *, force: bool = False) -> dict:
+        # API, settings, and scheduled checks share this method. In a configured
+        # Tauri host process they are all delegated-install preflight, not an
+        # ordinary cache-only public check.
+        return self._about.check_for_updates(force=force)
+
+    def install_update(self) -> dict:
+        return self._about.install_update()
+
+    def schedule_background_update_check(self, delay_seconds: float = 15.0) -> bool:
+        return self._about.schedule_background_update_check(delay_seconds)
+
+    # --- Skins and the app icon: services/appearance.py.
+    def skin_service(self) -> SkinService:
+        return self._appearance.skin_service()
+
+    def app_icon_service(self) -> AppIconService:
+        return self._appearance.app_icon_service()
+
+    def app_icon(self) -> dict:
+        return self._appearance.app_icon()
+
+    def update_app_icon(self, icon_id: str) -> dict:
+        return self._appearance.update_app_icon(icon_id)
+
+    def skins(self) -> dict:
+        return self._appearance.skins()
+
+    def import_skin(self, payload: bytes) -> dict:
+        return self._appearance.import_skin(payload)
+
+    def replace_skin(self, payload: bytes, expected_skin_id: str | None = None) -> dict:
+        return self._appearance.replace_skin(payload, expected_skin_id)
+
+    def enable_skin(self, skin_id: str) -> dict:
+        return self._appearance.enable_skin(skin_id)
+
+    def reset_skin(self) -> dict:
+        return self._appearance.reset_skin()
+
+    def skin_file(self, skin_id: str, path: str):
+        return self._appearance.skin_file(skin_id, path)
+
+    # --- OCR page: services/ocr.py.
+    def ocr_settings(self) -> dict:
+        return self._ocr.ocr_settings()
+
+    def ocr_service_status(self) -> dict:
+        return self._ocr.ocr_service_status()
+
+    def pick_ocr_file(self) -> dict:
+        return self._ocr.pick_ocr_file()
+
+    def pick_ocr_folder(self) -> dict:
+        return self._ocr.pick_ocr_folder()
+
+    def list_ocr_files(self, payload: dict | None = None) -> dict:
+        return self._ocr.list_ocr_files(payload)
+
+    def ocr_extract_text(self, payload: dict | None = None) -> dict:
+        return self._ocr.ocr_extract_text(payload)
+
+    def open_ocr_log_dir(self) -> dict:
+        return self._ocr.open_ocr_log_dir()
+
+    # --- Structured localhost shutdown: services/server_shutdown.py.
+    @property
+    def server_shutdown_requested(self) -> bool:
+        return self._shutdown.server_shutdown_requested
+
+    def request_server_shutdown(self, behavior: str, remember: bool = False) -> dict:
+        return self._shutdown.request_server_shutdown(behavior, remember)
+
+    def finalize_server_shutdown(self) -> None:
+        return self._shutdown.finalize_server_shutdown()
 
 
 def create_state(
