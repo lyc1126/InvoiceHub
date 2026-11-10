@@ -22,6 +22,7 @@ SERVICES = {
     "_appearance": ("lock",),
     "_ocr": ("profile", "config"),
     "_about": ("lock",),
+    "_invoices": ("lock", "profile"),
 }
 
 

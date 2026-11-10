@@ -2138,7 +2138,7 @@ def test_invoice_search_scope_with_large_snapshot(tmp_path: Path, monkeypatch) -
         {"文件名": "number.pdf", "发票号码": "SYNTHETIC-123", "开票金额": "8.00"},
         {"文件名": "boundary.pdf", "销售方": "syn", "发票号码": "thetic"},
     ]
-    monkeypatch.setattr(state, "_summary_rows", lambda: rows)
+    monkeypatch.setattr(state._invoices, "_summary_rows", lambda: rows)
     client = TestClient(app)
     invoice = client.get("/api/v1/invoices", params={"keyword": " synthetic ", "search_scope": "invoice"}).json()
     assert invoice["count"] == 2
@@ -2246,8 +2246,8 @@ def test_background_startup_sync_uses_spawn_worker_and_clears_current_profile_ca
     context = SpawnContext()
     monkeypatch.setattr("invoice_hub.services.app_state.multiprocessing.get_context", lambda method: calls.setdefault("context", method) and context)
     monkeypatch.setattr("invoice_hub.services.app_state._run_background_sync_process", fake_sync_worker)
-    state._invoice_cache_key = (1, 1)
-    state._invoice_cache_rows = [{"文件名": "stale.csv"}]
+    state._invoices._invoice_cache_key = (1, 1)
+    state._invoices._invoice_cache_rows = [{"文件名": "stale.csv"}]
 
     state.run_background_diagnostics("startup_sync")
     deadline = time.monotonic() + 2
@@ -2263,8 +2263,8 @@ def test_background_startup_sync_uses_spawn_worker_and_clears_current_profile_ca
     assert calls["db_path"] == str(state.layout.db_path)
     assert calls["trigger"] == "startup_sync"
     assert state._background_status == "ready"
-    assert state._invoice_cache_key is None
-    assert state._invoice_cache_rows == []
+    assert state._invoices._invoice_cache_key is None
+    assert state._invoices._invoice_cache_rows == []
 
 
 def test_background_sync_completion_does_not_invalidate_new_active_profile_cache(tmp_path: Path, monkeypatch) -> None:
@@ -2373,8 +2373,8 @@ def test_background_sync_completion_does_not_invalidate_new_active_profile_cache
     next_profile = target_profile_for(state.config, next_watch)
     with state._lock:
         state._active_profile = next_profile
-        state._invoice_cache_key = (9, 9)
-        state._invoice_cache_rows = [{"文件名": "new-profile.csv"}]
+        state._invoices._invoice_cache_key = (9, 9)
+        state._invoices._invoice_cache_rows = [{"文件名": "new-profile.csv"}]
 
     try:
         release.set()
@@ -2402,8 +2402,8 @@ def test_background_sync_completion_does_not_invalidate_new_active_profile_cache
     assert not ordinary_sync_events.intersection(event["event_type"] for event in state.wait_events(0))
     assert notifications == []
     assert state._background_status == "running"
-    assert state._invoice_cache_key == (9, 9)
-    assert state._invoice_cache_rows == [{"文件名": "new-profile.csv"}]
+    assert state._invoices._invoice_cache_key == (9, 9)
+    assert state._invoices._invoice_cache_rows == [{"文件名": "new-profile.csv"}]
 
 
 def test_background_spawn_worker_keeps_fastapi_responsive_while_sync_runs(tmp_path: Path, monkeypatch) -> None:
@@ -3044,7 +3044,7 @@ def test_manual_fields_suppresses_stale_profile_event_after_old_profile_write(tm
     next_watch_dir.mkdir()
     next_profile = target_profile_for(state.config, next_watch_dir)
     event_seq = state.repo.event_bounds()["max_seq"]
-    app_state_module = importlib.import_module("invoice_hub.services.app_state")
+    app_state_module = importlib.import_module("invoice_hub.services.invoice_list")
     original_write_summary_xlsx = app_state_module.write_summary_xlsx
 
     def switch_profile_after_old_write(path: Path, rows: list[dict[str, str]]) -> None:
