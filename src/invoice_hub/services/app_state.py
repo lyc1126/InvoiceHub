@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING
 from invoice_hub.domain.models import TargetProfile, utc_now_text
 from invoice_hub.monitoring.state import MonitorState, is_pid_alive
 from invoice_hub.monitoring.sync import MonitorSynchronizer
-from invoice_hub.platform import HostRpcCommand, OCR_EXTENSIONS, host_rpc, open_external_url, open_local_path, pick_directory, pick_file
+from invoice_hub.platform import HostRpcCommand, host_rpc, open_external_url, open_local_path, pick_directory
 from invoice_hub.projections.cost_analysis import invoice_cost_breakdown
 from invoice_hub.projections.costs import CostProjectionService
 from invoice_hub.projections.summary import SUMMARY_HEADERS, build_summary, write_summary_xlsx
@@ -32,6 +32,7 @@ from invoice_hub.release.package_manifest import load_package_manifest
 from invoice_hub.services.bookkeeping import BookkeepingService
 from invoice_hub.services.costs import CostService
 from invoice_hub.services.monitor_bridge import MonitorBridge
+from invoice_hub.services.ocr import OcrService
 from invoice_hub.services.preview_print import InvoicePreviewPrintService
 from invoice_hub.services.document_index import DocumentIndex, InboundDetails
 from invoice_hub.services.dossier import BusinessDossierService
@@ -41,6 +42,7 @@ from invoice_hub.services.invoice_printing import InvoicePrintService
 from invoice_hub.services.invoice_selection import InvoiceSelectionService, file_format_from_source, invoice_number_from_filename
 from invoice_hub.services.invoice_trash import InvoiceTrashService, TrashError
 from invoice_hub.services.app_icons import AppIconService
+from invoice_hub.services.appearance import AppearanceService
 from invoice_hub.services.skins import SkinService
 from invoice_hub.services.update_service import UpdateService
 from invoice_hub.storage import SQLiteRepository, atomic_write_json, read_csv_rows, read_json_object, write_csv_rows
@@ -173,6 +175,13 @@ class AppState:
         self._invoice_print_service = InvoicePrintService()
         self._file_preview_service = FilePreviewService()
         self._invoice_trash = InvoiceTrashService(layout.runtime_dir / "local_state" / "invoice-trash")
+        self._ocr = OcrService(
+            layout=layout, config=lambda: self.config, active_profile=lambda: self.active_profile,
+        )
+        self._appearance = AppearanceService(
+            lock=self._lock, repo=self.repo, layout=layout,
+            desktop_host_enabled=lambda: self._tauri_desktop_host_enabled(),
+        )
         # Built first: documents and preview/print revalidate homepage selections through it.
         # list_invoices stays here (cache, consistency) and is looked up per call.
         self._selection = InvoiceSelectionService(
@@ -2649,62 +2658,36 @@ class AppState:
     def cost_service(self) -> CostProjectionService:
         return self._costs.cost_service()
 
+    # Skin and app-icon use cases live in services/appearance.py (ENG-03); these keep the public names.
     def skin_service(self) -> SkinService:
-        return SkinService(self.layout)
+        return self._appearance.skin_service()
 
     def app_icon_service(self) -> AppIconService:
-        return AppIconService(self.layout)
+        return self._appearance.app_icon_service()
 
     def app_icon(self) -> dict:
-        return self.app_icon_service().list_payload()
+        return self._appearance.app_icon()
 
     def update_app_icon(self, icon_id: str) -> dict:
-        with self._lock:
-            service = self.app_icon_service()
-            normalized_icon_id = service.validate_icon_id(icon_id)
-            if self._tauri_desktop_host_enabled():
-                # The host changes window/taskbar/tray state first. Persisting before that
-                # would make the next launch claim an icon that the active desktop rejected.
-                host_rpc.set_app_icon(normalized_icon_id)
-            result = service.update_app_icon(normalized_icon_id)
-            self.append_event("app_icon.updated", {"icon": normalized_icon_id})
-            return result
+        return self._appearance.update_app_icon(icon_id)
 
     def skins(self) -> dict:
-        return self.skin_service().list_skins()
+        return self._appearance.skins()
 
     def import_skin(self, payload: bytes) -> dict:
-        with self._lock:
-            result = self.skin_service().import_skin(payload, replace=False)
-            self.append_event("skin.imported", {"skin_id": result["skin"]["id"]})
-            return result
+        return self._appearance.import_skin(payload)
 
     def replace_skin(self, payload: bytes, expected_skin_id: str | None = None) -> dict:
-        with self._lock:
-            service = self.skin_service()
-            imported = service.import_skin(payload, replace=True, expected_skin_id=expected_skin_id)
-            skin_id = imported["skin"]["id"]
-            enabled = service.enable_skin(skin_id)
-            enabled["skin"] = imported["skin"]
-            enabled["replaced"] = True
-            self.append_event("skin.replaced", {"skin_id": skin_id})
-            self.append_event("skin.enabled", {"skin_id": skin_id})
-            return enabled
+        return self._appearance.replace_skin(payload, expected_skin_id)
 
     def enable_skin(self, skin_id: str) -> dict:
-        with self._lock:
-            result = self.skin_service().enable_skin(skin_id)
-            self.append_event("skin.enabled", {"skin_id": skin_id})
-            return result
+        return self._appearance.enable_skin(skin_id)
 
     def reset_skin(self) -> dict:
-        with self._lock:
-            result = self.skin_service().reset_skin()
-            self.append_event("skin.reset", {})
-            return result
+        return self._appearance.reset_skin()
 
     def skin_file(self, skin_id: str, path: str):
-        return self.skin_service().get_file(skin_id, path)
+        return self._appearance.skin_file(skin_id, path)
 
     # Cost use cases live in services/costs.py (ENG-03); this keeps the public name.
     def cost_snapshot(self) -> dict:
@@ -2759,16 +2742,12 @@ class AppState:
     def open_outbound_document_location(self, payload: dict | None = None) -> dict:
         return self._documents.open_outbound_document_location(payload)
 
+    # OCR page use cases live in services/ocr.py (ENG-03); these keep the public names.
     def ocr_settings(self) -> dict:
-        return {
-            "ok": True,
-            "provider_mode": "disabled",
-            "local_ocr_supported": bool(self.config.release_capabilities.get("local_ocr", False)),
-            "message": "当前发布包未内置本地 OCR",
-        }
+        return self._ocr.ocr_settings()
 
     def ocr_service_status(self) -> dict:
-        return {"ok": True, "running": False, "status": "disabled", "message": "当前发布包未内置本地 OCR"}
+        return self._ocr.ocr_service_status()
 
     def inspect_watch_dir(self, watch_dir: Path) -> dict:
         path = Path(watch_dir)
@@ -2904,40 +2883,19 @@ class AppState:
         return self._costs.open_cost_summary()
 
     def pick_ocr_file(self) -> dict:
-        payload = pick_file(
-            Path(self.active_profile.watch_dir),
-            "选择 OCR 识别文件",
-            host_command=HostRpcCommand.PICK_OCR_FILE,
-        )
-        selected_path = str(payload.get("path") or "").strip()
-        return {"ok": True, "selected": bool(selected_path), "path": selected_path}
+        return self._ocr.pick_ocr_file()
 
     def pick_ocr_folder(self) -> dict:
-        payload = pick_directory(
-            Path(self.active_profile.watch_dir),
-            "选择 OCR 文件夹",
-            host_command=HostRpcCommand.PICK_OCR_DIRECTORY,
-        )
-        selected_path = str(payload.get("path") or "").strip()
-        return {"ok": True, "selected": bool(selected_path), "path": selected_path}
+        return self._ocr.pick_ocr_folder()
 
     def list_ocr_files(self, payload: dict | None = None) -> dict:
-        folder = Path(str((payload or {}).get("folder") or self.active_profile.watch_dir)).expanduser()
-        if not folder.exists() or not folder.is_dir():
-            return {"ok": False, "items": [], "message": f"目录不可用: {folder}"}
-        items = [
-            {"path": str(path), "name": path.name, "suffix": path.suffix.lower(), "size": path.stat().st_size}
-            for path in sorted(folder.iterdir(), key=lambda item: item.name.casefold())
-            if path.is_file() and path.suffix.lower() in OCR_EXTENSIONS
-        ]
-        return {"ok": True, "items": items}
+        return self._ocr.list_ocr_files(payload)
 
     def ocr_extract_text(self, payload: dict | None = None) -> dict:
-        return {"ok": False, "text": "", "message": "当前发布包未内置本地 OCR", "path": str((payload or {}).get("path") or "")}
+        return self._ocr.ocr_extract_text(payload)
 
     def open_ocr_log_dir(self) -> dict:
-        open_local_path(self.layout.runtime_dir)
-        return {"ok": True, "opened": True, "path": str(self.layout.runtime_dir)}
+        return self._ocr.open_ocr_log_dir()
 
     # Bookkeeping use cases live in services/bookkeeping.py (ENG-03); these keep the public names.
     def bookkeeping_setup(self) -> dict:

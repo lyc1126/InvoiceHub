@@ -434,6 +434,8 @@
 | `src/invoice_hub/services/errors.py` | `StaleInvoiceSelectionError`，AppState 与拆出的领域服务共用。 | 放在中立模块以免 `app_state` 与领域服务循环导入；`services` 包与 `app_state` 仍重导出同一个类。 |
 | `src/invoice_hub/services/monitor_bridge.py` | monitor 子进程命令、状态真值、ready 等待和启停。 | AppState 与 control 调用；与 daemon/state 构成生命周期闭环。 |
 | `src/invoice_hub/services/skins.py` | 皮肤 ZIP 安全验证、运行态存储、启用和文件服务。 | API、AppState、common.js 使用；安全回归在 API 测试。 |
+| `src/invoice_hub/services/appearance.py` | `AppearanceService`：皮肤导入/替换/启用/重置/文件与应用图标切换（ENG-03 从 AppState 原样迁出）。 | AppState 同名转发；写入持 AppState 同一把 RLock；Tauri 宿主下先由宿主换图标再持久化。 |
+| `src/invoice_hub/services/ocr.py` | `OcrService`：OCR 页的候选文件选择/列表与“未内置本地 OCR”状态（ENG-03 从 AppState 原样迁出）。 | AppState 同名转发；活动目标与 config 经回调读取。 |
 | `src/invoice_hub/services/update_service.py` | HTTPS 白名单更新检查、ETag/cache、版本/契约/平台产物选择和错误状态。 | About/API/启动后台检查消费；绝不执行安装。 |
 
 ## 13. 平台与发布
@@ -495,6 +497,7 @@
 | 文件 | 主要覆盖 | 关联生产模块 |
 |---|---|---|
 | `tests/fixtures/sample_invoice.xml` | 最小结构化发票样本。 | extraction、summary、cost XML 链路。 |
+| `tests/test_appstate_service_wiring.py` | ENG-03 接线守护：每个从 AppState 拆出的服务在切换 watch_dir 后，锁、活动目标与 config 仍是 AppState 的同一对象。 | 新拆出服务须登记到 `SERVICES`；构造时快照或私有锁会使对应参数失败。 |
 | `tests/test_api_contract.py` | API 字段、设置、关闭、诊断、SSE、皮肤、成本、选择合计、重命名，以及 monitor recovery HMAC request/response/replay/empty-body contracts。 | `api/app.py`、`AppState`、skins、costs、summary。 |
 | `tests/test_file_preview.py` | 预览 job、来源复核、分页、文本、容量与安全边界。 | file_preview、document_rendering、AppState、API。 |
 | `tests/test_file_preview_frontend_contract.py` | 首页预览 DOM、交互和静态资源契约。 | index.html、page-index.js、app.css。 |
