@@ -23,6 +23,7 @@ from invoice_hub.projections.summary import build_summary
 from invoice_hub.services.monitor_bridge import MonitorBridge
 from invoice_hub.storage import SQLiteRepository
 from invoice_hub.targets import AppConfig
+from invoice_hub.targets.companies import company_taxpayer_for
 from invoice_hub.targets.paths import Layout
 from invoice_hub.targets.paths import profile_identity as _background_profile_identity
 
@@ -168,6 +169,7 @@ class MonitorControlService:
                         Path(profile.workspace_dir),
                         profile.id,
                         reference_markup_rate=reference_markup_rate,
+                        company_taxpayer=lambda: company_taxpayer_for(self.config, Path(profile.watch_dir)),
                     )
                     progress.report("summary", "正在生成普通汇总", percent=0)
                     summary = build_summary(

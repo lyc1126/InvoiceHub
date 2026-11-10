@@ -16,6 +16,7 @@ from invoice_hub.api.app import create_app
 SERVICES = {
     "bookkeeping": ("lock", "profile", "config"),
     "companies": ("lock", "profile", "config"),
+    "company_views": ("lock", "profile", "config"),
     "documents": ("lock", "profile"),
     "costs": ("lock", "profile", "config"),
     "dossier": ("profile", "config"),

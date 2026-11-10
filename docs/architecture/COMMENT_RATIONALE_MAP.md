@@ -1,5 +1,15 @@
 # InvoiceHub 注释与设计原因地图
 
+## 2026-11-10 按公司只读目录与纳税人类型（WS-07 第 2 步）
+
+- `targets/companies.py`：查找放在 `targets/` 而不是 `services/`，因为 monitor daemon 与 spawn 子进程不经过 AppState，`monitoring/` 也不能依赖 `services/`；坏清单读作“无公司”，成本页与同步照常工作，损坏由清单 API 报告。守护：`test_company_taxpayer_lookup_follows_folder_and_month`。
+- `background_sync.py::_run_background_sync_process(company_taxpayer=…)`：子进程没有 AppConfig，由父进程查好后传入；daemon 是长驻进程，按每次同步现查以跟随清单修改与跨月。守护：`test_every_cost_projection_and_synchronizer_receives_the_registry_lookup`。
+- `cost_analysis.py::build_cost_analysis_outputs` 在解析后、写工作簿前才调用 `company_taxpayer()`：长时间同步期间改了清单，不会被同步开始时读到的旧值覆盖；`services/costs.py::refresh_workbook_tax_profile` 因此在写锁被占用时可以直接返回 `sync_running`。
+- `CostProjectionService.read_fingerprint` 含有效类型：类型变化不改任何投影文件，不纳入就会让分页读缓存继续返回旧价格。守护：`test_registry_taxpayer_type_prices_the_reference_and_keeps_the_saved_rate`。
+- `effective_tax_profile` 只换类型、不换税率：清单不替用户在 3% 与 1% 之间选择，小规模配非常用税率时由既有 `warning` 提示。`save_reference_status` 拒绝与清单不同的类型，避免页面保存后又被清单覆盖、看起来“保存无效”。
+- `company_registry.py::_after_write` 在释放 AppState 锁后才回调成本刷新，并且只比较纳税人类型（改名不重写工作簿）：刷新要取投影写锁，持有 AppState 锁去等它会阻塞其它请求。守护：`test_registry_edit_reprices_the_active_company_and_rewrites_the_workbook`。
+- `company_views.py::_read_processed/_scan_signatures` 不用 `MonitorState`：它的构造函数会建目录，`load_processed` 遇坏文件会备份并重写；非活动目录必须完全只读。扫描有 20,000 项 / 2 秒上限，未扫完时删除数不计、无差异只能判 `unknown`。守护：`test_directory_views_report_projection_and_freshness_without_writing`、`test_missing_processed_record_reads_as_unknown`。
+
 ## 2026-11-10 公司清单（WS-07 第 1 步）
 
 - `company_registry.py::CompanyRegistryService._load/_corrupt`：损坏、未来版本或缺字段的清单不回退为空，否则下一次保存会抹掉全部公司；保留原文件并拒写。守护：`test_corrupt_registry_is_kept_and_blocks_writes`。

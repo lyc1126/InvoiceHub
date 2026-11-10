@@ -20,7 +20,6 @@ import json
 import re
 import threading
 import uuid
-from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
@@ -29,9 +28,17 @@ from invoice_hub.projections.cost_analysis import TAXPAYER_LABELS
 from invoice_hub.services.dossier import BUSINESS_DOSSIER_DIR_HINTS
 from invoice_hub.storage import SQLiteRepository, atomic_write_json
 from invoice_hub.targets import AppConfig
-from invoice_hub.targets.paths import canonical_path, serialize_config_path
+from invoice_hub.targets.companies import (
+    REGISTRY_SCHEMA_VERSION,
+    is_within as _is_within,
+    path_key as _path_key,
+    company_taxpayer_for,
+    current_month,
+    resolve_company_root,
+    taxpayer_type_for,
+)
+from invoice_hub.targets.paths import serialize_config_path
 
-REGISTRY_SCHEMA_VERSION = 1
 MAX_COMPANIES = 200
 MAX_NAME_LENGTH = 80
 
@@ -62,20 +69,6 @@ class CompanyRegistryError(Exception):
 
 def _invalid(message: str, field: str) -> CompanyRegistryError:
     return CompanyRegistryError("COMPANY_INVALID", message, status_code=422, field=field)
-
-
-def _path_key(path: Path) -> str:
-    # Same normalisation as target_id_for: resolved and case-folded, so 公司A and 公司a on a
-    # case-insensitive volume are one folder.
-    return canonical_path(path).casefold()
-
-
-def _is_within(path: Path, parent: Path) -> bool:
-    try:
-        Path(_path_key(path)).relative_to(Path(_path_key(parent)))
-        return True
-    except ValueError:
-        return False
 
 
 def clean_relative_subdir(raw: object, field: str) -> str:
@@ -114,15 +107,6 @@ def clean_taxpayer_periods(raw: object) -> list[dict[str, str]]:
             raise _invalid(f"生效月份 {month} 重复。", f"{field}.effective_from")
         periods[month] = taxpayer_type
     return [{"effective_from": month, "taxpayer_type": periods[month]} for month in sorted(periods)]
-
-
-def taxpayer_type_for(periods: list[dict[str, str]], month: str) -> str | None:
-    """The type in force in ``month`` (YYYY-MM), or None before the first known period."""
-    current = None
-    for period in periods:
-        if period["effective_from"] <= month:
-            current = period["taxpayer_type"]
-    return current
 
 
 def detect_subdirs(root: Path) -> dict[str, tuple[str, str]]:
@@ -166,12 +150,16 @@ class CompanyRegistryService:
         registry_path: Path,
         config: Callable[[], AppConfig],
         active_profile: Callable[[], TargetProfile],
+        on_active_taxpayer_change: Callable[[], dict] | None = None,
     ) -> None:
         self._lock = lock
         self.repo = repo
         self.registry_path = registry_path
         self._config = config
         self._active_profile = active_profile
+        # The registry decides the cost reference's taxpayer type. When an edit changes it for
+        # the active watch_dir, the cost workbook is rewritten so it matches the page again.
+        self._on_active_taxpayer_change = on_active_taxpayer_change
 
     @property
     def config(self) -> AppConfig:
@@ -215,6 +203,18 @@ class CompanyRegistryService:
         registry["revision"] = int(registry["revision"]) + 1
         atomic_write_json(self.registry_path, registry)
 
+    def _active_taxpayer(self) -> str | None:
+        # Only the type changes prices; a renamed company keeps the workbook as it is.
+        found = company_taxpayer_for(self.config, Path(self.active_profile.watch_dir))
+        return found["taxpayer_type"] if found else None
+
+    def _after_write(self, result: dict, taxpayer_before: str | None) -> dict:
+        # Called after the registry lock is released: the refresh takes the monitor's
+        # projection lock and must not hold AppState's lock while waiting for it.
+        if self._on_active_taxpayer_change and self._active_taxpayer() != taxpayer_before:
+            result["cost_workbook"] = self._on_active_taxpayer_change()
+        return result
+
     @staticmethod
     def _check_revision(registry: dict, payload: dict) -> None:
         expected = payload.get("revision")
@@ -235,10 +235,7 @@ class CompanyRegistryService:
     # ---- validation ----------------------------------------------------------------------
 
     def _resolve_root(self, stored: str) -> Path:
-        candidate = Path(stored).expanduser()
-        if not candidate.is_absolute():
-            candidate = self.config.root_dir / candidate
-        return Path(canonical_path(candidate))
+        return resolve_company_root(self.config.root_dir, stored)
 
     def _clean_root(self, raw: object, registry: dict, company_id: str | None) -> str:
         text = str(raw or "").strip().strip('"').strip("'")
@@ -345,7 +342,7 @@ class CompanyRegistryService:
 
     @staticmethod
     def _today_month() -> str:
-        return datetime.now().strftime("%Y-%m")
+        return current_month()
 
     def list_companies(self) -> dict:
         with self._lock:
@@ -373,6 +370,7 @@ class CompanyRegistryService:
 
     def create_company(self, payload: object) -> dict:
         payload = payload if isinstance(payload, dict) else {}
+        taxpayer_before = self._active_taxpayer()
         with self._lock:
             registry = self._load()
             self._check_revision(registry, payload)
@@ -400,10 +398,11 @@ class CompanyRegistryService:
             self.repo.append_event("companies.created", {"company_id": company["id"], "revision": registry["revision"]})
         result = self.get_company(company["id"])
         result["subdir_sources"] = sources
-        return result
+        return self._after_write(result, taxpayer_before)
 
     def update_company(self, company_id: str, payload: object) -> dict:
         payload = payload if isinstance(payload, dict) else {}
+        taxpayer_before = self._active_taxpayer()
         with self._lock:
             registry = self._load()
             company = self._find(registry, company_id)
@@ -423,9 +422,10 @@ class CompanyRegistryService:
                 company.update(updated)
                 self._save(registry)
                 self.repo.append_event("companies.updated", {"company_id": company_id, "revision": registry["revision"]})
-        return self.get_company(company_id)
+        return self._after_write(self.get_company(company_id), taxpayer_before)
 
     def delete_company(self, company_id: str, revision: object) -> dict:
+        taxpayer_before = self._active_taxpayer()
         with self._lock:
             registry = self._load()
             company = self._find(registry, company_id)
@@ -434,7 +434,8 @@ class CompanyRegistryService:
             registry["companies"] = [item for item in registry["companies"] if item is not company]
             self._save(registry)
             self.repo.append_event("companies.deleted", {"company_id": company_id, "revision": registry["revision"]})
-            return {"ok": True, "deleted": company_id, "revision": registry["revision"], "files_touched": 0}
+            result = {"ok": True, "deleted": company_id, "revision": registry["revision"], "files_touched": 0}
+        return self._after_write(result, taxpayer_before)
 
     # ---- missing subfolders: preview -> confirm -> mkdir only --------------------------------
 

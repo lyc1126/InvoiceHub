@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from invoice_hub.domain.models import utc_now_text
 from invoice_hub.projections.costs import CostProjectionService
@@ -12,10 +12,19 @@ from .state import MonitorState, SyncProgress
 
 
 class MonitorSynchronizer:
-    def __init__(self, state: MonitorState, repo: SQLiteRepository | None = None, reference_markup_rate: str = "0.08"):
+    def __init__(
+        self,
+        state: MonitorState,
+        repo: SQLiteRepository | None = None,
+        reference_markup_rate: str = "0.08",
+        *,
+        company_taxpayer: Callable[[], dict | None] | None = None,
+    ):
         self.state = state
         self.repo = repo
         self.reference_markup_rate = reference_markup_rate
+        # Registry taxpayer lookup for the cost reference (see CostProjectionService).
+        self.company_taxpayer = company_taxpayer
         if self.repo:
             self.repo.init_db()
 
@@ -29,6 +38,7 @@ class MonitorSynchronizer:
             Path(self.state.profile.workspace_dir),
             self.state.profile.id,
             reference_markup_rate=self.reference_markup_rate,
+            company_taxpayer=self.company_taxpayer,
         )
 
     def run_sync(

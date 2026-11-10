@@ -49,6 +49,8 @@ from invoice_hub.projections.cost_analysis import (
     reference_cost_basis,
     reference_cost_basis_text,
     reference_tax_profile_from_status,
+    effective_tax_profile,
+    TAXPAYER_LABELS,
     _write_workbook,
 )
 from invoice_hub.projections.cost_outbound import OUTBOUND_SUMMARY_NAME, _empty_summary as _empty_outbound_summary, load_outbound_summary, read_outbound_summary
@@ -315,8 +317,20 @@ def _reference_sources(rows: list[dict]) -> list[dict]:
 
 
 class CostProjectionService:
-    def __init__(self, watch_dir: Path, workspace_dir: Path, target_id: str, reference_markup_rate: str = "0.08"):
+    def __init__(
+        self,
+        watch_dir: Path,
+        workspace_dir: Path,
+        target_id: str,
+        reference_markup_rate: str = "0.08",
+        *,
+        company_taxpayer: Callable[[], dict | None] | None = None,
+    ):
         self.watch_dir = Path(watch_dir)
+        # Registry lookup (targets.companies.company_taxpayer_for) supplied by every caller —
+        # API, monitor daemon, background child, manual rebuild — so the workbook and the page
+        # price the reference with the same taxpayer type. None means "no registry company".
+        self._company_taxpayer = company_taxpayer
         self.workspace_dir = Path(workspace_dir)
         self.target_id = target_id
         self.reference_markup_rate = reference_markup_rate
@@ -340,12 +354,18 @@ class CostProjectionService:
                 progress=progress,
                 on_rows=preview.add,
                 outbound_items=self._outbound_items(),
+                company_taxpayer=self.company_taxpayer,
             )
         self.cache_snapshot()
         return result
 
+    def company_taxpayer(self) -> dict | None:
+        return self._company_taxpayer() if self._company_taxpayer else None
+
     def read_fingerprint(self):
-        return [str(self.watch_dir.resolve()), self.target_id, str(self.reference_markup_rate),
+        # The registry taxpayer type changes prices without touching any projection file, so it
+        # is part of the read generation; otherwise the paged view keeps serving old prices.
+        return [str(self.watch_dir.resolve()), self.target_id, str(self.reference_markup_rate), self.company_taxpayer(),
                 *[file_signature(path) for path in (self.detail_csv, self.summary_xlsx, self.status_json, self.summary_csv,
                                                     self.outbound_summary_json)]]
 
@@ -438,7 +458,16 @@ class CostProjectionService:
         return item_catalog_from_status(_read_reference_status_payload(self.status_json))
 
     def _tax_profile(self) -> ReferenceTaxProfile:
-        return reference_tax_profile_from_status(_read_reference_status_payload(self.status_json))
+        return effective_tax_profile(
+            reference_tax_profile_from_status(_read_reference_status_payload(self.status_json)), self.company_taxpayer()
+        )
+
+    def refresh_workbook_tax_profile(self) -> bool:
+        """Rewrite the workbook after the registry changed this company's taxpayer type."""
+        if not self.detail_csv.exists():
+            return False
+        self._refresh_workbook_from_current_detail(self._markup_meta()["rate"])
+        return True
 
     def _summary_metadata(self) -> list[dict]:
         rows = []
@@ -607,7 +636,14 @@ class CostProjectionService:
         # merge workbook-only statuses like rebuild() does; removing it changes failure behaviour.
         workbook_status = self._read_reference_status_from_workbook()  # noqa: F841
         tax_profile_changed = "tax_profile" in payload
-        tax_profile = parse_reference_tax_profile(payload.get("tax_profile")) if tax_profile_changed else self._tax_profile()
+        saved_tax_profile = parse_reference_tax_profile(payload.get("tax_profile")) if tax_profile_changed else None
+        company = self.company_taxpayer()
+        if saved_tax_profile is not None and company and saved_tax_profile.taxpayer_type != company["taxpayer_type"]:
+            raise ValueError(
+                f"纳税人类型以公司清单为准（{company['company_name']}：{TAXPAYER_LABELS[company['taxpayer_type']]}），"
+                "请在公司清单修改；这里只能修改销项税率。"
+            )
+        tax_profile = effective_tax_profile(saved_tax_profile, company) if saved_tax_profile is not None else self._tax_profile()
         catalog_changed = "item_catalog" in payload
         item_catalog = parse_item_catalog(payload.get("item_catalog")) if catalog_changed else self._item_catalog()
         exclusions_changed = "reference_exclusions" in payload
@@ -709,7 +745,7 @@ class CostProjectionService:
             current,
             reference_markup_rate=fallback_markup["rate"],
             reference_markup_locked=fallback_markup["locked"],
-            tax_profile=tax_profile if tax_profile_changed else None,
+            tax_profile=saved_tax_profile,
             item_catalog=item_catalog if catalog_changed else None,
             reference_exclusions=self._merge_exclusions(requested_exclusions, detail_rows) if exclusions_changed else None,
         )

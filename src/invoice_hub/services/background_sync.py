@@ -25,6 +25,7 @@ from invoice_hub.monitoring.sync import MonitorSynchronizer
 from invoice_hub.platform import host_rpc
 from invoice_hub.storage import SQLiteRepository
 from invoice_hub.targets import AppConfig
+from invoice_hub.targets.companies import company_taxpayer_for
 from invoice_hub.targets.paths import Layout
 from invoice_hub.targets.paths import profile_identity as _background_profile_identity
 
@@ -41,8 +42,13 @@ def _run_background_sync_process(
     reference_markup_rate: str,
     trigger: str,
     result_sender,
+    company_taxpayer: dict | None = None,
 ) -> None:
-    """Run the potentially native/Python-heavy first sync outside the API process."""
+    """Run the potentially native/Python-heavy first sync outside the API process.
+
+    ``company_taxpayer`` is the registry lookup the parent made for this profile; the spawned
+    child has no AppConfig, so it prices the cost reference with the parent's answer.
+    """
     host_rpc.scrub_child_environment(os.environ)
     try:
         profile = TargetProfile.model_validate(profile_payload)
@@ -51,6 +57,7 @@ def _run_background_sync_process(
             MonitorState(profile, Path(db_path), sync_interval_seconds=60),
             repo=repository,
             reference_markup_rate=reference_markup_rate,
+            company_taxpayer=lambda: company_taxpayer,
         ).run_sync(trigger, force=False, emit_events=False, notify=False)
         result_sender.send({"ok": bool(result.get("ok")), "sync": result})
     except Exception as exc:
@@ -343,7 +350,10 @@ class BackgroundSyncService:
                     result_receiver, result_sender = context.Pipe(duplex=False)
                     process = context.Process(
                         target=_run_background_sync_process,
-                        args=(profile.model_dump(), db_path, reference_markup_rate, trigger, result_sender),
+                        args=(
+                            profile.model_dump(), db_path, reference_markup_rate, trigger, result_sender,
+                            company_taxpayer_for(self.config, Path(profile.watch_dir)),
+                        ),
                         name="invoice-hub-background-sync",
                         daemon=True,
                     )

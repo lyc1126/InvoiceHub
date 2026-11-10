@@ -335,7 +335,7 @@
 | `src/invoice_hub/api/routes/invoices.py` | 发票列表、删除所选、勾选合计、原票预览、批量打印与详情/手改/打开路由。 | `state.invoices/selection/preview_print` 与 AppState 的删除所选编排、`invoice_trash`、`file_preview`、`invoice_printing`；预览内容使用 `PREVIEW_CONTENT_HEADERS`。 |
 | `src/invoice_hub/api/routes/costs.py` | 成本分析快照、分页视图、开票参考状态与打开汇总路由。 | `CostAnalysisService` 经 `AppState`。 |
 | `src/invoice_hub/api/routes/documents.py` | 入库/出库单据状态、索引、目录与预览/导出/打开路由。 | `document_index` 与单据投影。 |
-| `src/invoice_hub/api/routes/companies.py` | 公司清单路由（WS-07 第 1 步）：增删改查、子目录补建预览与确认；`CompanyRegistryError` 映射为 `{ok:false, error:{code}}`，文件系统工作经线程池。 | 调用 `state.companies`；不得改变 `watch_dir` 或 monitor。 |
+| `src/invoice_hub/api/routes/companies.py` | 公司清单路由（WS-07 第 1 步）：增删改查、子目录补建预览与确认；第 2 步的按公司只读目录与目录发票列表；`CompanyRegistryError` 映射为 `{ok:false, error:{code}}`，文件系统工作经线程池。 | 调用 `state.companies`；不得改变 `watch_dir` 或 monitor。 |
 | `src/invoice_hub/api/routes/dossier.py` | 业务资料夹读取与打开路由。 | 做账与成本共用的公司资料夹。 |
 | `src/invoice_hub/api/routes/appearance.py` | 皮肤列表/导入/替换/启用/重置/文件与应用图标路由。 | `skins`、`app_icons`；图标更新经 Host RPC。 |
 | `src/invoice_hub/api/routes/monitor.py` | monitor bridge 状态、进度、健康检查、重建、启停与打开日志/运行目录路由。 | status/start/stop 经 `_monitor_recovery_response` 承载认证 transcript。 |
@@ -364,6 +364,7 @@
 | 文件 | 职责与入口 | 关系与修改影响 |
 |---|---|---|
 | `src/invoice_hub/targets/__init__.py` | 导出配置、布局和档案函数。 | AppState、monitor daemon/control 和测试使用。 |
+| `src/invoice_hub/targets/companies.py` | 公司清单的只读查找（WS-07），供 API 进程、monitor daemon 与后台同步子进程共用：清单路径、路径键/包含判断、根目录解析、`taxpayer_type_for`、`company_taxpayer_for(config, 目录, 月份)`；坏清单读作“无公司”。 | 唯一写入者是 `services/company_registry.py`；成本开票参考经它取纳税人类型（`projections/costs.py`、`monitoring/sync.py`、`services/costs.py`、`monitor_control.py`、`background_sync.py`）。 |
 | `src/invoice_hub/targets/paths.py` | `AppConfig`、`Layout`、相对路径序列化、SHA1 `target_id`、冲突隔离，以及 `path_is_under_root` 受控根判断和 `profile_identity` 过期结果判断。 | 决定所有入口的路径解释；变更需覆盖路径、启动、monitor、打包和配置测试。 |
 
 ## 9. 文件与 SQLite 存储
@@ -423,7 +424,7 @@
 |---|---|---|
 | `src/invoice_hub/services/__init__.py` | 导出 `AppState`、过期选择（来自 `errors.py`）、预览和打印异常及 `create_state`。 | API 应用工厂依赖。 |
 | `src/invoice_hub/services/app_state.py` | 组装根：构造全部领域服务并作为公开属性暴露（`state.bookkeeping`、`state.settings` 等），持有 config、活动 TargetProfile 与 RLock，保留 health、切换 watch_dir（`update_settings`）与删除所选两条跨域编排；不再有转发方法（ENG-08）。 | 上接 API 路由与测试，下接 `services/` 下的领域服务；服务读共享状态一律经 provider，跨服务协作经 lambda 每次现查对方服务方法（对服务类或实例的打桩因此全局生效），由 `tests/test_appstate_service_wiring.py` 守护（含“AppState 不再长出转发”检查）。 |
-| `src/invoice_hub/services/company_registry.py` | `CompanyRegistryService`：`runtime/local_state/companies.json` 的唯一写入者（RLock + revision CAS + 原子替换，损坏时保留原文件并拒写）；六类标准子目录与识别提示（前四类复用 `dossier.BUSINESS_DOSSIER_DIR_HINTS`）、纳税人身份生效期（`taxpayer_type_for`）、子目录补建 `plan_hash` 预览/确认与仅新建空目录。 | 上接 `api/routes/companies.py`；读活动 TargetProfile 只用于标记 `monitored`；后续 WS-07 按公司只读视图从这里取公司与子目录，不把它当第二个 watch_dir。守护测试 `tests/test_api_companies.py`。 |
+| `src/invoice_hub/services/company_registry.py` | `CompanyRegistryService`：`runtime/local_state/companies.json` 的唯一写入者（RLock + revision CAS + 原子替换，损坏时保留原文件并拒写）；六类标准子目录与识别提示（前四类复用 `dossier.BUSINESS_DOSSIER_DIR_HINTS`）、纳税人身份生效期（`taxpayer_type_for`）、子目录补建 `plan_hash` 预览/确认与仅新建空目录。 | 上接 `api/routes/companies.py`；读活动 TargetProfile 只用于标记 `monitored`；`services/company_views.py` 从这里取公司与子目录，不把它当第二个 watch_dir；写入改变活动公司当月纳税人类型时回调 `state.costs.refresh_workbook_tax_profile`。守护测试 `tests/test_api_companies.py`。 |
 | `src/invoice_hub/services/dossier.py` | `BusinessDossierService`：解析当前公司资料夹、一次有界扫描快捷入口/统计并限制打开路径（ENG-03 从 AppState 原样迁出；扫描上限常量也在此）。路由以 `state.dossier` 直接调用，做账经 `business_dossier_root()` 取公司目录。 | `/api/v1/business-dossier*` 和首页消费；不得改变 `watch_dir` 扫描语义；截断统计必须明确为下界。 |
 | `src/invoice_hub/services/document_rendering.py` | MuPDF 文档打开和安全分页 PNG 渲染的共享适配。 | preview/print 共用；缺依赖、加密、空文档、页尺寸和渲染失败保持结构化错误。 |
 | `src/invoice_hub/services/file_preview.py` | 短期源文件预览 job、闲置续租、页面/文本缓存、SVG/XML/图片安全边界。 | 保留已选源文件顺序；15 分钟闲置 TTL、页数、像素、作业数和缓存上限防止内存滥用。 |
@@ -434,6 +435,7 @@
 | `src/invoice_hub/services/invoice_selection.py` | 首页勾选的同票分组/来源身份/金额/格式纯函数，以及 `InvoiceSelectionService`：按当前发票列表复核 `invoice_key + source_path`、勾选合计（ENG-03 从 AppState 原样迁出）。 | 单据、预览/打印直接依赖它；发票详情路由、AppState 的删除所选与路由经 `state.selection` 调用 `validated_invoice_selection`/`invoice_selection_summary`。发票列表来自 `InvoiceListService`，经回调每次现取（测试会在实例上替换）；合计持 AppState 同一把 RLock。 |
 | `src/invoice_hub/services/background_sync.py` | `BackgroundSyncService` 与 spawn 子进程入口 `_run_background_sync_process`：首轮启动同步、代际与 TargetProfile 身份校验、过期结果 `server.background_stale`、旧子进程有界退役与结果等待上限（ENG-03 从 AppState 原样迁出，含超时常量）。 | AppState 与删除所选、切换目录经 `state.background.run_background_diagnostics` 触发（测试在本类上打桩以跳过启动同步），`health`/`bridge_progress` 读本服务的 `status`；测试对 `multiprocessing.get_context`、子进程入口与超时常量的打桩改为本模块。 |
 | `src/invoice_hub/services/bookkeeping.py` | `BookkeepingService`：账套确认、科目/辅助核算查询、凭证生成/决定/审核、映射规则预览与保存、定向重算、捷锐导出与导入批次、状态/映射迁移（ENG-03 从 AppState 原样迁出）。 | AppState 构造，路由以 `state.bookkeeping` 直接调用。活动 TargetProfile、config、公司资料夹与成本明细路径经回调实时读取，不缓存快照；写入先取 AppState 同一把 `_lock`，再取 `bookkeeping_write_lock`。 |
+| `src/invoice_hub/services/company_views.py` | `CompanyViewService`（`state.company_views`，WS-07 第 2 步）：各子目录的投影身份、上次投影状态、有界只读的过期判断（`directory_freshness`），以及按目录的只读发票列表（临时 `InvoiceListService` 只调 `list_invoices`；活动目录交给 `state.invoices`）。 | 上接 `api/routes/companies.py`；不建目录、不修复状态文件、不触发汇总。守护测试 `tests/test_company_views.py`。 |
 | `src/invoice_hub/services/costs.py` | `CostService`：`CostProjectionService` 工厂、成本快照、分页视图、开票参考状态保存与打开成本汇总（ENG-03 从 AppState 原样迁出）。 | 与 `projections/costs.py` 分工：这里只决定读哪个 TargetProfile、持哪把锁，算法在投影层。每次调用在 AppState 同一把 RLock 下复制活动目标与加价率，再在该目标的 monitor 同步锁内读写；保存后清发票缓存经回调调用 `InvoiceListService.clear_invoice_cache`。 |
 | `src/invoice_hub/services/diagnostics.py` | `DiagnosticsService`：诊断摘要、配置健康检查、日志尾部与脱敏支持包导出（ENG-03 从 AppState 原样迁出，含支持包上限与排除清单常量）。 | AppState 构造，路由以 `state.diagnostics` 直接调用；只读汇总设置、发票列表、monitor、成本、单据等状态，协作者以 AppState 方法同名注入、每次调用现取；支持包不含源发票与投影文件。 |
 | `src/invoice_hub/services/documents.py` | `DocumentService`：单据默认值、单据目录状态、首页批量入库核对、入/出库预览、导出状态、导出与打开（ENG-03 从 AppState 原样迁出）。 | AppState 构造，路由以 `state.documents` 直接调用；`_document_index` 与 `_inbound_details` 仍由 AppState 创建后传入（documents 路由直接读索引状态）。活动 TargetProfile、成本明细路径、出库目录经回调实时读取，首页批量入库核对（`_validated_inbound_selection`）在本服务内经 `InvoiceSelectionService` 复核；出库目录的保存/最近记录仍属设置用例留在 AppState。 |
@@ -535,6 +537,7 @@
 | `tests/test_polling_observer.py` | macOS polling observer 的事件/停止契约。 | monitoring/polling_observer、daemon。 |
 | `tests/test_windows_release_contract.py` | Windows BAT/PS1/module/manifest/browser/stale 静态契约，以及 fresh PowerShell 初始化器、浅源归档和确定性磁盘阈值动态契约。 | scripts/windows、scripts/dev Windows 发行链；初始化器成功路径不得依赖宿主临时卷余量，低于配置阈值必须失败且不写 receipt。 |
 | `tests/test_macos_release_contract.py` | Mac runtime/build/verify/Sparkle/签名脚本静态契约。 | macOS 正式发行文件。 |
+| `tests/test_company_views.py` | 按公司只读目录与纳税人类型优先级：投影/过期判断（新增、改动、删除、坏记录）、读取不建目录不改文件、只读列表与分页、活动目录交接、`company_taxpayer_for` 按月份、清单类型计价与保存拒绝、清单变化重写工作簿、所有 `CostProjectionService`/`MonitorSynchronizer` 构造都传入查找。 | services/company_views、targets/companies、projections/costs、services/company_registry。 |
 | `tests/test_api_companies.py` | 公司清单 API：空清单不建文件、子目录识别与歧义回退、revision CAS、根目录重复/嵌套、相对/绝对路径保存、子目录越界、纳税人生效期、补建预览/确认/过期、链接逃逸、损坏文件拒写、删除不碰文件、`monitored` 标记且不切换目录、跨来源拒绝。 | services/company_registry、api/routes/companies。 |
 | `tests/test_api_bookkeeping.py` | 做账 API、错误模型和废弃接口 410。 | AppState、api、bookkeeping。 |
 | `tests/test_bookkeeping_decisions.py` | W9 会计决定与提案 revision。 | decisions、vouchers。 |

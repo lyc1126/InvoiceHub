@@ -2,6 +2,17 @@
 
 ## 未发布
 
+### 2026-11-10 多公司工作区后端第 2 步：按公司只读目录，纳税人类型以公司清单为准（WS-07）
+
+- 需求：用户决定纳税人身份以公司清单为准，并要求继续 WS-07 第 2 步。
+- 起点：`codex/ws-07-company-registry` 的 `f72dff7`（第 1 步），仍在独立 worktree 施工，主工作区未改动。
+- 方案（第 2 步）：新增 `services/company_views.py::CompanyViewService`（`state.company_views`）。每个子目录用它作为 `watch_dir` 时的 TargetProfile 找到上次的普通汇总与成本明细；`target_profile_for` 是纯函数，读取不建任何目录。过期判断只在请求时进行：读 `processed_files.json`（坏文件不修复，判为 `unknown`），有界递归列出 PDF/OFD/XML（20,000 项或 2 秒，不跟随目录链接），按 `mtime_ns + size` 比对，得出 `fresh/stale/never_built/unknown`；活动目录直接报 `monitored`。之所以不用 `MonitorState`，是因为它的构造会建目录、读坏文件时会修复重写。非活动目录的发票列表由绑定该目录 profile 的临时 `InvoiceListService` 只调用 `list_invoices` 生成：行结构与首页相同，但标 `read_only`、清空 `detail_url`；活动目录交给 `state.invoices`。监控、设置、后台同步等仍只有活动目录这一份。这就是最初“按公司构造服务实例”的落地形态：只建读侧，不复制整套服务。
+- 方案（纳税人类型）：新增 `targets/companies.py`，提供各进程共用的只读查找 `company_taxpayer_for(config, 目录, 月份)`；它放在 `targets/`，是因为 monitor daemon 与 spawn 子进程不经过 AppState。`cost_analysis.py::effective_tax_profile` 用清单当月类型替换状态文件里的类型，销项税率仍取成本页保存值（不替用户在 3%/1% 之间选择，非常用税率沿用原有提示）；有效类型不写回状态文件。全部 6 处 `CostProjectionService` 构造和 `MonitorSynchronizer` 都传入 `company_taxpayer`：API 每次现查；daemon 每次同步现查；后台首轮同步子进程由父进程查好后作为第 6 个位置参数传入。`build_cost_analysis_outputs` 在解析完成、写工作簿前才取值。分页读缓存的指纹包含有效类型。成本页提交与清单不同的类型返回 400，提示到公司清单修改。清单增删改让活动公司当月类型变化时，释放锁后在投影写锁下重写工作簿；锁被同步占用时交给那次同步（`cost_workbook.reason=sync_running`）。只比较类型，改名不重写。
+- API：新增 `GET /api/v1/companies/{company_id}/directories`（`check_freshness` 可关）、`GET /api/v1/companies/{company_id}/directories/{key}/invoices`（与 `/api/v1/invoices` 同参数），错误码 `COMPANY_DIRECTORY_NOT_FOUND`（404）。`reference_tax_profile` 新增 `taxpayer_source`、`company_name`；清单写接口在类型变化时附 `cost_workbook`。既有字段与路由不变。
+- 文档：接口流程 §3.5.1、数据算法 §4.6 与 §9.3、成本规则与做账规则的公司清单节、文件地图（新增 `targets/companies.py`、`services/company_views.py`、`tests/test_company_views.py`）、任务导航第 5 节与 10.3 节、设计原因地图、架构入口、未来工作总览 WS-07 进度与遗留项。
+- 验证：新增 `tests/test_company_views.py`（8 项）；接线测试登记 `company_views`；测试中 4 个后台同步替身函数增加可选 `company_taxpayer` 参数。macOS 本机全量 pytest（绝对 `PYTHONPATH`）866 项：0 失败，16 项跳过（均为既有平台或环境跳过）。`compileall src tests`、`ruff check --select E9,F`、`git diff --check` 通过。
+- 未覆盖：`/costs` 页面未改。纳税人类型选择框仍可操作，选不同类型保存时由后端 400 拒绝并在横幅显示原因；没有显示来源，也没有禁用选择框（主工作区另一条线正在改 `page-costs.js`，本轮不碰）。开票参考仍按当月的单一类型计价，未按每张进项票的开票月份分别判断。跨月生效且期间没有同步时，工作簿要到下一次同步才更新。无前端消费者、无浏览器验收、无 Windows 与打包产物验证。只做了本地提交，未推送、未合并。
+
 ### 2026-11-10 多公司工作区后端第 1 步：公司清单（WS-07）
 
 - 需求：用户确认开工 WS-07，并让 Agent 自行判断方案。评估结论：ENG-08 之后各服务通过 provider 读取活动目录，可以按公司构造，但监控、设置、后台同步、诊断、删除所选等必须保持活动目录单例；而且按公司构造服务的前提是先有“公司清单”。因此本轮先做 WS-07 第 1 步，按公司只读视图留到第 2 步。

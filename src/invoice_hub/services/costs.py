@@ -24,6 +24,7 @@ from invoice_hub.services.errors import StaleInvoiceSelectionError
 from invoice_hub.storage import SQLiteRepository
 from invoice_hub.storage.read_views import COST_FIELDS, ReadViews
 from invoice_hub.targets import AppConfig
+from invoice_hub.targets.companies import company_taxpayer_for
 from invoice_hub.targets.paths import profile_identity as _profile_identity
 
 
@@ -58,12 +59,19 @@ class CostService:
     def append_event(self, event_type: str, payload: dict | None = None, error: dict | None = None, task_id: str | None = None) -> dict:
         return self.repo.append_event(event_type, payload=payload, error=error, task_id=task_id)
 
+    def _company_taxpayer(self, profile: TargetProfile) -> Callable[[], dict | None]:
+        # The company registry decides the taxpayer type (2026-11-10); read on every use so a
+        # registry edit applies without rebuilding this service.
+        return lambda: company_taxpayer_for(self.config, Path(profile.watch_dir))
+
     def cost_service(self) -> CostProjectionService:
+        profile = self.active_profile
         return CostProjectionService(
-            Path(self.active_profile.watch_dir),
-            Path(self.active_profile.workspace_dir),
-            self.active_profile.id,
+            Path(profile.watch_dir),
+            Path(profile.workspace_dir),
+            profile.id,
             reference_markup_rate=self.config.reference_markup_rate,
+            company_taxpayer=self._company_taxpayer(profile),
         )
 
     def cost_snapshot(self) -> dict:
@@ -80,6 +88,7 @@ class CostService:
                 Path(profile.workspace_dir),
                 profile.id,
                 reference_markup_rate=reference_markup_rate,
+                company_taxpayer=self._company_taxpayer(profile),
             ).snapshot().model_dump(mode="json")
         payload["recent_watch_dirs"] = recent_watch_dirs
         return payload
@@ -89,7 +98,10 @@ class CostService:
             profile = self.active_profile.model_copy(deep=True)
             rate = str(self.config.reference_markup_rate)
             recent = self._recent_watch_dirs()
-        service = CostProjectionService(Path(profile.watch_dir), Path(profile.workspace_dir), profile.id, reference_markup_rate=rate)
+        service = CostProjectionService(
+            Path(profile.watch_dir), Path(profile.workspace_dir), profile.id, reference_markup_rate=rate,
+            company_taxpayer=self._company_taxpayer(profile),
+        )
         views = ReadViews(profile.workspace_dir)
         monitor = MonitorState(profile, self._db_path)
         # Never remove the projection lock to make reads fast. Publish a committed
@@ -138,6 +150,27 @@ class CostService:
             meta[field] = rows if name == view else []
         return meta
 
+    def refresh_workbook_tax_profile(self) -> dict:
+        """Rewrite 成本发票汇总.xlsx after the registry changed the active company's taxpayer type.
+
+        Never waits for a running sync: that sync looks the registry up again just before it
+        writes the workbook, so a busy lock means the new type is already on its way.
+        """
+        with self._lock:
+            profile = self.active_profile.model_copy(deep=True)
+            rate = str(self.config.reference_markup_rate)
+        monitor_state = MonitorState(profile, self._db_path, sync_interval_seconds=60)
+        with monitor_state.try_sync_write_lock() as acquired:
+            if not acquired:
+                return {"refreshed": False, "reason": "sync_running"}
+            refreshed = CostProjectionService(
+                Path(profile.watch_dir), Path(profile.workspace_dir), profile.id, reference_markup_rate=rate,
+                company_taxpayer=self._company_taxpayer(profile),
+            ).refresh_workbook_tax_profile()
+        if refreshed:
+            self.append_event("cost_analysis.tax_profile_refreshed", {"target_id": profile.id})
+        return {"refreshed": refreshed, "reason": "" if refreshed else "no_cost_detail"}
+
     def save_cost_reference_status(self, payload: dict) -> dict:
         with self._lock:
             profile = self.active_profile.model_copy(deep=True)
@@ -150,6 +183,7 @@ class CostService:
                 Path(profile.workspace_dir),
                 profile.id,
                 reference_markup_rate=reference_markup_rate,
+                company_taxpayer=self._company_taxpayer(profile),
             )
             if payload.get("revision"):
                 service.cache_snapshot()

@@ -331,7 +331,7 @@ L10-D 复用 L10-R/C 的 lease、marker、fixed-loopback bridge 和 pure coordin
 | `PATCH /api/v1/bookkeeping/import-result` | 废弃路由 | 固定 HTTP 410 `BATCH_FINALIZE_REQUIRED` | 禁止逐张绕过 batch finalize |
 | `GET /api/v1/bookkeeping/state` | `bookkeeping_state` | 公司、store revision、草稿和批次总览 | 页面只读后再发显式动作 |
 
-### 3.5.1 公司清单（WS-07 第 1 步）
+### 3.5.1 公司清单与按公司只读目录（WS-07 第 1—2 步）
 
 公司清单存于 `runtime/local_state/companies.json`（schema v1，见数据算法 §4.6），由 `state.companies`（`services/company_registry.py::CompanyRegistryService`）读写。它与单目录设置分开：任何清单操作都不改变活动 `watch_dir`、TargetProfile 或 monitor；没有清单文件时列表为空、`revision=0`，且读取不会创建文件。写请求经同源校验，并携带清单 `revision`（CAS）。
 
@@ -344,8 +344,12 @@ L10-D 复用 L10-R/C 的 lease、marker、fixed-loopback bridge 和 pure coordin
 | `DELETE /api/v1/companies/{company_id}?revision=N` | `delete_company` | 只删清单条目，返回 `files_touched=0` | 不删除、移动或改写公司资料夹内任何文件 |
 | `GET /api/v1/companies/{company_id}/subdirs/plan` | `subdir_plan` | 补建预览：逐项 `create/exists/blocked` 与 `plan_hash` | 零写；同名文件、链接或越出根目录为 `blocked` |
 | `POST /api/v1/companies/{company_id}/subdirs/create` | `create_subdirs` | `confirm=true` + 预览的 `plan_hash` 后只新建空目录，返回 `created/skipped/failed` | 422 `COMPANY_CONFIRM_REQUIRED`；清单 revision 或任一路径状态变化返回 409 `COMPANY_PLAN_STALE`，须重新预览 |
+| `GET /api/v1/companies/{company_id}/directories` | `state.company_views.company_directories` | 六个子目录各自的 `target_id`、`active/read_only`、上次投影（`projection.summary_exists/summary_updated_at/cost_detail_exists/cost_detail_updated_at`）与 `freshness`（`monitored/fresh/stale/never_built/unknown/missing_dir/not_checked`，带 `added/updated/deleted/source_file_count/complete/message`） | `check_freshness=false` 跳过比对；比对只读、有界（20,000 项或 2 秒），不建目录、不修复状态文件、不触发汇总 |
+| `GET /api/v1/companies/{company_id}/directories/{key}/invoices` | `directory_invoices` | 与 `GET /api/v1/invoices` 相同的筛选与分页参数和行结构；非活动目录读上次汇总，`read_only=true`、行内 `detail_url=""`；活动目录交给 `state.invoices`，`read_only=false` | 未知子目录 404 `COMPANY_DIRECTORY_NOT_FOUND`；只读行不能用于预览、打印、改名、删除（这些接口仍校验活动 `target_id`） |
 
 失败统一为 `{ok:false, detail, error:{code, message, field?}}`：422 `COMPANY_INVALID`（`field` 指向 `name/root_dir/subdirs.<key>/taxpayer_periods[...]/revision`）、409 `COMPANY_REVISION_CONFLICT`。
+
+纳税人类型以公司清单为准（2026-11-10 用户决定）：活动 `watch_dir` 所在公司在当月有登记时，`GET /api/v1/cost-analysis*` 的 `reference_tax_profile.taxpayer_type` 取自清单，新增字段 `taxpayer_source`（`company_registry/cost_settings/default`）与 `company_name`；`POST /api/v1/cost-analysis/reference-status` 提交不同的 `tax_profile.taxpayer_type` 返回 400，销项税率仍可保存。清单增删改使活动公司当月类型变化时，写接口响应带 `cost_workbook: {refreshed, reason}`（`sync_running` 表示正在同步、由该次同步写入，`no_cost_detail` 表示尚无成本明细）。
 
 ### 3.6 皮肤
 

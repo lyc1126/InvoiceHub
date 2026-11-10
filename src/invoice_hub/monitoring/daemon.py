@@ -12,6 +12,7 @@ from invoice_hub.monitoring.state import MonitorState
 from invoice_hub.monitoring.sync import MonitorSynchronizer
 from invoice_hub.storage import SQLiteRepository
 from invoice_hub.targets import ensure_runtime_layout, load_config, target_profile_for
+from invoice_hub.targets.companies import company_taxpayer_for
 
 
 def _event_kind(path: Path, state: MonitorState) -> str | None:
@@ -40,7 +41,13 @@ def run_monitor(root_dir: Path, config_path: str | None, sync_interval_seconds: 
     profile = target_profile_for(config)
     state = MonitorState(profile, layout.db_path, sync_interval_seconds=sync_interval_seconds)
     repo = SQLiteRepository(layout.db_path)
-    synchronizer = MonitorSynchronizer(state, repo=repo, reference_markup_rate=config.reference_markup_rate)
+    # Looked up on every sync: a long-running daemon must follow registry edits and month changes.
+    synchronizer = MonitorSynchronizer(
+        state,
+        repo=repo,
+        reference_markup_rate=config.reference_markup_rate,
+        company_taxpayer=lambda: company_taxpayer_for(config, Path(profile.watch_dir)),
+    )
 
     if notify_self_test:
         state.notify_self_test()

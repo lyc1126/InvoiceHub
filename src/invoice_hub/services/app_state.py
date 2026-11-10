@@ -21,6 +21,7 @@ from invoice_hub.services.appearance import AppearanceService
 from invoice_hub.services.background_sync import BackgroundSyncService
 from invoice_hub.services.bookkeeping import BookkeepingService
 from invoice_hub.services.company_registry import CompanyRegistryService
+from invoice_hub.services.company_views import CompanyViewService
 from invoice_hub.services.costs import CostService
 from invoice_hub.services.diagnostics import DiagnosticsService
 from invoice_hub.services.document_index import DocumentIndex, InboundDetails
@@ -40,6 +41,7 @@ from invoice_hub.services.settings import SettingsService
 from invoice_hub.services.update_service import UpdateService
 from invoice_hub.storage import SQLiteRepository, atomic_write_json
 from invoice_hub.targets import AppConfig, ensure_runtime_layout, load_config, target_profile_for
+from invoice_hub.targets.companies import company_registry_path
 from invoice_hub.targets.paths import Layout
 
 class AppState:
@@ -127,9 +129,20 @@ class AppState:
         self.companies = CompanyRegistryService(
             lock=self._lock,
             repo=self.repo,
-            registry_path=layout.runtime_dir / "local_state" / "companies.json",
+            registry_path=company_registry_path(layout.runtime_dir),
             config=lambda: self.config,
             active_profile=lambda: self.active_profile,
+            on_active_taxpayer_change=lambda: self.costs.refresh_workbook_tax_profile(),
+        )
+        # WS-07 step 2: read-only views of each company folder's last projection.
+        self.company_views = CompanyViewService(
+            lock=self._lock,
+            repo=self.repo,
+            db_path=layout.db_path,
+            config=lambda: self.config,
+            active_profile=lambda: self.active_profile,
+            registry=self.companies,
+            active_invoices=lambda: self.invoices,
         )
         self.bookkeeping = BookkeepingService(
             lock=self._lock,

@@ -220,9 +220,15 @@ Lifecycle lease 是 host 运行态授权快照，不是可持久化业务状态�
 - `revision` 每次实际写入加一；写请求必须携带当前值，不一致返回 `COMPANY_REVISION_CONFLICT`。值未变化的 PATCH 不写文件。
 - `root_dir` 按 `serialize_config_path` 保存：项目根内为相对路径，包外为绝对路径。根目录之间按解析后、不区分大小写的路径比较，不允许重复或互相嵌套，避免后续聚合把同一文件计入两家公司。
 - `subdirs` 是相对根目录的 POSIX 路径；拒绝绝对路径、盘符、`~`、空段、`.`/`..` 和 Windows 保留字符，六类之间不得相同或嵌套。登记时未给出的键按“标准名存在 → 根目录直接子目录中唯一命中提示词（同一文件夹命中多类则不用） → 标准名（待创建）”推断，此后映射固定保存，不随目录变化重新猜测。
-- `taxpayer_periods` 按月份升序、月份唯一；某月身份取 `effective_from <= 该月` 的最后一项（`taxpayer_type_for`），早于首项或为空时为“未设置”，不默认一般纳税人。它暂未接入成本页的 `成本开票状态.json.tax_profile`；接入时须在 COST 规则中定义两者优先级。
+- `taxpayer_periods` 按月份升序、月份唯一；某月身份取 `effective_from <= 该月` 的最后一项（`targets/companies.py::taxpayer_type_for`），早于首项或为空时为“未设置”，不默认一般纳税人。成本开票参考以它为准，见 §9.3。
 - 读取到非 JSON、`schema_version != 1`、revision/列表结构错误或缺少 `id/name/root_dir/subdirs/taxpayer_periods` 的条目时返回 `COMPANY_REGISTRY_CORRUPT`，保留原文件并拒绝写入。
 - 子目录补建的 `plan_hash = SHA256(company_id, registry revision, 根路径键, [key, 路径键, action]...)`；apply 在同一锁内重算并比对，只对 `create` 项 `mkdir(exist_ok=False)`，遇到已出现的目录记为 `skipped`，路径上有同名文件记为 `failed`，不触碰任何既有文件。
+
+按公司只读目录（WS-07 第 2 步，`services/company_views.py`）：
+
+- 每个子目录的投影身份就是它作为 `watch_dir` 时的 `target_profile_for(config, 子目录)`，因此曾经监控过该目录留下的 `runtime/targets/<id>/workspace/发票汇总.csv` 与目录内 `成本发票明细.csv` 会被找到。`target_profile_for` 是纯函数，读取不建任何目录。
+- 是否过期：读 `state/processed_files.json`（坏文件不修复、不备份，直接判 `unknown`），再以 `os.scandir` 不跟随目录链接、递归列出 PDF/OFD/XML（跳过 `~$`，与 `supported_invoice_files` 同口径），按 `mtime_ns + size` 比对，路径键与 monitor 一致。新增或改动任一 → `stale`；列表完整且无差异 → `fresh`；超过 20,000 个目录项或 2 秒即停止，此时删除数不计、无差异也只能判 `unknown`；没有汇总 CSV → `never_built`。活动目录直接报 `monitored`，不比对。
+- 发票列表：非活动目录用绑定该 profile 的临时 `InvoiceListService` 调用只读的 `list_invoices`（不带 `page`，避免读取渐进缓存），再在外层分页；活动目录交给 `state.invoices`。
 
 ## 5. SQLite schema 与真实使用情况
 
@@ -446,6 +452,8 @@ reference_key = SHA1(UTF8(join(values, "\x1f"))).hexdigest()
 ### 9.3 行级加价、公司税务设置与快照
 
 公司税务设置存于 `watch_dir/成本开票状态.json` 顶层 `tax_profile`（纳税人类型 `general|small_scale`、销项税率 `t`）；缺失或不可读时 `general`、`t = 0.13`，与 2026-11-05 之前的结果一致。
+
+有效纳税人类型（2026-11-10 起以公司清单为准）：`effective_tax_profile(状态文件 tax_profile, company_taxpayer_for(config, watch_dir, 当月))`。清单中包含 `watch_dir` 的公司在当月有登记时，类型取清单值、`taxpayer_source = company_registry`；否则沿用状态文件（`cost_settings`）或默认（`default`）。销项税率 `t` 始终取状态文件或默认值，清单不替用户在 3% 与 1% 之间选择；小规模配非常用税率时沿用原有 `warning`。有效类型只在计算时套用，不写回状态文件。API 进程、monitor daemon（每次同步现查）、后台首轮同步子进程（父进程查好后作为参数传入）与手动重建都用同一查找；`build_cost_analysis_outputs` 在解析完成、写工作簿前才取值。`CostProjectionService.read_fingerprint` 含有效类型，清单变化会使分页读缓存换代。
 
 成本单价 `P` 按数量加权，但把不可抵扣的进项税计入成本：
 

@@ -9,7 +9,7 @@ import xml.etree.ElementTree as ET
 import unicodedata
 import zipfile
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from pathlib import Path
@@ -419,6 +419,10 @@ class ReferenceTaxProfile:
     taxpayer_type: str = TAXPAYER_GENERAL
     output_tax_rate: Decimal = REFERENCE_OUTPUT_TAX_RATE
     configured: bool = False
+    # Set by effective_tax_profile when the company registry supplies the taxpayer type; never
+    # written back to the status file, which keeps only what the cost page itself saved.
+    taxpayer_source: str = ""
+    company_name: str = ""
 
     def status_payload(self) -> dict:
         return {
@@ -438,6 +442,10 @@ class ReferenceTaxProfile:
             "output_tax_rate_display": f"{percent}%",
             "configured": self.configured,
             "warning": warning,
+            # company_registry: type comes from the company list and cannot be changed here;
+            # cost_settings: saved on this page; default: nothing saved (一般纳税人 + 13%).
+            "taxpayer_source": self.taxpayer_source or ("cost_settings" if self.configured else "default"),
+            "company_name": self.company_name,
         }
 
 
@@ -456,6 +464,24 @@ def parse_reference_tax_profile(value: object) -> ReferenceTaxProfile:
     if taxpayer_type not in TAXPAYER_LABELS:
         raise ValueError("纳税人类型只能是一般纳税人或小规模纳税人")
     return ReferenceTaxProfile(taxpayer_type, _tax_rate_from_percent(value.get("output_tax_rate_percent")), True)
+
+
+def effective_tax_profile(profile: ReferenceTaxProfile, company_taxpayer: dict | None) -> ReferenceTaxProfile:
+    """Apply the company registry's taxpayer type (it wins, 2026-11-10); keep the saved rate.
+
+    ``company_taxpayer`` comes from ``targets.companies.company_taxpayer_for``. The output rate
+    stays the cost page's own value: the registry does not choose between 3% and 1%, and a rate
+    that does not fit a small-scale company is flagged by ``api_payload`` instead of guessed.
+    """
+    taxpayer_type = str((company_taxpayer or {}).get("taxpayer_type") or "")
+    if taxpayer_type not in TAXPAYER_LABELS:
+        return profile
+    return replace(
+        profile,
+        taxpayer_type=taxpayer_type,
+        taxpayer_source="company_registry",
+        company_name=str(company_taxpayer.get("company_name") or ""),
+    )
 
 
 def reference_tax_profile_from_status(payload: object) -> ReferenceTaxProfile:
@@ -2713,6 +2739,7 @@ def build_cost_analysis_outputs(
     progress: Callable[[int, int], None] | None = None,
     on_rows: Callable | None = None,
     outbound_items: dict[str, dict] | None = None,
+    company_taxpayer: Callable[[], dict | None] | None = None,
 ) -> dict:
     watch_folder = Path(watch_folder)
     output_folder = Path(output_folder)
@@ -2766,7 +2793,11 @@ def build_cost_analysis_outputs(
             status_payload = {}
     markup_rate = normalize_reference_markup_rate(status_payload.get("reference_markup_rate", reference_markup_rate))
     markup_locked = _truthy(status_payload.get("reference_markup_locked", False))
-    tax_profile = reference_tax_profile_from_status(status_payload)
+    # Looked up after parsing, just before the workbook is written, so a registry edit made
+    # during a long sync is not overwritten by a value read when the sync started.
+    tax_profile = effective_tax_profile(
+        reference_tax_profile_from_status(status_payload), company_taxpayer() if company_taxpayer else None
+    )
     item_catalog = item_catalog_from_status(status_payload)
     exclusions = reference_exclusions_from_status(status_payload)
     status_items, status_changed = _merge_reference_status(_load_reference_status(status_json), _load_workbook_reference_status(summary_xlsx))

@@ -147,7 +147,7 @@ flowchart TD
 |---|---|
 | 首先阅读 | 数据算法第 8、9 节；接口流程第 3.3、6.6 节；[成本](rules/COST_ANALYSIS.md) |
 | 首要入口 | `projections/cost_analysis.py::parse_cost_rows_from_words`、`_cost_validation`、`_select_cost_analysis`、`project_spec_summary`、`_invoice_reference_summary`；`projections/costs.py::CostProjectionService`；`services/costs.py::CostService.cost_snapshot/save_cost_reference_status` |
-| 必须联动 | `cost_analysis.py` 与 `costs.py` 的重复公式/兼容键；`domain/models.py`、成本 CSV/XLSX 五 sheet、状态 JSON、cost API、page-costs、单据入库来源 |
+| 必须联动 | `cost_analysis.py` 与 `costs.py` 的重复公式/兼容键；`domain/models.py`、成本 CSV/XLSX 五 sheet、状态 JSON、cost API、page-costs、单据入库来源；纳税人类型以公司清单为准，新增 `CostProjectionService`/`MonitorSynchronizer` 构造必须传入 `company_taxpayer`（`targets/companies.py`） |
 | 产物与消费者 | `watch_dir/成本发票明细.csv`、`成本发票汇总.xlsx`、`成本开票状态.json`、详情/选择成本拆分、单据 |
 | 最低自动化 | 完整 `tests/test_summary_and_costs.py`，成本相关 `tests/test_invoice_classification.py` 和 `tests/test_api_contract.py`；页面字段变化再跑 `test_frontend_contract.py` |
 | 真实验收 | 页面四标签互斥、TSV 复制、行级加价草稿/保存/刷新、实际工作簿五 sheet；真实业务版式检查校验差异 |
@@ -309,11 +309,11 @@ OFD 专用入口为 `services/ofd_rendering.py`、`tools/ofd-preview/` 与 `scri
 
 | 导航项 | 内容 |
 |---|---|
-| 首先阅读 | 接口流程第 3.5.1 节；数据算法第 4.6 节 |
-| 首要入口 | `services/company_registry.py::CompanyRegistryService`（`_load/_save/_check_revision`、`_clean_root/_clean_subdirs`、`_plan/create_subdirs`）、`detect_subdirs`、`taxpayer_type_for`；路由 `api/routes/companies.py`；AppState 只负责构造 `state.companies` |
-| 必须联动 | 子目录提示词与 `services/dossier.py::BUSINESS_DOSSIER_DIR_HINTS` 共用；路径保存规则 `targets/paths.py::serialize_config_path`；接线测试 `SERVICES` |
+| 首先阅读 | 接口流程第 3.5.1 节；数据算法第 4.6、9.3 节 |
+| 首要入口 | `services/company_registry.py::CompanyRegistryService`（`_load/_save/_check_revision`、`_clean_root/_clean_subdirs`、`_plan/create_subdirs`、`_after_write`）、`detect_subdirs`；`services/company_views.py::CompanyViewService`、`directory_freshness`；`targets/companies.py::company_taxpayer_for/taxpayer_type_for`；路由 `api/routes/companies.py`；AppState 只负责构造 `state.companies`、`state.company_views` |
+| 必须联动 | 子目录提示词与 `services/dossier.py::BUSINESS_DOSSIER_DIR_HINTS` 共用；路径保存规则 `targets/paths.py::serialize_config_path`；接线测试 `SERVICES`；纳税人类型经 `company_taxpayer` 进入全部成本计价入口（见第 5 节）；只读列表行结构跟随 `InvoiceListService` |
 | 产物与消费者 | `runtime/local_state/companies.json`；`/api/v1/companies*`；后续 WS-07 按公司只读视图与 `/workspace` 侧栏 |
-| 最低自动化 | `tests/test_api_companies.py`、`tests/test_appstate_service_wiring.py`、`tests/test_development_documentation.py` |
+| 最低自动化 | `tests/test_api_companies.py`、`tests/test_company_views.py`、`tests/test_appstate_service_wiring.py`、`tests/test_development_documentation.py`；纳税人类型相关再跑 `tests/test_summary_and_costs.py` |
 | 真实验收 | 包外中文/空格路径、网络盘、Windows 盘符与大小写不敏感卷上的重复/嵌套判断；原生目录选择器接入后另测 |
 | 高风险提醒 | 清单不是第二个 watch_dir：不得启动第二个监控、不得对非活动公司后台扫描或写投影；损坏文件不能当空清单覆盖；补建只能新建空目录，删除公司只删条目 |
 
