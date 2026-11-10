@@ -26,6 +26,7 @@ SERVICES = {
     "_rename": ("lock", "profile"),
     "_settings": ("lock", "profile", "config"),
     "_diagnostics": ("profile", "config"),
+    "_background": ("lock", "profile", "config"),
 }
 
 

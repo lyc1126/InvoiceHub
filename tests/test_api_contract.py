@@ -1513,7 +1513,7 @@ def test_reference_status_api_accepts_row_markup_rate(tmp_path: Path) -> None:
     app = create_app(tmp_path)
     client = TestClient(app)
     deadline = time.time() + 3
-    while time.time() < deadline and app.state.invoice_hub._background_status in {"initializing", "running"}:
+    while time.time() < deadline and app.state.invoice_hub._background._background_status in {"initializing", "running"}:
         time.sleep(0.05)
     write_csv_rows(
         watch / "成本发票明细.csv",
@@ -1973,7 +1973,7 @@ def test_bridge_progress_api_filters_to_active_profile_and_safe_fields(tmp_path:
     assert idle["background_sync_status"] == "initializing"
 
     with state._lock:
-        state._background_status = "running"
+        state._background._background_status = "running"
 
     monitor_state = MonitorState(state.active_profile, state.layout.db_path)
     monitor_state.write_sync_progress(
@@ -2244,14 +2244,14 @@ def test_background_startup_sync_uses_spawn_worker_and_clears_current_profile_ca
         result_sender.send({"ok": True, "sync": {"ok": True, "target_id": profile_payload["id"]}})
 
     context = SpawnContext()
-    monkeypatch.setattr("invoice_hub.services.app_state.multiprocessing.get_context", lambda method: calls.setdefault("context", method) and context)
-    monkeypatch.setattr("invoice_hub.services.app_state._run_background_sync_process", fake_sync_worker)
+    monkeypatch.setattr("invoice_hub.services.background_sync.multiprocessing.get_context", lambda method: calls.setdefault("context", method) and context)
+    monkeypatch.setattr("invoice_hub.services.background_sync._run_background_sync_process", fake_sync_worker)
     state._invoices._invoice_cache_key = (1, 1)
     state._invoices._invoice_cache_rows = [{"文件名": "stale.csv"}]
 
     state.run_background_diagnostics("startup_sync")
     deadline = time.monotonic() + 2
-    while time.monotonic() < deadline and state._background_status != "ready":
+    while time.monotonic() < deadline and state._background._background_status != "ready":
         time.sleep(0.01)
 
     process = calls["process"]
@@ -2262,7 +2262,7 @@ def test_background_startup_sync_uses_spawn_worker_and_clears_current_profile_ca
     assert calls["profile_payload"] == state.active_profile.model_dump()
     assert calls["db_path"] == str(state.layout.db_path)
     assert calls["trigger"] == "startup_sync"
-    assert state._background_status == "ready"
+    assert state._background._background_status == "ready"
     assert state._invoices._invoice_cache_key is None
     assert state._invoices._invoice_cache_rows == []
 
@@ -2363,8 +2363,8 @@ def test_background_sync_completion_does_not_invalidate_new_active_profile_cache
             }
         )
 
-    monkeypatch.setattr("invoice_hub.services.app_state.multiprocessing.get_context", lambda method: SpawnContext())
-    monkeypatch.setattr("invoice_hub.services.app_state._run_background_sync_process", blocked_sync_worker)
+    monkeypatch.setattr("invoice_hub.services.background_sync.multiprocessing.get_context", lambda method: SpawnContext())
+    monkeypatch.setattr("invoice_hub.services.background_sync._run_background_sync_process", blocked_sync_worker)
 
     state.run_background_diagnostics("startup_sync")
     assert started.wait(timeout=2)
@@ -2401,7 +2401,7 @@ def test_background_sync_completion_does_not_invalidate_new_active_profile_cache
     }
     assert not ordinary_sync_events.intersection(event["event_type"] for event in state.wait_events(0))
     assert notifications == []
-    assert state._background_status == "running"
+    assert state._background._background_status == "running"
     assert state._invoices._invoice_cache_key == (9, 9)
     assert state._invoices._invoice_cache_rows == [{"文件名": "new-profile.csv"}]
 
@@ -2428,7 +2428,7 @@ def test_background_spawn_worker_keeps_fastapi_responsive_while_sync_runs(tmp_pa
         assert method == "spawn"
         return SlowSpawnContext()
 
-    monkeypatch.setattr("invoice_hub.services.app_state.multiprocessing.get_context", get_slow_spawn_context)
+    monkeypatch.setattr("invoice_hub.services.background_sync.multiprocessing.get_context", get_slow_spawn_context)
     client = TestClient(app)
     state.run_background_diagnostics("startup_sync")
 
@@ -2436,7 +2436,7 @@ def test_background_spawn_worker_keeps_fastapi_responsive_while_sync_runs(tmp_pa
     deadline = time.monotonic() + 5
     while time.monotonic() < deadline:
         with state._lock:
-            process = state._background_process
+            process = state._background._background_process
         if process is not None and process.is_alive():
             break
         time.sleep(0.01)
@@ -2450,9 +2450,9 @@ def test_background_spawn_worker_keeps_fastapi_responsive_while_sync_runs(tmp_pa
     assert health.json()["background_status"] == "running"
     assert time.monotonic() - request_started < 0.75
 
-    while time.monotonic() < deadline and state._background_status != "ready":
+    while time.monotonic() < deadline and state._background._background_status != "ready":
         time.sleep(0.02)
-    assert state._background_status == "ready"
+    assert state._background._background_status == "ready"
 
 
 def test_new_background_generation_retires_prior_worker_with_bounded_kill(tmp_path: Path, monkeypatch) -> None:
@@ -2540,10 +2540,10 @@ def test_new_background_generation_retires_prior_worker_with_bounded_kill(tmp_pa
 
     prior = PriorProcess()
     with state._lock:
-        state._background_process = prior
-        state._background_process_generation = 7
-    monkeypatch.setattr("invoice_hub.services.app_state.multiprocessing.get_context", lambda method: SpawnContext())
-    monkeypatch.setattr("invoice_hub.services.app_state._run_background_sync_process", fast_sync_worker)
+        state._background._background_process = prior
+        state._background._background_process_generation = 7
+    monkeypatch.setattr("invoice_hub.services.background_sync.multiprocessing.get_context", lambda method: SpawnContext())
+    monkeypatch.setattr("invoice_hub.services.background_sync._run_background_sync_process", fast_sync_worker)
 
     started = time.monotonic()
     state.run_background_diagnostics("startup_sync")
@@ -2586,7 +2586,7 @@ def test_background_retire_timeout_keeps_pid_snapshot_after_process_close(tmp_pa
             return None
 
     process = ProcessClosedByPeer()
-    state._retire_background_process_async(process, generation=4, reason="test_closed_process")
+    state._background._retire_background_process_async(process, generation=4, reason="test_closed_process")
 
     deadline = time.monotonic() + 2
     events = []
@@ -2610,9 +2610,9 @@ def test_background_worker_rejecting_kill_stays_managed_without_sync_failure(tmp
         startup_patch.setattr(AppState, "run_background_diagnostics", lambda self, trigger="startup_sync": None)
         app = create_app(tmp_path)
     state = app.state.invoice_hub
-    monkeypatch.setattr("invoice_hub.services.app_state.BACKGROUND_SYNC_MAX_SECONDS", 0.01)
-    monkeypatch.setattr("invoice_hub.services.app_state.BACKGROUND_SYNC_TERMINATE_JOIN_SECONDS", 0.0)
-    monkeypatch.setattr("invoice_hub.services.app_state.BACKGROUND_SYNC_KILL_JOIN_SECONDS", 0.0)
+    monkeypatch.setattr("invoice_hub.services.background_sync.BACKGROUND_SYNC_MAX_SECONDS", 0.01)
+    monkeypatch.setattr("invoice_hub.services.background_sync.BACKGROUND_SYNC_TERMINATE_JOIN_SECONDS", 0.0)
+    monkeypatch.setattr("invoice_hub.services.background_sync.BACKGROUND_SYNC_KILL_JOIN_SECONDS", 0.0)
 
     class ResultPipe:
         def __init__(self) -> None:
@@ -2700,8 +2700,8 @@ def test_background_worker_rejecting_kill_stays_managed_without_sync_failure(tmp
     def fast_sync_worker(profile_payload, db_path, reference_markup_rate, trigger, result_sender) -> None:
         result_sender.send({"ok": True, "sync": {"ok": True, "target_id": profile_payload["id"], "rebuilt": False}})
 
-    monkeypatch.setattr("invoice_hub.services.app_state.multiprocessing.get_context", lambda method: SpawnContext())
-    monkeypatch.setattr("invoice_hub.services.app_state._run_background_sync_process", fast_sync_worker)
+    monkeypatch.setattr("invoice_hub.services.background_sync.multiprocessing.get_context", lambda method: SpawnContext())
+    monkeypatch.setattr("invoice_hub.services.background_sync._run_background_sync_process", fast_sync_worker)
     state.run_background_diagnostics("startup_sync")
 
     deadline = time.monotonic() + 2
@@ -2720,8 +2720,8 @@ def test_background_worker_rejecting_kill_stays_managed_without_sync_failure(tmp
     assert isinstance(refusing, RefusingProcess)
     assert "server.background_worker_retire_timeout" in event_types
     assert not {"monitor.sync_failed", "server.background_failed", "server.background_ready"}.intersection(event_types)
-    assert state._background_status == "running"
-    assert id(refusing) in state._retiring_background_processes
+    assert state._background._background_status == "running"
+    assert id(refusing) in state._background._retiring_background_processes
 
     before_retry = refusing.kill_calls
     state.run_background_diagnostics("startup_sync")
