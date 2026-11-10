@@ -31,10 +31,11 @@ from invoice_hub.services.invoice_trash import InvoiceTrashService, TrashError
 from invoice_hub.services.about import AboutService
 from invoice_hub.services.app_icons import AppIconService
 from invoice_hub.services.appearance import AppearanceService
+from invoice_hub.services.server_shutdown import ServerShutdownService
 from invoice_hub.services.settings import SettingsService
 from invoice_hub.services.skins import SkinService
 from invoice_hub.services.update_service import UpdateService
-from invoice_hub.storage import SQLiteRepository, atomic_write_json, read_json_object
+from invoice_hub.storage import SQLiteRepository, atomic_write_json
 from invoice_hub.targets import AppConfig, ensure_runtime_layout, load_config, target_profile_for
 from invoice_hub.targets.paths import Layout
 # Keep a completed startup worker (or a cost save) scoped to the TargetProfile it captured.
@@ -70,6 +71,16 @@ class AppState:
         self._invoice_print_service = InvoicePrintService()
         self._file_preview_service = FilePreviewService()
         self._invoice_trash = InvoiceTrashService(layout.runtime_dir / "local_state" / "invoice-trash")
+        self._shutdown = ServerShutdownService(
+            lock=self._lock,
+            repo=self.repo,
+            layout=layout,
+            document_index=self._document_index,
+            config=lambda: self.config,
+            bridge_status=lambda *args, **kwargs: self.bridge_status(*args, **kwargs),
+            bridge_stop=lambda *args, **kwargs: self.bridge_stop(*args, **kwargs),
+            save_preferences=lambda *args, **kwargs: self.save_preferences(*args, **kwargs),
+        )
         self._monitor = MonitorControlService(
             lock=self._lock,
             repo=self.repo,
@@ -214,10 +225,6 @@ class AppState:
             company_dir=lambda: self._dossier.business_dossier_root(),
             cost_detail_csv=lambda: self.cost_service().detail_csv,
         )
-        self._server_shutdown_requested = False
-        self._server_shutdown_behavior = ""
-        self._server_shutdown_pid_value: str | None = None
-        self._server_shutdown_monitor_running = False
         self.ensure_active_dirs()
         self.append_event("server.started", {"phase": "fast_ready"})
 
@@ -506,138 +513,16 @@ class AppState:
     def bridge_stop(self) -> dict:
         return self._monitor.bridge_stop()
 
+    # Structured shutdown lives in services/server_shutdown.py (ENG-03); these keep the public names.
     @property
     def server_shutdown_requested(self) -> bool:
-        with self._lock:
-            return self._server_shutdown_requested
+        return self._shutdown.server_shutdown_requested
 
     def request_server_shutdown(self, behavior: str, remember: bool = False) -> dict:
-        normalized = str(behavior or "").strip()
-        if normalized not in {"keep_monitor", "stop_monitor"}:
-            raise ValueError("关闭系统时必须选择保留监控或停止监控")
-
-        with self._lock:
-            if self._server_shutdown_requested:
-                return {
-                    "ok": True,
-                    "scheduled": False,
-                    "idempotent": True,
-                    "shutdown_behavior": self._server_shutdown_behavior or normalized,
-                    "monitor_running": self._server_shutdown_monitor_running,
-                    "message": "localhost 关闭已在执行。",
-                }
-            self._server_shutdown_requested = True
-            self._server_shutdown_behavior = normalized
-            try:
-                self._server_shutdown_pid_value = self.layout.server_pid.read_text(encoding="utf-8").strip()
-            except (FileNotFoundError, IsADirectoryError, OSError):
-                self._server_shutdown_pid_value = None
-
-        try:
-            monitor_before = self.bridge_status()
-            monitor_was_running = bool(monitor_before.get("running"))
-            monitor_result: dict | None = None
-            monitor_after = monitor_before
-            if normalized == "stop_monitor":
-                monitor_result = self.bridge_stop()
-                if monitor_result.get("ok") is False:
-                    raise RuntimeError(str(monitor_result.get("error") or monitor_result.get("message") or "停止监控失败"))
-                monitor_after = monitor_result.get("status") if isinstance(monitor_result.get("status"), dict) else self.bridge_status()
-                if bool((monitor_after or {}).get("running")):
-                    raise RuntimeError("监控未能停止，请检查监控状态后重试")
-
-            if remember:
-                self.save_preferences({"system_shutdown_behavior": normalized})
-
-            monitor_running = bool((monitor_after or {}).get("running"))
-            self._server_shutdown_monitor_running = monitor_running
-            requested_at = utc_now_text()
-            lifecycle_state = {
-                "status": "stopping",
-                "pid": os.getpid(),
-                "host": self.config.host,
-                "port": self.config.port,
-                "url": f"http://{self.config.host}:{self.config.port}/",
-                "runtime_dir": str(self.layout.runtime_dir),
-                "config_path": str(self.config.config_path),
-                "shutdown_behavior": normalized,
-                "monitor_running": monitor_running,
-                "shutdown_requested_at": requested_at,
-            }
-            atomic_write_json(self.layout.server_state, lifecycle_state)
-            self.append_event(
-                "server.shutdown_requested",
-                {
-                    "shutdown_behavior": normalized,
-                    "remembered": bool(remember),
-                    "monitor_was_running": monitor_was_running,
-                    "monitor_running": monitor_running,
-                },
-            )
-            if normalized == "stop_monitor":
-                message = "WebUI 与监控正在关闭。"
-            elif monitor_running:
-                message = "WebUI 正在关闭，监控将继续运行。"
-            else:
-                message = "WebUI 正在关闭；当前监控原本未运行。"
-            return {
-                "ok": True,
-                "scheduled": True,
-                "idempotent": False,
-                "shutdown_behavior": normalized,
-                "remembered": bool(remember),
-                "monitor_was_running": monitor_was_running,
-                "monitor_running": monitor_running,
-                "monitor": monitor_result,
-                "message": message,
-            }
-        except Exception as exc:
-            with self._lock:
-                self._server_shutdown_requested = False
-                self._server_shutdown_behavior = ""
-                self._server_shutdown_pid_value = None
-                self._server_shutdown_monitor_running = False
-            self.append_event(
-                "server.shutdown_failed",
-                {"shutdown_behavior": normalized, "remembered": bool(remember)},
-                error={"message": str(exc)},
-            )
-            raise
+        return self._shutdown.request_server_shutdown(behavior, remember)
 
     def finalize_server_shutdown(self) -> None:
-        self._document_index.close()
-        stopped_at = utc_now_text()
-        current = read_json_object(self.layout.server_state, {})
-        current.update(
-            {
-                "status": "stopped",
-                "runtime_dir": str(self.layout.runtime_dir),
-                "config_path": str(self.config.config_path),
-                "shutdown_behavior": self._server_shutdown_behavior,
-                "monitor_running": self._server_shutdown_monitor_running,
-                "stopped_at": stopped_at,
-            }
-        )
-        current.pop("pid", None)
-        atomic_write_json(self.layout.server_state, current)
-
-        try:
-            pid_text = self.layout.server_pid.read_text(encoding="utf-8").strip()
-        except (FileNotFoundError, IsADirectoryError, OSError):
-            pid_text = ""
-        expected_pid_text = self._server_shutdown_pid_value
-        if expected_pid_text is not None and pid_text == expected_pid_text:
-            try:
-                self.layout.server_pid.unlink()
-            except FileNotFoundError:
-                pass
-        self.append_event(
-            "server.stopped",
-            {
-                "shutdown_behavior": self._server_shutdown_behavior,
-                "monitor_running": self._server_shutdown_monitor_running,
-            },
-        )
+        return self._shutdown.finalize_server_shutdown()
 
     def open_monitor_log(self) -> dict:
         return self._monitor.open_monitor_log()
