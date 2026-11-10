@@ -27,6 +27,7 @@ SERVICES = {
     "_settings": ("lock", "profile", "config"),
     "_diagnostics": ("profile", "config"),
     "_background": ("lock", "profile", "config"),
+    "_monitor": ("lock", "profile", "config"),
 }
 
 
