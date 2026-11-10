@@ -390,7 +390,7 @@
 
 | 文件 | 职责与入口 | 关系与修改影响 |
 |---|---|---|
-| `src/invoice_hub/bookkeeping/__init__.py` | 导出做账领域与服务入口。 | AppState 做账用例和测试从此访问稳定符号。 |
+| `src/invoice_hub/bookkeeping/__init__.py` | 导出做账领域与服务入口。 | `services/bookkeeping.py` 做账用例和测试从此访问稳定符号。 |
 | `src/invoice_hub/bookkeeping/paths.py` | 公司资料夹 `凭证/` 真值路径。 | 真实业务状态不得写入仓库或通用 runtime。 |
 | `src/invoice_hub/bookkeeping/repository.py` | 严格 schema、写锁、revision/CAS 和诊断。 | 所有状态写入必须经此边界，异常文件 fail closed。 |
 | `src/invoice_hub/bookkeeping/status.py` | 状态 v1/v2、preview/apply 迁移和业务身份。 | 禁止启动时自动迁移；审批和导出绑定 revision。 |
@@ -421,11 +421,12 @@
 | 文件 | 职责与入口 | 关系与修改影响 |
 |---|---|---|
 | `src/invoice_hub/services/__init__.py` | 导出 `AppState`、过期选择、预览和打印异常及 `create_state`。 | API 应用工厂依赖。 |
-| `src/invoice_hub/services/app_state.py` | 当前统一用例门面：设置、诊断、发票、预览/打印、成本、单据、monitor、皮肤、OCR 占位、更新 metadata/host approval 和关闭。 | 上接 API，下接几乎全部子系统；`_host_update_lock` 串行化 allowlisted Feed gate、host candidate 和一次性 install approval，改动必须按用例做相邻回归。 |
+| `src/invoice_hub/services/app_state.py` | 当前统一用例门面：设置、诊断、发票、预览/打印、成本、单据、monitor、皮肤、OCR 占位、更新 metadata/host approval 和关闭；做账用例已拆到 `services/bookkeeping.py`，这里只保留同名转发。 | 上接 API，下接几乎全部子系统；`_host_update_lock` 串行化 allowlisted Feed gate、host candidate 和一次性 install approval，改动必须按用例做相邻回归。 |
 | `src/invoice_hub/services/app_state.py` 的 business dossier 用例 | 解析当前公司资料夹、一次有界扫描快捷入口/统计并限制打开路径。 | `/api/v1/business-dossier*` 和首页消费；不得改变 `watch_dir` 扫描语义；截断统计必须明确为下界。 |
 | `src/invoice_hub/services/document_rendering.py` | MuPDF 文档打开和安全分页 PNG 渲染的共享适配。 | preview/print 共用；缺依赖、加密、空文档、页尺寸和渲染失败保持结构化错误。 |
 | `src/invoice_hub/services/file_preview.py` | 短期源文件预览 job、闲置续租、页面/文本缓存、SVG/XML/图片安全边界。 | 保留已选源文件顺序；15 分钟闲置 TTL、页数、像素、作业数和缓存上限防止内存滥用。 |
 | `src/invoice_hub/services/invoice_printing.py` | 短期同票 PDF 打印 job 和分页 PNG 缓存。 | 不持久化票面；只接收受控 PDF，过期/容量/加密失败明确返回。 |
+| `src/invoice_hub/services/bookkeeping.py` | `BookkeepingService`：账套确认、科目/辅助核算查询、凭证生成/决定/审核、映射规则预览与保存、定向重算、捷锐导出与导入批次、状态/映射迁移（ENG-03 从 AppState 原样迁出）。 | AppState 构造并以同名方法转发，路由不变。活动 TargetProfile、config、公司资料夹与成本明细路径经回调实时读取，不缓存快照；写入先取 AppState 同一把 `_lock`，再取 `bookkeeping_write_lock`。 |
 | `src/invoice_hub/services/monitor_bridge.py` | monitor 子进程命令、状态真值、ready 等待和启停。 | AppState 与 control 调用；与 daemon/state 构成生命周期闭环。 |
 | `src/invoice_hub/services/skins.py` | 皮肤 ZIP 安全验证、运行态存储、启用和文件服务。 | API、AppState、common.js 使用；安全回归在 API 测试。 |
 | `src/invoice_hub/services/update_service.py` | HTTPS 白名单更新检查、ETag/cache、版本/契约/平台产物选择和错误状态。 | About/API/启动后台检查消费；绝不执行安装。 |

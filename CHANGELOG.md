@@ -2,6 +2,15 @@
 
 ## 未发布
 
+### 2026-11-10 AppState 拆出做账服务（ENG-03 第一步）
+
+- 需求：用户要求先处理 ENG-03。`services/app_state.py` 5779 行、234 个方法，多公司工作区（WS-07）之前需要按领域拆开；未来工作总览定的顺序是先做账、再单据。
+- 起点：本地开发线 `codex/cost-select-all-transitions` 的 `3b88a74`（领先 `main`，含路由拆分）；主工作区有未提交修改，本轮在独立 worktree 的 `codex/appstate-bookkeeping-service` 施工，未改动主工作区。
+- 方案：做账区段（33 个方法，含 10 个私有辅助）原样迁到新的 `services/bookkeeping.py::BookkeepingService`，只替换两处对 AppState 的依赖（公司资料夹、成本明细路径）。服务通过构造参数拿到 AppState 同一把 `_lock` 与 SQLite 仓库，活动 TargetProfile、config、公司资料夹与成本明细路径一律经回调实时读取，不缓存快照（切换 watch_dir 会替换这些对象）。AppState 保留 23 个同名公开方法转发，路由、测试调用和 monkeypatch 路径都不变；方法内的延迟导入原样保留。
+- 结果：`app_state.py` 5779 → 4209 行，方法 234 → 224（剩余的做账方法只是一行转发）；新文件 1706 行。
+- 验证：搬移前后逐行对比，除 6 处依赖替换外完全相同；临时根目录构建应用，OpenAPI（128 条路径）与路由表 JSON 逐字节一致；ruff 通过；新增两条测试——切换 watch_dir 后 `/api/v1/bookkeeping/setup` 指向新公司资料夹、做账写入会等待 AppState 的锁——并做变异核对：把回调改成构造时快照、把锁换成私有 RLock 后两条测试都会失败。全量 pytest 765 通过、16 跳过（11 项 Windows 专用、5 项需另行构建的原生 OFD 组件），基线同口径 763 通过（差额即两条新测试）。
+- 未覆盖：未启动真实 localhost 页面点做账流程（HTTP 契约由 API 测试覆盖）；未重建打包产物；路由仍经 AppState 转发，直接调用领域服务并删除转发留到后续步骤。
+
 ### 2026-11-09 修复测试导入 api.app 时改写仓库运行态（ENG-07）
 
 - 需求：用户要求先修复 ENG-07。现象：在主工作区跑全量 pytest 会改写仓库自身的 `runtime/`（`server_state.json`、`invoice_hub.db`、默认 target 汇总与监控状态）和 `发票文件/` 下的空成本产物；若本机配置指向真实目录，跑测试就会同步真实发票目录。

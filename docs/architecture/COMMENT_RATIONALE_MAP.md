@@ -144,6 +144,7 @@ Windows验包测试中的假凭据在运行时拼接：保持生成文件的扫�
 | `finalize_server_shutdown` | 正式启动器 PID 可能不是 Uvicorn `os.getpid()`，且关闭期间可能启动新实例 | 仅当 PID 文件内容仍等于请求快照时删除 | shutdown finalize 测试 |
 | `AppState._scan_business_dossier/business_dossier/open_business_dossier` | 公司资料夹是导航边界，不是新的扫描根；完整递归和每链接重复扫描会拖住页面，即使前端超时服务端仍会继续工作 | 单次 `os.scandir` 有目录项/时间上限、跳过符号链接；迭代途中 `OSError` 保留已累计项并以 `unreadable_entries` 标为下界；只打开业务资料夹或当前 watch_dir 内路径，open 同步路径经线程池 | business dossier API/有界扫描/iterator-OSError/线程池与首页刷新容错测试 |
 | `AppState.bookkeeping_*` 与 bookkeeping repository | 做账状态写入跨进程且必须绑定当前资源 revision | 只经严格仓储/写锁/CAS；坏 schema 保留原文件并 fail closed | 全部 bookkeeping 状态/API 测试 |
+| `AppState.__init__` 构造 `BookkeepingService` 的回调参数 | 切换 watch_dir 会替换 AppState 的 TargetProfile 与 config；服务若在构造时捕获对象，后续做账会落到旧公司资料夹。服务若自建锁，做账写入就不再与目录切换和其它 AppState 写入串行 | 活动目标、config、公司资料夹与成本明细路径一律经回调实时读取；传入的是 AppState 同一把 RLock | `test_bookkeeping_service_follows_watch_dir_switch`、`test_bookkeeping_writes_wait_for_the_app_state_lock` |
 
 ## 5. P0：票头、金额与同票纠偏
 
@@ -337,7 +338,7 @@ Windows验包测试中的假凭据在运行时拼接：保持生成文件的扫�
 
 这些注释适合在未来拆分模块时增加短区块标题，不应单独制造批量 diff：
 
-- `services/app_state.py`：配置与诊断、单据、普通汇总/重命名、列表/一致性/选择合计、monitor/关闭、成本/皮肤、OCR/平台七个用例区。
+- `services/app_state.py`：配置与诊断、单据、普通汇总/重命名、列表/一致性/选择合计、monitor/关闭、成本/皮肤、OCR/平台七个用例区；做账用例在 `services/bookkeeping.py`。
 - `projections/cost_analysis.py`：格式清洗、均价/详情拆分、加价/快照、PDF 坐标、XML/OFD 明细、状态兼容、分组/工作簿七个算法区。
 - `web/static/js/page-settings.js`：只在真实拆分模块时为目录、运行、皮肤、偏好、关闭、诊断区保留导航标题。
 - Windows 启动器：预检、判重、进程启动、就绪探测、状态写入、浏览器派发的阶段标题。

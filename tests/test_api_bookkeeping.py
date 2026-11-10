@@ -228,6 +228,45 @@ def test_legacy_item_import_result_route_is_gone(tmp_path: Path, monkeypatch) ->
     assert response.json()["error"]["code"] == "BATCH_FINALIZE_REQUIRED"
 
 
+def test_bookkeeping_service_follows_watch_dir_switch(tmp_path: Path, monkeypatch) -> None:
+    client, paths = _client(tmp_path, monkeypatch)
+    state = client.app.state.invoice_hub
+    before = client.get("/api/v1/bookkeeping/setup").json()
+    assert before["company_dir"] == str(tmp_path / "公司 A")
+
+    other_watch_dir = tmp_path / "公司 B" / "成本发票"
+    other_watch_dir.mkdir(parents=True)
+    state.update_settings({"watch_dir": str(other_watch_dir)})
+
+    after = client.get("/api/v1/bookkeeping/setup").json()
+    assert after["company_dir"] == str(tmp_path / "公司 B")
+    assert after["watch_dir"] == str(other_watch_dir)
+    assert after["target_id"] == state.active_profile.id != before["target_id"]
+    assert not paths.voucher_status_json.exists()
+
+
+def test_bookkeeping_writes_wait_for_the_app_state_lock(tmp_path: Path, monkeypatch) -> None:
+    import threading
+
+    client, _paths = _client(tmp_path, monkeypatch)
+    state = client.app.state.invoice_hub
+    finished = threading.Event()
+    result: dict[str, Any] = {}
+
+    def generate() -> None:
+        result.update(state.generate_voucher_drafts())
+        finished.set()
+
+    with state._lock:
+        worker = threading.Thread(target=generate)
+        worker.start()
+        # The split service must reuse AppState's RLock, not a private one.
+        assert not finished.wait(0.3)
+    worker.join(timeout=10)
+    assert finished.is_set()
+    assert result["ok"] is False
+
+
 @dataclass(frozen=True)
 class W9ApiCase:
     client: TestClient

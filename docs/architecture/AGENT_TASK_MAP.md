@@ -293,7 +293,7 @@ OFD 专用入口为 `services/ofd_rendering.py`、`tools/ofd-preview/` 与 `scri
 | 导航项 | 内容 |
 |---|---|
 | 首先阅读 | 接口流程第 3.5 节；数据算法第 3.2、4.5 节；[做账](rules/BOOKKEEPING.md) |
-| 首要入口 | `AppState.business_dossier/_scan_business_dossier/bookkeeping_*`；`bookkeeping/repository.py`、`validator.py`、`vouchers.py`、`decisions.py`、`catalogs.py`、`mapping.py`、`batches.py`；首页资料夹容错在 `page-index.js`，做账页在 `page-bookkeeping.js` |
+| 首要入口 | `AppState.business_dossier/_scan_business_dossier`；做账用例 `services/bookkeeping.py::BookkeepingService`（AppState 同名转发）；`bookkeeping/repository.py`、`validator.py`、`vouchers.py`、`decisions.py`、`catalogs.py`、`mapping.py`、`batches.py`；首页资料夹容错在 `page-index.js`，做账页在 `page-bookkeeping.js` |
 | 必须联动 | 公司资料夹受控路径、profile/catalog/mapping/store 绑定、proposal revision、统一 validator、batch manifest/XLSX、API/页面 blockers、runner facts |
 | 产物与消费者 | 公司资料夹 `凭证/` 下 JSON、批次、日志；`/api/v1/business-dossier*`、`/api/v1/bookkeeping/*` 和做账页 |
 | 最低自动化 | 资料夹变化至少运行 `tests/test_api_contract.py` 的资料夹/线程池/有界扫描用例与 `tests/test_frontend_contract.py` 的资料夹刷新容错契约；做账变化运行全部 `tests/test_bookkeeping_*.py`、`test_api_bookkeeping.py`、`test_runner_dryrun.py` |
