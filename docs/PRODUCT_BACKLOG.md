@@ -68,11 +68,12 @@
 | [AGENT-03](#agent-03) | Agent 写入：应用内审批与 L1/L2 写工具 | P3 | 暂缓（先只读） | 待定 |
 | [ENG-01](#eng-01) | Windows Rust clippy 清零后改为阻断 | P2 | 待评估 | 待定 |
 | [ENG-02](#eng-02) | 判定开票参考保存时未使用的工作簿状态读取 | P2 | 待评估 | 待定 |
-| [ENG-03](#eng-03) | AppState 按领域拆分为独立服务 | P1 | 进行中（做账、单据、成本、业务资料夹、预览/打印、发票勾选已拆出，2026-11-10） | 待定 |
+| [ENG-03](#eng-03) | AppState 按领域拆分为独立服务 | P1 | 已完成（2026-11-10） | 未发布 |
 | [ENG-04](#eng-04) | 架构入口文档只描述当前状态 | P2 | 待评估 | 待定 |
 | [ENG-05](#eng-05) | 真实浏览器 E2E（合成目录 + 本机后端） | P1 | 待评估 | 待定 |
 | [ENG-06](#eng-06) | 扩大静态检查（ruff B/E7、新模块类型检查） | P3 | 待评估 | 待定 |
 | [ENG-07](#eng-07) | 测试导入 `api.app` 时不再对仓库默认配置做启动同步 | P2 | 已完成（2026-11-09） | 未发布 |
+| [ENG-08](#eng-08) | 路由直接依赖领域服务，删除 AppState 转发门面 | P2 | 待评估 | 待定（建议随 WS-07） |
 
 ## 成本分析与开票参考（COST）
 
@@ -339,8 +340,8 @@
 
 ### ENG-03 AppState 按领域拆分为独立服务
 
-- 优先级 / 状态 / 目标版本：P1 / 进行中 / 待定（建议在 WS-07 多公司后端之前）
-- 进度：2026-11-10 第一步完成——做账区段（33 个方法、约 1650 行）原样迁到 `services/bookkeeping.py::BookkeepingService`，AppState 保留 23 个同名转发；`app_state.py` 5779 → 4209 行，OpenAPI 与路由表逐字节不变，新增锁共享与切换目录跟随两条测试。同日第二步完成——单据（入/出库）用例迁到 `services/documents.py::DocumentService`（27 个方法），AppState 保留 15 个同名转发；出库目录的选择/保存/最近记录属设置，留在 AppState；首页勾选校验仍在 AppState，以回调注入；`app_state.py` 4209 → 3905 行，方法 224 → 211。第三步完成——成本编排（工厂、快照、分页视图、参考状态保存、打开汇总，5 个方法）迁到 `services/costs.py::CostService`；它们都是公开方法，方法数不变，`app_state.py` 3905 → 3815 行。剩余体量（约）：monitor/后台同步 560 行、设置/配置 470、预览/打印 320、重命名 315、发票列表 290、业务资料夹 290、诊断 280、勾选合计 270。第四步完成——业务资料夹（公司目录推断、有界扫描、快捷入口、受限打开，9 个方法与扫描上限常量）迁到 `services/dossier.py::BusinessDossierService`，做账改为经 `business_dossier_root()` 取公司目录；`app_state.py` 3815 → 3515 行，方法 211 → 204。第五步完成——预览/打印编排（16 个方法）迁到 `services/preview_print.py::InvoicePreviewPrintService`，两个底层服务实例仍由 AppState 创建后传入，勾选身份规则以回调注入；`AppState._path_is_under_root` 别名因再无调用而删除；`app_state.py` 3515 → 3216 行，方法 204 → 197。第六步完成——发票勾选（同票分组/来源身份/金额/格式 5 个纯函数，勾选复核与合计 4 个方法）迁到 `services/invoice_selection.py`；单据的入库勾选核对移入 `DocumentService`，单据与预览/打印改为直接依赖勾选服务，原先的 5 个勾选回调删除；`app_state.py` 3216 → 3045 行，方法 197 → 189。下一步候选：重命名（约 315 行）、诊断（约 280 行）；发票列表（约 290 行）是勾选、一致性和详情的共同上游，宜在两者之后再拆；monitor/后台同步与设置最后；全部拆完后路由改为直接调用领域服务并删除转发。
+- 优先级 / 状态 / 目标版本：P1 / 已完成 / 未发布（2026-11-10 完成领域拆分；转发门面的去留另见 ENG-08）
+- 进度：2026-11-10 分 16 步完成，均为原样搬移、AppState 保留同名转发，每步 OpenAPI 与路由表逐字节不变、全量 pytest 通过。领域服务（`services/` 下）：`bookkeeping`、`documents`、`costs`、`dossier`、`preview_print`、`invoice_selection`、`appearance`、`ocr`、`about`、`invoice_list`、`invoice_rename`、`settings`、`diagnostics`、`background_sync`、`monitor_control`、`server_shutdown`，外加共用异常的 `errors.py`。`app_state.py` 5779 → 770 行：只剩组装、共享的 config/活动目标/RLock、health、切换 watch_dir 与删除所选两条跨域编排，以及按服务分组的转发。守护：各服务锁与目标/config 跟随由 `tests/test_appstate_service_wiring.py` 参数化检查，另有逐步的目录切换与锁等待测试，均做过变异核对。详见 CHANGELOG 2026-11-10 各节。
 - 问题与证据：`services/app_state.py` 约 5800 行、230 余个方法，覆盖设置、发票、预览打印、单据、皮肤、monitor、成本、做账、OCR；多公司工作区会打破“单活动目录”前提，改动集中压在这一个类上。
 - 方案：以做账（约 45 个方法）和单据为先，抽出 `services/<领域>.py`，AppState 只保留锁、活动目标与跨域编排并委托；对外方法签名先保持不变，测试中的 `AppState.xxx` monkeypatch 路径逐步迁移。新领域（公司清单、聚合、比较）直接写成独立服务。
 - 验收标准：每次抽取前后全量 pytest 与 OpenAPI 不变；AppState 行数与方法数单调下降；锁与活动目标切换语义有专门测试。
@@ -385,6 +386,16 @@
 - 方案：BAT、Tauri 与 Swift 都经 `python -m invoice_hub.api.main` 启动，`main.py` 先设置 `INVOICE_HUB_ROOT/CONFIG` 再 `from invoice_hub.api.app import app`；可改为 `main.py` 在该处调用 `create_app()`，删除模块级实例，去掉导入副作用（需保持“只构造一份 AppState 与一条 startup sync”的 macOS 规则）。备选是在测试 `conftest.py` 中把 `INVOICE_HUB_ROOT`/配置指向临时目录。
 - 验收标准：全量 pytest 前后仓库内 `runtime/`、`发票文件/` 与 `config/` 无变化（可加一个快照比对的测试或 CI 检查）；各启动入口的 ready 与握手测试通过。
 - 影响范围：`api/app.py`、`api/main.py`、测试夹具、MACOS/MONITORING 规则（单 AppState 与启动同步）。
+
+<a id="eng-08"></a>
+
+### ENG-08 路由直接依赖领域服务，删除 AppState 转发门面
+
+- 优先级 / 状态 / 目标版本：P2 / 待评估 / 待定（建议随 WS-07 多公司后端一起做）
+- 问题与证据：ENG-03 完成后，`services/app_state.py` 约 770 行中约 400 行是 136 个一行转发；路由与测试仍调用 `state.<方法>`。测试还在 AppState 类上打桩 `run_background_diagnostics`（约 70 处）、`bridge_status/bridge_stop`，服务间协作正是经这些 AppState 方法回调，打桩才能全局生效。
+- 方案：给各领域服务公开属性名（如 `state.bookkeeping`），路由改为直接调用；测试调用与打桩迁到服务；服务间回调改为显式依赖对象。WS-07 会按公司选择服务实例，届时路由的取用方式本来就要改，一起做可以只改一次。
+- 验收标准：路由不再经 AppState 转发；OpenAPI 与路由表逐字节不变；全量 pytest 通过；接线测试改为覆盖新的依赖方式。
+- 影响范围：`api/routes/`、`services/app_state.py`、几乎所有 API/服务测试、FILE_MAP 与架构文档。
 
 ## 待修复（缺陷）
 

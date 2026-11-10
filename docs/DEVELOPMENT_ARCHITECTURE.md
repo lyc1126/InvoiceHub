@@ -203,7 +203,7 @@ flowchart TB
     Release --> Web
 ```
 
-理想依赖方向是“外层适配器依赖内层领域和服务”。当前真实结构中，`AppState` 同时依赖几乎所有子系统，是路由统一入口，也是最明显的架构债务。文档不会把它伪装成已经拆分完成的整洁服务层。
+理想依赖方向是“外层适配器依赖内层领域和服务”。ENG-03 之后，用例实现在 `services/` 下的领域服务里；`AppState` 是组装根与转发门面，持有共享的 config、活动 TargetProfile 与 RLock，并保留切换 watch_dir、删除所选两条跨域编排。路由仍经 `AppState` 的同名方法进入，尚未直接依赖领域服务（见 ENG-08）。
 
 ## 5. 目录树与职责
 
@@ -275,7 +275,7 @@ flowchart LR
 | `bookkeeping` | `VoucherExecutabilityValidator`、映射/迁移/批次仓储 | W8/W9 做账协议与确定性状态 | 浏览器自动化和平台窗口 |
 | `storage` | `atomic_write_json`、`SQLiteRepository` | 原子读写、任务、事件 | 发票主存储 |
 | `monitoring` | `run_monitor`、`MonitorSynchronizer.run_sync` | 持续观察、变化判断、自动重建 | Web 页面生命周期 |
-| `services` | `AppState`、`MonitorBridge`、`SkinService`、`UpdateService` | 用例编排、并发锁、平台协调与受限更新检查 | HTTP 细节 |
+| `services` | `AppState`（组装根/门面）、各领域服务（`bookkeeping`、`documents`、`costs`、`dossier`、`preview_print`、`invoice_selection`、`invoice_list`、`invoice_rename`、`settings`、`diagnostics`、`monitor_control`、`background_sync`、`about`、`appearance`、`ocr`、`server_shutdown`）、`MonitorBridge`、`SkinService`、`UpdateService` | 用例编排、并发锁、平台协调与受限更新检查 | HTTP 细节 |
 | `api` | `create_app` | HTTP、错误码、静态文件、SSE | 重复业务算法 |
 | `platform` | `pick_directory`、`open_local_path` | Windows Python 适配；macOS 原生适配在 Swift 壳 | 领域判断 |
 | `release` | `build_core`、三类 manifest、`provenance`、`update_metadata`、`sbom`、`source_snapshot` | 脱敏确定性包、身份/依赖证明、从真实产物/收据/Tag 派生的更新元数据与对应源码；公开 Feed 在 macOS 用 Tag 派生验证器复验实际成品 | 用户业务数据迁移或外部平台发布 |
@@ -286,7 +286,7 @@ flowchart LR
 
 ```text
 BAT/页面/monitor 触发
-  → AppState.bridge_rebuild 或 MonitorSynchronizer.run_sync
+  → MonitorControlService.bridge_rebuild（经 AppState）或 MonitorSynchronizer.run_sync
   → supported_invoice_files
   → extract_invoice_record(PDF/OFD/XML)
   → apply_invoice_family_corrections
@@ -321,7 +321,7 @@ BAT/页面/monitor 触发
 
 | 状态 | 事实 | 维护含义 |
 |---|---|---|
-| 架构债务 | `services/app_state.py` 聚合大量跨域用例 | 改动前必须按用例定位，避免把不相关逻辑一起重构；新领域用例不再加入 AppState，按领域拆分见 ENG-03（做账、单据、成本、业务资料夹、预览/打印、发票勾选已拆到 `services/` 下的 `bookkeeping.py`、`documents.py`、`costs.py`、`dossier.py`、`preview_print.py`、`invoice_selection.py`，AppState 保留同名转发）。HTTP 层已按领域拆到 `api/routes/` |
+| 架构债务 | 路由仍经 `AppState` 转发门面调用领域服务 | ENG-03 已把用例全部拆到 `services/` 下的领域服务，AppState 只剩组装、共享状态、两条跨域编排与转发；新用例写进对应领域服务，不再加入 AppState。路由直接依赖领域服务并删除转发见 ENG-08。HTTP 层已按领域拆到 `api/routes/` |
 | 架构债务 | `cost_analysis.py` 与 `costs.py` 有参考键、加价和锁定快照的对应实现 | 修改公式必须双向核对并跑成本全链测试 |
 | 架构债务 | 路径规范化在 `targets`、`monitoring`、成本和选择合计中有不同语境实现 | 不能仅凭函数同名就机械合并 |
 | 架构债务 | `base_head.html` 存在，但页面仍各自维护 head 和资源版本 | 静态资源变更必须逐模板核对版本参数 |

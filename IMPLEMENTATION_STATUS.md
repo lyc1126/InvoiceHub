@@ -3,7 +3,7 @@
 ## 2026-11-09 工程门禁、API 路由拆分与 Vue 工作区前端基础（工作分支 `codex/engineering-guardrails`，基于未合并的 `codex/cost-select-all-transitions`）
 
 - CI：新增 ruff（E9+F）、Rust（macOS/Windows 的 `cargo fmt --check`、clippy、`cargo test`；Windows clippy 暂只报告）、两平台 Node 交互测试、Vue 前端（类型检查、组件测试、提交构建逐字节可复现）作业；SwiftUI 参考壳的 `swift test` 改为路径触发的独立 workflow。
-- 后端：113 条领域路由从 `api/app.py` 拆到 `api/routes/` 的 10 个模块，共享辅助在 `api/common.py`；OpenAPI 与路由匹配结果与拆分前一致。`AppState` 拆分进行中（ENG-03）：2026-11-10 做账、单据、成本、业务资料夹、预览/打印、发票勾选用例已迁到 `services/` 下的 `bookkeeping.py`、`documents.py`、`costs.py`、`dossier.py`、`preview_print.py`、`invoice_selection.py`，AppState 保留同名转发。
+- 后端：113 条领域路由从 `api/app.py` 拆到 `api/routes/` 的 10 个模块，共享辅助在 `api/common.py`；OpenAPI 与路由匹配结果与拆分前一致。`AppState` 已按领域拆分（ENG-03，2026-11-10）：用例在 `services/` 下 16 个领域服务中，`app_state.py` 由 5779 行降为约 770 行，只保留组装、共享状态、health、切换 watch_dir 与删除所选两条跨域编排及同名转发；路由直接依赖领域服务登记为 ENG-08。
 - 前端：`frontend/`（Vue 3 + TypeScript + Pinia + Vue Router + Vitest）提交构建到 `web/static/app/`，`/workspace` 只读预览外框（概览、目录）；旧页面不变。多公司工作区（WS-01 起）在此基础上实现。
 - 未覆盖：GitHub CI 尚未实际运行（未推送）；Windows 与 Tauri 打包产物未重建；本机回环网络策略下 4 个 Rust socket 测试无法在本地通过。
 - 同日修复 ENG-07：`api/app.py` 去掉模块级实例，`api/main.py` 显式 `create_app()`；pytest 增加仓库运行态守护，全量测试不再改写 checkout 的 `runtime/`、`发票文件/`、`config/`。

@@ -2,6 +2,26 @@
 
 ## 未发布
 
+### 2026-11-10 完成 AppState 领域拆分（ENG-03 第七至十六步）
+
+- 需求：用户要求“继续，直到完成 AppState 的全部拆解”。
+- 起点与分支：本地开发线 `codex/cost-select-all-transitions` 的 `1dfd3ae`；为少动主工作区，剩余各步在同一个 worktree 分支 `codex/appstate-decomposition` 上逐步提交，最后一次合并。
+- 做法：每步都是原样搬移，AppState 保留同名转发；服务读共享的 config、活动 TargetProfile 一律经 provider，每次调用现取，写入持 AppState 同一把 RLock；跨服务协作者以 AppState 方法同名注入，因此测试在 AppState 类上的打桩（`run_background_diagnostics`、`bridge_status/bridge_stop`）仍全局生效。每步用 AST 逐方法比对搬移前后源码，只允许依赖替换；临时根目录构建应用比对 OpenAPI 与路由表 JSON 逐字节一致；ruff 与全量 pytest 通过后才提交。
+- 第七步：皮肤/应用图标 → `services/appearance.py`，OCR 页 → `services/ocr.py`。新增 `tests/test_appstate_service_wiring.py`，按服务参数化检查切换 watch_dir 后锁、活动目标、config 仍是 AppState 的同一对象（此前各步拆出的服务一并纳入）。
+- 第八步：About 与更新生命周期 → `services/about.py`（`AboutService` 持有宿主更新审批状态、非阻塞生命周期锁与后台检查定时器；`UpdateService` 仍由 AppState 创建）；新增 `host_rpc.desktop_host_mode_enabled()` 供共用。宿主更新测试改为构造空的 `AboutService`，属性名与断言不变；About 链接测试的 `open_external_url` 打桩迁到新模块。
+- 第九步：发票列表、手改、一致性、详情与打开源文件（27 个方法）→ `services/invoice_list.py`，读缓存归该服务；AppState 保留 `_clear_invoice_cache` 等供后台同步、重建、重命名、删除调用；第六步留下的两个勾选规则别名删除。读写缓存、替换 `_summary_rows`、打桩 `write_summary_xlsx` 的测试迁到 `state._invoices` 或新模块。
+- 第十步：源发票重命名 → `services/invoice_rename.py`（含命名格式常量）。设置页源码契约测试改为读取整个 `services/` 目录，检查的字符串不变。
+- 第十一步：设置页数据、config 文件持久化、最近/出库目录、偏好、watch_dir 检查与选择（25 个方法）→ `services/settings.py`（含常量）。切换 watch_dir（`update_settings`）牵动 monitor、缓存、活动目标与启动同步，留在 AppState。config 对象仍归 AppState：原先 3 处“改写配置文件后重新赋值 `self.config`”改为调用注入的 `reload_config`，在同一把 RLock 内给 AppState 重新赋值；变异核对时把它改成空操作，单据测试会失败。`UnsupportedStartupSurfaceError` 移到 `services/errors.py`。
+- 第十二步：诊断摘要、配置健康、日志尾部与脱敏支持包 → `services/diagnostics.py`（含支持包上限与排除清单常量）；AppState 里已无用的后缀/投影文件名常量与 `_format_file_mtime` 别名删除。
+- 第十三步：后台启动同步（spawn 子进程入口、超时常量与 12 个方法）→ `services/background_sync.py`，后台状态、代际与进程登记归该服务；AppState 保留 `run_background_diagnostics`，`health`/进度读该服务的状态。测试对 `multiprocessing.get_context`、子进程入口与超时常量的打桩，以及对后台状态字段的读写，迁到新模块与 `state._background`。
+- 第十四步：monitor 启停/状态/健康、同步进度、手动重建与打开日志/运行目录 → `services/monitor_control.py`。
+- 第十五步：结构化关闭 → `services/server_shutdown.py`（含关闭状态字段）；AppState 保留 `server_shutdown_requested` 属性与两个方法转发。
+- 第十六步：纯重排。`__init__` 按依赖顺序构造服务，并配一段统一说明（删除已与实际顺序不符的逐步注释）；类体依次为核心成员、两条跨域编排、按服务分组的转发；补模块说明，整理导入顺序。AST 校验：136 个方法源码逐字相同，`__init__` 的 33 条语句集合相同，模块级代码不变。
+- 结果：`app_state.py` 3045 → 770 行（全程 5779 → 770）；AppState 只剩组装、共享状态、`health`、切换 watch_dir 与删除所选两条跨域编排，以及 136 个转发。“删除所选”本身只有 31 行，底层已是独立的 `InvoiceTrashService`，又要协调 monitor 写锁、发票与预览缓存和启动同步，属于跨域编排，故留在 AppState。
+- 验证：分支上每步全量 pytest 通过，最终 790 通过、16 跳过（11 项 Windows 专用、5 项需另行构建的原生 OFD 组件），起点 774 通过，差额是 16 条参数化接线测试。每个新服务都做了变异核对（锁换成私有 RLock、活动目标或 config 改为构造时快照），接线测试或既有行为测试都会失败。
+- 文档：文件地图逐一登记新文件与接线测试；架构入口、设计原因、任务导航中指向实现位置的 `AppState.xxx` 改到新模块，经转发仍成立的表述未改；ENG-03 标为已完成，新增 ENG-08（路由直接依赖领域服务、删除转发门面，建议随 WS-07 一起做）。
+- 未覆盖：未启动真实 localhost 逐页操作，也未重建任何打包产物或运行正式 Windows BAT/Tauri 宿主；转发门面与类级打桩仍在，路由尚未直接依赖领域服务（ENG-08）。
+
 ### 2026-11-10 AppState 拆出发票勾选服务（ENG-03 第六步）
 
 - 需求：用户要求继续 ENG-03。上一轮建议把勾选合计连同勾选复核辅助方法拆成发票勾选服务，让单据、预览/打印直接依赖它，去掉第二、五步留下的勾选回调。

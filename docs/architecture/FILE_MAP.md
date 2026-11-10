@@ -116,7 +116,7 @@
   → 源发票、投影文件、运行状态和 SQLite
 ```
 
-当前 `services/app_state.py` 是统一业务门面，实际跨越多层。它是导航中心，不代表可以把所有新逻辑继续堆入其中。
+`services/app_state.py` 是组装根与转发门面（ENG-03）：用例实现在 `services/` 下的领域服务里，按下表找对应文件；新逻辑写进领域服务，不加入 AppState。
 
 <a id="directory-rules"></a>
 
@@ -421,7 +421,7 @@
 | 文件 | 职责与入口 | 关系与修改影响 |
 |---|---|---|
 | `src/invoice_hub/services/__init__.py` | 导出 `AppState`、过期选择（来自 `errors.py`）、预览和打印异常及 `create_state`。 | API 应用工厂依赖。 |
-| `src/invoice_hub/services/app_state.py` | 当前统一用例门面：设置、诊断、发票、预览/打印、成本、单据、monitor、皮肤、OCR 占位、更新 metadata/host approval 和关闭；做账、单据、成本、业务资料夹、预览/打印、发票勾选用例已拆到 `services/` 下的 `bookkeeping.py`、`documents.py`、`costs.py`、`dossier.py`、`preview_print.py`、`invoice_selection.py`，这里只保留同名转发。 | 上接 API，下接几乎全部子系统；`_host_update_lock` 串行化 allowlisted Feed gate、host candidate 和一次性 install approval，改动必须按用例做相邻回归。 |
+| `src/invoice_hub/services/app_state.py` | 组装根与转发门面：构造全部领域服务，持有 config、活动 TargetProfile 与 RLock，保留 health、切换 watch_dir（`update_settings`）与删除所选两条跨域编排，其余公开方法按服务分组转发。 | 上接 API 路由与测试，下接 `services/` 下的领域服务；服务读共享状态一律经 provider，跨服务协作经 AppState 方法回调（类级打桩因此全局生效），由 `tests/test_appstate_service_wiring.py` 守护。 |
 | `src/invoice_hub/services/dossier.py` | `BusinessDossierService`：解析当前公司资料夹、一次有界扫描快捷入口/统计并限制打开路径（ENG-03 从 AppState 原样迁出；扫描上限常量也在此）。AppState 保留 `business_dossier/open_business_dossier` 转发，做账经 `business_dossier_root()` 取公司目录。 | `/api/v1/business-dossier*` 和首页消费；不得改变 `watch_dir` 扫描语义；截断统计必须明确为下界。 |
 | `src/invoice_hub/services/document_rendering.py` | MuPDF 文档打开和安全分页 PNG 渲染的共享适配。 | preview/print 共用；缺依赖、加密、空文档、页尺寸和渲染失败保持结构化错误。 |
 | `src/invoice_hub/services/file_preview.py` | 短期源文件预览 job、闲置续租、页面/文本缓存、SVG/XML/图片安全边界。 | 保留已选源文件顺序；15 分钟闲置 TTL、页数、像素、作业数和缓存上限防止内存滥用。 |
@@ -506,7 +506,7 @@
 |---|---|---|
 | `tests/fixtures/sample_invoice.xml` | 最小结构化发票样本。 | extraction、summary、cost XML 链路。 |
 | `tests/test_appstate_service_wiring.py` | ENG-03 接线守护：每个从 AppState 拆出的服务在切换 watch_dir 后，锁、活动目标与 config 仍是 AppState 的同一对象。 | 新拆出服务须登记到 `SERVICES`；构造时快照或私有锁会使对应参数失败。 |
-| `tests/test_api_contract.py` | API 字段、设置、关闭、诊断、SSE、皮肤、成本、选择合计、重命名，以及 monitor recovery HMAC request/response/replay/empty-body contracts。 | `api/app.py`、`AppState`、skins、costs、summary。 |
+| `tests/test_api_contract.py` | API 字段、设置、关闭、诊断、SSE、皮肤、成本、选择合计、重命名，以及 monitor recovery HMAC request/response/replay/empty-body contracts。 | `api/app.py`、`AppState` 与领域服务、skins、costs、summary。 |
 | `tests/test_file_preview.py` | 预览 job、来源复核、分页、文本、容量与安全边界。 | file_preview、document_rendering、AppState、API。 |
 | `tests/test_file_preview_frontend_contract.py` | 首页预览 DOM、交互和静态资源契约。 | index.html、page-index.js、app.css。 |
 | `tests/test_documents.py` | 单据状态、预览、人民币大写、模板扩行、导出和路径限制。 | documents、AppState documents API。 |

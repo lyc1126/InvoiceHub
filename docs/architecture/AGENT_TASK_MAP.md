@@ -64,7 +64,7 @@ D1 紧凑布局验收增加常见短窗口下 20 键无需下划、背面长解�
 
 大列表/单据缓存入口：`services/document_index.py`、`DocumentService.document_state/document_outbound_preview`、documents index API、`page-documents.js/page-index.js`、`large-lists.css`。最低验收 `tests/test_document_index.py`、`tests/test_documents.py`、前端/Node 及 7,003 条浏览器场景：停止/恢复、变更/删除、目录隔离、旧任务拒绝、健康接口、两款皮肤和恢复入口。解析字段语义变化需递增缓存版本。
 
-首页搜索范围任务：`AppState._filter_invoice_items`、`api/app.py::invoices`、`index.html` 与 `page-index.js` 联动；最低覆盖大量合成记录的 invoice/filename/all、缺省兼容、非法枚举、组合筛选、统计/空结果、重置及旧响应拒绝，并复验默认外观、两款皮肤和 `no_skin=1`。修改脚本必须更新首页版本参数与静态契约。
+首页搜索范围任务：`services/invoice_list.py::InvoiceListService._filter_invoice_items`、`api/app.py::invoices`、`index.html` 与 `page-index.js` 联动；最低覆盖大量合成记录的 invoice/filename/all、缺省兼容、非法枚举、组合筛选、统计/空结果、重置及旧响应拒绝，并复验默认外观、两款皮肤和 `no_skin=1`。修改脚本必须更新首页版本参数与静态契约。
 
 2026-09-07 图标/桌面整合入口：`services/app_icons.py`、`platform/host_rpc.py`、`src-tauri/src/app_icon.rs`、设置外观和皮肤页；最低检查 `test_app_icon.py`、`test_tauri_host_rpc.py`、`test_desktop_icon.py`、Tauri lifecycle/Windows marker 契约及四款图标 DOM。同步进度与启动恢复需联动 monitoring、API、首页/成本页、Windows 启停模块与各自契约。打包前同时核对最新前端和已完成桌面分支功能，不能仅按某一分支日期判断新旧。
 
@@ -128,7 +128,7 @@ flowchart TD
 |---|---|
 | 首先阅读 | 数据算法第 7.4 节；[提取与分类](rules/INVOICE_EXTRACTION.md) |
 | 首要入口 | `extraction/classification.py::classify_invoice`、`canonical_business_type`、`classification_status`；`parsers.py::_pdf_classification`、`_ofd_classification`、`apply_invoice_family_corrections` |
-| 必须联动 | `InvoiceRecord`、summary 表头、`AppState.list_invoices/_build_consistency_groups`、成本校验字段、index/detail/consistency JS 与模板 |
+| 必须联动 | `InvoiceRecord`、summary 表头、`InvoiceListService.list_invoices/_build_consistency_groups`（`services/invoice_list.py`）、成本校验字段、index/detail/consistency JS 与模板 |
 | 产物与消费者 | 普通汇总四个分类字段、列表筛选、详情、一致性、成本“发票校验”sheet |
 | 最低自动化 | 完整 `tests/test_invoice_classification.py`，加 `tests/test_summary_and_costs.py` 的同票纠偏测试、API 一致性测试、前端契约 |
 | 真实验收 | 新业务样式必须区分“合成测试通过”和“真实票验证”；检查当前皮肤与 `?no_skin=1` 的徽标/长文本 |
@@ -161,7 +161,7 @@ flowchart TD
 | 导航项 | 内容 |
 |---|---|
 | 首先阅读 | 开发架构第 3.4、6 节；数据算法第 4、6 节；接口流程设置接口 |
-| 首要入口 | `targets/paths.py::load_config`、`serialize_config_path`、`target_id_for`、`target_profile_for`、`ensure_runtime_layout`；`AppState.update_settings` |
+| 首要入口 | `targets/paths.py::load_config`、`serialize_config_path`、`target_id_for`、`target_profile_for`、`ensure_runtime_layout`；`AppState.update_settings`（跨域编排）与 `services/settings.py` |
 | 必须联动 | Windows 启动/停止脚本的路径解析、monitor control/daemon、CostProjectionService、SkinService、release 默认配置 |
 | 产物与消费者 | `config/app.local.json`、runtime、目标 workspace/state/localappdata、普通与成本输出路径 |
 | 最低自动化 | `tests/test_paths.py`、设置目录 API 测试、monitoring 路径用例、`tests/test_release.py` |
@@ -177,7 +177,7 @@ flowchart TD
 | 导航项 | 内容 |
 |---|---|
 | 首先阅读 | 接口流程第 6.1 至 6.5 节；数据算法第 6、13 节；`docs/MONITORING_AND_LOGGING.md` |
-| 首要入口 | `monitoring/daemon.py::run_monitor`、`monitoring/sync.py::MonitorSynchronizer.run_sync`、`monitoring/state.py::MonitorState`、`services/monitor_bridge.py::MonitorBridge`、`AppState.run_background_diagnostics` |
+| 首要入口 | `monitoring/daemon.py::run_monitor`、`monitoring/sync.py::MonitorSynchronizer.run_sync`、`monitoring/state.py::MonitorState`、`services/monitor_bridge.py::MonitorBridge`、`services/background_sync.py`（AppState 保留 `run_background_diagnostics`）、`services/monitor_control.py` |
 | 必须联动 | bridge API、SSE 事件、首页/设置/成本/单据刷新、Windows monitor PS1/BAT、SQLite events |
 | 产物与消费者 | lock、stop flag、processed、manual overrides、monitor status、业务日志、bridge stdout/stderr |
 | 最低自动化 | 完整 `tests/test_monitoring.py`，启动后台同步和 bridge API 测试；事件变化再跑 SSE API 与前端契约 |
@@ -193,7 +193,7 @@ flowchart TD
 | 导航项 | 内容 |
 |---|---|
 | 首先阅读 | 接口流程第 3.1、6.10 节；[监控与关闭](rules/MONITORING.md) |
-| 首要入口 | `AppState.settings/preferences/save_preferences/diagnostic_*`、`request_server_shutdown/finalize_server_shutdown`；`api/app.py::shutdown`；`page-settings.js` |
+| 首要入口 | `services/settings.py`（settings/preferences/save_preferences）、`services/diagnostics.py`、`services/server_shutdown.py`（request/finalize shutdown），均经 AppState 同名转发；`api/app.py::shutdown`；`page-settings.js` |
 | 必须联动 | settings 模板、settings-actions CSS、common SSE、bridge、server state/PID、两个正式停止 BAT 的固定语义 |
 | 产物与消费者 | preferences、support packages、server_state、server.pid、events；设置页所有分类 |
 | 最低自动化 | 设置/偏好/诊断/关闭 API 测试 + `tests/test_frontend_contract.py`；涉及 bridge 再跑 monitoring |
@@ -228,7 +228,7 @@ flowchart TD
 
 官网入口为 `website/index.html`，样式与交互为 `website/style.css`、`website/app.js`、`website/paper-scene.js`，合成演示数据由 `website/demo-data.js` 提供。先读 `website/README.md` 和 `website/ASSETS.md`，同步 FILE_MAP、README、状态和 CHANGELOG。最低检查是 `node --test website/tests/demo.test.cjs`、修改脚本语法及本地链接，视觉变化另需桌面/手机截图、真实交互和动画/减少动态效果检查。官网不请求业务 API，不加载应用皮肤，不处理真实发票；本轮浏览器访问未获许可，视觉验收保持未执行。
 
-软件入口位于设置 About 模板/脚本、`AppState.about`、`api/app.py` 的 `/website/` 路由及 `version.py::LOCAL_WEBSITE_PATH`；HTTP 与组包共用 `website.py` 白名单。增减官网资源须同步该白名单并检查 Core Build ID、源码快照、Windows portable、Tauri development/alpha/public-preview 与 Swift 参考壳的复制链。最低验收包括 `tests/test_website.py`、About/官网 API、设置静态契约和 build manifest 测试；localhost 实取首页、设置、官网与资源，当前皮肤和恢复入口分开记录。源码复制验收不得当作平台成品验收。
+软件入口位于设置 About 模板/脚本、`services/about.py::AboutService.about`（AppState 转发）、`api/app.py` 的 `/website/` 路由及 `version.py::LOCAL_WEBSITE_PATH`；HTTP 与组包共用 `website.py` 白名单。增减官网资源须同步该白名单并检查 Core Build ID、源码快照、Windows portable、Tauri development/alpha/public-preview 与 Swift 参考壳的复制链。最低验收包括 `tests/test_website.py`、About/官网 API、设置静态契约和 build manifest 测试；localhost 实取首页、设置、官网与资源，当前皮肤和恢复入口分开记录。源码复制验收不得当作平台成品验收。
 
 四视图和功能场景变更至少覆盖：筛选后空选择禁用、预览来源逐份保留、同票 PDF 回退与缺 PDF 整批阻断、明细税率/规格/单位分组、概念金额换算的分位守恒、五层画布进入/离开收敛与减少动态效果。Node VM 调度测试只证明控制状态，不替代真实像素或鼠标命中验收。
 
@@ -374,7 +374,7 @@ Windows portable 目录发布重试需覆盖短暂 5/32/33 成功、持续失败
 |---|---|
 | 首先阅读 | 历史净化执行记录；[Tauri 宿主](rules/TAURI_HOST.md)、[构建与发行](rules/RELEASE.md)；接口流程第 6.11 至 6.13 节 |
 | 首要入口 | `version.py`、`release/*`、`HISTORY_SANITIZATION_EXECUTION.md`、`.github` 治理配置；当前 `v0.3` 使用 `scripts/dev/tauri_version_sync.py`、`tauri_doctor.py`、`tauri_bootstrap.py`、`src-tauri/src/backend.rs`、`src-tauri/src/monitor_recovery.rs` 和 `src-tauri/src/host_rpc.rs` |
-| 必须联动 | LICENSE/NOTICE/贡献与安全文档、README/状态/架构地图、依赖锁、公开仓库设置、Release 元数据；Tauri lifecycle/updater 改动再联动 `api/app.py` 的 install body/error/origin、`AppState` metadata approval、`platform/host_rpc.py`、monitor 子进程环境、Web consumers 与 Host RPC contracts |
+| 必须联动 | LICENSE/NOTICE/贡献与安全文档、README/状态/架构地图、依赖锁、公开仓库设置、Release 元数据；Tauri lifecycle/updater 改动再联动 `api/app.py` 的 install body/error/origin、`services/about.py` 的 metadata approval、`platform/host_rpc.py`、monitor 子进程环境、Web consumers 与 Host RPC contracts |
 | 产物与消费者 | 新的 `v0.3` 才产生 NSIS、DMG/更新归档、Feed、源码归档、SBOM 和发布收据 |
 | 最低自动化 | 公开基线运行文档/许可证、候选内容和 all-ref secret/业务数据扫描；foundation 先跑版本同步、doctor fail-closed 与 pnpm lock 测试；lifecycle/updater 变更再跑 isolated Rust HMAC/identity/OpenAPI/post-preference revalidation/RPC revocation、manifest hash、candidate 主动 TTL/order、`.app/Contents` sibling state-root rejection、macOS custom menu/Cmd-Q 共用 `app.exit(0)` 且拒绝 predefined Quit、L10-R lifecycle lease/ready-only/pending-marker/Unix-symlink contract，以及 Python host-RPC direct no-proxy transport、hosted strict `Cache-Control: no-cache` fresh-200/cache-ETag-304 rejection、host-check immediate-busy/approval-retention、non-host check bypass、install-lock immediate-error/approval-retention/no-second-RPC、empty-install-body/redacted-error TestClient contracts，每个 RC 最多一次完整回归 |
 | 真实验收 | `v0.3` 每平台最终 RC 一次安装、启动、目录选择、托盘与更新烟测，失败后仅重跑受影响类别 |
@@ -391,7 +391,7 @@ Windows portable 目录发布重试需覆盖短暂 5/32/33 成功、持续失败
 | 导航项 | 内容 |
 |---|---|
 | 首先阅读 | 发行计划、接口流程第 3.1/6.13 节；`docs/release/UPDATE_SYSTEM.md` |
-| 首要入口 | `services/update_service.py`、`services/app_state.py::check_for_updates/install_update`、`release/update_metadata.py`、`version.py`、`platform/host_rpc.py`、设置 About 模板/JS/CSS；`v0.3` 增加 Tauri updater 与 Host RPC adapter |
+| 首要入口 | `services/update_service.py`、`services/about.py::AboutService.check_for_updates/install_update`、`release/update_metadata.py`、`version.py`、`platform/host_rpc.py`、设置 About 模板/JS/CSS；`v0.3` 增加 Tauri updater 与 Host RPC adapter |
 | 必须联动 | package identity、preferences、启动后台 timer、事件、Feed、update install API 的 `{}` body/error、manifest hash、monitor lifecycle 和 Host RPC authorization |
 | 产物与消费者 | `v0.3` 生成 GitHub Pages Feed、签名更新资产和 Tauri 安装器 |
 | 最低自动化 | 覆盖 fresh Feed approval 与 cache/ETag/`304` rejection、host check/install 非阻塞竞争、candidate TTL/一次消费、空 install body/脱敏 503；L10-D 另锁定 HMAC request/response/replay/空 body、host-only artifact identity、disabled/activation/startup restore、response flush -> execute latch、CommitLost 无副作用、coordinator 顺序/恢复，以及 Windows/macOS 退出源码边界。真实下载验签、monitor stop/recheck、安装/restart 仍需最终 RC 平台样本 |
