@@ -21,6 +21,7 @@ SERVICES = {
     "_selection": ("lock", "profile"),
     "_appearance": ("lock",),
     "_ocr": ("profile", "config"),
+    "_about": ("lock",),
 }
 
 

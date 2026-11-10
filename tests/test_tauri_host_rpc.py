@@ -10,7 +10,7 @@ import pytest
 
 from invoice_hub.platform import host_rpc
 from invoice_hub.platform import windows
-from invoice_hub.services.app_state import AppState
+from invoice_hub.services.about import AboutService
 
 
 TOKEN = "a" * 64
@@ -234,8 +234,8 @@ def test_host_updater_rejects_extra_or_inconsistent_private_response_fields(
         host_rpc.update_check()
 
 
-def _host_update_state(result: dict, events: list[str]) -> AppState:
-    state = object.__new__(AppState)
+def _host_update_state(result: dict, events: list[str]) -> AboutService:
+    state = object.__new__(AboutService)
     state._lock = threading.RLock()
     state._host_update_lock = threading.Lock()
     state._host_update_approval_version = ""

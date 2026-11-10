@@ -591,7 +591,7 @@ def test_about_api_is_local_only_and_update_check_payload_is_strict(tmp_path: Pa
     assert update_calls
 
     opened_urls: list[str] = []
-    monkeypatch.setattr("invoice_hub.services.app_state.open_external_url", opened_urls.append)
+    monkeypatch.setattr("invoice_hub.services.about.open_external_url", opened_urls.append)
     assert client.post("/api/v1/about/links/github", json={}).json() == {"ok": True, "link_key": "github"}
     assert client.post("/api/v1/about/links/changelog", json={}).json() == {"ok": True, "link_key": "changelog"}
     assert opened_urls == [PUBLIC_SOURCE_URL, CHANGELOG_URL]
@@ -606,7 +606,7 @@ def test_about_api_is_local_only_and_update_check_payload_is_strict(tmp_path: Pa
     def unavailable_browser(_url: str) -> None:
         raise OSError("shell unavailable")
 
-    monkeypatch.setattr("invoice_hub.services.app_state.open_external_url", unavailable_browser)
+    monkeypatch.setattr("invoice_hub.services.about.open_external_url", unavailable_browser)
     failed = client.post("/api/v1/about/links/github", json={})
     assert failed.status_code == 503
     assert failed.json() == {"detail": "无法打开系统默认浏览器"}

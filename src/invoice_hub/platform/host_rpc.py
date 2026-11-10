@@ -81,6 +81,11 @@ def _configured_values() -> tuple[str, str]:
     )
 
 
+def desktop_host_mode_enabled() -> bool:
+    """True when this backend runs inside the Tauri desktop host (set by the host at launch)."""
+    return os.environ.get(DESKTOP_HOST_MODE_ENV) == "tauri"
+
+
 def is_configured() -> bool:
     url, token = _configured_values()
     return bool(url or token)

@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING
 from invoice_hub.domain.models import TargetProfile, utc_now_text
 from invoice_hub.monitoring.state import MonitorState, is_pid_alive
 from invoice_hub.monitoring.sync import MonitorSynchronizer
-from invoice_hub.platform import HostRpcCommand, host_rpc, open_external_url, open_local_path, pick_directory
+from invoice_hub.platform import HostRpcCommand, host_rpc, open_local_path, pick_directory
 from invoice_hub.projections.cost_analysis import invoice_cost_breakdown
 from invoice_hub.projections.costs import CostProjectionService
 from invoice_hub.projections.summary import SUMMARY_HEADERS, build_summary, write_summary_xlsx
@@ -41,6 +41,7 @@ from invoice_hub.services.file_preview import FilePreviewService
 from invoice_hub.services.invoice_printing import InvoicePrintService
 from invoice_hub.services.invoice_selection import InvoiceSelectionService, file_format_from_source, invoice_number_from_filename
 from invoice_hub.services.invoice_trash import InvoiceTrashService, TrashError
+from invoice_hub.services.about import AboutService
 from invoice_hub.services.app_icons import AppIconService
 from invoice_hub.services.appearance import AppearanceService
 from invoice_hub.services.skins import SkinService
@@ -51,7 +52,6 @@ from invoice_hub.targets import AppConfig, ensure_runtime_layout, load_config, t
 from invoice_hub.targets.paths import Layout, serialize_config_path
 # Keep a completed startup worker (or a cost save) scoped to the TargetProfile it captured.
 from invoice_hub.targets.paths import profile_identity as _background_profile_identity
-from invoice_hub.version import CHANGELOG_URL, LOCAL_WEBSITE_PATH, PRODUCT_DISPLAY_NAME, PRODUCT_NAME, PUBLIC_SOURCE_URL
 
 if TYPE_CHECKING:
     from invoice_hub.domain.models import VoucherDecisionPatch, VoucherReviewPatch
@@ -89,10 +89,6 @@ PROJECTION_FILE_NAMES = {
     "成本发票明细.csv",
     "成本发票汇总.xlsx",
     "成本开票状态.json",
-}
-ABOUT_EXTERNAL_LINKS = {
-    "github": PUBLIC_SOURCE_URL,
-    "changelog": CHANGELOG_URL,
 }
 
 BACKGROUND_SYNC_POLL_SECONDS = 0.25
@@ -153,15 +149,11 @@ class AppState:
             package_manifest=self._package_manifest,
             build_manifest=self._build_manifest,
         )
-        self._update_check_timer: threading.Timer | None = None
         self.repo = SQLiteRepository(layout.db_path)
         self.repo.init_db()
         self._lock = threading.RLock()
         self._document_index = DocumentIndex(layout.runtime_dir / "local_state" / "documents" / "index")
         self._inbound_details = InboundDetails()
-        self._host_update_lock = threading.Lock()
-        self._host_update_approval_version = ""
-        self._host_update_check_generation = 0
         self._background_status = "initializing"
         self._background_generation = 0
         self._background_process = None
@@ -175,6 +167,14 @@ class AppState:
         self._invoice_print_service = InvoicePrintService()
         self._file_preview_service = FilePreviewService()
         self._invoice_trash = InvoiceTrashService(layout.runtime_dir / "local_state" / "invoice-trash")
+        self._about = AboutService(
+            lock=self._lock,
+            repo=self.repo,
+            update_service=self._update_service,
+            build_manifest=self._build_manifest,
+            package_manifest=self._package_manifest,
+            preferences=lambda: self.preferences(),
+        )
         self._ocr = OcrService(
             layout=layout, config=lambda: self.config, active_profile=lambda: self.active_profile,
         )
@@ -890,7 +890,7 @@ class AppState:
             return str(path.absolute())
 
     def _tauri_desktop_host_enabled(self) -> bool:
-        return os.environ.get(host_rpc.DESKTOP_HOST_MODE_ENV) == "tauri"
+        return host_rpc.desktop_host_mode_enabled()
 
     def _desktop_surface_available(self) -> bool:
         return self._tauri_desktop_host_enabled() or self._package_manifest.get("platform") == "macos"
@@ -1023,148 +1023,24 @@ class AppState:
             self.append_event("settings.preferences_updated", {"target_id": self.active_profile.id, "keys": sorted(set(changed))})
         return self.preferences()
 
+    # About and update lifecycle live in services/about.py (ENG-03); these keep the public names.
     def about(self) -> dict:
-        package = self._package_manifest
-        build = self._build_manifest
-        return {
-            "ok": True,
-            "product": {
-                "name": PRODUCT_NAME,
-                "display_name": PRODUCT_DISPLAY_NAME,
-                "version": package["product_version"],
-            },
-            "package": {
-                "id": package["package_id"],
-                "platform": package["platform"],
-                "architecture": package["architecture"],
-                "type": package["package_type"],
-                "manifest_status": package["manifest_status"],
-            },
-            "build": {
-                "id": build["build_id"],
-                "source_commit": build["source_commit"],
-                "built_at": build["built_at"],
-                "api_contract_version": build["api_contract_version"],
-            },
-            "links": {
-                "website": LOCAL_WEBSITE_PATH,
-                "github": PUBLIC_SOURCE_URL,
-                "release_notes": CHANGELOG_URL,
-            },
-            "update": self._update_service.state(),
-        }
+        return self._about.about()
 
     def open_about_link(self, link_key: str) -> dict:
-        """Open a fixed public project link through the operating system shell."""
-
-        key = str(link_key or "").strip().casefold()
-        try:
-            url = ABOUT_EXTERNAL_LINKS[key]
-        except KeyError as exc:
-            raise ValueError("公开链接不可用") from exc
-        open_external_url(url)
-        return {"ok": True, "link_key": key}
+        return self._about.open_about_link(link_key)
 
     def check_for_updates(self, *, force: bool = False) -> dict:
         # API, settings, and scheduled checks share this method. In a configured
         # Tauri host process they are all delegated-install preflight, not an
         # ordinary cache-only public check.
-        host_approval_requested = (
-            self._tauri_desktop_host_enabled()
-            and host_rpc.is_configured()
-            and host_rpc.updater_enabled()
-        )
-        if not host_approval_requested:
-            # Only a non-host process has no delegated install preflight. Keep
-            # its ordinary cache/ETag and independent nonblocking busy behavior.
-            result = self._update_service.check(force=force)
-        elif not self._host_update_lock.acquire(blocking=False):
-            # Do not reset a valid approval, touch host metadata, or write an
-            # event while an owned host check/install lifecycle is in progress.
-            result = self._update_service.busy_result()
-            return {"ok": bool(result.get("ok")), "update": result}
-        else:
-            # Keep the strict metadata approval and host-owned candidate in one
-            # serialized session. The approval is process-local and never
-            # reaches the Web API.
-            try:
-                with self._lock:
-                    self._host_update_approval_version = ""
-                    self._host_update_check_generation += 1
-                    approval_generation = self._host_update_check_generation
-                result = self._update_service.check(force=force, require_fresh_body=True)
-                if (
-                    result.get("ok") is True
-                    and result.get("status") == "available"
-                ):
-                    latest_version = str(result.get("latest_version") or "").strip()
-                    if latest_version:
-                        try:
-                            host_candidate_version = host_rpc.update_check()
-                        except host_rpc.HostRpcError:
-                            host_candidate_version = None
-                        if host_candidate_version == latest_version:
-                            with self._lock:
-                                if approval_generation == self._host_update_check_generation:
-                                    self._host_update_approval_version = latest_version
-            finally:
-                self._host_update_lock.release()
-        self.append_event(
-            "updates.checked",
-            {
-                "status": result.get("status"),
-                "latest_version": result.get("latest_version"),
-                "error_code": result.get("error_code"),
-                "force": bool(force),
-            },
-        )
-        return {"ok": bool(result.get("ok")), "update": result}
+        return self._about.check_for_updates(force=force)
 
     def install_update(self) -> dict:
-        """Delegate an already metadata-approved update to the owned Tauri host."""
-
-        if not self._host_update_lock.acquire(blocking=False):
-            # A competing lifecycle operation owns the one-shot approval. Do
-            # not consume it or make a second private RPC while it is active.
-            raise host_rpc.HostRpcError("Tauri host updater is unavailable")
-        try:
-            with self._lock:
-                approval = self._host_update_approval_version
-                # Install is one-shot even if the host rejects a stale candidate.
-                self._host_update_approval_version = ""
-            if not (
-                approval
-                and self._tauri_desktop_host_enabled()
-                and host_rpc.is_configured()
-                and host_rpc.updater_enabled()
-            ):
-                raise host_rpc.HostRpcError("Tauri host updater is unavailable")
-            host_rpc.update_install()
-        finally:
-            self._host_update_lock.release()
-        self.append_event("updates.install_requested", {"version": approval})
-        return {"ok": True}
+        return self._about.install_update()
 
     def schedule_background_update_check(self, delay_seconds: float = 15.0) -> bool:
-        if not self._package_manifest.get("manifest_valid"):
-            return False
-        if not self.preferences()["preferences"].get("auto_check_updates", True):
-            return False
-        with self._lock:
-            if self._update_check_timer is not None:
-                return False
-
-            def run() -> None:
-                try:
-                    self.check_for_updates(force=False)
-                except Exception as exc:
-                    self.append_event("updates.background_failed", error={"message": str(exc)})
-
-            timer = threading.Timer(max(0.0, float(delay_seconds)), run)
-            timer.daemon = True
-            self._update_check_timer = timer
-            timer.start()
-        return True
+        return self._about.schedule_background_update_check(delay_seconds)
 
     def _support_packages_dir(self) -> Path:
         return self.layout.runtime_dir / "local_state" / "support_packages"

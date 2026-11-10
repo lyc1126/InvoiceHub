@@ -434,6 +434,7 @@
 | `src/invoice_hub/services/errors.py` | `StaleInvoiceSelectionError`，AppState 与拆出的领域服务共用。 | 放在中立模块以免 `app_state` 与领域服务循环导入；`services` 包与 `app_state` 仍重导出同一个类。 |
 | `src/invoice_hub/services/monitor_bridge.py` | monitor 子进程命令、状态真值、ready 等待和启停。 | AppState 与 control 调用；与 daemon/state 构成生命周期闭环。 |
 | `src/invoice_hub/services/skins.py` | 皮肤 ZIP 安全验证、运行态存储、启用和文件服务。 | API、AppState、common.js 使用；安全回归在 API 测试。 |
+| `src/invoice_hub/services/about.py` | `AboutService`：About 构建身份、公开链接、更新检查/后台定时检查与委托宿主安装（ENG-03 从 AppState 原样迁出）。 | AppState 同名转发；`UpdateService` 由 AppState 创建后传入（测试经 `state._update_service` 替换传输层）。宿主审批 `_host_update_*` 状态归本服务，`_host_update_lock` 非阻塞串行检查/安装；Tauri 判定用 `host_rpc.desktop_host_mode_enabled()`。 |
 | `src/invoice_hub/services/appearance.py` | `AppearanceService`：皮肤导入/替换/启用/重置/文件与应用图标切换（ENG-03 从 AppState 原样迁出）。 | AppState 同名转发；写入持 AppState 同一把 RLock；Tauri 宿主下先由宿主换图标再持久化。 |
 | `src/invoice_hub/services/ocr.py` | `OcrService`：OCR 页的候选文件选择/列表与“未内置本地 OCR”状态（ENG-03 从 AppState 原样迁出）。 | AppState 同名转发；活动目标与 config 经回调读取。 |
 | `src/invoice_hub/services/update_service.py` | HTTPS 白名单更新检查、ETag/cache、版本/契约/平台产物选择和错误状态。 | About/API/启动后台检查消费；绝不执行安装。 |
