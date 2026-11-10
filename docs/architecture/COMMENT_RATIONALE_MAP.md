@@ -1,5 +1,14 @@
 # InvoiceHub 注释与设计原因地图
 
+## 2026-11-10 公司清单（WS-07 第 1 步）
+
+- `company_registry.py::CompanyRegistryService._load/_corrupt`：损坏、未来版本或缺字段的清单不回退为空，否则下一次保存会抹掉全部公司；保留原文件并拒写。守护：`test_corrupt_registry_is_kept_and_blocks_writes`。
+- `_clean_root`：根目录按解析后、大小写折叠的路径比较，禁止重复与嵌套，后续公司聚合才不会把同一文件计入两家公司；`_clean_subdirs` 同理禁止六类子目录相同或嵌套。守护：`test_names_are_unique_and_roots_cannot_repeat_or_nest`、`test_subdir_mapping_must_stay_inside_the_root_and_be_distinct`。
+- `detect_subdirs`：同一文件夹命中多类提示词时不归入任何一类，改为提示创建标准目录，避免把抵扣清单当成开具发票读。守护：`test_create_detects_existing_folders_and_never_guesses_ambiguous_ones`。
+- `_subdir_status`：`resolve()` 也会跟随已存在前缀里的链接，因此“父目录是指向外部的链接”的缺失子目录在创建前就被拒绝。守护：`test_linked_parent_that_leaves_the_root_is_blocked`。
+- `_plan/create_subdirs`：`plan_hash` 绑定清单 revision 与每项路径/动作，确认时在锁内重算；`mkdir(exist_ok=False)` 在预览后出现同名项时不覆盖。守护：`test_subdir_creation_is_preview_then_confirm_and_only_makes_empty_folders`。
+- `clean_taxpayer_periods/taxpayer_type_for`：空即未设置，不默认一般纳税人（税务规则“未知不为零”）。守护：`test_taxpayer_type_follows_effective_month`。
+
 ## 2026-11-09 工程门禁、路由拆分与 Vue 前端
 
 - `api/app.py::create_app` 的 `include_router` 顺序：每个路由组放在其路由原来注册的位置，FastAPI 0.141 以 `_IncludedRouter` 按序惰性匹配，故重叠路径（发票详情与 trash-jobs、皮肤 `{skin_id}` 与固定动作）的命中顺序不变。守护：拆分时 OpenAPI 逐字节一致、792 个方法×路径样本命中同一端点，以及 `test_api_contract.py`。

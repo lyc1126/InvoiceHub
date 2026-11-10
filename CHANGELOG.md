@@ -2,6 +2,16 @@
 
 ## 未发布
 
+### 2026-11-10 多公司工作区后端第 1 步：公司清单（WS-07）
+
+- 需求：用户确认开工 WS-07，并让 Agent 自行判断方案。评估结论：ENG-08 之后各服务通过 provider 读取活动目录，可以按公司构造，但监控、设置、后台同步、诊断、删除所选等必须保持活动目录单例；而且按公司构造服务的前提是先有“公司清单”。因此本轮先做 WS-07 第 1 步，按公司只读视图留到第 2 步。
+- 起点：本地开发线 `codex/cost-select-all-transitions` 的 `1ace01b`（ENG-08 尚未进入 `main`，WS-07 依赖它）。在独立 worktree 的 `codex/ws-07-company-registry` 施工；主工作区另一条线的未提交修改（成本页、`bank/`、交接脚本等）未改动。
+- 方案：新增 `services/company_registry.py::CompanyRegistryService`（`state.companies`）与 `api/routes/companies.py`。清单存于 `runtime/local_state/companies.json`（schema v1），与单目录设置分开；由共享 RLock、revision CAS 和原子替换保护；文件损坏、版本不符或缺字段时返回 `COMPANY_REGISTRY_CORRUPT`，保留原文件并拒写。每家公司记录名称、资料夹根（项目内相对、包外绝对）、六类子目录相对路径（成本发票、开具发票、银行流水、进项抵扣、工资社保、费用报销），以及纳税人身份生效期。登记时未给出的子目录按“标准名 → 唯一无歧义提示词命中 → 标准名（待创建）”推断，前四类提示词复用业务资料夹。根目录不得重复或嵌套，子目录不得越界、相同或嵌套。补建子目录分两步：`GET …/subdirs/plan` 零写预览，`POST …/subdirs/create` 凭 `plan_hash` 加 `confirm=true` 只新建空目录；链接或越出根目录的路径不创建。删除公司只删条目。列表标记活动 `watch_dir` 落在哪家公司、哪个子目录（`monitored`），但不切换目录或监控。
+- API：新增 `GET/POST /api/v1/companies`、`GET/PATCH/DELETE /api/v1/companies/{company_id}`、`GET /api/v1/companies/{company_id}/subdirs/plan`、`POST /api/v1/companies/{company_id}/subdirs/create`；错误码 `COMPANY_INVALID`（422，带 `field`）、`COMPANY_NOT_FOUND`（404）、`COMPANY_REVISION_CONFLICT`/`COMPANY_PLAN_STALE`/`COMPANY_REGISTRY_CORRUPT`（409）、`COMPANY_CONFIRM_REQUIRED`（422）。既有路由、握手能力清单与 `API_CONTRACT_VERSION` 不变。
+- 文档：接口流程新增 §3.5.1 并补错误模型 422 行；数据算法新增 §4.6 与运行态条目；文件地图登记服务、路由与测试；任务导航新增快速索引行与“10.3 公司清单”；做账规则页新增“公司清单”规则；设计原因地图、架构入口服务列表同步更新；未来工作总览中 WS-07 改为进行中（第 1 步完成），WS-02 改为后端已完成、界面待做。
+- 验证：新增 `tests/test_api_companies.py`（16 个测试函数，参数化后 29 项），接线测试登记 `companies`。macOS 本机全量 pytest（绝对 `PYTHONPATH`）857 项：0 失败，16 项跳过（均为既有平台或环境跳过）；`compileall src tests`、`ruff check --select E9,F`、`git diff --check` 通过。
+- 未覆盖：没有前端或页面消费者（`/workspace` 侧栏属 WS-01/WS-02）；未在 Windows、网络盘、大小写敏感卷上实测路径判断；Windows 跳过链接用例；没有原生目录选择器接入；纳税人身份尚未接入成本页 `tax_profile`；未启动 localhost 做浏览器验收；未重建打包产物。只做了本地提交，未推送、未合并。
+
 ### 2026-11-10 路由直接依赖领域服务，删除 AppState 转发（ENG-08）
 
 - 需求：ENG-03 完成后，用户要求不等 WS-07，直接把 ENG-08 做掉，去掉 AppState 的转发。

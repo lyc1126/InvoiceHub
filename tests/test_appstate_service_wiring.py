@@ -15,6 +15,7 @@ from invoice_hub.api.app import create_app
 # public service attribute on AppState -> which shared things that service must follow
 SERVICES = {
     "bookkeeping": ("lock", "profile", "config"),
+    "companies": ("lock", "profile", "config"),
     "documents": ("lock", "profile"),
     "costs": ("lock", "profile", "config"),
     "dossier": ("profile", "config"),

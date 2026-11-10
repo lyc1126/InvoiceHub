@@ -41,6 +41,7 @@ from invoice_hub.api.routes import invoices as invoices_routes
 from invoice_hub.api.routes import costs as costs_routes
 from invoice_hub.api.routes import documents as documents_routes
 from invoice_hub.api.routes import dossier as dossier_routes
+from invoice_hub.api.routes import companies as companies_routes
 from invoice_hub.api.routes import appearance as appearance_routes
 from invoice_hub.api.routes import monitor as monitor_routes
 from invoice_hub.api.routes import bookkeeping as bookkeeping_routes
@@ -312,6 +313,7 @@ def create_app(
     app.include_router(costs_routes.router())
     app.include_router(documents_routes.router())
     app.include_router(dossier_routes.router())
+    app.include_router(companies_routes.router())
     app.include_router(appearance_routes.router())
     app.include_router(monitor_routes.router())
 

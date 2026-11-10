@@ -2,7 +2,7 @@
 
 本页是 [AGENTS.md](../../../AGENTS.md) 按任务引用的强制功能规则；命中本专题时须在修改前完整读取。规则维护在本页，入口摘要不能替代正文。
 
-- 适用问题：W8/W9/W10、凭证、映射、审批、导出、迁移、批次观察与捷锐。
+- 适用问题：W8/W9/W10、凭证、映射、审批、导出、迁移、批次观察与捷锐；多公司工作区的公司清单（WS-07）。
 - 代码与验收定位：bookkeeping/、runners/；接口流程第 3.5 节、数据算法第 3.2、4.5 节、任务导航第 10.2 节。Python 模块目录（extraction/projections/monitoring/services/bookkeeping/runners/platform/release）相对 `src/invoice_hub/`，其余路径相对仓库根。
 - 导航：[任务入口](../AGENT_TASK_MAP.md#task-bookkeeping) · [架构总入口](../../DEVELOPMENT_ARCHITECTURE.md) · [文件地图](../FILE_MAP.md) · [接口与流程](../INTERFACES_AND_FLOWS.md) · [数据与算法](../DATA_AND_ALGORITHMS.md) · [设计原因](../COMMENT_RATIONALE_MAP.md)。
 - 待开发优化：[未来工作总览 BK-01](../../PRODUCT_BACKLOG.md#bk-01)（通用凭证导出）、[BANK-01](../../PRODUCT_BACKLOG.md#bank-01)（通用银行版式引擎）、[WS-05 / WS-07](../../PRODUCT_BACKLOG.md#ws-05)（做账可视化与后端）；开工前先读对应条目。
@@ -24,3 +24,14 @@
 - 显式 recompute 和映射保存如果得到相同 proposal，不得改写凭证文件或重置 `blocked/rejected`；如果 proposal 变化，只能在同一 `posting_key` 下生成新 revision 并使旧审批失效。
 - 映射 v1→v2 与凭证状态 v1→v2 迁移都必须提供确定性 preview hash，apply 必须在同一写锁内重验源 SHA、preview hash、source revision、profile/目录/映射绑定、待重确认数和命令身份；必须保留并校验精确备份 SHA，迁移 revision 只能单调增加。
 - 捷锐外部页面自动化不在公开源树保留真实选择器、页面地址、坐标、账套或实测记录。W10 driver 只能在用户当回合明确授权后，于受控测试环境重新采集私有事实；公开源码不得据此自动写入外部系统。
+
+<a id="company-registry"></a>
+
+## 公司清单（WS-07）
+
+- 公司清单与单目录设置分开存放在 `runtime/local_state/companies.json`；任何清单读写都不得改变活动 `watch_dir`、TargetProfile 或 monitor，监控仍只有一个目录。`monitored` 只是标记活动目录落在哪家公司内。没有清单时产品行为与之前一致。
+- 清单只由 `CompanyRegistryService` 在共享 RLock 内写入，写请求必须携带当前 `revision`；文件不是合法 v1 清单时必须保留原文件并拒绝写入，不得当作空清单覆盖。
+- 公司资料夹根目录必须已存在，不同公司的根不得重复或互相嵌套；六类子目录保存为根内相对路径，拒绝越界写法，彼此不得相同或嵌套。登记时的自动识别只取唯一、无歧义的命中，命中多类的文件夹不猜。
+- 补建缺失子目录必须先预览，再以预览的 `plan_hash` 和 `confirm=true` 执行；执行时重算计划，任何变化都要求重新预览。只新建空目录，不移动、删除或改写任何文件；链接或越出根目录的路径不创建。删除公司只删清单条目。
+- 纳税人身份按生效月份记录；未登记即“未设置”，不得默认一般纳税人。它尚未替代成本页 `成本开票状态.json` 的 `tax_profile`，接入前须在[成本规则](COST_ANALYSIS.md)写明两者优先级。
+- 后续按公司读取时（WS-07 第 2 步起），非活动公司只读上次投影并提示是否过期，不得在后台扫描、重建或写入其投影。

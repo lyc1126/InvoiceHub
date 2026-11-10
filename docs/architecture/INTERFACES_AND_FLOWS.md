@@ -331,6 +331,22 @@ L10-D 复用 L10-R/C 的 lease、marker、fixed-loopback bridge 和 pure coordin
 | `PATCH /api/v1/bookkeeping/import-result` | 废弃路由 | 固定 HTTP 410 `BATCH_FINALIZE_REQUIRED` | 禁止逐张绕过 batch finalize |
 | `GET /api/v1/bookkeeping/state` | `bookkeeping_state` | 公司、store revision、草稿和批次总览 | 页面只读后再发显式动作 |
 
+### 3.5.1 公司清单（WS-07 第 1 步）
+
+公司清单存于 `runtime/local_state/companies.json`（schema v1，见数据算法 §4.6），由 `state.companies`（`services/company_registry.py::CompanyRegistryService`）读写。它与单目录设置分开：任何清单操作都不改变活动 `watch_dir`、TargetProfile 或 monitor；没有清单文件时列表为空、`revision=0`，且读取不会创建文件。写请求经同源校验，并携带清单 `revision`（CAS）。
+
+| 方法与路径 | 服务入口 | 当前语义 | 错误与安全边界 |
+|---|---|---|---|
+| `GET /api/v1/companies` | `list_companies` | 全部公司、六个标准子目录状态（`present/missing/not_directory/outside_root/unreadable/root_unavailable`）、当前纳税人类型、`monitored`/`monitored_subdir_key` 与 `monitored_company_id` | 只做 stat，不递归扫描；清单损坏返回 409 `COMPANY_REGISTRY_CORRUPT` |
+| `POST /api/v1/companies` | `create_company` | 登记公司：名称、资料夹根、可选子目录映射与纳税人身份；未给出的子目录按标准名 → 唯一命中提示词 → 标准名（待创建）推断，返回 `subdir_sources` | 根须是已存在文件夹，不得与已登记公司重复或嵌套；名称不区分大小写唯一；最多 200 家 |
+| `GET /api/v1/companies/{company_id}` | `get_company` | 单家公司当前状态 | 不存在返回 404 `COMPANY_NOT_FOUND` |
+| `PATCH /api/v1/companies/{company_id}` | `update_company` | 改名称/根/纳税人身份（整体替换）/子目录映射（按键合并） | 值未变化时不写文件、不递增 revision |
+| `DELETE /api/v1/companies/{company_id}?revision=N` | `delete_company` | 只删清单条目，返回 `files_touched=0` | 不删除、移动或改写公司资料夹内任何文件 |
+| `GET /api/v1/companies/{company_id}/subdirs/plan` | `subdir_plan` | 补建预览：逐项 `create/exists/blocked` 与 `plan_hash` | 零写；同名文件、链接或越出根目录为 `blocked` |
+| `POST /api/v1/companies/{company_id}/subdirs/create` | `create_subdirs` | `confirm=true` + 预览的 `plan_hash` 后只新建空目录，返回 `created/skipped/failed` | 422 `COMPANY_CONFIRM_REQUIRED`；清单 revision 或任一路径状态变化返回 409 `COMPANY_PLAN_STALE`，须重新预览 |
+
+失败统一为 `{ok:false, detail, error:{code, message, field?}}`：422 `COMPANY_INVALID`（`field` 指向 `name/root_dir/subdirs.<key>/taxpayer_periods[...]/revision`）、409 `COMPANY_REVISION_CONFLICT`。
+
 ### 3.6 皮肤
 
 | 方法与路径 | AppState 入口 | 主要请求/返回 | HTTP 语义 |
@@ -378,7 +394,8 @@ health 的当前 API 契约是 `2026-08-02-release-update-v1`，做账协议是 
 |---|---|---|
 | `400` | 非法 JSON/字段、过量选择、非法数量/加价率、单据规则错误、关闭选择错误 | 页面显示业务信息，不把它误报为断网 |
 | `404` | 发票位置键、任务或单据候选不存在 | 刷新当前快照后让用户重选 |
-| `409` | `invoice_key + source_path` 已过期、皮肤 id 冲突等 | 不对新对象执行旧操作 |
+| `409` | `invoice_key + source_path` 已过期、皮肤 id 冲突、公司清单 revision/补建预览过期或清单损坏等 | 不对新对象执行旧操作 |
+| `422` | 公司清单字段校验失败（`COMPANY_INVALID`）或补建未确认 | 按 `error.field` 定位输入，不改写清单 |
 | `413` | 皮肤 ZIP 请求体超过上限 | 在解压前拒绝 |
 | `415` | 皮肤上传 media type 不是允许的 ZIP/二进制类型 | 不尝试猜测正文 |
 | `500` | WebUI 关闭等无法安全完成的内部错误 | 保留 WebUI，允许用户查看状态并重试 |

@@ -176,6 +176,7 @@ CSV 使用 UTF-8 BOM 方便 Excel/WPS；XLSX 的活动 sheet 为“发票汇总�
 - `local_state/documents/defaults.json`：入/出库单手填默认值。
 - `local_state/skins`：导入皮肤和启用状态。
 - `local_state/support_packages`：脱敏诊断支持包。
+- `local_state/companies.json`：多公司工作区的公司清单（WS-07），结构见 §4.6；不是发票主数据，也不改变活动 `watch_dir`。
 
 macOS 将这组可写运行态映射到用户的 Application Support，而不是 `.app/Contents`；TargetProfile 和投影语义不变。Windows 正式 core 仍使用包内运行态布局。平台差异只影响根位置，不改变各文件的真值角色。
 
@@ -202,6 +203,26 @@ Lifecycle lease 是 host 运行态授权快照，不是可持久化业务状态�
 状态 v1 到 v2 和映射 v1 到 v2 都是 preview/apply 两阶段迁移。apply 必须在同一写锁内重验源 SHA、preview hash、source revision、profile/目录/映射绑定、待重确认数、命令身份和备份 SHA；不得在启动时自动迁移。
 
 `config/app.local.json` 可能含包外业务绝对路径。文档和发布包只能说明字段结构，不复制本机值；core 构建必须生成脱敏默认配置。
+
+### 4.6 公司清单（WS-07）
+
+`runtime/local_state/companies.json` 由 `CompanyRegistryService` 独占写入（共享 AppState RLock + 原子替换）：
+
+```json
+{"schema_version": 1, "revision": 3, "companies": [{
+  "id": "co_<12 位 hex>", "name": "甲公司", "root_dir": "./客户/甲公司 或 包外绝对路径",
+  "subdirs": {"cost_invoice_dir": "成本发票", "issued_invoice_dir": "开具发票", "bank_flow_dir": "银行流水",
+              "input_deduction_dir": "进项抵扣", "payroll_social_dir": "工资社保", "expense_reimbursement_dir": "费用报销"},
+  "taxpayer_periods": [{"effective_from": "2024-01", "taxpayer_type": "small_scale"}],
+  "created_at": "UTC", "updated_at": "UTC"}]}
+```
+
+- `revision` 每次实际写入加一；写请求必须携带当前值，不一致返回 `COMPANY_REVISION_CONFLICT`。值未变化的 PATCH 不写文件。
+- `root_dir` 按 `serialize_config_path` 保存：项目根内为相对路径，包外为绝对路径。根目录之间按解析后、不区分大小写的路径比较，不允许重复或互相嵌套，避免后续聚合把同一文件计入两家公司。
+- `subdirs` 是相对根目录的 POSIX 路径；拒绝绝对路径、盘符、`~`、空段、`.`/`..` 和 Windows 保留字符，六类之间不得相同或嵌套。登记时未给出的键按“标准名存在 → 根目录直接子目录中唯一命中提示词（同一文件夹命中多类则不用） → 标准名（待创建）”推断，此后映射固定保存，不随目录变化重新猜测。
+- `taxpayer_periods` 按月份升序、月份唯一；某月身份取 `effective_from <= 该月` 的最后一项（`taxpayer_type_for`），早于首项或为空时为“未设置”，不默认一般纳税人。它暂未接入成本页的 `成本开票状态.json.tax_profile`；接入时须在 COST 规则中定义两者优先级。
+- 读取到非 JSON、`schema_version != 1`、revision/列表结构错误或缺少 `id/name/root_dir/subdirs/taxpayer_periods` 的条目时返回 `COMPANY_REGISTRY_CORRUPT`，保留原文件并拒绝写入。
+- 子目录补建的 `plan_hash = SHA256(company_id, registry revision, 根路径键, [key, 路径键, action]...)`；apply 在同一锁内重算并比对，只对 `create` 项 `mkdir(exist_ok=False)`，遇到已出现的目录记为 `skipped`，路径上有同名文件记为 `failed`，不触碰任何既有文件。
 
 ## 5. SQLite schema 与真实使用情况
 

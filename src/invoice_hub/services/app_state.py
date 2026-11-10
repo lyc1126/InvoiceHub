@@ -20,6 +20,7 @@ from invoice_hub.services.about import AboutService
 from invoice_hub.services.appearance import AppearanceService
 from invoice_hub.services.background_sync import BackgroundSyncService
 from invoice_hub.services.bookkeeping import BookkeepingService
+from invoice_hub.services.company_registry import CompanyRegistryService
 from invoice_hub.services.costs import CostService
 from invoice_hub.services.diagnostics import DiagnosticsService
 from invoice_hub.services.document_index import DocumentIndex, InboundDetails
@@ -118,6 +119,15 @@ class AppState:
         )
         self.dossier = BusinessDossierService(
             repo=self.repo,
+            config=lambda: self.config,
+            active_profile=lambda: self.active_profile,
+        )
+        # WS-07 company list: reads the active profile only to mark which company holds watch_dir;
+        # it never switches the directory or the monitor.
+        self.companies = CompanyRegistryService(
+            lock=self._lock,
+            repo=self.repo,
+            registry_path=layout.runtime_dir / "local_state" / "companies.json",
             config=lambda: self.config,
             active_profile=lambda: self.active_profile,
         )

@@ -23,6 +23,7 @@
 | 大列表卡顿、索引停止、入库/出库、批量队列 | [页面/单据/预览/皮肤](rules/WEB_UI.md)、[成本](rules/COST_ANALYSIS.md) | [10. 入库单与出库单](#task-documents) |
 | 勾选合计、搜索税率、来源追溯、超过100份预览、OFD 缺字、打印空白/漏页 | [页面/单据/预览/皮肤](rules/WEB_UI.md) | [10.1 发票预览与批量打印](#task-preview) |
 | 凭证、科目映射、审批、迁移、导出、批次、捷锐 | [做账](rules/BOOKKEEPING.md) | [10.2 业务资料夹与做账 W8/W9](#task-bookkeeping) |
+| 公司清单、多公司工作区后端（WS-07）、标准子目录检测与补建、纳税人身份生效期 | [做账（公司清单）](rules/BOOKKEEPING.md#company-registry)、[监控与关闭](rules/MONITORING.md)、[页面/API](rules/WEB_UI.md) | [10.3 公司清单（WS-07）](#task-companies) |
 | 明暗切换、no_skin、皮肤 ZIP 与字体资源 | [页面/单据/预览/皮肤](rules/WEB_UI.md) | [11. 皮肤系统](#task-skins) |
 | BAT/PS1、PowerShell、端口、中文路径、Tk | [Windows](rules/WINDOWS.md)、[监控与关闭](rules/MONITORING.md) | [12. Windows 正式入口与平台交互](#task-windows) |
 | NSOpenPanel、WKWebView、TCC、SwiftUI/Sparkle | [macOS 参考壳](rules/MACOS.md)、[监控与关闭](rules/MONITORING.md) | [12.1 macOS 壳、构建握手与原生桥接](#task-macos) |
@@ -299,6 +300,22 @@ OFD 专用入口为 `services/ofd_rendering.py`、`tools/ofd-preview/` 与 `scri
 | 最低自动化 | 资料夹变化至少运行 `tests/test_api_contract.py` 的资料夹/线程池/有界扫描用例与 `tests/test_frontend_contract.py` 的资料夹刷新容错契约；做账变化运行全部 `tests/test_bookkeeping_*.py`、`test_api_bookkeeping.py`、`test_runner_dryrun.py` |
 | 真实验收 | W9 profile/科目/辅助/映射人审必须基于目标账套重新采集；真实 Safari apply、读回和 reconcile-only 属 W10，每次 apply 仍需当回合明确授权 |
 | 高风险提醒 | 资料夹导航不得变成完整发票扫描或任意本机打开器；截断统计和 `os.scandir` 迭代中断后的累计统计都必须显式标为下界且不能阻塞发票列表。做账不得自动迁移、不绕过 blockers、不猜最新 XLSX、不直接写状态 JSON；测试通过不授权真实账套迁移、审批、导出或导入 |
+
+<a id="task-companies"></a>
+
+## 10.3 公司清单（WS-07）
+
+必读功能规则：[做账（公司清单）](rules/BOOKKEEPING.md#company-registry)、[监控与关闭](rules/MONITORING.md)、[页面/API](rules/WEB_UI.md)；方案与后续步骤见[未来工作总览 WS-07](../PRODUCT_BACKLOG.md#ws-07)。
+
+| 导航项 | 内容 |
+|---|---|
+| 首先阅读 | 接口流程第 3.5.1 节；数据算法第 4.6 节 |
+| 首要入口 | `services/company_registry.py::CompanyRegistryService`（`_load/_save/_check_revision`、`_clean_root/_clean_subdirs`、`_plan/create_subdirs`）、`detect_subdirs`、`taxpayer_type_for`；路由 `api/routes/companies.py`；AppState 只负责构造 `state.companies` |
+| 必须联动 | 子目录提示词与 `services/dossier.py::BUSINESS_DOSSIER_DIR_HINTS` 共用；路径保存规则 `targets/paths.py::serialize_config_path`；接线测试 `SERVICES` |
+| 产物与消费者 | `runtime/local_state/companies.json`；`/api/v1/companies*`；后续 WS-07 按公司只读视图与 `/workspace` 侧栏 |
+| 最低自动化 | `tests/test_api_companies.py`、`tests/test_appstate_service_wiring.py`、`tests/test_development_documentation.py` |
+| 真实验收 | 包外中文/空格路径、网络盘、Windows 盘符与大小写不敏感卷上的重复/嵌套判断；原生目录选择器接入后另测 |
+| 高风险提醒 | 清单不是第二个 watch_dir：不得启动第二个监控、不得对非活动公司后台扫描或写投影；损坏文件不能当空清单覆盖；补建只能新建空目录，删除公司只删条目 |
 
 <a id="task-skins"></a>
 

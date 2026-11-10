@@ -275,7 +275,7 @@ flowchart LR
 | `bookkeeping` | `VoucherExecutabilityValidator`、映射/迁移/批次仓储 | W8/W9 做账协议与确定性状态 | 浏览器自动化和平台窗口 |
 | `storage` | `atomic_write_json`、`SQLiteRepository` | 原子读写、任务、事件 | 发票主存储 |
 | `monitoring` | `run_monitor`、`MonitorSynchronizer.run_sync` | 持续观察、变化判断、自动重建 | Web 页面生命周期 |
-| `services` | `AppState`（组装根）、各领域服务（`bookkeeping`、`documents`、`costs`、`dossier`、`preview_print`、`invoice_selection`、`invoice_list`、`invoice_rename`、`settings`、`diagnostics`、`monitor_control`、`background_sync`、`about`、`appearance`、`ocr`、`server_shutdown`）、`MonitorBridge`、`SkinService`、`UpdateService` | 用例编排、并发锁、平台协调与受限更新检查 | HTTP 细节 |
+| `services` | `AppState`（组装根）、各领域服务（`bookkeeping`、`documents`、`costs`、`dossier`、`preview_print`、`invoice_selection`、`invoice_list`、`invoice_rename`、`settings`、`diagnostics`、`monitor_control`、`background_sync`、`about`、`appearance`、`ocr`、`server_shutdown`、`company_registry`（WS-07 公司清单，`state.companies`））、`MonitorBridge`、`SkinService`、`UpdateService` | 用例编排、并发锁、平台协调与受限更新检查 | HTTP 细节 |
 | `api` | `create_app` | HTTP、错误码、静态文件、SSE | 重复业务算法 |
 | `platform` | `pick_directory`、`open_local_path` | Windows Python 适配；macOS 原生适配在 Swift 壳 | 领域判断 |
 | `release` | `build_core`、三类 manifest、`provenance`、`update_metadata`、`sbom`、`source_snapshot` | 脱敏确定性包、身份/依赖证明、从真实产物/收据/Tag 派生的更新元数据与对应源码；公开 Feed 在 macOS 用 Tag 派生验证器复验实际成品 | 用户业务数据迁移或外部平台发布 |

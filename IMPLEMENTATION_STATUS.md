@@ -1,5 +1,11 @@
 # IMPLEMENTATION_STATUS
 
+## 2026-11-10 多公司工作区后端第 1 步：公司清单（WS-07，工作分支 `codex/ws-07-company-registry`，基于未合并的 `codex/cost-select-all-transitions`）
+
+- 后端新增公司清单（`state.companies`，`/api/v1/companies*`，存于 `runtime/local_state/companies.json`）：登记公司名称、资料夹根、六类标准子目录映射（自动识别无歧义的现有文件夹）与纳税人身份生效期；子目录状态检测；缺失子目录先预览、确认后只新建空目录；删除公司只删条目。写入带 revision；清单损坏时保留原文件并拒写。
+- 运行模型不变：仍是单活动监控目录；清单操作不切换 `watch_dir` 或监控，只标记活动目录所在的公司。没有清单时行为与之前一致。
+- 未完成：页面消费（WS-01/WS-02 界面）、纳税人身份接入成本页、WS-07 第 2 步按公司只读视图及后续聚合、比较、明细。未在 Windows 或打包产物上验证。
+
 ## 2026-11-09 工程门禁、API 路由拆分与 Vue 工作区前端基础（工作分支 `codex/engineering-guardrails`，基于未合并的 `codex/cost-select-all-transitions`）
 
 - CI：新增 ruff（E9+F）、Rust（macOS/Windows 的 `cargo fmt --check`、clippy、`cargo test`；Windows clippy 暂只报告）、两平台 Node 交互测试、Vue 前端（类型检查、组件测试、提交构建逐字节可复现）作业；SwiftUI 参考壳的 `swift test` 改为路径触发的独立 workflow。
