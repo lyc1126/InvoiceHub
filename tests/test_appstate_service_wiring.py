@@ -25,6 +25,7 @@ SERVICES = {
     "_invoices": ("lock", "profile"),
     "_rename": ("lock", "profile"),
     "_settings": ("lock", "profile", "config"),
+    "_diagnostics": ("profile", "config"),
 }
 
 
