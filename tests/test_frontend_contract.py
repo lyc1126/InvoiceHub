@@ -1279,7 +1279,8 @@ def test_settings_page_contract() -> None:
     css = (ROOT / "web" / "static" / "css" / "app.css").read_text(encoding="utf-8")
     settings_actions_css = (ROOT / "web" / "static" / "css" / "settings-actions.css").read_text(encoding="utf-8")
     api_app = _api_source()
-    app_state = (ROOT / "src" / "invoice_hub" / "services" / "app_state.py").read_text(encoding="utf-8")
+    # AppState forwards to domain services split out of it (ENG-03); check the whole services layer.
+    app_state = "\n".join(path.read_text(encoding="utf-8") for path in sorted((ROOT / "src" / "invoice_hub" / "services").glob("*.py")))
     bridge = (ROOT / "src" / "invoice_hub" / "services" / "monitor_bridge.py").read_text(encoding="utf-8")
 
     assert 'body data-page="settings"' in html
