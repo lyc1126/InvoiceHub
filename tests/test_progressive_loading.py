@@ -161,7 +161,7 @@ def test_failed_cost_build_never_promotes_partial_rows_to_editable(tmp_path, mon
 
 
 def test_outbound_partial_preview_and_status_reuse(tmp_path, monkeypatch):
-    import invoice_hub.services.app_state as module
+    import invoice_hub.services.documents as module
     with _client(tmp_path, monkeypatch) as client:
         state = client.app.state.invoice_hub
         root = tmp_path / "发票文件"
@@ -169,7 +169,7 @@ def test_outbound_partial_preview_and_status_reuse(tmp_path, monkeypatch):
         number = "10000000000000000013"
         source.write_text(_cost_xml_text(number))
         monkeypatch.setattr(state, "_outbound_invoice_dir_text", lambda: str(root))
-        monkeypatch.setattr(state, "document_state", lambda **kw: {
+        monkeypatch.setattr(state._documents, "document_state", lambda **kw: {
             "outbound_invoices": [{"invoice_number": number, "source_files": [str(source)]}],
             "index": {"state": "running"}})
         assert state.document_outbound_preview(number)["provisional"]

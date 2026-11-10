@@ -321,7 +321,7 @@ BAT/页面/monitor 触发
 
 | 状态 | 事实 | 维护含义 |
 |---|---|---|
-| 架构债务 | `services/app_state.py` 聚合大量跨域用例 | 改动前必须按用例定位，避免把不相关逻辑一起重构；新领域用例不再加入 AppState，按领域拆分见 ENG-03（做账已拆到 `services/bookkeeping.py`，AppState 保留同名转发）。HTTP 层已按领域拆到 `api/routes/` |
+| 架构债务 | `services/app_state.py` 聚合大量跨域用例 | 改动前必须按用例定位，避免把不相关逻辑一起重构；新领域用例不再加入 AppState，按领域拆分见 ENG-03（做账、单据已拆到 `services/bookkeeping.py`、`services/documents.py`，AppState 保留同名转发）。HTTP 层已按领域拆到 `api/routes/` |
 | 架构债务 | `cost_analysis.py` 与 `costs.py` 有参考键、加价和锁定快照的对应实现 | 修改公式必须双向核对并跑成本全链测试 |
 | 架构债务 | 路径规范化在 `targets`、`monitoring`、成本和选择合计中有不同语境实现 | 不能仅凭函数同名就机械合并 |
 | 架构债务 | `base_head.html` 存在，但页面仍各自维护 head 和资源版本 | 静态资源变更必须逐模板核对版本参数 |

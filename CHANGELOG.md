@@ -2,6 +2,16 @@
 
 ## 未发布
 
+### 2026-11-10 AppState 拆出单据服务（ENG-03 第二步）
+
+- 需求：用户确认继续 ENG-03，按计划拆单据（入库/出库）用例。
+- 起点：本地开发线 `codex/cost-select-all-transitions` 的 `7ab3f5d`（已含第一步）；在独立 worktree 的 `codex/appstate-document-service` 施工，主工作区未改动。
+- 方案：单据两段代码（默认值与单据目录状态、首页批量入库核对、入/出库预览、导出状态、导出、打开，共 27 个方法）原样迁到新的 `services/documents.py::DocumentService`，AppState 保留 15 个同名公开方法转发。边界取舍：出库目录的选择/校验/保存/最近记录会改写配置，属于设置用例，留在 AppState；首页勾选身份校验（`_validated_inbound_selection`）依赖发票列表规则，也留在 AppState，以回调注入。服务通过构造参数拿到 AppState 同一把 `_lock`、SQLite 仓库，以及由 AppState 创建的 `DocumentIndex`/`InboundDetails`（documents 路由仍直接读 `_document_index` 状态）；活动 TargetProfile、成本明细路径、出库目录一律经回调实时读取。出库预览文件名元数据缓存改由服务持有（AppState 其它代码从未使用）。`StaleInvoiceSelectionError` 移到新的 `services/errors.py`，避免与 `app_state` 循环导入，`app_state` 与 `services` 包仍导出同一个类。预览与单据共用的受控根判断改为 `targets/paths.py::path_is_under_root`，AppState 的 `_path_is_under_root` 指向它。
+- 测试迁移：两处打桩随代码迁移——`test_documents.py` 的“文件被占用”改为打桩 `DocumentService._document_path_occupied`；`test_progressive_loading.py::test_outbound_partial_preview_and_status_reuse` 改为打桩 `state._documents.document_state` 与 `services.documents.build_outbound_preview`，断言不变。
+- 结果：`app_state.py` 4209 → 3905 行，方法 224 → 211；新文件 `documents.py` 423 行。
+- 验证：搬移前后逐行对比，只有依赖替换（成本明细路径、出库目录、最近出库目录、勾选校验、受控根判断、默认值路径）和空行差异；OpenAPI 与路由表 JSON 逐字节一致；ruff 通过；新增两条测试——切换 watch_dir 与出库目录后 `/api/v1/documents/state` 跟随新目录、单据导出会等待 AppState 的锁——变异核对时（回调改为构造时快照、锁换成私有 RLock）各自失败。全量 pytest 767 通过、16 跳过，基线 765 通过（差额即两条新测试）。
+- 未覆盖：未在真实 localhost 页面导出/打开单据，也未用 Excel/WPS 打开导出文件（工作簿写出函数未改动）；未重建打包产物。
+
 ### 2026-11-10 AppState 拆出做账服务（ENG-03 第一步）
 
 - 需求：用户要求先处理 ENG-03。`services/app_state.py` 5779 行、234 个方法，多公司工作区（WS-07）之前需要按领域拆开；未来工作总览定的顺序是先做账、再单据。

@@ -9,8 +9,8 @@ from openpyxl import load_workbook
 from invoice_hub.api.app import create_app
 from invoice_hub.projections.cost_analysis import DETAIL_HEADERS
 from invoice_hub.projections.documents import build_inbound_preview, rmb_uppercase, write_inbound_workbook, write_outbound_workbook
-from invoice_hub.services.app_state import AppState
 from invoice_hub.services.document_index import DocumentIndex
+from invoice_hub.services.documents import DocumentService
 from invoice_hub.storage.files import read_json_object, write_csv_rows
 
 
@@ -375,7 +375,7 @@ def test_inbound_export_status_copy_location_deleted_and_occupied_messages(tmp_p
 
     recreated = client.post("/api/v1/documents/inbound/export", json={"invoice_number": "10000000000000000013"}).json()
     occupied_path = Path(recreated["path"])
-    monkeypatch.setattr(AppState, "_document_path_occupied", staticmethod(lambda path: path == occupied_path))
+    monkeypatch.setattr(DocumentService, "_document_path_occupied", staticmethod(lambda path: path == occupied_path))
     occupied_status = client.post("/api/v1/documents/inbound/export-status", json={"invoice_number": "10000000000000000013"}).json()
     occupied_export = client.post("/api/v1/documents/inbound/export", json={"invoice_number": "10000000000000000013"}).json()
     occupied_open = client.post("/api/v1/documents/inbound/open", json={"invoice_number": "10000000000000000013"}).json()
@@ -627,3 +627,45 @@ def test_document_layout_retains_rows_totals_and_print_area(tmp_path: Path, kind
             assert preview["layout"]["column_widths"][3:5] == [10, 10]
     finally:
         wb.close()
+
+
+def test_document_service_follows_watch_dir_and_outbound_switch(tmp_path, monkeypatch):
+    with _client(tmp_path, monkeypatch) as client:
+        state = client.app.state.invoice_hub
+        before = client.get("/api/v1/documents/state?selection_only=true").json()
+        other_watch = tmp_path / "其它发票"
+        other_watch.mkdir()
+        outbound = tmp_path / "开具发票"
+        outbound.mkdir()
+
+        state.update_settings({"watch_dir": str(other_watch)})
+        state.update_outbound_invoice_dir({"outbound_invoice_dir": str(outbound)})
+        after = client.get("/api/v1/documents/state?selection_only=true").json()
+
+        assert after["watch_dir"] == str(other_watch.resolve()) != before["watch_dir"]
+        assert after["target_id"] == state.active_profile.id != before["target_id"]
+        assert after["cost_detail_csv_path"] == str(other_watch.resolve() / "成本发票明细.csv")
+        assert after["outbound_invoice_dir"] == str(outbound.resolve())
+
+
+def test_document_export_waits_for_the_app_state_lock(tmp_path, monkeypatch):
+    import threading
+
+    with _client(tmp_path, monkeypatch) as client:
+        state = client.app.state.invoice_hub
+        finished = threading.Event()
+
+        def export() -> None:
+            try:
+                state.export_inbound_document({"invoice_number": "10000000000000000013"})
+            except Exception:
+                pass
+            finished.set()
+
+        with state._lock:
+            worker = threading.Thread(target=export)
+            worker.start()
+            # The split service must reuse AppState's RLock, not a private one.
+            assert not finished.wait(0.3)
+        worker.join(timeout=10)
+        assert finished.is_set()

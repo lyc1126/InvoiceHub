@@ -65,7 +65,7 @@
 
 | 新增路径 | 职责 |
 |---|---|
-| `src/invoice_hub/services/document_index.py` | 单据 spawn worker、逐文件缓存与进度，AppState 调度 |
+| `src/invoice_hub/services/document_index.py` | 单据 spawn worker、逐文件缓存与进度；AppState 创建实例，`DocumentService` 调度 |
 | `tests/test_document_index.py` | 真实进程停止/恢复、健康并发、变更/删除/隔离、过期身份 |
 | `web/static/css/large-lists.css` | 首页/单据分页与加载控件尺寸，兼容皮肤和窄屏 |
 
@@ -363,7 +363,7 @@
 | 文件 | 职责与入口 | 关系与修改影响 |
 |---|---|---|
 | `src/invoice_hub/targets/__init__.py` | 导出配置、布局和档案函数。 | AppState、monitor daemon/control 和测试使用。 |
-| `src/invoice_hub/targets/paths.py` | `AppConfig`、`Layout`、相对路径序列化、SHA1 `target_id`、冲突隔离。 | 决定所有入口的路径解释；变更需覆盖路径、启动、monitor、打包和配置测试。 |
+| `src/invoice_hub/targets/paths.py` | `AppConfig`、`Layout`、相对路径序列化、SHA1 `target_id`、冲突隔离，以及 `path_is_under_root` 受控根判断。 | 决定所有入口的路径解释；变更需覆盖路径、启动、monitor、打包和配置测试。 |
 
 ## 9. 文件与 SQLite 存储
 
@@ -421,12 +421,14 @@
 | 文件 | 职责与入口 | 关系与修改影响 |
 |---|---|---|
 | `src/invoice_hub/services/__init__.py` | 导出 `AppState`、过期选择、预览和打印异常及 `create_state`。 | API 应用工厂依赖。 |
-| `src/invoice_hub/services/app_state.py` | 当前统一用例门面：设置、诊断、发票、预览/打印、成本、单据、monitor、皮肤、OCR 占位、更新 metadata/host approval 和关闭；做账用例已拆到 `services/bookkeeping.py`，这里只保留同名转发。 | 上接 API，下接几乎全部子系统；`_host_update_lock` 串行化 allowlisted Feed gate、host candidate 和一次性 install approval，改动必须按用例做相邻回归。 |
+| `src/invoice_hub/services/app_state.py` | 当前统一用例门面：设置、诊断、发票、预览/打印、成本、单据、monitor、皮肤、OCR 占位、更新 metadata/host approval 和关闭；做账与单据用例已拆到 `services/bookkeeping.py`、`services/documents.py`，这里只保留同名转发。 | 上接 API，下接几乎全部子系统；`_host_update_lock` 串行化 allowlisted Feed gate、host candidate 和一次性 install approval，改动必须按用例做相邻回归。 |
 | `src/invoice_hub/services/app_state.py` 的 business dossier 用例 | 解析当前公司资料夹、一次有界扫描快捷入口/统计并限制打开路径。 | `/api/v1/business-dossier*` 和首页消费；不得改变 `watch_dir` 扫描语义；截断统计必须明确为下界。 |
 | `src/invoice_hub/services/document_rendering.py` | MuPDF 文档打开和安全分页 PNG 渲染的共享适配。 | preview/print 共用；缺依赖、加密、空文档、页尺寸和渲染失败保持结构化错误。 |
 | `src/invoice_hub/services/file_preview.py` | 短期源文件预览 job、闲置续租、页面/文本缓存、SVG/XML/图片安全边界。 | 保留已选源文件顺序；15 分钟闲置 TTL、页数、像素、作业数和缓存上限防止内存滥用。 |
 | `src/invoice_hub/services/invoice_printing.py` | 短期同票 PDF 打印 job 和分页 PNG 缓存。 | 不持久化票面；只接收受控 PDF，过期/容量/加密失败明确返回。 |
 | `src/invoice_hub/services/bookkeeping.py` | `BookkeepingService`：账套确认、科目/辅助核算查询、凭证生成/决定/审核、映射规则预览与保存、定向重算、捷锐导出与导入批次、状态/映射迁移（ENG-03 从 AppState 原样迁出）。 | AppState 构造并以同名方法转发，路由不变。活动 TargetProfile、config、公司资料夹与成本明细路径经回调实时读取，不缓存快照；写入先取 AppState 同一把 `_lock`，再取 `bookkeeping_write_lock`。 |
+| `src/invoice_hub/services/documents.py` | `DocumentService`：单据默认值、单据目录状态、首页批量入库核对、入/出库预览、导出状态、导出与打开（ENG-03 从 AppState 原样迁出）。 | AppState 构造并以同名方法转发，路由不变；`_document_index` 与 `_inbound_details` 仍由 AppState 创建后传入（documents 路由直接读索引状态）。活动 TargetProfile、成本明细路径、出库目录与首页勾选校验经回调实时读取；出库目录的保存/最近记录仍属设置用例留在 AppState。 |
+| `src/invoice_hub/services/errors.py` | `StaleInvoiceSelectionError`，AppState 与拆出的领域服务共用。 | 放在中立模块以免 `app_state` 与领域服务循环导入；`services` 包与 `app_state` 仍重导出同一个类。 |
 | `src/invoice_hub/services/monitor_bridge.py` | monitor 子进程命令、状态真值、ready 等待和启停。 | AppState 与 control 调用；与 daemon/state 构成生命周期闭环。 |
 | `src/invoice_hub/services/skins.py` | 皮肤 ZIP 安全验证、运行态存储、启用和文件服务。 | API、AppState、common.js 使用；安全回归在 API 测试。 |
 | `src/invoice_hub/services/update_service.py` | HTTPS 白名单更新检查、ETag/cache、版本/契约/平台产物选择和错误状态。 | About/API/启动后台检查消费；绝不执行安装。 |

@@ -62,7 +62,7 @@ D1 紧凑布局验收增加常见短窗口下 20 键无需下划、背面长解�
 2026-09-08：[`v0.3.0-alpha.2` 双平台预览](https://github.com/lyc1126/InvoiceHub/releases/tag/v0.3.0-alpha.2) 已按所有者确认的验收范围发布。Windows x64 portable ZIP 与 macOS arm64 preview DMG 同源，包含校验和、收据和平台 Python SBOM；Mac 离线核验与实际默认配置验收通过，隔离 HOME 自动烟测仍未通过，未启用安装 updater 或更新 Feed。精确发布身份和限制见[分支与发布记录](../BRANCH_STATUS.md)。
 
 
-大列表/单据缓存入口：`services/document_index.py`、`AppState.document_state/document_outbound_preview`、documents index API、`page-documents.js/page-index.js`、`large-lists.css`。最低验收 `tests/test_document_index.py`、`tests/test_documents.py`、前端/Node 及 7,003 条浏览器场景：停止/恢复、变更/删除、目录隔离、旧任务拒绝、健康接口、两款皮肤和恢复入口。解析字段语义变化需递增缓存版本。
+大列表/单据缓存入口：`services/document_index.py`、`DocumentService.document_state/document_outbound_preview`、documents index API、`page-documents.js/page-index.js`、`large-lists.css`。最低验收 `tests/test_document_index.py`、`tests/test_documents.py`、前端/Node 及 7,003 条浏览器场景：停止/恢复、变更/删除、目录隔离、旧任务拒绝、健康接口、两款皮肤和恢复入口。解析字段语义变化需递增缓存版本。
 
 首页搜索范围任务：`AppState._filter_invoice_items`、`api/app.py::invoices`、`index.html` 与 `page-index.js` 联动；最低覆盖大量合成记录的 invoice/filename/all、缺省兼容、非法枚举、组合筛选、统计/空结果、重置及旧响应拒绝，并复验默认外观、两款皮肤和 `no_skin=1`。修改脚本必须更新首页版本参数与静态契约。
 
@@ -252,14 +252,14 @@ flowchart TD
 
 ## 10. 入库单与出库单
 
-2026-10-09 单据加载性能同时定位 `document_index.py::InboundDetails/build_index/ensure` 与 `AppState.document_state/document_*_preview/*_export_status`；最低增加 `test_document_index.py`、`test_progressive_loading.py` 的无需无关扫描、部分候选只读、缓存失效及停止/恢复用例。首页批量可优先准备勾选票，但不能放宽正式导出的身份复核。
+2026-10-09 单据加载性能同时定位 `document_index.py::InboundDetails/build_index/ensure` 与 `DocumentService.document_state/document_*_preview/*_export_status`（`services/documents.py`，AppState 同名转发）；最低增加 `test_document_index.py`、`test_progressive_loading.py` 的无需无关扫描、部分候选只读、缓存失效及停止/恢复用例。首页批量可优先准备勾选票，但不能放宽正式导出的身份复核。
 
 必读功能规则：[页面/单据/预览/皮肤](rules/WEB_UI.md)、[成本](rules/COST_ANALYSIS.md)。
 
 | 导航项 | 内容 |
 |---|---|
 | 首先阅读 | 接口流程第 3.4、6.8 节；数据算法第 10、12.3 节 |
-| 首要入口 | `projections/documents.py::build_inbound_preview/build_outbound_preview/write_*_workbook/rmb_uppercase/_ensure_detail_rows`；AppState 的 `_inbound/_outbound_document_target` 和导出方法 |
+| 首要入口 | `projections/documents.py::build_inbound_preview/build_outbound_preview/write_*_workbook/rmb_uppercase/_ensure_detail_rows`；`services/documents.py::DocumentService` 的 `_inbound/_outbound_document_target` 和导出方法（AppState 同名转发） |
 | 必须联动 | 两个 Excel 模板、documents API、page-documents、首页 page-index 勾选交接、设置页单据目录/默认值、平台打开文件 |
 | 产物与消费者 | `watch_dir/入库单/*.xlsx`、`outbound_invoice_dir/出库单/*.xlsx`；预览与导出状态 |
 | 最低自动化 | 完整 `tests/test_documents.py` + 单据/源预览/打印前端契约与 `node --test tests/frontend_interactions.test.cjs`；批量需身份、缺明细、同票副本、停止/未知结果检查；路径配置变化再跑 paths/API |
