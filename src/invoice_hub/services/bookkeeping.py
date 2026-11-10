@@ -1,7 +1,6 @@
 """Bookkeeping use cases for the active company folder.
 
-Moved out of ``AppState`` (ENG-03) without behaviour changes. ``AppState`` keeps the
-public method names and forwards to this service, so routes and callers stay unchanged.
+Split out of ``AppState`` (ENG-03); routes call it as ``state.bookkeeping`` (ENG-08).
 
 Every call reads the *current* active TargetProfile and config through the providers,
 never a captured copy: switching ``watch_dir`` must retarget the next bookkeeping call

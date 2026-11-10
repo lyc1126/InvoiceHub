@@ -23,20 +23,20 @@ def router() -> APIRouter:
             request,
             method="GET",
             path="/api/v1/bridge/status",
-            action=_state(request).bridge_status,
+            action=_state(request).monitor.bridge_status,
         )
 
     @routes.get("/api/v1/bridge/progress")
     def bridge_progress(request: Request) -> dict:
-        return _state(request).bridge_progress()
+        return _state(request).monitor.bridge_progress()
 
     @routes.post("/api/v1/bridge/health-check")
     def bridge_health_check(request: Request) -> dict:
-        return _state(request).bridge_health_check()
+        return _state(request).monitor.bridge_health_check()
 
     @routes.post("/api/v1/bridge/rebuild")
     def bridge_rebuild(request: Request) -> dict:
-        return _state(request).bridge_rebuild()
+        return _state(request).monitor.bridge_rebuild()
 
     @routes.post("/api/v1/bridge/start")
     def bridge_start(request: Request) -> Response:
@@ -44,7 +44,7 @@ def router() -> APIRouter:
             request,
             method="POST",
             path="/api/v1/bridge/start",
-            action=_state(request).bridge_start,
+            action=_state(request).monitor.bridge_start,
         )
 
     @routes.post("/api/v1/bridge/stop")
@@ -53,15 +53,15 @@ def router() -> APIRouter:
             request,
             method="POST",
             path="/api/v1/bridge/stop",
-            action=_state(request).bridge_stop,
+            action=_state(request).monitor.bridge_stop,
         )
 
     @routes.post('/api/v1/bridge/open-log')
     def bridge_open_log(request: Request) -> dict:
-        return _state(request).open_monitor_log()
+        return _state(request).monitor.open_monitor_log()
 
     @routes.post('/api/v1/bridge/open-runtime-dir')
     def bridge_open_runtime_dir(request: Request) -> dict:
-        return _state(request).open_runtime_dir()
+        return _state(request).monitor.open_runtime_dir()
 
     return routes

@@ -71,7 +71,7 @@ def _selection(item: dict) -> dict[str, str]:
 
 def _client_with_rows(tmp_path: Path, monkeypatch, rows: list[dict[str, str]]) -> tuple[TestClient, object]:
     monkeypatch.setattr(
-        "invoice_hub.services.app_state.AppState.run_background_diagnostics",
+        "invoice_hub.services.background_sync.BackgroundSyncService.run_background_diagnostics",
         lambda self, trigger="startup_sync": None,
     )
     app = create_app(tmp_path)
@@ -82,7 +82,7 @@ def _client_with_rows(tmp_path: Path, monkeypatch, rows: list[dict[str, str]]) -
 
 def test_preview_job_preserves_source_order_and_renders_pdf_ofd_xml(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(
-        "invoice_hub.services.app_state.AppState.run_background_diagnostics",
+        "invoice_hub.services.background_sync.BackgroundSyncService.run_background_diagnostics",
         lambda self, trigger="startup_sync": None,
     )
     app = create_app(tmp_path)
@@ -253,7 +253,7 @@ def test_preview_xml_encodings_replacements_and_truncation(tmp_path: Path) -> No
 
 def test_preview_api_rejects_stale_and_outside_watch_paths(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(
-        "invoice_hub.services.app_state.AppState.run_background_diagnostics",
+        "invoice_hub.services.background_sync.BackgroundSyncService.run_background_diagnostics",
         lambda self, trigger="startup_sync": None,
     )
     app = create_app(tmp_path)
@@ -290,7 +290,7 @@ def test_preview_api_rejects_stale_and_outside_watch_paths(tmp_path: Path, monke
 
 def test_preview_detects_source_changes_expiry_and_unknown_jobs(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(
-        "invoice_hub.services.app_state.AppState.run_background_diagnostics",
+        "invoice_hub.services.background_sync.BackgroundSyncService.run_background_diagnostics",
         lambda self, trigger="startup_sync": None,
     )
     app = create_app(tmp_path)
@@ -325,7 +325,7 @@ def test_preview_detects_source_changes_expiry_and_unknown_jobs(tmp_path: Path, 
 
 def test_preview_damaged_and_encrypted_files_are_isolated(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(
-        "invoice_hub.services.app_state.AppState.run_background_diagnostics",
+        "invoice_hub.services.background_sync.BackgroundSyncService.run_background_diagnostics",
         lambda self, trigger="startup_sync": None,
     )
     app = create_app(tmp_path)
@@ -362,7 +362,7 @@ def test_preview_damaged_and_encrypted_files_are_isolated(tmp_path: Path, monkey
 
 def test_preview_renderer_unavailable_maps_to_503(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(
-        "invoice_hub.services.app_state.AppState.run_background_diagnostics",
+        "invoice_hub.services.background_sync.BackgroundSyncService.run_background_diagnostics",
         lambda self, trigger="startup_sync": None,
     )
     app = create_app(tmp_path)
@@ -446,7 +446,7 @@ def test_preview_cache_limit_and_open_actions(tmp_path: Path, monkeypatch) -> No
     monkeypatch.setattr("invoice_hub.services.file_preview.MAX_PREVIEW_CACHE_BYTES", 256 * 1024 * 1024)
     monkeypatch.setattr("invoice_hub.services.file_preview.MAX_PREVIEW_JOB_BYTES", 128 * 1024 * 1024)
     monkeypatch.setattr(
-        "invoice_hub.services.app_state.AppState.run_background_diagnostics",
+        "invoice_hub.services.background_sync.BackgroundSyncService.run_background_diagnostics",
         lambda self, trigger="startup_sync": None,
     )
     app = create_app(tmp_path / "app")
@@ -482,7 +482,7 @@ def test_preview_print_service_follows_watch_dir_switch(tmp_path: Path, monkeypa
     from invoice_hub.services.file_preview import FilePreviewError
 
     monkeypatch.setattr(
-        "invoice_hub.services.app_state.AppState.run_background_diagnostics",
+        "invoice_hub.services.background_sync.BackgroundSyncService.run_background_diagnostics",
         lambda self, trigger="startup_sync": None,
     )
     app = create_app(tmp_path / "app")
@@ -491,24 +491,24 @@ def test_preview_print_service_follows_watch_dir_switch(tmp_path: Path, monkeypa
     old_watch.mkdir(parents=True, exist_ok=True)
     pdf = old_watch / "old.pdf"
     _write_pdf(pdf, [(595, 842)])
-    assert state._preview_print._invoice_preview_source({"source_path": str(pdf)}).path == pdf.resolve()
+    assert state.preview_print._invoice_preview_source({"source_path": str(pdf)}).path == pdf.resolve()
 
     new_watch = tmp_path / "other"
     new_watch.mkdir()
     state.update_settings({"watch_dir": str(new_watch)})
 
-    assert state._preview_print.active_profile.id == state.active_profile.id
+    assert state.preview_print.active_profile.id == state.active_profile.id
     with pytest.raises(FilePreviewError) as raised:
-        state._preview_print._invoice_preview_source({"source_path": str(pdf)})
+        state.preview_print._invoice_preview_source({"source_path": str(pdf)})
     assert raised.value.code == "source_changed"
-    assert state._preview_print._print_pdf_path({"source_path": str(pdf)}) is None
+    assert state.preview_print._print_pdf_path({"source_path": str(pdf)}) is None
 
 
 def test_preview_creation_waits_for_the_app_state_lock(tmp_path: Path, monkeypatch) -> None:
     import threading
 
     monkeypatch.setattr(
-        "invoice_hub.services.app_state.AppState.run_background_diagnostics",
+        "invoice_hub.services.background_sync.BackgroundSyncService.run_background_diagnostics",
         lambda self, trigger="startup_sync": None,
     )
     state = create_app(tmp_path / "app").state.invoice_hub
@@ -516,7 +516,7 @@ def test_preview_creation_waits_for_the_app_state_lock(tmp_path: Path, monkeypat
 
     def prepare() -> None:
         try:
-            state.prepare_invoice_preview({"items": []})
+            state.preview_print.prepare_invoice_preview({"items": []})
         except Exception:
             pass
         finished.set()

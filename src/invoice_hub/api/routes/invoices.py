@@ -33,7 +33,7 @@ def router() -> APIRouter:
     def invoices(request: Request, search_scope: Literal["invoice", "filename", "all"] = "all",
                  page: int | None = Query(None, ge=1), page_size: int = Query(100, ge=1, le=200),
                  date_sort: Literal["", "asc", "desc"] = "") -> dict:
-        return _state(request).list_invoices({**dict(request.query_params), "search_scope": search_scope})
+        return _state(request).invoices.list_invoices({**dict(request.query_params), "search_scope": search_scope})
 
     @routes.post("/api/v1/invoices/trash-jobs")
     async def prepare_invoice_trash(request: Request):
@@ -65,7 +65,7 @@ def router() -> APIRouter:
         except (json.JSONDecodeError, UnicodeDecodeError):
             raise HTTPException(status_code=400, detail="请求体必须是合法 JSON。")
         try:
-            return await run_in_threadpool(_state(request).invoice_selection_summary, payload)
+            return await run_in_threadpool(_state(request).selection.invoice_selection_summary, payload)
         except StaleInvoiceSelectionError as exc:
             raise HTTPException(status_code=409, detail=str(exc))
         except ValueError as exc:
@@ -78,7 +78,7 @@ def router() -> APIRouter:
         except (json.JSONDecodeError, UnicodeDecodeError):
             raise HTTPException(status_code=400, detail="请求体必须是合法 JSON。", headers=PREVIEW_CONTENT_HEADERS)
         try:
-            result = await run_in_threadpool(_state(request).prepare_invoice_preview, payload)
+            result = await run_in_threadpool(_state(request).preview_print.prepare_invoice_preview, payload)
         except StaleInvoiceSelectionError as exc:
             raise HTTPException(status_code=409, detail=str(exc), headers=PREVIEW_CONTENT_HEADERS)
         except FilePreviewError as exc:
@@ -90,7 +90,7 @@ def router() -> APIRouter:
     @routes.get("/api/v1/invoices/preview-jobs/{job_id}/files/{file_number}/pages/{page_number}")
     def invoice_preview_job_page(request: Request, job_id: str, file_number: int, page_number: int):
         try:
-            page = _state(request).invoice_preview_page(job_id, file_number, page_number)
+            page = _state(request).preview_print.invoice_preview_page(job_id, file_number, page_number)
         except FilePreviewError as exc:
             raise HTTPException(status_code=exc.status_code, detail=str(exc), headers=PREVIEW_CONTENT_HEADERS)
         return Response(
@@ -107,7 +107,7 @@ def router() -> APIRouter:
     @routes.get("/api/v1/invoices/preview-jobs/{job_id}/files/{file_number}/text")
     def invoice_preview_job_text(request: Request, job_id: str, file_number: int):
         try:
-            text = _state(request).invoice_preview_text(job_id, file_number)
+            text = _state(request).preview_print.invoice_preview_text(job_id, file_number)
         except FilePreviewError as exc:
             raise HTTPException(status_code=exc.status_code, detail=str(exc), headers=PREVIEW_CONTENT_HEADERS)
         return Response(
@@ -124,7 +124,7 @@ def router() -> APIRouter:
     @routes.post("/api/v1/invoices/preview-jobs/{job_id}/keep-alive")
     def keep_invoice_preview_job_alive(request: Request, job_id: str):
         try:
-            result = _state(request).keep_invoice_preview_alive(job_id)
+            result = _state(request).preview_print.keep_invoice_preview_alive(job_id)
         except FilePreviewError as exc:
             raise HTTPException(status_code=exc.status_code, detail=str(exc), headers=PREVIEW_CONTENT_HEADERS)
         return JSONResponse(result, headers=PREVIEW_CONTENT_HEADERS)
@@ -132,7 +132,7 @@ def router() -> APIRouter:
     @routes.post("/api/v1/invoices/preview-jobs/{job_id}/files/{file_number}/open-file")
     def open_invoice_preview_file(request: Request, job_id: str, file_number: int):
         try:
-            result = _state(request).open_invoice_preview_file(job_id, file_number)
+            result = _state(request).preview_print.open_invoice_preview_file(job_id, file_number)
         except FilePreviewError as exc:
             raise HTTPException(status_code=exc.status_code, detail=str(exc), headers=PREVIEW_CONTENT_HEADERS)
         return JSONResponse(result, headers=PREVIEW_CONTENT_HEADERS)
@@ -140,7 +140,7 @@ def router() -> APIRouter:
     @routes.post("/api/v1/invoices/preview-jobs/{job_id}/files/{file_number}/open-location")
     def open_invoice_preview_location(request: Request, job_id: str, file_number: int):
         try:
-            result = _state(request).open_invoice_preview_location(job_id, file_number)
+            result = _state(request).preview_print.open_invoice_preview_location(job_id, file_number)
         except FilePreviewError as exc:
             raise HTTPException(status_code=exc.status_code, detail=str(exc), headers=PREVIEW_CONTENT_HEADERS)
         return JSONResponse(result, headers=PREVIEW_CONTENT_HEADERS)
@@ -152,7 +152,7 @@ def router() -> APIRouter:
         except (json.JSONDecodeError, UnicodeDecodeError):
             raise HTTPException(status_code=400, detail="请求体必须是合法 JSON。")
         try:
-            return await run_in_threadpool(_state(request).prepare_invoice_print, payload)
+            return await run_in_threadpool(_state(request).preview_print.prepare_invoice_print, payload)
         except StaleInvoiceSelectionError as exc:
             raise HTTPException(status_code=409, detail=str(exc))
         except InvoicePrintError as exc:
@@ -163,7 +163,7 @@ def router() -> APIRouter:
     @routes.get("/api/v1/invoices/print-jobs/{job_id}/pages/{page_number}")
     def invoice_print_job_page(request: Request, job_id: str, page_number: int):
         try:
-            page = _state(request).invoice_print_page(job_id, page_number)
+            page = _state(request).preview_print.invoice_print_page(job_id, page_number)
         except InvoicePrintError as exc:
             raise HTTPException(status_code=exc.status_code, detail=str(exc))
         return Response(
@@ -181,10 +181,10 @@ def router() -> APIRouter:
             state = _state(request)
             with state._lock:
                 if source_path or target_id:
-                    state._validated_invoice_selection({"target_id": target_id,
+                    state.selection.validated_invoice_selection({"target_id": target_id,
                         "items": [{"invoice_key": invoice_key, "source_path": source_path}]},
                         max_items=1, operation="查看")
-                return state.invoice_detail(invoice_key)
+                return state.invoices.invoice_detail(invoice_key)
         except (ValueError, StaleInvoiceSelectionError) as exc:
             raise HTTPException(status_code=409, detail=str(exc))
         except KeyError:
@@ -194,21 +194,21 @@ def router() -> APIRouter:
     async def manual_fields(request: Request, invoice_key: str) -> dict:
         try:
             payload = await request.json()
-            return await run_in_threadpool(_state(request).update_manual_fields, invoice_key, payload)
+            return await run_in_threadpool(_state(request).invoices.update_manual_fields, invoice_key, payload)
         except KeyError:
             raise HTTPException(status_code=404, detail="invoice not found")
 
     @routes.post("/api/v1/invoices/{invoice_key}/open-file")
     def open_file(request: Request, invoice_key: str) -> dict:
         try:
-            return _state(request).open_invoice_file(invoice_key)
+            return _state(request).invoices.open_invoice_file(invoice_key)
         except KeyError:
             raise HTTPException(status_code=404, detail="invoice not found")
 
     @routes.post("/api/v1/invoices/{invoice_key}/open-location")
     def open_location(request: Request, invoice_key: str) -> dict:
         try:
-            return _state(request).open_invoice_location(invoice_key)
+            return _state(request).invoices.open_invoice_location(invoice_key)
         except KeyError:
             raise HTTPException(status_code=404, detail="invoice not found")
 

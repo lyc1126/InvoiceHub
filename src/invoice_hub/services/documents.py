@@ -1,9 +1,8 @@
 """Inbound/outbound document use cases: defaults, catalog state, previews, export and open.
 
-Moved out of ``AppState`` (ENG-03) without behaviour changes; ``AppState`` keeps the public
-method names and forwards here, so routes and callers are unchanged.
+Split out of ``AppState`` (ENG-03); routes call it as ``state.documents`` (ENG-08).
 
-What stays in AppState and arrives as a callback: the active TargetProfile, the cost detail
+What arrives as a callback: the active TargetProfile (owned by AppState), the cost detail
 path and the configured outbound directory (settings own its persistence); homepage
 selections are rechecked through ``InvoiceSelectionService``. Each is read on every call, never captured,
 because watch_dir/outbound switches replace them and a stale value would export documents

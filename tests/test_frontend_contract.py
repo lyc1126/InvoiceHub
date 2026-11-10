@@ -1565,7 +1565,7 @@ def test_settings_page_contract() -> None:
     assert "/api/v1/diagnostics/support-package" in api_app
     assert "/api/v1/server/shutdown" in api_app
     assert "shutdown_scheduler" in api_app
-    assert "if state.server_shutdown_requested:" in api_app
+    assert "if state.shutdown.server_shutdown_requested:" in api_app
 
 
 def test_skin_page_contract_and_common_skin_loader() -> None:

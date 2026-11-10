@@ -1,5 +1,5 @@
 """OCR page use cases. The core package ships no local OCR: these only pick candidate files
-and report the disabled state. Moved out of ``AppState`` (ENG-03) without behaviour changes.
+and report the disabled state. Split out of ``AppState`` (ENG-03); routes call it as ``state.ocr`` (ENG-08).
 """
 
 from __future__ import annotations

@@ -1,8 +1,8 @@
 """Monitor control from the API: daemon start/stop/status/health, sync progress, manual rebuild, logs.
 
-Moved out of ``AppState`` (ENG-03) without behaviour changes; AppState keeps the public names
-(tests patch ``bridge_status``/``bridge_stop`` on the AppState class, and shutdown reaches them
-through AppState). The daemon itself is a separate process managed by ``MonitorBridge``.
+Split out of ``AppState`` (ENG-03); routes call it as ``state.monitor`` (ENG-08). Settings,
+diagnostics and shutdown reach ``bridge_status``/``bridge_stop`` through AppState on every call,
+so tests patch them on this class. The daemon itself is a separate process managed by ``MonitorBridge``.
 Manual rebuild runs ``MonitorSynchronizer`` in-process under the TargetProfile's sync write
 lock, shared with the daemon and startup sync, and only clears caches or emits events for the
 profile it captured if that profile is still active.
@@ -64,14 +64,14 @@ class MonitorControlService:
     def append_event(self, event_type: str, payload: dict | None = None, error: dict | None = None, task_id: str | None = None) -> dict:
         return self.repo.append_event(event_type, payload=payload, error=error, task_id=task_id)
 
-    def _monitor_state(self) -> MonitorState:
+    def monitor_state(self) -> MonitorState:
         return MonitorState(self.active_profile, self.layout.db_path, sync_interval_seconds=60)
 
-    def _monitor_bridge(self) -> MonitorBridge:
+    def monitor_bridge(self) -> MonitorBridge:
         return MonitorBridge(self.config, self.layout, self.active_profile, self.repo)
 
     def bridge_status(self) -> dict:
-        return self._monitor_bridge().status()
+        return self.monitor_bridge().status()
 
     def bridge_progress(self) -> dict:
         with self._lock:
@@ -137,7 +137,7 @@ class MonitorControlService:
         }
 
     def bridge_health_check(self) -> dict:
-        return self._monitor_bridge().health_check()
+        return self.monitor_bridge().health_check()
 
     def _rebuild_message(self, summary: dict, cost_result: dict, profile: TargetProfile | None = None) -> str:
         summary_count = int(summary.get("count") or 0)
@@ -247,13 +247,13 @@ class MonitorControlService:
             return {"ok": False, "task_id": task_id, "exit_code": 1, "message": f"重新汇总失败: {exc}", "error": str(exc)}
 
     def bridge_start(self) -> dict:
-        return self._monitor_bridge().start()
+        return self.monitor_bridge().start()
 
     def bridge_stop(self) -> dict:
-        return self._monitor_bridge().stop()
+        return self.monitor_bridge().stop()
 
     def open_monitor_log(self) -> dict:
-        monitor_state = self._monitor_state()
+        monitor_state = self.monitor_state()
         path = monitor_state.log_path
         if path.exists():
             open_local_path(path)

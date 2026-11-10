@@ -1,11 +1,11 @@
 """Structured localhost shutdown: accept a shutdown request once, then finalize after Uvicorn exits.
 
-Moved out of ``AppState`` (ENG-03) without behaviour changes; AppState keeps the public names.
+Split out of ``AppState`` (ENG-03); routes and the app lifespan call it as ``state.shutdown`` (ENG-08).
 Closing the window, stopping localhost and stopping the monitor are separate: the request
 records whether the monitor keeps running (``keep_monitor``) or is stopped first. Only after a
 request is accepted does the SSE stream end, so a WebView EventSource cannot hold Uvicorn's
 graceful shutdown open; a failed request resets the flag. Monitor status/stop and preference
-saving are AppState methods injected under the same names (tests patch them on the class).
+saving are the monitor and settings services' methods, looked up through AppState per call.
 """
 
 from __future__ import annotations

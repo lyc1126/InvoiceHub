@@ -129,7 +129,9 @@ def test_picker_routes_map_host_rpc_errors_to_a_stable_redacted_5xx_contract() -
         "pick_ocr_file",
         "pick_ocr_folder",
     ):
-        assert f"return _run_native_picker(_state(request).{method})" in app
+        # Routes call the owning domain service directly (ENG-08).
+        service = "ocr" if method.startswith("pick_ocr_") else "settings"
+        assert f"return _run_native_picker(_state(request).{service}.{method})" in app
 
 
 def test_host_rpc_rejects_an_external_endpoint_without_leaking_the_token(monkeypatch: pytest.MonkeyPatch) -> None:

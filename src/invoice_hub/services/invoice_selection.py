@@ -1,14 +1,14 @@
 """Homepage invoice selection: identity rules, revalidation and the selection summary.
 
-Moved out of ``AppState`` (ENG-03) without behaviour changes. ``invoice_key`` is a row
+Split out of ``AppState`` (ENG-03); routes call it as ``state.selection`` (ENG-08). ``invoice_key`` is a row
 position that is reused after a rebuild, so every selection carries ``source_path`` and is
 rechecked against the *current* invoice list before any use; a mismatch is a stale
 selection, never a silent re-target. The pure helpers below define one invoice family
 (invoice number, then the 20-digit number in the file name, then the source path), shared
 by totals, documents, preview and print.
 
-The invoice list itself (caching, consistency, rebuild) stays in ``AppState`` and arrives
-as a callback, as do the active profile and the cost detail path; all are read per call.
+The invoice list itself (caching, consistency, rebuild) belongs to ``InvoiceListService`` and
+arrives as a callback, as do the active profile and the cost detail path; all are read per call.
 The summary holds AppState's own RLock so validation and the result share one directory
 generation.
 """

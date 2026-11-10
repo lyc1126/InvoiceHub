@@ -1,8 +1,7 @@
 """Invoice list: summary CSV cache, manual overrides, filters/stats, consistency, detail, open.
 
-Moved out of ``AppState`` (ENG-03) without behaviour changes; AppState keeps the public names
-(and ``_clear_invoice_cache``, which background sync, rebuild, rename, delete and directory
-switches call) and forwards here. The summary CSV is a rebuildable projection; ``mtime_ns +
+Split out of ``AppState`` (ENG-03); routes call it as ``state.invoices`` (ENG-08), and background
+sync, rebuild, rename, delete and directory switches call ``clear_invoice_cache``. The summary CSV is a rebuildable projection; ``mtime_ns +
 size`` only keys this process's read cache, never the truth of a source invoice. Manual edits
 write the override file and the projection under the TargetProfile's monitor sync lock, and
 only clear the cache or emit events when that profile is still the active one.
@@ -72,17 +71,17 @@ class InvoiceListService:
     def invoice_summary_xlsx(self) -> Path:
         return Path(self.active_profile.workspace_dir) / "发票汇总.xlsx"
 
-    def _manual_overrides_path(self) -> Path:
+    def manual_overrides_path(self) -> Path:
         return Path(self.active_profile.state_dir) / "manual_overrides.json"
 
-    def _clear_invoice_cache(self) -> None:
+    def clear_invoice_cache(self) -> None:
         self._invoice_cache_key = None
         self._invoice_cache_rows = []
 
     def _summary_rows(self) -> list[dict[str, str]]:
         path = self.invoice_summary_csv()
         if not path.exists():
-            self._clear_invoice_cache()
+            self.clear_invoice_cache()
             return []
         stat = path.stat()
         key = (str(path), stat.st_mtime_ns, stat.st_size, stat.st_ctime_ns)
@@ -94,10 +93,10 @@ class InvoiceListService:
     def _write_summary_rows(self, rows: list[dict[str, str]]) -> None:
         write_csv_rows(self.invoice_summary_csv(), SUMMARY_HEADERS, rows)
         write_summary_xlsx(self.invoice_summary_xlsx(), rows)
-        self._clear_invoice_cache()
+        self.clear_invoice_cache()
 
     def _manual_override_items(self) -> dict:
-        payload = read_json_object(self._manual_overrides_path(), {"items": {}})
+        payload = read_json_object(self.manual_overrides_path(), {"items": {}})
         items = payload.get("items")
         return items if isinstance(items, dict) else {}
 
@@ -305,7 +304,7 @@ class InvoiceListService:
         filters = filters or {}
         with self._lock:
             key = [self.active_profile.id, str(self.invoice_summary_csv()), file_signature(self.invoice_summary_csv()),
-                   file_signature(self._manual_overrides_path())]
+                   file_signature(self.manual_overrides_path())]
             if key != self._invoice_payload_key:
                 self._invoice_payload = self._build_invoice_payload()
                 self._invoice_payload_key = key
@@ -500,7 +499,7 @@ class InvoiceListService:
             write_summary_xlsx(monitor_state.summary_xlsx, rows)
         with self._lock:
             if profile_identity == _profile_identity(self.active_profile):
-                self._clear_invoice_cache()
+                self.clear_invoice_cache()
                 self.append_event(
                     "invoice.manual_fields_updated",
                     {"invoice_key": invoice_key, "fields": sorted(cleaned), "target_id": profile.id},

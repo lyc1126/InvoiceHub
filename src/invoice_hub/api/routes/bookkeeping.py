@@ -20,12 +20,12 @@ def router() -> APIRouter:
     @routes.post("/api/v1/bookkeeping/generate")
     def bookkeeping_generate(request: Request) -> dict:
         _require_same_origin_write(request)
-        return _state(request).generate_voucher_drafts()
+        return _state(request).bookkeeping.generate_voucher_drafts()
 
     @routes.get("/api/v1/bookkeeping/setup")
     def bookkeeping_setup(request: Request) -> dict:
         try:
-            return _state(request).bookkeeping_setup()
+            return _state(request).bookkeeping.bookkeeping_setup()
         except ValueError as exc:
             return _bookkeeping_error_response(exc)
 
@@ -33,14 +33,14 @@ def router() -> APIRouter:
     async def bookkeeping_profile(request: Request) -> dict:
         _require_same_origin_write(request)
         try:
-            return _state(request).save_bookkeeping_profile(await request.json())
+            return _state(request).bookkeeping.save_bookkeeping_profile(await request.json())
         except ValueError as exc:
             return _bookkeeping_error_response(exc)
 
     @routes.get("/api/v1/bookkeeping/accounts")
     def bookkeeping_accounts(request: Request, q: str = Query(""), limit: int = Query(200, ge=1, le=500)) -> dict:
         try:
-            return _state(request).bookkeeping_accounts(query=q, limit=limit)
+            return _state(request).bookkeeping.bookkeeping_accounts(query=q, limit=limit)
         except (ValueError, FileNotFoundError) as exc:
             return _bookkeeping_error_response(exc)
 
@@ -52,14 +52,14 @@ def router() -> APIRouter:
         limit: int = Query(200, ge=1, le=500),
     ) -> dict:
         try:
-            return _state(request).bookkeeping_aux_values(dimension=dimension, query=q, limit=limit)
+            return _state(request).bookkeeping.bookkeeping_aux_values(dimension=dimension, query=q, limit=limit)
         except (ValueError, FileNotFoundError) as exc:
             return _bookkeeping_error_response(exc)
 
     @routes.get("/api/v1/bookkeeping/vouchers")
     def bookkeeping_vouchers(request: Request, status: str = Query(""), tier: str = Query("")) -> dict:
         try:
-            return _state(request).bookkeeping_vouchers(status=status, tier=tier)
+            return _state(request).bookkeeping.bookkeeping_vouchers(status=status, tier=tier)
         except ValueError as exc:
             return _bookkeeping_error_response(exc)
 
@@ -74,7 +74,7 @@ def router() -> APIRouter:
             raise HTTPException(status_code=400, detail="voucher_key mismatch")
         payload["voucher_key"] = voucher_key
         try:
-            return _state(request).review_voucher(VoucherReviewPatch.model_validate(payload))
+            return _state(request).bookkeeping.review_voucher(VoucherReviewPatch.model_validate(payload))
         except KeyError:
             raise HTTPException(status_code=404, detail="voucher not found")
         except ValueError as exc:
@@ -91,7 +91,7 @@ def router() -> APIRouter:
             raise HTTPException(status_code=400, detail="voucher_key mismatch")
         payload["voucher_key"] = voucher_key
         try:
-            return _state(request).save_voucher_decision(VoucherDecisionPatch.model_validate(payload))
+            return _state(request).bookkeeping.save_voucher_decision(VoucherDecisionPatch.model_validate(payload))
         except KeyError:
             raise HTTPException(status_code=404, detail="voucher not found")
         except ValueError as exc:
@@ -100,7 +100,7 @@ def router() -> APIRouter:
     @routes.get("/api/v1/bookkeeping/mapping-rules")
     def bookkeeping_mapping_rules_get(request: Request) -> dict:
         try:
-            return _state(request).bookkeeping_mapping_rules()
+            return _state(request).bookkeeping.bookkeeping_mapping_rules()
         except ValueError as exc:
             return _bookkeeping_error_response(exc)
 
@@ -108,7 +108,7 @@ def router() -> APIRouter:
     async def bookkeeping_mapping_rules_preview(request: Request) -> dict:
         _require_same_origin_write(request)
         try:
-            return _state(request).preview_mapping_rule(await request.json())
+            return _state(request).bookkeeping.preview_mapping_rule(await request.json())
         except ValueError as exc:
             return _bookkeeping_error_response(exc)
 
@@ -116,7 +116,7 @@ def router() -> APIRouter:
     async def bookkeeping_mapping_rules(request: Request) -> dict:
         _require_same_origin_write(request)
         try:
-            return _state(request).append_mapping_rule(await request.json())
+            return _state(request).bookkeeping.append_mapping_rule(await request.json())
         except ValueError as exc:
             return _bookkeeping_error_response(exc)
 
@@ -124,7 +124,7 @@ def router() -> APIRouter:
     def bookkeeping_mapping_migration_preview(request: Request) -> dict:
         _require_same_origin_write(request)
         try:
-            return _state(request).preview_bookkeeping_mapping_migration()
+            return _state(request).bookkeeping.preview_bookkeeping_mapping_migration()
         except ValueError as exc:
             return _bookkeeping_error_response(exc)
 
@@ -132,7 +132,7 @@ def router() -> APIRouter:
     async def bookkeeping_mapping_migration_apply(request: Request) -> dict:
         _require_same_origin_write(request)
         try:
-            return _state(request).apply_bookkeeping_mapping_migration(await request.json())
+            return _state(request).bookkeeping.apply_bookkeeping_mapping_migration(await request.json())
         except ValueError as exc:
             return _bookkeeping_error_response(exc)
 
@@ -140,7 +140,7 @@ def router() -> APIRouter:
     async def bookkeeping_recompute(request: Request) -> dict:
         _require_same_origin_write(request)
         try:
-            return _state(request).recompute_bookkeeping_drafts(await request.json())
+            return _state(request).bookkeeping.recompute_bookkeeping_drafts(await request.json())
         except ValueError as exc:
             return _bookkeeping_error_response(exc)
 
@@ -148,7 +148,7 @@ def router() -> APIRouter:
     async def bookkeeping_export_import_file(request: Request) -> dict:
         _require_same_origin_write(request)
         try:
-            return _state(request).export_jierui_import_xlsx(await request.json())
+            return _state(request).bookkeeping.export_jierui_import_xlsx(await request.json())
         except KeyError:
             raise HTTPException(status_code=404, detail="voucher not found")
         except ValueError as exc:
@@ -157,7 +157,7 @@ def router() -> APIRouter:
     @routes.get("/api/v1/bookkeeping/export-status")
     def bookkeeping_export_status(request: Request) -> dict:
         try:
-            return _state(request).bookkeeping_export_status()
+            return _state(request).bookkeeping.bookkeeping_export_status()
         except ValueError as exc:
             return _bookkeeping_error_response(exc)
 
@@ -165,7 +165,7 @@ def router() -> APIRouter:
     def bookkeeping_migration_preview(request: Request) -> dict:
         _require_same_origin_write(request)
         try:
-            return _state(request).preview_bookkeeping_migration()
+            return _state(request).bookkeeping.preview_bookkeeping_migration()
         except ValueError as exc:
             return _bookkeeping_error_response(exc)
 
@@ -173,7 +173,7 @@ def router() -> APIRouter:
     async def bookkeeping_migration_apply(request: Request) -> dict:
         _require_same_origin_write(request)
         try:
-            return _state(request).apply_bookkeeping_migration(await request.json())
+            return _state(request).bookkeeping.apply_bookkeeping_migration(await request.json())
         except ValueError as exc:
             return _bookkeeping_error_response(exc)
 
@@ -181,7 +181,7 @@ def router() -> APIRouter:
     async def bookkeeping_batch_dry_run(request: Request, batch_id: str) -> dict:
         _require_same_origin_write(request)
         try:
-            return _state(request).record_bookkeeping_batch_dry_run(batch_id, await request.json())
+            return _state(request).bookkeeping.record_bookkeeping_batch_dry_run(batch_id, await request.json())
         except KeyError:
             raise HTTPException(status_code=404, detail="import batch not found")
         except ValueError as exc:
@@ -191,7 +191,7 @@ def router() -> APIRouter:
     async def bookkeeping_batch_begin(request: Request, batch_id: str) -> dict:
         _require_same_origin_write(request)
         try:
-            return _state(request).begin_bookkeeping_import_batch(batch_id, await request.json())
+            return _state(request).bookkeeping.begin_bookkeeping_import_batch(batch_id, await request.json())
         except KeyError:
             raise HTTPException(status_code=404, detail="import batch not found")
         except ValueError as exc:
@@ -201,7 +201,7 @@ def router() -> APIRouter:
     async def bookkeeping_batch_finalize(request: Request, batch_id: str) -> dict:
         _require_same_origin_write(request)
         try:
-            return _state(request).finalize_bookkeeping_import_batch(batch_id, await request.json())
+            return _state(request).bookkeeping.finalize_bookkeeping_import_batch(batch_id, await request.json())
         except KeyError:
             raise HTTPException(status_code=404, detail="import batch not found")
         except ValueError as exc:
@@ -211,7 +211,7 @@ def router() -> APIRouter:
     async def bookkeeping_import_result(request: Request) -> dict:
         _require_same_origin_write(request)
         try:
-            return _state(request).patch_voucher_import_result(await request.json())
+            return _state(request).bookkeeping.patch_voucher_import_result(await request.json())
         except KeyError:
             raise HTTPException(status_code=404, detail="voucher not found")
         except ValueError as exc:
@@ -220,7 +220,7 @@ def router() -> APIRouter:
     @routes.get("/api/v1/bookkeeping/state")
     def bookkeeping_state(request: Request) -> dict:
         try:
-            return _state(request).bookkeeping_state()
+            return _state(request).bookkeeping.bookkeeping_state()
         except ValueError as exc:
             return _bookkeeping_error_response(exc)
 

@@ -19,45 +19,45 @@ def router() -> APIRouter:
 
     @routes.get("/api/v1/ocr/settings")
     def ocr_settings(request: Request) -> dict:
-        return _state(request).ocr_settings()
+        return _state(request).ocr.ocr_settings()
 
     @routes.put("/api/v1/ocr/settings")
     async def update_ocr_settings(request: Request) -> dict:
-        return _state(request).ocr_settings()
+        return _state(request).ocr.ocr_settings()
 
     @routes.get("/api/v1/ocr/service-status")
     def ocr_service_status(request: Request) -> dict:
-        return _state(request).ocr_service_status()
+        return _state(request).ocr.ocr_service_status()
 
     @routes.post("/api/v1/ocr/service-start")
     def ocr_service_start(request: Request) -> dict:
-        return _state(request).ocr_service_status()
+        return _state(request).ocr.ocr_service_status()
 
     @routes.post("/api/v1/ocr/service-stop")
     def ocr_service_stop(request: Request) -> dict:
-        return _state(request).ocr_service_status()
+        return _state(request).ocr.ocr_service_status()
 
     @routes.post("/api/v1/ocr/open-log-dir")
     def ocr_open_log_dir(request: Request) -> dict:
-        return _state(request).open_ocr_log_dir()
+        return _state(request).ocr.open_ocr_log_dir()
 
     @routes.post("/api/v1/ocr/pick-file")
     def ocr_pick_file(request: Request) -> dict:
         _require_native_picker_origin(request)
-        return _run_native_picker(_state(request).pick_ocr_file)
+        return _run_native_picker(_state(request).ocr.pick_ocr_file)
 
     @routes.post("/api/v1/ocr/pick-folder")
     def ocr_pick_folder(request: Request) -> dict:
         _require_native_picker_origin(request)
-        return _run_native_picker(_state(request).pick_ocr_folder)
+        return _run_native_picker(_state(request).ocr.pick_ocr_folder)
 
     @routes.post("/api/v1/ocr/list-files")
     async def ocr_list_files(request: Request) -> dict:
-        return _state(request).list_ocr_files(await request.json())
+        return _state(request).ocr.list_ocr_files(await request.json())
 
     @routes.post("/api/v1/ocr/extract-text")
     async def ocr_extract_text(request: Request) -> dict:
-        return _state(request).ocr_extract_text(await request.json())
+        return _state(request).ocr.ocr_extract_text(await request.json())
 
     @routes.post("/api/v1/ocr/local-smoke")
     def ocr_local_smoke() -> dict:

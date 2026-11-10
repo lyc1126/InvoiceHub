@@ -1,7 +1,6 @@
 """Business dossier: infer the company folder around watch_dir, scan it once, open its links.
 
-Moved out of ``AppState`` (ENG-03) without behaviour changes; ``AppState`` keeps
-``business_dossier``/``open_business_dossier`` and bookkeeping asks this service for the
+Split out of ``AppState`` (ENG-03); routes call it as ``state.dossier`` (ENG-08), and bookkeeping asks this service for the
 company folder through ``business_dossier_root``. The folder is a navigation boundary, not a
 new scan root for invoices: the scan is bounded in entries and time, skips symlinks and
 reports partial counts as lower bounds, and open only accepts paths inside the company

@@ -53,7 +53,7 @@ WEB_DIR = ROOT_DIR / "web"
 def _schedule_process_shutdown(state: AppState, delay_seconds: float = 0.8) -> None:
     def terminate() -> None:
         try:
-            state.finalize_server_shutdown()
+            state.shutdown.finalize_server_shutdown()
         finally:
             os.kill(os.getpid(), signal.SIGTERM)
 
@@ -158,7 +158,7 @@ def create_app(
         if bypass in {"1", "true", "yes", "on"}:
             return ""
         try:
-            active = _state(request).skins().get("active_skin") or {}
+            active = _state(request).appearance.skins().get("active_skin") or {}
         except Exception:
             return ""
         href = str(active.get("stylesheet_url") or "").strip()
@@ -178,7 +178,7 @@ def create_app(
         # App icons are independent from skins, so backend and ?no_skin pages keep it.
         favicon_url = AppIconService.favicon_url(DEFAULT_APP_ICON_ID)
         try:
-            payload = _state(request).app_icon()
+            payload = _state(request).appearance.app_icon()
             current_icon = str(payload.get("icon") or "").strip()
             for item in payload.get("icons") or []:
                 if isinstance(item, dict) and str(item.get("id") or "") == current_icon:
@@ -264,7 +264,7 @@ def create_app(
     @app.get("/invoices/print/{job_id}", response_class=HTMLResponse)
     def invoice_print_page(request: Request, job_id: str):
         try:
-            payload = _state(request).invoice_print_job(job_id, record_open=True)
+            payload = _state(request).preview_print.invoice_print_job(job_id, record_open=True)
         except InvoicePrintError as exc:
             raise HTTPException(status_code=exc.status_code, detail=str(exc))
         content = _template(

@@ -296,7 +296,7 @@ def test_native_api_mixed_preview_renewal_and_source_change(tmp_path, monkeypatc
     from invoice_hub.projections.summary import SUMMARY_HEADERS
     from invoice_hub.storage.files import write_csv_rows
     from test_file_preview import _summary_row, _write_pdf, _selection
-    monkeypatch.setattr("invoice_hub.services.app_state.AppState.run_background_diagnostics", lambda *a, **kw: None)
+    monkeypatch.setattr("invoice_hub.services.background_sync.BackgroundSyncService.run_background_diagnostics", lambda *a, **kw: None)
     app = create_app(tmp_path)
     state = app.state.invoice_hub
     state._file_preview_service._ofd_renderer = ofd.OFDRenderer(Path(COMPONENT))

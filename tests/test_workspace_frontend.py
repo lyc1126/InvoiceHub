@@ -15,7 +15,7 @@ BUILD = ROOT / "web" / "static" / "app"
 
 def _client(tmp_path: Path, monkeypatch) -> TestClient:
     monkeypatch.setattr(
-        "invoice_hub.services.app_state.AppState.run_background_diagnostics",
+        "invoice_hub.services.background_sync.BackgroundSyncService.run_background_diagnostics",
         lambda self, trigger="startup_sync": None,
     )
     return TestClient(create_app(tmp_path))

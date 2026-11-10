@@ -34,11 +34,11 @@ from invoice_hub.bookkeeping.status import (
 from invoice_hub.bookkeeping.vouchers import generate_voucher_drafts
 from invoice_hub.domain.models import AccountMappingRule
 from invoice_hub.projections.cost_analysis import DETAIL_HEADERS
-from invoice_hub.services.app_state import AppState
+from invoice_hub.services.background_sync import BackgroundSyncService
 
 
 def _client(tmp_path: Path, monkeypatch) -> tuple[TestClient, object]:
-    monkeypatch.setattr(AppState, "run_background_diagnostics", lambda self, trigger="startup_sync": None)
+    monkeypatch.setattr(BackgroundSyncService, "run_background_diagnostics", lambda self, trigger="startup_sync": None)
     company = tmp_path / "公司 A"
     watch_dir = company / "成本发票"
     watch_dir.mkdir(parents=True)
@@ -254,7 +254,7 @@ def test_bookkeeping_writes_wait_for_the_app_state_lock(tmp_path: Path, monkeypa
     result: dict[str, Any] = {}
 
     def generate() -> None:
-        result.update(state.generate_voucher_drafts())
+        result.update(state.bookkeeping.generate_voucher_drafts())
         finished.set()
 
     with state._lock:
@@ -415,7 +415,7 @@ def _initial_mapping_rule(
 
 @pytest.fixture
 def w9_case(tmp_path: Path, monkeypatch) -> W9ApiCase:
-    monkeypatch.setattr(AppState, "run_background_diagnostics", lambda self, trigger="startup_sync": None)
+    monkeypatch.setattr(BackgroundSyncService, "run_background_diagnostics", lambda self, trigger="startup_sync": None)
     company_dir = tmp_path / "公司 A"
     watch_dir = company_dir / "成本发票"
     watch_dir.mkdir(parents=True)

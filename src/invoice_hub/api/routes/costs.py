@@ -24,13 +24,13 @@ def router() -> APIRouter:
 
     @routes.get("/api/v1/cost-analysis")
     async def cost_analysis(request: Request) -> dict:
-        return await run_in_threadpool(_state(request).cost_snapshot)
+        return await run_in_threadpool(_state(request).costs.cost_snapshot)
 
     @routes.get("/api/v1/cost-analysis/view")
     def cost_analysis_view(request: Request, view: Literal["details", "project", "reference", "checks"] = "details",
                            page: int = Query(1, ge=1), page_size: int = Query(100, ge=1, le=200), revision: str = "") -> dict:
         try:
-            return _state(request).cost_view(view, page, page_size, revision)
+            return _state(request).costs.cost_view(view, page, page_size, revision)
         except StaleInvoiceSelectionError as exc:
             raise HTTPException(status_code=409, detail=str(exc))
 
@@ -38,12 +38,12 @@ def router() -> APIRouter:
     async def reference_status(request: Request) -> dict:
         try:
             payload = await request.json()
-            return await run_in_threadpool(_state(request).save_cost_reference_status, payload)
+            return await run_in_threadpool(_state(request).costs.save_cost_reference_status, payload)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
 
     @routes.post("/api/v1/cost-analysis/open-summary")
     def open_cost_summary(request: Request) -> dict:
-        return _state(request).open_cost_summary()
+        return _state(request).costs.open_cost_summary()
 
     return routes

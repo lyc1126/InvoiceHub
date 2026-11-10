@@ -1,7 +1,6 @@
 """About page and update lifecycle: build identity, public links, update checks and install.
 
-Moved out of ``AppState`` (ENG-03) without behaviour changes; AppState keeps the public names
-and forwards here. Feed fetching, caching and version approval stay in ``UpdateService``.
+Split out of ``AppState`` (ENG-03); routes call it as ``state.about`` (ENG-08). Feed fetching, caching and version approval stay in ``UpdateService``.
 
 Inside a configured Tauri host every check is an install preflight: strict fresh metadata and
 the host's own candidate must agree before a one-shot, process-local approval is recorded,

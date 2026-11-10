@@ -23,7 +23,7 @@ def router() -> APIRouter:
 
     @routes.get("/api/v1/consistency-report")
     def consistency_report(request: Request, only_mismatch: bool = Query(False)) -> dict:
-        return _state(request).consistency_report(only_mismatch=only_mismatch)
+        return _state(request).invoices.consistency_report(only_mismatch=only_mismatch)
 
     @routes.get("/api/v1/tasks/{task_id}")
     def task(request: Request, task_id: str) -> dict:
@@ -41,7 +41,7 @@ def router() -> APIRouter:
             # The shutdown response must reach the WebView before Uvicorn begins
             # graceful termination. Ending this owned SSE stream then prevents the
             # browser connection from holding the localhost process open forever.
-            if state.server_shutdown_requested:
+            if state.shutdown.server_shutdown_requested:
                 return
             if await request.is_disconnected():
                 return
@@ -73,7 +73,7 @@ def router() -> APIRouter:
         if not isinstance(remember, bool):
             raise HTTPException(status_code=400, detail="remember 必须是布尔值")
         try:
-            result = _state(request).request_server_shutdown(payload.get("shutdown_behavior"), remember=remember)
+            result = _state(request).shutdown.request_server_shutdown(payload.get("shutdown_behavior"), remember=remember)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
         except Exception as exc:

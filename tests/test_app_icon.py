@@ -15,7 +15,7 @@ APP_ICON_ASSET_VERSION = "20260907-app-icon-v3"
 
 def _app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(
-        "invoice_hub.services.app_state.AppState.run_background_diagnostics",
+        "invoice_hub.services.background_sync.BackgroundSyncService.run_background_diagnostics",
         lambda self, trigger="startup_sync": None,
     )
     return create_app(tmp_path)
@@ -26,7 +26,7 @@ def test_app_icon_defaults_invalid_state_and_static_assets_are_safe(
 ) -> None:
     app = _app(tmp_path, monkeypatch)
     state = app.state.invoice_hub
-    state_path = state.app_icon_service().state_path
+    state_path = state.appearance.app_icon_service().state_path
     state_path.parent.mkdir(parents=True, exist_ok=True)
     state_path.write_text('{"icon":"unbundled"}', encoding="utf-8")
     client = TestClient(app)
@@ -61,7 +61,7 @@ def test_app_icon_api_persists_only_in_runtime_and_rejects_invalid_writes(
 ) -> None:
     app = _app(tmp_path, monkeypatch)
     state = app.state.invoice_hub
-    state_path = state.app_icon_service().state_path
+    state_path = state.appearance.app_icon_service().state_path
     watch_dir = Path(state.active_profile.watch_dir).resolve()
     client = TestClient(app)
 
@@ -101,7 +101,7 @@ def test_tauri_app_icon_failure_does_not_persist_unapplied_choice(
         lambda _icon_id: (_ for _ in ()).throw(host_rpc.HostRpcError("private failure")),
     )
     app = _app(tmp_path, monkeypatch)
-    state_path = app.state.invoice_hub.app_icon_service().state_path
+    state_path = app.state.invoice_hub.appearance.app_icon_service().state_path
     client = TestClient(app)
 
     response = client.put("/api/v1/app-icon", json={"icon": "violet"})
@@ -116,7 +116,7 @@ def test_tauri_app_icon_persists_only_after_host_accepts_it(
 ) -> None:
     monkeypatch.setenv(host_rpc.DESKTOP_HOST_MODE_ENV, "tauri")
     app = _app(tmp_path, monkeypatch)
-    state_path = app.state.invoice_hub.app_icon_service().state_path
+    state_path = app.state.invoice_hub.appearance.app_icon_service().state_path
     calls: list[tuple[str, bool]] = []
 
     def apply_in_host(icon_id: str) -> None:

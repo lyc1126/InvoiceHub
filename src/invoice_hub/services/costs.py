@@ -1,14 +1,13 @@
 """Cost-analysis use cases: projection factory, snapshot, paged views, reference status, open.
 
-Moved out of ``AppState`` (ENG-03) without behaviour changes; ``AppState`` keeps the public
-method names and forwards here. The cost algorithms themselves stay in ``projections/``;
+Split out of ``AppState`` (ENG-03); routes call it as ``state.costs`` (ENG-08). The cost algorithms themselves stay in ``projections/``;
 this layer only decides which TargetProfile to read and which locks to hold.
 
 Every call captures the active TargetProfile and markup rate under AppState's own RLock and
 then works on that copy, so a concurrent watch_dir switch cannot mix two directories in one
 read or save. Projection reads/writes additionally hold the per-profile monitor sync lock,
-shared with the daemon and manual rebuild. Clearing the invoice cache after a save stays an
-AppState concern and arrives as a callback.
+shared with the daemon and manual rebuild. Clearing the invoice cache after a save belongs to
+the invoice list service and arrives as a callback.
 """
 
 from __future__ import annotations

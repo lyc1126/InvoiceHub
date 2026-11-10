@@ -1,7 +1,6 @@
 """Appearance use cases: skins (ZIP import, enable, reset, files) and the app icon.
 
-Moved out of ``AppState`` (ENG-03) without behaviour changes; AppState keeps the public
-names and forwards here. Validation and storage stay in ``SkinService``/``AppIconService``;
+Split out of ``AppState`` (ENG-03); routes call it as ``state.appearance`` (ENG-08). Validation and storage stay in ``SkinService``/``AppIconService``;
 writes hold AppState's own RLock. In the Tauri desktop host the icon is changed by the host
 first and only then persisted, so the next launch never claims an icon the desktop rejected.
 """

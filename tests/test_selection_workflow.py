@@ -15,14 +15,14 @@ from invoice_hub.storage import write_csv_rows
 
 @pytest.fixture
 def selection_env(tmp_path, monkeypatch):
-    monkeypatch.setattr("invoice_hub.services.app_state.AppState.run_background_diagnostics", lambda *args: None)
+    monkeypatch.setattr("invoice_hub.services.background_sync.BackgroundSyncService.run_background_diagnostics", lambda *args: None)
     app = create_app(tmp_path)
     state = app.state.invoice_hub
     watch = Path(state.active_profile.watch_dir)
     paths = [watch / name for name in ("a.xml", "a.pdf", "b.xml")]
     for path in paths:
         path.write_text("synthetic invoice", encoding="utf-8")
-    write_csv_rows(state.invoice_summary_csv(), SUMMARY_HEADERS, [
+    write_csv_rows(state.invoices.invoice_summary_csv(), SUMMARY_HEADERS, [
         {"文件名": path.name, "文件路径": str(path), "发票号码": "1" if i < 2 else "2", "开票金额": "113.00"}
         for i, path in enumerate(paths)])
     client = TestClient(app)
@@ -231,13 +231,13 @@ def test_confirmed_trash_flows_into_existing_projection_sync_and_keeps_manual_fi
     monitor.save_manual_overrides({str(paths[2]): {"source_path": str(paths[2]), "fields": {"销售方": "人工保留销售方"}}})
     before = monitor.load_manual_overrides()
     called = []
-    monkeypatch.setattr(state, 'run_background_diagnostics', lambda trigger: called.append(trigger))
+    monkeypatch.setattr(state.background, 'run_background_diagnostics', lambda trigger: called.append(trigger))
     job = prepare().json()
     assert client.post(f"/api/v1/invoices/trash-jobs/{job['job_id']}/confirm", json={"confirmed": True}).status_code == 200
     assert called == ['startup_sync']
     result = MonitorSynchronizer(monitor, state.repo).run_sync('startup_sync', notify=False)
     assert result['deleted'] == 1
-    rows = read_csv_rows(state.invoice_summary_csv())
+    rows = read_csv_rows(state.invoices.invoice_summary_csv())
     assert str(paths[0]) not in {row['文件路径'] for row in rows}
     assert next(row for row in rows if row['文件路径'] == str(paths[2]))['销售方'] == '人工保留销售方'
     assert monitor.load_manual_overrides() == before
@@ -247,37 +247,37 @@ def test_confirmed_trash_flows_into_existing_projection_sync_and_keeps_manual_fi
 def test_selection_service_follows_watch_dir_switch_and_live_invoice_list(tmp_path, monkeypatch):
     from invoice_hub.services.errors import StaleInvoiceSelectionError
 
-    monkeypatch.setattr("invoice_hub.services.app_state.AppState.run_background_diagnostics", lambda *args: None)
+    monkeypatch.setattr("invoice_hub.services.background_sync.BackgroundSyncService.run_background_diagnostics", lambda *args: None)
     state = create_app(tmp_path).state.invoice_hub
     source = tmp_path / "a.pdf"
     source.write_bytes(b"%PDF")
     listed = {"items": [{"invoice_key": "0", "source_path": str(source), "invoice_number": "1" * 20}], "snapshot": {}}
     # The service must ask AppState for the invoice list on every call, so instance patches apply.
-    monkeypatch.setattr(state, "list_invoices", lambda: listed)
+    monkeypatch.setattr(state.invoices, "list_invoices", lambda: listed)
     old_target = state.active_profile.id
     request = {"target_id": old_target, "items": [{"invoice_key": "0", "source_path": str(source)}]}
-    _, selected = state._validated_invoice_selection(request, max_items=1, operation="测试")
+    _, selected = state.selection.validated_invoice_selection(request, max_items=1, operation="测试")
     assert selected == listed["items"]
 
     other = tmp_path / "other"
     other.mkdir()
     state.update_settings({"watch_dir": str(other)})
 
-    assert state._selection.active_profile.id == state.active_profile.id != old_target
+    assert state.selection.active_profile.id == state.active_profile.id != old_target
     with pytest.raises(StaleInvoiceSelectionError):
-        state.invoice_selection_summary(request)
+        state.selection.invoice_selection_summary(request)
 
 
 def test_selection_summary_waits_for_the_app_state_lock(tmp_path, monkeypatch):
     import threading
 
-    monkeypatch.setattr("invoice_hub.services.app_state.AppState.run_background_diagnostics", lambda *args: None)
+    monkeypatch.setattr("invoice_hub.services.background_sync.BackgroundSyncService.run_background_diagnostics", lambda *args: None)
     state = create_app(tmp_path).state.invoice_hub
     finished = threading.Event()
 
     def summarize() -> None:
         try:
-            state.invoice_selection_summary({"items": []})
+            state.selection.invoice_selection_summary({"items": []})
         except Exception:
             pass
         finished.set()

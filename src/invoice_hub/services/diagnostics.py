@@ -1,9 +1,9 @@
 """Diagnostics: summary, config health and the redacted support package.
 
-Moved out of ``AppState`` (ENG-03) without behaviour changes; AppState keeps the public names.
+Split out of ``AppState`` (ENG-03); routes call it as ``state.diagnostics`` (ENG-08).
 Diagnostics only reads: it gathers state that other services own (settings, invoice list,
-monitor, costs, documents), so those collaborators are AppState methods injected under the
-same names and read on every call. The support package never contains source invoices or
+monitor, costs, documents), so those collaborators are those services' methods, looked up
+through AppState on every call. The support package never contains source invoices or
 projection files; its manifest lists what was excluded.
 """
 

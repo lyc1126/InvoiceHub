@@ -18,10 +18,10 @@ def router() -> APIRouter:
 
     @routes.get("/api/v1/business-dossier")
     def business_dossier(request: Request) -> dict:
-        return _state(request).business_dossier()
+        return _state(request).dossier.business_dossier()
 
     @routes.post("/api/v1/business-dossier/open")
     async def open_business_dossier(request: Request) -> dict:
-        return await run_in_threadpool(_state(request).open_business_dossier, await request.json())
+        return await run_in_threadpool(_state(request).dossier.open_business_dossier, await request.json())
 
     return routes

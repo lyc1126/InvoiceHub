@@ -81,7 +81,7 @@ def _detail_row(**overrides: object) -> dict:
 
 
 def _client(tmp_path: Path, monkeypatch) -> TestClient:
-    monkeypatch.setattr("invoice_hub.services.app_state.AppState.run_background_diagnostics", lambda self, trigger="startup_sync": None)
+    monkeypatch.setattr("invoice_hub.services.background_sync.BackgroundSyncService.run_background_diagnostics", lambda self, trigger="startup_sync": None)
     return TestClient(create_app(tmp_path))
 
 
@@ -499,7 +499,7 @@ def _batch_selection_client(tmp_path: Path, monkeypatch):
     watch.mkdir(parents=True, exist_ok=True)
     for name, number in (("a.xml", "10000000000000000013"), ("a-copy.xml", "10000000000000000013"), ("b.xml", "10000000000000000014")):
         (watch / name).write_text(_cost_xml_text(number), encoding="utf-8")
-    state.bridge_rebuild()
+    state.monitor.bridge_rebuild()
     invoices = client.get("/api/v1/invoices").json()
     selection = {"target_id": invoices["target_id"], "items": [
         {"invoice_key": item["invoice_key"], "source_path": item["source_path"]} for item in invoices["items"]
@@ -557,10 +557,10 @@ def test_inbound_selection_rejects_stale_or_invalid_identity(tmp_path: Path, mon
     elif change == "outside":
         outside = tmp_path / "outside.xml"
         outside.write_text(_cost_xml_text(), encoding="utf-8")
-        current = state.list_invoices()
+        current = state.invoices.list_invoices()
         current["items"][0]["source_path"] = str(outside)
         selection["items"][0]["source_path"] = str(outside)
-        monkeypatch.setattr(state, "list_invoices", lambda: current)
+        monkeypatch.setattr(state.invoices, "list_invoices", lambda: current)
     else:
         selection["items"] = []
         status = 400
@@ -639,7 +639,7 @@ def test_document_service_follows_watch_dir_and_outbound_switch(tmp_path, monkey
         outbound.mkdir()
 
         state.update_settings({"watch_dir": str(other_watch)})
-        state.update_outbound_invoice_dir({"outbound_invoice_dir": str(outbound)})
+        state.settings.update_outbound_invoice_dir({"outbound_invoice_dir": str(outbound)})
         after = client.get("/api/v1/documents/state?selection_only=true").json()
 
         assert after["watch_dir"] == str(other_watch.resolve()) != before["watch_dir"]
@@ -657,7 +657,7 @@ def test_document_export_waits_for_the_app_state_lock(tmp_path, monkeypatch):
 
         def export() -> None:
             try:
-                state.export_inbound_document({"invoice_number": "10000000000000000013"})
+                state.documents.export_inbound_document({"invoice_number": "10000000000000000013"})
             except Exception:
                 pass
             finished.set()

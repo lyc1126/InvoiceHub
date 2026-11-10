@@ -1,8 +1,7 @@
 """Background startup sync: run the first full sync in a spawned child, publish its result safely.
 
-Moved out of ``AppState`` (ENG-03) without behaviour changes; AppState keeps
-``run_background_diagnostics`` (tests patch it on the class to skip startup sync) and reads the
-status through this service. PyMuPDF and other native parsers can hold the GIL for a long time,
+Split out of ``AppState`` (ENG-03); AppState and its callers use it as ``state.background``
+(ENG-08), and tests patch ``run_background_diagnostics`` on this class to skip startup sync. PyMuPDF and other native parsers can hold the GIL for a long time,
 so the first sync runs in a ``spawn`` child, never in an API thread. Each run gets a generation;
 the parent only clears caches, updates status and re-emits ordinary sync events when the
 generation *and* the full TargetProfile identity it captured still match the active profile.
@@ -88,6 +87,10 @@ class BackgroundSyncService:
         self._background_process = None
         self._background_process_generation: int | None = None
         self._retiring_background_processes: dict[int, tuple[object, int]] = {}
+
+    @property
+    def status(self) -> str:
+        return self._background_status
 
     @property
     def config(self) -> AppConfig:

@@ -1,12 +1,11 @@
 """Rename source invoices in watch_dir to ``YY-MM-DD_销售方&购买方_金额元.ext``.
 
-Moved out of ``AppState`` (ENG-03) without behaviour changes; AppState keeps
-``rename_invoice_files``. Phase one moves every source to a temporary name first so planned
+Split out of ``AppState`` (ENG-03); routes call it as ``state.rename`` (ENG-08). Phase one moves every source to a temporary name first so planned
 targets never collide with each other; any staging failure rolls back in reverse. Existing
 non-planned files are never overwritten, manual overrides follow their renamed source, and a
 rebuild refreshes the projections afterwards. Collaborators (invoice list, monitor state,
-rebuild, cache, directory check) are AppState methods passed in under the same names, so
-class-level patches on AppState still apply.
+rebuild, cache, directory check) are other services' methods passed in under the same names
+and looked up through AppState on every call, so patches on those services apply.
 """
 
 from __future__ import annotations

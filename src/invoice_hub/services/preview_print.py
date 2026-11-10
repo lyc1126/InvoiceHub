@@ -1,7 +1,6 @@
 """Invoice source preview and batch print orchestration for the active watch_dir.
 
-Moved out of ``AppState`` (ENG-03) without behaviour changes; ``AppState`` keeps the public
-method names and forwards here. Rendering, job storage and limits stay in
+Split out of ``AppState`` (ENG-03); routes call it as ``state.preview_print`` (ENG-08). Rendering, job storage and limits stay in
 ``FilePreviewService``/``InvoicePrintService``; this layer turns a homepage selection into
 sources inside the current watch_dir and records events. Both services are created by
 AppState and passed in, because AppState clears them on watch_dir switches and temporary

@@ -1,12 +1,11 @@
 """Settings: the settings payload, config-file persistence, recent/outbound directories, preferences.
 
-Moved out of ``AppState`` (ENG-03) without behaviour changes; AppState keeps the public names
-and forwards here. AppState owns the config object every service reads, so after this service
+Split out of ``AppState`` (ENG-03); routes call it as ``state.settings`` (ENG-08). AppState owns the config object every service reads, so after this service
 rewrites the config file it calls ``reload_config`` instead of assigning its own copy. Paths
 inside the project root are written back relative, user directories outside it absolute.
 Switching watch_dir is cross-domain (monitor, caches, profile, startup sync) and stays in
-``AppState.update_settings``. Collaborators from other domains are AppState methods injected
-under the same names, so class-level patches on AppState still apply.
+``AppState.update_settings``. Collaborators from other domains are those services' methods,
+injected under the same names and looked up through AppState on every call.
 """
 
 from __future__ import annotations
@@ -103,7 +102,7 @@ class SettingsService:
             "mode": {"key": "v1-localhost-refactor", "label": "重构版 localhost"},
             "bridge": self.bridge_status(),
             "watch_dir": profile.watch_dir,
-            "outbound_invoice_dir": self._outbound_invoice_dir_text(),
+            "outbound_invoice_dir": self.outbound_invoice_dir_text(),
             "active_target_id": profile.id,
             "active_target": profile.model_dump(),
             "active_target_paths": profile.model_dump(),
@@ -124,8 +123,8 @@ class SettingsService:
                 "output_summary_xlsx_exists": cost.summary_xlsx.exists(),
                 "reference_status_exists": cost.status_json.exists(),
             },
-            "recent_watch_dirs": self._recent_watch_dirs(),
-            "recent_outbound_invoice_dirs": self._recent_outbound_invoice_dirs(),
+            "recent_watch_dirs": self.recent_watch_dirs(),
+            "recent_outbound_invoice_dirs": self.recent_outbound_invoice_dirs(),
             "preferences": preferences["preferences"],
             "preferences_path": preferences["preferences_path"],
             "path_validation": self.inspect_watch_dir(Path(profile.watch_dir)),
@@ -152,7 +151,7 @@ class SettingsService:
         except OSError:
             return str(path.absolute())
 
-    def _recent_watch_dirs(self) -> list[str]:
+    def recent_watch_dirs(self) -> list[str]:
         payload = read_json_object(self.config.config_path, {})
         candidates: list[object] = [self.active_profile.watch_dir, payload.get("watch_dir")]
         raw_recent = payload.get(RECENT_WATCH_DIRS_KEY, [])
@@ -178,18 +177,18 @@ class SettingsService:
         return normalized[:MAX_RECENT_WATCH_DIRS]
 
     def _push_recent_watch_dir(self, watch_dir: Path) -> list[str]:
-        current = self._recent_watch_dirs()
+        current = self.recent_watch_dirs()
         selected = self._config_path_to_absolute_text(str(watch_dir))
         result = [selected] if selected else []
         result.extend(item for item in current if item.casefold() != selected.casefold())
         return result[:MAX_RECENT_WATCH_DIRS]
 
-    def _outbound_invoice_dir_text(self) -> str:
+    def outbound_invoice_dir_text(self) -> str:
         if not self.config.outbound_invoice_dir:
             return ""
         return self._config_path_to_absolute_text(str(self.config.outbound_invoice_dir))
 
-    def _recent_outbound_invoice_dirs(self) -> list[str]:
+    def recent_outbound_invoice_dirs(self) -> list[str]:
         payload = read_json_object(self.config.config_path, {})
         candidates: list[object] = []
         if self.config.outbound_invoice_dir:
@@ -213,7 +212,7 @@ class SettingsService:
         return normalized[:MAX_RECENT_OUTBOUND_INVOICE_DIRS]
 
     def _push_recent_outbound_invoice_dir(self, outbound_dir: Path) -> list[str]:
-        current = self._recent_outbound_invoice_dirs()
+        current = self.recent_outbound_invoice_dirs()
         selected = self._config_path_to_absolute_text(str(outbound_dir))
         result = [selected] if selected else []
         result.extend(item for item in current if item.casefold() != selected.casefold())
@@ -256,7 +255,7 @@ class SettingsService:
             self.append_event("settings.recent_watch_dir_removed", {"watch_dir": target, "target_id": self.active_profile.id})
         return self.settings()
 
-    def _persist_watch_dir_config(self, watch_dir: Path) -> None:
+    def persist_watch_dir_config(self, watch_dir: Path) -> None:
         current = read_json_object(self.config.config_path, {})
         recent = self._push_recent_watch_dir(watch_dir)
         current["watch_dir"] = serialize_config_path(self.config.root_dir, watch_dir)
@@ -270,7 +269,7 @@ class SettingsService:
         current[RECENT_OUTBOUND_INVOICE_DIRS_KEY] = [serialize_config_path(self.config.root_dir, Path(item)) for item in recent]
         atomic_write_json(self.config.config_path, current)
 
-    def _preferences_path(self) -> Path:
+    def preferences_path(self) -> Path:
         return self.layout.runtime_dir / "local_state" / "preferences.json"
 
     def _normalize_optional_path_text(self, value: object) -> str:
@@ -330,11 +329,11 @@ class SettingsService:
         return result
 
     def preferences(self) -> dict:
-        preferences = self._clean_preferences(read_json_object(self._preferences_path(), {}))
+        preferences = self._clean_preferences(read_json_object(self.preferences_path(), {}))
         return {
             "ok": True,
             "preferences": preferences,
-            "preferences_path": str(self._preferences_path()),
+            "preferences_path": str(self.preferences_path()),
             "allowed": {
                 "cost_row_limit": sorted(PREFERENCE_COST_ROW_LIMITS),
                 "long_path_display": sorted(PREFERENCE_LONG_PATH_DISPLAYS),
@@ -349,7 +348,7 @@ class SettingsService:
     def save_preferences(self, payload: dict | None) -> dict:
         source = payload.get("preferences") if isinstance((payload or {}).get("preferences"), dict) else payload
         source = source if isinstance(source, dict) else {}
-        current = self._clean_preferences(read_json_object(self._preferences_path(), {}))
+        current = self._clean_preferences(read_json_object(self.preferences_path(), {}))
         updated = dict(current)
         changed: list[str] = []
 
@@ -412,12 +411,12 @@ class SettingsService:
             changed.append("ocr_candidate_dir")
 
         with self._lock:
-            atomic_write_json(self._preferences_path(), self._clean_preferences(updated))
+            atomic_write_json(self.preferences_path(), self._clean_preferences(updated))
             self.append_event("settings.preferences_updated", {"target_id": self.active_profile.id, "keys": sorted(set(changed))})
         return self.preferences()
 
     def pick_outbound_invoice_dir(self) -> dict:
-        initial = Path(self._outbound_invoice_dir_text() or self.active_profile.watch_dir)
+        initial = Path(self.outbound_invoice_dir_text() or self.active_profile.watch_dir)
         payload = pick_directory(
             initial,
             "选择开具发票文件夹",
@@ -425,7 +424,7 @@ class SettingsService:
         )
         selected_path = str(payload.get("path") or "").strip()
         if not selected_path:
-            current = self._outbound_invoice_dir_text()
+            current = self.outbound_invoice_dir_text()
             return {"ok": True, "selected": False, "outbound_invoice_dir": current, "validation": self.inspect_document_dir(Path(current)) if current else self.inspect_document_dir(None)}
         outbound_dir = Path(selected_path).expanduser().resolve()
         return {"ok": True, "selected": True, "requires_save": True, "outbound_invoice_dir": str(outbound_dir), "validation": self.inspect_document_dir(outbound_dir)}
@@ -459,7 +458,7 @@ class SettingsService:
         if not raw:
             return self.document_state()
         target = self._config_path_to_absolute_text(raw)
-        active = self._outbound_invoice_dir_text()
+        active = self.outbound_invoice_dir_text()
         if not target or (active and target.casefold() == active.casefold()):
             return self.document_state()
 
@@ -482,7 +481,7 @@ class SettingsService:
             self.append_event("documents.recent_outbound_dir_removed", {"outbound_invoice_dir": target, "target_id": self.active_profile.id})
         return self.document_state()
 
-    def _watch_dir_message(self, validation: dict, saved: bool = False) -> str:
+    def watch_dir_message(self, validation: dict, saved: bool = False) -> str:
         supported_count = int(validation.get("supported_count") or 0)
         archive_count = int(validation.get("archive_count") or 0)
         prefix = "目录已保存。" if saved else ""

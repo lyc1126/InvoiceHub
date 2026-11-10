@@ -16,7 +16,7 @@ def test_paged_invoices_keep_full_stats_and_selection_identity(tmp_path, monkeyp
         state = client.app.state.invoice_hub
         rows = [{"文件路径": str(tmp_path / f"{i}.xml"), "文件名": f"{i}.xml", "发票号码": str(i),
                  "开票金额": "10.00", "开票时间": f"2026-01-{i % 28 + 1:02d}"} for i in range(7003)]
-        write_csv_rows(state.invoice_summary_csv(), SUMMARY_HEADERS, rows)
+        write_csv_rows(state.invoices.invoice_summary_csv(), SUMMARY_HEADERS, rows)
         last = client.get("/api/v1/invoices?page=71").json()
         assert len(last["items"]) == 3
         assert last["items"][-1]["invoice_key"] == "7002"
@@ -53,7 +53,7 @@ def test_first_rows_visible_before_last_invoice_finishes(tmp_path, monkeypatch, 
         for i in range(3):
             (tmp_path / "发票文件" / f"{i}.xml").write_text(_cost_xml_text(str(10000000000000000000 + i)))
         results = []
-        worker = threading.Thread(target=lambda: results.append(state.bridge_rebuild()))
+        worker = threading.Thread(target=lambda: results.append(state.monitor.bridge_rebuild()))
         worker.start()
         try:
             assert entered.wait(10)
@@ -82,7 +82,7 @@ def test_first_rows_visible_before_last_invoice_finishes(tmp_path, monkeypatch, 
 def test_cost_pages_reuse_complete_snapshot_and_reject_stale_save(tmp_path, monkeypatch):
     with _client(tmp_path, monkeypatch) as client:
         state = client.app.state.invoice_hub
-        path = state.cost_service().detail_csv
+        path = state.costs.cost_service().detail_csv
         write_csv_rows(path, DETAIL_HEADERS, [_detail_row(发票号码=str(i), 内部项目名称=f"项目{i}") for i in range(205)])
         first = client.get("/api/v1/cost-analysis/view?page_size=100").json()
         assert len(first["items"]) == 100 and first["counts"]["details"] == 205
@@ -93,7 +93,7 @@ def test_cost_pages_reuse_complete_snapshot_and_reject_stale_save(tmp_path, monk
         entered, release = threading.Event(), threading.Event()
 
         def hold():
-            with state._monitor_state().sync_write_lock():
+            with state.monitor.monitor_state().sync_write_lock():
                 entered.set()
                 release.wait(5)
 
@@ -129,8 +129,8 @@ def test_inbound_cache_is_invalidated_and_selection_does_not_start_outbound(tmp_
 def test_export_status_does_not_rebuild_preview(tmp_path, monkeypatch):
     with _client(tmp_path, monkeypatch) as client:
         state = client.app.state.invoice_hub
-        write_csv_rows(state.cost_service().detail_csv, DETAIL_HEADERS, [_detail_row()])
-        monkeypatch.setattr(state, "document_inbound_preview", lambda *a, **k: pytest.fail("duplicate preview"))
+        write_csv_rows(state.costs.cost_service().detail_csv, DETAIL_HEADERS, [_detail_row()])
+        monkeypatch.setattr(state.documents, "document_inbound_preview", lambda *a, **k: pytest.fail("duplicate preview"))
         assert client.post("/api/v1/documents/inbound/export-status", json={"invoice_number": "10000000000000000013"}).json()["ok"]
 
 
@@ -168,11 +168,11 @@ def test_outbound_partial_preview_and_status_reuse(tmp_path, monkeypatch):
         source = root / "out.xml"
         number = "10000000000000000013"
         source.write_text(_cost_xml_text(number))
-        monkeypatch.setattr(state, "_outbound_invoice_dir_text", lambda: str(root))
-        monkeypatch.setattr(state._documents, "document_state", lambda **kw: {
+        monkeypatch.setattr(state.settings, "outbound_invoice_dir_text", lambda: str(root))
+        monkeypatch.setattr(state.documents, "document_state", lambda **kw: {
             "outbound_invoices": [{"invoice_number": number, "source_files": [str(source)]}],
             "index": {"state": "running"}})
-        assert state.document_outbound_preview(number)["provisional"]
+        assert state.documents.document_outbound_preview(number)["provisional"]
         original = module.build_outbound_preview
         monkeypatch.setattr(module, "build_outbound_preview", lambda *a, **kw: pytest.fail("duplicate parse"))
         response = client.post("/api/v1/documents/outbound/export-status", json={"invoice_number": number})
@@ -186,13 +186,13 @@ def test_outbound_partial_preview_and_status_reuse(tmp_path, monkeypatch):
             return preview
         monkeypatch.setattr(module, "build_outbound_preview", changing)
         with pytest.raises(module.DocumentError, match="变化"):
-            state.document_outbound_preview(number)
+            state.documents.document_outbound_preview(number)
 
 
 def test_cost_service_follows_watch_dir_switch(tmp_path, monkeypatch):
     with _client(tmp_path, monkeypatch) as client:
         state = client.app.state.invoice_hub
-        write_csv_rows(state.cost_service().detail_csv, DETAIL_HEADERS, [_detail_row()])
+        write_csv_rows(state.costs.cost_service().detail_csv, DETAIL_HEADERS, [_detail_row()])
         before = client.get("/api/v1/cost-analysis/view").json()
         assert before["counts"]["details"] == 1
         other = tmp_path / "其它发票"
@@ -201,7 +201,7 @@ def test_cost_service_follows_watch_dir_switch(tmp_path, monkeypatch):
         state.update_settings({"watch_dir": str(other)})
         after = client.get("/api/v1/cost-analysis/view").json()
 
-        assert state.cost_service().detail_csv == other.resolve() / "成本发票明细.csv"
+        assert state.costs.cost_service().detail_csv == other.resolve() / "成本发票明细.csv"
         assert after["watch_dir"] == str(other.resolve())
         assert after["target_id"] == state.active_profile.id != before["target_id"]
         assert after["counts"]["details"] == 0
@@ -213,7 +213,7 @@ def test_cost_view_waits_for_the_app_state_lock(tmp_path, monkeypatch):
         finished = threading.Event()
 
         def read() -> None:
-            state.cost_view("details")
+            state.costs.cost_view("details")
             finished.set()
 
         with state._lock:
