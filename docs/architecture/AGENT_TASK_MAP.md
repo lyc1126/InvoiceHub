@@ -145,7 +145,7 @@ flowchart TD
 | 导航项 | 内容 |
 |---|---|
 | 首先阅读 | 数据算法第 8、9 节；接口流程第 3.3、6.6 节；[成本](rules/COST_ANALYSIS.md) |
-| 首要入口 | `projections/cost_analysis.py::parse_cost_rows_from_words`、`_cost_validation`、`_select_cost_analysis`、`project_spec_summary`、`_invoice_reference_summary`；`projections/costs.py::CostProjectionService`；`services/costs.py::CostService.cost_snapshot/save_cost_reference_status`（AppState 同名转发） |
+| 首要入口 | `projections/cost_analysis.py::parse_cost_rows_from_words`、`_cost_validation`、`_select_cost_analysis`、`project_spec_summary`、`_invoice_reference_summary`；`projections/costs.py::CostProjectionService`；`services/costs.py::CostService.cost_snapshot/save_cost_reference_status` |
 | 必须联动 | `cost_analysis.py` 与 `costs.py` 的重复公式/兼容键；`domain/models.py`、成本 CSV/XLSX 五 sheet、状态 JSON、cost API、page-costs、单据入库来源 |
 | 产物与消费者 | `watch_dir/成本发票明细.csv`、`成本发票汇总.xlsx`、`成本开票状态.json`、详情/选择成本拆分、单据 |
 | 最低自动化 | 完整 `tests/test_summary_and_costs.py`，成本相关 `tests/test_invoice_classification.py` 和 `tests/test_api_contract.py`；页面字段变化再跑 `test_frontend_contract.py` |
@@ -177,7 +177,7 @@ flowchart TD
 | 导航项 | 内容 |
 |---|---|
 | 首先阅读 | 接口流程第 6.1 至 6.5 节；数据算法第 6、13 节；`docs/MONITORING_AND_LOGGING.md` |
-| 首要入口 | `monitoring/daemon.py::run_monitor`、`monitoring/sync.py::MonitorSynchronizer.run_sync`、`monitoring/state.py::MonitorState`、`services/monitor_bridge.py::MonitorBridge`、`services/background_sync.py`（AppState 保留 `run_background_diagnostics`）、`services/monitor_control.py` |
+| 首要入口 | `monitoring/daemon.py::run_monitor`、`monitoring/sync.py::MonitorSynchronizer.run_sync`、`monitoring/state.py::MonitorState`、`services/monitor_bridge.py::MonitorBridge`、`services/background_sync.py`（`state.background.run_background_diagnostics`）、`services/monitor_control.py` |
 | 必须联动 | bridge API、SSE 事件、首页/设置/成本/单据刷新、Windows monitor PS1/BAT、SQLite events |
 | 产物与消费者 | lock、stop flag、processed、manual overrides、monitor status、业务日志、bridge stdout/stderr |
 | 最低自动化 | 完整 `tests/test_monitoring.py`，启动后台同步和 bridge API 测试；事件变化再跑 SSE API 与前端契约 |
@@ -193,7 +193,7 @@ flowchart TD
 | 导航项 | 内容 |
 |---|---|
 | 首先阅读 | 接口流程第 3.1、6.10 节；[监控与关闭](rules/MONITORING.md) |
-| 首要入口 | `services/settings.py`（settings/preferences/save_preferences）、`services/diagnostics.py`、`services/server_shutdown.py`（request/finalize shutdown），均经 AppState 同名转发；`api/app.py::shutdown`；`page-settings.js` |
+| 首要入口 | `services/settings.py`（settings/preferences/save_preferences）、`services/diagnostics.py`、`services/server_shutdown.py`（request/finalize shutdown）；`api/app.py::shutdown`；`page-settings.js` |
 | 必须联动 | settings 模板、settings-actions CSS、common SSE、bridge、server state/PID、两个正式停止 BAT 的固定语义 |
 | 产物与消费者 | preferences、support packages、server_state、server.pid、events；设置页所有分类 |
 | 最低自动化 | 设置/偏好/诊断/关闭 API 测试 + `tests/test_frontend_contract.py`；涉及 bridge 再跑 monitoring |
@@ -228,7 +228,7 @@ flowchart TD
 
 官网入口为 `website/index.html`，样式与交互为 `website/style.css`、`website/app.js`、`website/paper-scene.js`，合成演示数据由 `website/demo-data.js` 提供。先读 `website/README.md` 和 `website/ASSETS.md`，同步 FILE_MAP、README、状态和 CHANGELOG。最低检查是 `node --test website/tests/demo.test.cjs`、修改脚本语法及本地链接，视觉变化另需桌面/手机截图、真实交互和动画/减少动态效果检查。官网不请求业务 API，不加载应用皮肤，不处理真实发票；本轮浏览器访问未获许可，视觉验收保持未执行。
 
-软件入口位于设置 About 模板/脚本、`services/about.py::AboutService.about`（AppState 转发）、`api/app.py` 的 `/website/` 路由及 `version.py::LOCAL_WEBSITE_PATH`；HTTP 与组包共用 `website.py` 白名单。增减官网资源须同步该白名单并检查 Core Build ID、源码快照、Windows portable、Tauri development/alpha/public-preview 与 Swift 参考壳的复制链。最低验收包括 `tests/test_website.py`、About/官网 API、设置静态契约和 build manifest 测试；localhost 实取首页、设置、官网与资源，当前皮肤和恢复入口分开记录。源码复制验收不得当作平台成品验收。
+软件入口位于设置 About 模板/脚本、`services/about.py::AboutService.about`、`api/app.py` 的 `/website/` 路由及 `version.py::LOCAL_WEBSITE_PATH`；HTTP 与组包共用 `website.py` 白名单。增减官网资源须同步该白名单并检查 Core Build ID、源码快照、Windows portable、Tauri development/alpha/public-preview 与 Swift 参考壳的复制链。最低验收包括 `tests/test_website.py`、About/官网 API、设置静态契约和 build manifest 测试；localhost 实取首页、设置、官网与资源，当前皮肤和恢复入口分开记录。源码复制验收不得当作平台成品验收。
 
 四视图和功能场景变更至少覆盖：筛选后空选择禁用、预览来源逐份保留、同票 PDF 回退与缺 PDF 整批阻断、明细税率/规格/单位分组、概念金额换算的分位守恒、五层画布进入/离开收敛与减少动态效果。Node VM 调度测试只证明控制状态，不替代真实像素或鼠标命中验收。
 
@@ -252,14 +252,14 @@ flowchart TD
 
 ## 10. 入库单与出库单
 
-2026-10-09 单据加载性能同时定位 `document_index.py::InboundDetails/build_index/ensure` 与 `DocumentService.document_state/document_*_preview/*_export_status`（`services/documents.py`，AppState 同名转发）；最低增加 `test_document_index.py`、`test_progressive_loading.py` 的无需无关扫描、部分候选只读、缓存失效及停止/恢复用例。首页批量可优先准备勾选票，但不能放宽正式导出的身份复核。
+2026-10-09 单据加载性能同时定位 `document_index.py::InboundDetails/build_index/ensure` 与 `DocumentService.document_state/document_*_preview/*_export_status`（`services/documents.py`）；最低增加 `test_document_index.py`、`test_progressive_loading.py` 的无需无关扫描、部分候选只读、缓存失效及停止/恢复用例。首页批量可优先准备勾选票，但不能放宽正式导出的身份复核。
 
 必读功能规则：[页面/单据/预览/皮肤](rules/WEB_UI.md)、[成本](rules/COST_ANALYSIS.md)。
 
 | 导航项 | 内容 |
 |---|---|
 | 首先阅读 | 接口流程第 3.4、6.8 节；数据算法第 10、12.3 节 |
-| 首要入口 | `projections/documents.py::build_inbound_preview/build_outbound_preview/write_*_workbook/rmb_uppercase/_ensure_detail_rows`；`services/documents.py::DocumentService` 的 `_inbound/_outbound_document_target` 和导出方法（AppState 同名转发） |
+| 首要入口 | `projections/documents.py::build_inbound_preview/build_outbound_preview/write_*_workbook/rmb_uppercase/_ensure_detail_rows`；`services/documents.py::DocumentService` 的 `_inbound/_outbound_document_target` 和导出方法 |
 | 必须联动 | 两个 Excel 模板、documents API、page-documents、首页 page-index 勾选交接、设置页单据目录/默认值、平台打开文件 |
 | 产物与消费者 | `watch_dir/入库单/*.xlsx`、`outbound_invoice_dir/出库单/*.xlsx`；预览与导出状态 |
 | 最低自动化 | 完整 `tests/test_documents.py` + 单据/源预览/打印前端契约与 `node --test tests/frontend_interactions.test.cjs`；批量需身份、缺明细、同票副本、停止/未知结果检查；路径配置变化再跑 paths/API |
@@ -277,7 +277,7 @@ OFD 专用入口为 `services/ofd_rendering.py`、`tools/ofd-preview/` 与 `scri
 | 导航项 | 内容 |
 |---|---|
 | 首先阅读 | 数据算法第 12.5 节；接口流程第 2、3.2、6.12 节；AGENTS 全局路径边界；[页面/单据/预览/皮肤](rules/WEB_UI.md)、[macOS 参考壳](rules/MACOS.md)、[Tauri 宿主](rules/TAURI_HOST.md) |
-| 首要入口 | `services/file_preview.py`、`services/invoice_printing.py`、`services/document_rendering.py`、`services/preview_print.py::InvoicePreviewPrintService.prepare_invoice_preview/keep_invoice_preview_alive/prepare_invoice_print`（AppState 同名转发）、`page-index.js`、`invoice_print.html` |
+| 首要入口 | `services/file_preview.py`、`services/invoice_printing.py`、`services/document_rendering.py`、`services/preview_print.py::InvoicePreviewPrintService.prepare_invoice_preview/keep_invoice_preview_alive/prepare_invoice_print`、`page-index.js`、`invoice_print.html` |
 | 必须联动 | API 路由/错误、预览闲置续租与 `404/410` 恢复、首页 DOM/CSS/静态版本、build manifest capabilities、Swift required routes 和 popup policy、OpenAPI verify、接口/数据/平台文档 |
 | 产物与消费者 | 短期内存 job、分页 PNG/XML 文本、受控打印 HTML、macOS 系统打印面板；不产生 SQLite 或投影主数据 |
 | 最低自动化 | `test_file_preview.py`、`test_invoice_printing.py`、两份预览/打印前端契约、`test_api_contract.py`、`test_build_manifest.py`、`swift test` |
@@ -293,7 +293,7 @@ OFD 专用入口为 `services/ofd_rendering.py`、`tools/ofd-preview/` 与 `scri
 | 导航项 | 内容 |
 |---|---|
 | 首先阅读 | 接口流程第 3.5 节；数据算法第 3.2、4.5 节；[做账](rules/BOOKKEEPING.md) |
-| 首要入口 | 业务资料夹 `services/dossier.py::BusinessDossierService.business_dossier/_scan_business_dossier`（AppState 转发）；做账用例 `services/bookkeeping.py::BookkeepingService`（AppState 同名转发）；`bookkeeping/repository.py`、`validator.py`、`vouchers.py`、`decisions.py`、`catalogs.py`、`mapping.py`、`batches.py`；首页资料夹容错在 `page-index.js`，做账页在 `page-bookkeeping.js` |
+| 首要入口 | 业务资料夹 `services/dossier.py::BusinessDossierService.business_dossier/_scan_business_dossier`；做账用例 `services/bookkeeping.py::BookkeepingService`；`bookkeeping/repository.py`、`validator.py`、`vouchers.py`、`decisions.py`、`catalogs.py`、`mapping.py`、`batches.py`；首页资料夹容错在 `page-index.js`，做账页在 `page-bookkeeping.js` |
 | 必须联动 | 公司资料夹受控路径、profile/catalog/mapping/store 绑定、proposal revision、统一 validator、batch manifest/XLSX、API/页面 blockers、runner facts |
 | 产物与消费者 | 公司资料夹 `凭证/` 下 JSON、批次、日志；`/api/v1/business-dossier*`、`/api/v1/bookkeeping/*` 和做账页 |
 | 最低自动化 | 资料夹变化至少运行 `tests/test_api_contract.py` 的资料夹/线程池/有界扫描用例与 `tests/test_frontend_contract.py` 的资料夹刷新容错契约；做账变化运行全部 `tests/test_bookkeeping_*.py`、`test_api_bookkeeping.py`、`test_runner_dryrun.py` |

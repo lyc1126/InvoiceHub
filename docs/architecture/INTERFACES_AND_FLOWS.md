@@ -72,7 +72,7 @@ L10-R/C 定义的 lease、marker、fixed-loopback bridge 和 pure coordinator �
 flowchart LR
     Page["HTML 模板"] --> JS["页面 JS / common.js"]
     JS --> HTTP["FastAPI 页面、API、SSE"]
-    HTTP --> State["AppState 用例门面"]
+    HTTP --> State["领域服务 state.*（AppState 组装）"]
     State --> Service["monitor / projection / extraction / bookkeeping / skin / update / platform"]
     Service --> File["源发票与 CSV/XLSX/JSON/日志"]
     State --> Repo["SQLiteRepository"]
@@ -164,7 +164,7 @@ API 路由分布：页面、官网、打印页、`/workspace`、health 与桌面
 
 `invoice_key` 当前来自汇总行下标。它只能和 `source_path` 一起用于短期页面选择；列表重建后不能把旧位置键当成同一张票。
 
-selection-summary 路由异步解析 JSON，随后将同步 `AppState.invoice_selection_summary()` 卸载到 Starlette 线程池。该方法会读取普通汇总、手改状态和当前成本 CSV 并执行聚合；不得再放回事件循环直接执行，否则文件 I/O 阻塞时 health 也无法调度。
+selection-summary 路由异步解析 JSON，随后将同步 `state.selection.invoice_selection_summary()` 卸载到 Starlette 线程池。该方法会读取普通汇总、手改状态和当前成本 CSV 并执行聚合；不得再放回事件循环直接执行，否则文件 I/O 阻塞时 health 也无法调度。
 
 同样，`manual-fields` 在 JSON 解析后在线程池执行。其写入与当前 profile 的 monitor 写锁串行化；若写入期间活动 profile 已切换，旧目录的手改真值可以完成，但不能清新目录缓存或发送新目录的刷新事件。
 

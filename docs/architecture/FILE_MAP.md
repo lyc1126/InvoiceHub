@@ -116,7 +116,7 @@
   → 源发票、投影文件、运行状态和 SQLite
 ```
 
-`services/app_state.py` 是组装根与转发门面（ENG-03）：用例实现在 `services/` 下的领域服务里，按下表找对应文件；新逻辑写进领域服务，不加入 AppState。
+`services/app_state.py` 是组装根（ENG-03/ENG-08）：用例实现在 `services/` 下的领域服务里，路由以 `state.<服务>` 直接调用，按下表找对应文件；新逻辑写进领域服务，不加入 AppState。
 
 <a id="directory-rules"></a>
 
@@ -332,7 +332,7 @@
 | `src/invoice_hub/api/common.py` | 请求辅助：`_state`、同源/原生选择器/更新来源校验、桌面 host challenge、三条 monitor recovery route 的认证 transcript、做账错误映射、SSE 游标。 | 被 `app.py` 与全部路由组共用。普通 bridge 调用保持原语义；只有带完整 recovery 认证头、空 body 且 challenge 未重放的 host 请求才执行 HMAC 校验并签名精确响应；四条 picker route 与 update install 继续把 private failure 映射为固定脱敏 503。 |
 | `src/invoice_hub/api/routes/__init__.py` | 路由组包说明。 | 新领域 API 在此目录新增模块并由 `create_app` 显式组合。 |
 | `src/invoice_hub/api/routes/settings.py` | About、更新检查/安装、设置、偏好、诊断与 watch_dir 选择/校验/改名路由。 | `AppState` 设置与更新服务；picker 与 update install 走 `common` 的脱敏 503。 |
-| `src/invoice_hub/api/routes/invoices.py` | 发票列表、删除所选、勾选合计、原票预览、批量打印与详情/手改/打开路由。 | `AppState`（预览/打印经 `preview_print` 转发）、`invoice_trash`、`file_preview`、`invoice_printing`；预览内容使用 `PREVIEW_CONTENT_HEADERS`。 |
+| `src/invoice_hub/api/routes/invoices.py` | 发票列表、删除所选、勾选合计、原票预览、批量打印与详情/手改/打开路由。 | `state.invoices/selection/preview_print` 与 AppState 的删除所选编排、`invoice_trash`、`file_preview`、`invoice_printing`；预览内容使用 `PREVIEW_CONTENT_HEADERS`。 |
 | `src/invoice_hub/api/routes/costs.py` | 成本分析快照、分页视图、开票参考状态与打开汇总路由。 | `CostAnalysisService` 经 `AppState`。 |
 | `src/invoice_hub/api/routes/documents.py` | 入库/出库单据状态、索引、目录与预览/导出/打开路由。 | `document_index` 与单据投影。 |
 | `src/invoice_hub/api/routes/dossier.py` | 业务资料夹读取与打开路由。 | 做账与成本共用的公司资料夹。 |
@@ -380,7 +380,7 @@
 | `src/invoice_hub/projections/__init__.py` | 导出普通汇总与成本服务。 | monitoring 和外部调用的稳定入口。 |
 | `src/invoice_hub/projections/summary.py` | `build_summary`、重复标记、CSV/XLSX schema 和写表。 | 消费 extraction；写入 profile workspace；monitor/AppState 调用。 |
 | `src/invoice_hub/projections/cost_analysis.py` | PDF 坐标表格、XML/OFD 明细、校验、均价、参考价和工作簿生成。 | 成本算法核心；`costs.py`、documents 和选择/详情成本拆分使用。 |
-| `src/invoice_hub/projections/costs.py` | `CostProjectionService`，状态兼容、快照、参考状态保存与同步统计。 | `services/costs.py`（经 AppState）、monitoring 调用；输出 `/api/v1/cost-analysis` 契约。 |
+| `src/invoice_hub/projections/costs.py` | `CostProjectionService`，状态兼容、快照、参考状态保存与同步统计。 | `services/costs.py`、monitoring 调用；输出 `/api/v1/cost-analysis` 契约。 |
 | `src/invoice_hub/projections/cost_outbound.py` | 手动重新汇总时读取开具发票目录：按发票号去重多格式、只采用销售方为本目录进项购买方的票、按开票参考分组键汇总销项数量与金额；文件签名缓存与汇总写入 profile 工作区 `cost_outbound_files.json` / `cost_outbound_summary.json`。 | `costs.py::refresh_outbound` 调用，复用 `cost_analysis` 的解析与分组键；不写 `watch_dir` 或开具目录。 |
 | `src/invoice_hub/projections/documents.py` | 入库/出库预览、无前缀大写金额、模板列宽/扩行/打印范围和原子导出。 | AppState documents 用例调用；只读入库明细按完整来源副本去重、冲突阻断。 |
 | `src/invoice_hub/projections/document_templates/电子入库单模板.xlsx` | 入库单版式真值。 | `write_inbound_workbook` 读取；版式变化需跑单据渲染/单元格测试。 |
@@ -421,29 +421,29 @@
 | 文件 | 职责与入口 | 关系与修改影响 |
 |---|---|---|
 | `src/invoice_hub/services/__init__.py` | 导出 `AppState`、过期选择（来自 `errors.py`）、预览和打印异常及 `create_state`。 | API 应用工厂依赖。 |
-| `src/invoice_hub/services/app_state.py` | 组装根与转发门面：构造全部领域服务，持有 config、活动 TargetProfile 与 RLock，保留 health、切换 watch_dir（`update_settings`）与删除所选两条跨域编排，其余公开方法按服务分组转发。 | 上接 API 路由与测试，下接 `services/` 下的领域服务；服务读共享状态一律经 provider，跨服务协作经 AppState 方法回调（类级打桩因此全局生效），由 `tests/test_appstate_service_wiring.py` 守护。 |
-| `src/invoice_hub/services/dossier.py` | `BusinessDossierService`：解析当前公司资料夹、一次有界扫描快捷入口/统计并限制打开路径（ENG-03 从 AppState 原样迁出；扫描上限常量也在此）。AppState 保留 `business_dossier/open_business_dossier` 转发，做账经 `business_dossier_root()` 取公司目录。 | `/api/v1/business-dossier*` 和首页消费；不得改变 `watch_dir` 扫描语义；截断统计必须明确为下界。 |
+| `src/invoice_hub/services/app_state.py` | 组装根：构造全部领域服务并作为公开属性暴露（`state.bookkeeping`、`state.settings` 等），持有 config、活动 TargetProfile 与 RLock，保留 health、切换 watch_dir（`update_settings`）与删除所选两条跨域编排；不再有转发方法（ENG-08）。 | 上接 API 路由与测试，下接 `services/` 下的领域服务；服务读共享状态一律经 provider，跨服务协作经 lambda 每次现查对方服务方法（对服务类或实例的打桩因此全局生效），由 `tests/test_appstate_service_wiring.py` 守护（含“AppState 不再长出转发”检查）。 |
+| `src/invoice_hub/services/dossier.py` | `BusinessDossierService`：解析当前公司资料夹、一次有界扫描快捷入口/统计并限制打开路径（ENG-03 从 AppState 原样迁出；扫描上限常量也在此）。路由以 `state.dossier` 直接调用，做账经 `business_dossier_root()` 取公司目录。 | `/api/v1/business-dossier*` 和首页消费；不得改变 `watch_dir` 扫描语义；截断统计必须明确为下界。 |
 | `src/invoice_hub/services/document_rendering.py` | MuPDF 文档打开和安全分页 PNG 渲染的共享适配。 | preview/print 共用；缺依赖、加密、空文档、页尺寸和渲染失败保持结构化错误。 |
 | `src/invoice_hub/services/file_preview.py` | 短期源文件预览 job、闲置续租、页面/文本缓存、SVG/XML/图片安全边界。 | 保留已选源文件顺序；15 分钟闲置 TTL、页数、像素、作业数和缓存上限防止内存滥用。 |
 | `src/invoice_hub/services/invoice_printing.py` | 短期同票 PDF 打印 job 和分页 PNG 缓存。 | 不持久化票面；只接收受控 PDF，过期/容量/加密失败明确返回。 |
 | `src/invoice_hub/services/preview_print.py` | `InvoicePreviewPrintService`：把首页勾选转成当前 watch_dir 内的预览源/同票 PDF 打印源，创建 job、续租、读页与受限打开，并记录事件（ENG-03 从 AppState 原样迁出）。 | AppState 创建 `FilePreviewService`/`InvoicePrintService` 后传入（目录切换时由 AppState 清空；临时识别共用预览池）；勾选校验与同票分组/来源身份/文件格式规则直接取自 `invoice_selection.py`；创建预览持 AppState 同一把 RLock。 |
-| `src/invoice_hub/services/invoice_list.py` | `InvoiceListService`：普通汇总 CSV 读取缓存、手改覆盖与手改写入、筛选/排序/统计、一致性分组、详情与打开源文件（ENG-03 从 AppState 原样迁出）。 | AppState 同名转发，并保留 `_clear_invoice_cache`/`_manual_overrides_path`/`_format_file_mtime` 供后台同步、重建、重命名、删除、诊断调用；缓存字段归本服务（测试经 `state._invoices` 访问）；列表构建持 AppState 同一把 RLock，手改写入持目标 profile 的 monitor 同步锁。 |
-| `src/invoice_hub/services/invoice_rename.py` | `InvoiceRenameService`：按 `YY-MM-DD_销售方&购买方_金额元.ext` 批量重命名源发票，两阶段临时名、失败逆序回滚、手改覆盖随文件迁移、完成后重建（ENG-03 从 AppState 原样迁出，含命名格式常量）。 | AppState 保留 `rename_invoice_files`；发票列表、monitor 状态、重建、目录检查、清缓存均为 AppState 方法以同名注入，类级打桩仍生效。 |
-| `src/invoice_hub/services/invoice_selection.py` | 首页勾选的同票分组/来源身份/金额/格式纯函数，以及 `InvoiceSelectionService`：按当前发票列表复核 `invoice_key + source_path`、勾选合计（ENG-03 从 AppState 原样迁出）。 | 单据、预览/打印直接依赖它；AppState 保留 `_validated_invoice_selection`（发票详情路由、删除所选）与 `invoice_selection_summary` 转发。发票列表 `list_invoices` 仍在 AppState，经回调每次现取（测试会在实例上替换）；合计持 AppState 同一把 RLock。 |
-| `src/invoice_hub/services/background_sync.py` | `BackgroundSyncService` 与 spawn 子进程入口 `_run_background_sync_process`：首轮启动同步、代际与 TargetProfile 身份校验、过期结果 `server.background_stale`、旧子进程有界退役与结果等待上限（ENG-03 从 AppState 原样迁出，含超时常量）。 | AppState 保留 `run_background_diagnostics`（测试在类上打桩以跳过启动同步），`health`/`bridge_progress` 读本服务的后台状态；测试对 `multiprocessing.get_context`、子进程入口与超时常量的打桩改为本模块。 |
-| `src/invoice_hub/services/bookkeeping.py` | `BookkeepingService`：账套确认、科目/辅助核算查询、凭证生成/决定/审核、映射规则预览与保存、定向重算、捷锐导出与导入批次、状态/映射迁移（ENG-03 从 AppState 原样迁出）。 | AppState 构造并以同名方法转发，路由不变。活动 TargetProfile、config、公司资料夹与成本明细路径经回调实时读取，不缓存快照；写入先取 AppState 同一把 `_lock`，再取 `bookkeeping_write_lock`。 |
-| `src/invoice_hub/services/costs.py` | `CostService`：`CostProjectionService` 工厂、成本快照、分页视图、开票参考状态保存与打开成本汇总（ENG-03 从 AppState 原样迁出）。 | 与 `projections/costs.py` 分工：这里只决定读哪个 TargetProfile、持哪把锁，算法在投影层。每次调用在 AppState 同一把 RLock 下复制活动目标与加价率，再在该目标的 monitor 同步锁内读写；保存后清发票缓存经 AppState 回调。 |
-| `src/invoice_hub/services/diagnostics.py` | `DiagnosticsService`：诊断摘要、配置健康检查、日志尾部与脱敏支持包导出（ENG-03 从 AppState 原样迁出，含支持包上限与排除清单常量）。 | AppState 同名转发；只读汇总设置、发票列表、monitor、成本、单据等状态，协作者以 AppState 方法同名注入、每次调用现取；支持包不含源发票与投影文件。 |
-| `src/invoice_hub/services/documents.py` | `DocumentService`：单据默认值、单据目录状态、首页批量入库核对、入/出库预览、导出状态、导出与打开（ENG-03 从 AppState 原样迁出）。 | AppState 构造并以同名方法转发，路由不变；`_document_index` 与 `_inbound_details` 仍由 AppState 创建后传入（documents 路由直接读索引状态）。活动 TargetProfile、成本明细路径、出库目录经回调实时读取，首页批量入库核对（`_validated_inbound_selection`）在本服务内经 `InvoiceSelectionService` 复核；出库目录的保存/最近记录仍属设置用例留在 AppState。 |
+| `src/invoice_hub/services/invoice_list.py` | `InvoiceListService`：普通汇总 CSV 读取缓存、手改覆盖与手改写入、筛选/排序/统计、一致性分组、详情与打开源文件（ENG-03 从 AppState 原样迁出）。 | AppState 构造，路由以 `state.invoices` 直接调用，并保留 `_clear_invoice_cache`/`_manual_overrides_path`/`_format_file_mtime` 供后台同步、重建、重命名、删除、诊断调用；缓存字段归本服务（测试经 `state._invoices` 访问）；列表构建持 AppState 同一把 RLock，手改写入持目标 profile 的 monitor 同步锁。 |
+| `src/invoice_hub/services/invoice_rename.py` | `InvoiceRenameService`：按 `YY-MM-DD_销售方&购买方_金额元.ext` 批量重命名源发票，两阶段临时名、失败逆序回滚、手改覆盖随文件迁移、完成后重建（ENG-03 从 AppState 原样迁出，含命名格式常量）。 | 路由以 `state.rename` 直接调用；发票列表、monitor 状态、重建、目录检查、清缓存为其它服务的方法，以同名回调注入、每次现查。 |
+| `src/invoice_hub/services/invoice_selection.py` | 首页勾选的同票分组/来源身份/金额/格式纯函数，以及 `InvoiceSelectionService`：按当前发票列表复核 `invoice_key + source_path`、勾选合计（ENG-03 从 AppState 原样迁出）。 | 单据、预览/打印直接依赖它；发票详情路由、AppState 的删除所选与路由经 `state.selection` 调用 `validated_invoice_selection`/`invoice_selection_summary`。发票列表来自 `InvoiceListService`，经回调每次现取（测试会在实例上替换）；合计持 AppState 同一把 RLock。 |
+| `src/invoice_hub/services/background_sync.py` | `BackgroundSyncService` 与 spawn 子进程入口 `_run_background_sync_process`：首轮启动同步、代际与 TargetProfile 身份校验、过期结果 `server.background_stale`、旧子进程有界退役与结果等待上限（ENG-03 从 AppState 原样迁出，含超时常量）。 | AppState 与删除所选、切换目录经 `state.background.run_background_diagnostics` 触发（测试在本类上打桩以跳过启动同步），`health`/`bridge_progress` 读本服务的 `status`；测试对 `multiprocessing.get_context`、子进程入口与超时常量的打桩改为本模块。 |
+| `src/invoice_hub/services/bookkeeping.py` | `BookkeepingService`：账套确认、科目/辅助核算查询、凭证生成/决定/审核、映射规则预览与保存、定向重算、捷锐导出与导入批次、状态/映射迁移（ENG-03 从 AppState 原样迁出）。 | AppState 构造，路由以 `state.bookkeeping` 直接调用。活动 TargetProfile、config、公司资料夹与成本明细路径经回调实时读取，不缓存快照；写入先取 AppState 同一把 `_lock`，再取 `bookkeeping_write_lock`。 |
+| `src/invoice_hub/services/costs.py` | `CostService`：`CostProjectionService` 工厂、成本快照、分页视图、开票参考状态保存与打开成本汇总（ENG-03 从 AppState 原样迁出）。 | 与 `projections/costs.py` 分工：这里只决定读哪个 TargetProfile、持哪把锁，算法在投影层。每次调用在 AppState 同一把 RLock 下复制活动目标与加价率，再在该目标的 monitor 同步锁内读写；保存后清发票缓存经回调调用 `InvoiceListService.clear_invoice_cache`。 |
+| `src/invoice_hub/services/diagnostics.py` | `DiagnosticsService`：诊断摘要、配置健康检查、日志尾部与脱敏支持包导出（ENG-03 从 AppState 原样迁出，含支持包上限与排除清单常量）。 | AppState 构造，路由以 `state.diagnostics` 直接调用；只读汇总设置、发票列表、monitor、成本、单据等状态，协作者以 AppState 方法同名注入、每次调用现取；支持包不含源发票与投影文件。 |
+| `src/invoice_hub/services/documents.py` | `DocumentService`：单据默认值、单据目录状态、首页批量入库核对、入/出库预览、导出状态、导出与打开（ENG-03 从 AppState 原样迁出）。 | AppState 构造，路由以 `state.documents` 直接调用；`_document_index` 与 `_inbound_details` 仍由 AppState 创建后传入（documents 路由直接读索引状态）。活动 TargetProfile、成本明细路径、出库目录经回调实时读取，首页批量入库核对（`_validated_inbound_selection`）在本服务内经 `InvoiceSelectionService` 复核；出库目录的保存/最近记录仍属设置用例留在 AppState。 |
 | `src/invoice_hub/services/errors.py` | `StaleInvoiceSelectionError`、`UnsupportedStartupSurfaceError`，AppState 与拆出的领域服务共用。 | 放在中立模块以免 `app_state` 与领域服务循环导入；`services` 包与 `app_state` 仍重导出同一个类。 |
-| `src/invoice_hub/services/monitor_control.py` | `MonitorControlService`：API 侧的 monitor 启停/状态/健康、同步进度、手动重建与打开日志/运行目录（ENG-03 从 AppState 原样迁出）。 | AppState 同名转发（测试在 AppState 类上打桩 `bridge_status/bridge_stop`，关闭流程经 AppState 调用）；手动重建持目标 profile 的同步写锁，仅当该 profile 仍为活动目标时清缓存与发事件；后台状态经回调读取。 |
+| `src/invoice_hub/services/monitor_control.py` | `MonitorControlService`：API 侧的 monitor 启停/状态/健康、同步进度、手动重建与打开日志/运行目录（ENG-03 从 AppState 原样迁出）。 | AppState 构造，路由以 `state.monitor` 直接调用；设置、诊断、关闭经回调每次现查 `bridge_status/bridge_stop`（测试在本类上打桩）；手动重建持目标 profile 的同步写锁，仅当该 profile 仍为活动目标时清缓存与发事件；后台状态经回调读取。 |
 | `src/invoice_hub/services/monitor_bridge.py` | monitor 子进程命令、状态真值、ready 等待和启停。 | AppState 与 control 调用；与 daemon/state 构成生命周期闭环。 |
-| `src/invoice_hub/services/server_shutdown.py` | `ServerShutdownService`：结构化 localhost 关闭请求（只接受一次、按偏好保留或停止 monitor）与 Uvicorn 退出后的收尾（ENG-03 从 AppState 原样迁出）。 | AppState 保留 `server_shutdown_requested` 属性与两个方法转发；SSE 仅在请求被接受后结束；monitor 状态/停止与偏好保存经 AppState 方法注入（测试在类上打桩）。 |
-| `src/invoice_hub/services/settings.py` | `SettingsService`：设置页数据、config 文件中的 watch_dir/最近目录/出库目录持久化与移除、偏好读写校验、监控目录检查/选择（ENG-03 从 AppState 原样迁出，含偏好与最近目录常量）。 | AppState 同名转发；切换 watch_dir（`update_settings`）跨 monitor/缓存/目标/启动同步，留在 AppState。config 对象归 AppState，本服务改写配置后调用 `reload_config` 回调；其它领域的协作者以 AppState 方法同名注入。 |
+| `src/invoice_hub/services/server_shutdown.py` | `ServerShutdownService`：结构化 localhost 关闭请求（只接受一次、按偏好保留或停止 monitor）与 Uvicorn 退出后的收尾（ENG-03 从 AppState 原样迁出）。 | 路由与应用生命周期以 `state.shutdown` 直接调用；SSE 仅在请求被接受后结束；monitor 状态/停止与偏好保存是对应服务的方法，经回调每次现查（测试在 `MonitorControlService` 类上打桩）。 |
+| `src/invoice_hub/services/settings.py` | `SettingsService`：设置页数据、config 文件中的 watch_dir/最近目录/出库目录持久化与移除、偏好读写校验、监控目录检查/选择（ENG-03 从 AppState 原样迁出，含偏好与最近目录常量）。 | AppState 构造，路由以 `state.settings` 直接调用；切换 watch_dir（`update_settings`）跨 monitor/缓存/目标/启动同步，留在 AppState。config 对象归 AppState，本服务改写配置后调用 `reload_config` 回调；其它领域的协作者以 AppState 方法同名注入。 |
 | `src/invoice_hub/services/skins.py` | 皮肤 ZIP 安全验证、运行态存储、启用和文件服务。 | API、AppState、common.js 使用；安全回归在 API 测试。 |
-| `src/invoice_hub/services/about.py` | `AboutService`：About 构建身份、公开链接、更新检查/后台定时检查与委托宿主安装（ENG-03 从 AppState 原样迁出）。 | AppState 同名转发；`UpdateService` 由 AppState 创建后传入（测试经 `state._update_service` 替换传输层）。宿主审批 `_host_update_*` 状态归本服务，`_host_update_lock` 非阻塞串行检查/安装；Tauri 判定用 `host_rpc.desktop_host_mode_enabled()`。 |
-| `src/invoice_hub/services/appearance.py` | `AppearanceService`：皮肤导入/替换/启用/重置/文件与应用图标切换（ENG-03 从 AppState 原样迁出）。 | AppState 同名转发；写入持 AppState 同一把 RLock；Tauri 宿主下先由宿主换图标再持久化。 |
-| `src/invoice_hub/services/ocr.py` | `OcrService`：OCR 页的候选文件选择/列表与“未内置本地 OCR”状态（ENG-03 从 AppState 原样迁出）。 | AppState 同名转发；活动目标与 config 经回调读取。 |
+| `src/invoice_hub/services/about.py` | `AboutService`：About 构建身份、公开链接、更新检查/后台定时检查与委托宿主安装（ENG-03 从 AppState 原样迁出）。 | AppState 构造，路由以 `state.about` 直接调用；`UpdateService` 由 AppState 创建后传入（测试经 `state._update_service` 替换传输层）。宿主审批 `_host_update_*` 状态归本服务，`_host_update_lock` 非阻塞串行检查/安装；Tauri 判定用 `host_rpc.desktop_host_mode_enabled()`。 |
+| `src/invoice_hub/services/appearance.py` | `AppearanceService`：皮肤导入/替换/启用/重置/文件与应用图标切换（ENG-03 从 AppState 原样迁出）。 | AppState 构造，路由以 `state.appearance` 直接调用；写入持 AppState 同一把 RLock；Tauri 宿主下先由宿主换图标再持久化。 |
+| `src/invoice_hub/services/ocr.py` | `OcrService`：OCR 页的候选文件选择/列表与“未内置本地 OCR”状态（ENG-03 从 AppState 原样迁出）。 | AppState 构造，路由以 `state.ocr` 直接调用；活动目标与 config 经回调读取。 |
 | `src/invoice_hub/services/update_service.py` | HTTPS 白名单更新检查、ETag/cache、版本/契约/平台产物选择和错误状态。 | About/API/启动后台检查消费；绝不执行安装。 |
 
 ## 13. 平台与发布

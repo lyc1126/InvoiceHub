@@ -97,7 +97,7 @@
 原生选择器要求（本轮补充）：
 
 - Windows/macOS 的 Tauri desktop 和 browser 模式均通过同源后端调用当前 owned host 的系统文件夹窗口；macOS 为 `NSOpenPanel`，Windows 为系统文件夹选择窗口。窗口标题固定为“选择公司业务资料夹”，只允许选择一个目录。
-- 复用现有 `platform/windows.py::pick_directory` 与 Tauri `select_path` 的原生能力，新增固定用途枚举 `pick_tax_company_dir`，不调用会检查发票目录的 `AppState.pick_watch_dir()`，也不借用“保存监控目录”接口。Windows 非 Tauri 源码/BAT 入口沿用已有本地目录选择器适配；主线 macOS 由 Tauri 负责原生窗口。
+- 复用现有 `platform/windows.py::pick_directory` 与 Tauri `select_path` 的原生能力，新增固定用途枚举 `pick_tax_company_dir`，不调用会检查发票目录的 `SettingsService.pick_watch_dir()`（`state.settings`），也不借用“保存监控目录”接口。Windows 非 Tauri 源码/BAT 入口沿用已有本地目录选择器适配；主线 macOS 由 Tauri 负责原生窗口。
 - 原生窗口只返回选择结果。取消返回 `selected=false`，保留之前的绑定及待保存草稿；成功返回 `selected=true, requires_save=true`，只更新本次设置草稿，旧检测结果失效，重新检测通过前不能保存。
 - 选择器打开期间按钮显示“正在选择…”并阻止重复拉起；宿主不可用、超时或权限失败提供可重试提示，保留原绑定/草稿。设置关闭、清空绑定或更新草稿后，较早选择请求的返回不得覆盖新状态。
 - 原生通道继续要求固定 localhost Origin、owned lifecycle 和私有 token；token 不进入页面。系统窗口 120 秒、Python 125 秒的既有预算保持，页面不能使用更短超时提前判失败。不存在宿主时不得从 `file://` 原型绕过边界调用原生接口。
@@ -167,7 +167,7 @@ flowchart TB
     API --> UI
 ```
 
-依赖通过 `create_app()` 注入独立 tax services；不继续给庞大的 `AppState` 添加税种算法。Tauri 复用已有受控目录面板与生命周期，只增加公司目录选择用途的固定枚举；不把税务计算放进 Host RPC，也不重写核心。
+依赖通过 `create_app()` 注入独立 tax services；税种算法写进独立服务，不加入 `AppState`。Tauri 复用已有受控目录面板与生命周期，只增加公司目录选择用途的固定枚举；不把税务计算放进 Host RPC，也不重写核心。
 
 拟议模块均为未来实现路径，当前未创建：
 

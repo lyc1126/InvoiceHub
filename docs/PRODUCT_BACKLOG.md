@@ -73,7 +73,7 @@
 | [ENG-05](#eng-05) | 真实浏览器 E2E（合成目录 + 本机后端） | P1 | 待评估 | 待定 |
 | [ENG-06](#eng-06) | 扩大静态检查（ruff B/E7、新模块类型检查） | P3 | 待评估 | 待定 |
 | [ENG-07](#eng-07) | 测试导入 `api.app` 时不再对仓库默认配置做启动同步 | P2 | 已完成（2026-11-09） | 未发布 |
-| [ENG-08](#eng-08) | 路由直接依赖领域服务，删除 AppState 转发门面 | P2 | 待评估 | 待定（建议随 WS-07） |
+| [ENG-08](#eng-08) | 路由直接依赖领域服务，删除 AppState 转发门面 | P2 | 已完成（2026-11-10） | 未发布 |
 
 ## 成本分析与开票参考（COST）
 
@@ -278,7 +278,7 @@
 
 - 优先级 / 状态 / 目标版本：P2 / 待评估 / 待定
 - 问题与证据：2026-11-09 用户希望 Claude Code、Codex 等 Agent 能接入 InvoiceHub 即时读取和操作，接入形态参照 Vibe Island。现在 Agent 只能读 `watch_dir` 下的 CSV / XLSX 或调用只服务浏览器的 HTTP 接口：写接口要求同源 `Origin`，读接口没有面向 Agent 的身份、分页约定与范围控制。
-- 方案：新增 `invoicehub mcp`（stdio MCP，按会话启动）与后端 Agent 网关，经本机 socket 与配对令牌通信，调用与 HTTP 相同的 `AppState` 方法；只开放 L0 只读工具（发票列表 / 详情、成本视图、一致性、单据预览、业务资料夹、做账状态等）；同时落地灵活控制模型：规则 = Agent × 目录 / 期间 × 模块 × 明细粒度（只看汇总 / 脱敏 / 完整）→ 允许 / 询问 / 拒绝，界面分预设、询问卡片（仅一次 / 本会话 / 1 小时 / 始终）、规则表与模拟三层；设置页“Agent 接入”按 WorkBuddy → Codex → Claude Code 顺序一键写入 / 移除 MCP 配置，写前 dry-run 与备份，并安装 InvoiceHub skill。WorkBuddy 落地前核实是否支持 stdio 型 MCP 条目。详见设计 §3—§5、§5.6、§7。
+- 方案：新增 `invoicehub mcp`（stdio MCP，按会话启动）与后端 Agent 网关，经本机 socket 与配对令牌通信，调用与 HTTP 相同的领域服务方法；只开放 L0 只读工具（发票列表 / 详情、成本视图、一致性、单据预览、业务资料夹、做账状态等）；同时落地灵活控制模型：规则 = Agent × 目录 / 期间 × 模块 × 明细粒度（只看汇总 / 脱敏 / 完整）→ 允许 / 询问 / 拒绝，界面分预设、询问卡片（仅一次 / 本会话 / 1 小时 / 始终）、规则表与模拟三层；设置页“Agent 接入”按 WorkBuddy → Codex → Claude Code 顺序一键写入 / 移除 MCP 配置，写前 dry-run 与备份，并安装 InvoiceHub skill。WorkBuddy 落地前核实是否支持 stdio 型 MCP 条目。详见设计 §3—§5、§5.6、§7。
 - 验收标准：未配对或已吊销连接被拒；无规则时询问、拒绝优先、“只看汇总”不返回逐张明细、活动目录不在范围内返回 `SCOPE_DENIED`、“始终允许”生成的规则可在规则表删除并立即恢复询问；L0 工具与对应 HTTP 接口逐字段一致；InvoiceHub 未运行时返回 `HUB_NOT_RUNNING` 且 Agent 不卡住；接入 / 移除前后 Agent 配置除本条目外逐字节一致。
 - 影响范围：`api/`（网关）、新增 MCP 入口、`services/app_state.py`、设置存储与设置页、Tauri 打包入口、INTERFACES_AND_FLOWS、FILE_MAP；落地时在 AGENTS.md 项目边界写明“本机 Agent 授权”例外。
 
@@ -340,7 +340,7 @@
 
 ### ENG-03 AppState 按领域拆分为独立服务
 
-- 优先级 / 状态 / 目标版本：P1 / 已完成 / 未发布（2026-11-10 完成领域拆分；转发门面的去留另见 ENG-08）
+- 优先级 / 状态 / 目标版本：P1 / 已完成 / 未发布（2026-11-10 完成领域拆分；同日 ENG-08 删除转发）
 - 进度：2026-11-10 分 16 步完成，均为原样搬移、AppState 保留同名转发，每步 OpenAPI 与路由表逐字节不变、全量 pytest 通过。领域服务（`services/` 下）：`bookkeeping`、`documents`、`costs`、`dossier`、`preview_print`、`invoice_selection`、`appearance`、`ocr`、`about`、`invoice_list`、`invoice_rename`、`settings`、`diagnostics`、`background_sync`、`monitor_control`、`server_shutdown`，外加共用异常的 `errors.py`。`app_state.py` 5779 → 770 行：只剩组装、共享的 config/活动目标/RLock、health、切换 watch_dir 与删除所选两条跨域编排，以及按服务分组的转发。守护：各服务锁与目标/config 跟随由 `tests/test_appstate_service_wiring.py` 参数化检查，另有逐步的目录切换与锁等待测试，均做过变异核对。详见 CHANGELOG 2026-11-10 各节。
 - 问题与证据：`services/app_state.py` 约 5800 行、230 余个方法，覆盖设置、发票、预览打印、单据、皮肤、monitor、成本、做账、OCR；多公司工作区会打破“单活动目录”前提，改动集中压在这一个类上。
 - 方案：以做账（约 45 个方法）和单据为先，抽出 `services/<领域>.py`，AppState 只保留锁、活动目标与跨域编排并委托；对外方法签名先保持不变，测试中的 `AppState.xxx` monkeypatch 路径逐步迁移。新领域（公司清单、聚合、比较）直接写成独立服务。
@@ -391,7 +391,8 @@
 
 ### ENG-08 路由直接依赖领域服务，删除 AppState 转发门面
 
-- 优先级 / 状态 / 目标版本：P2 / 待评估 / 待定（建议随 WS-07 多公司后端一起做）
+- 优先级 / 状态 / 目标版本：P2 / 已完成 / 未发布（2026-11-10 用户要求不等 WS-07，直接完成）
+- 结果：16 个服务成为 AppState 公开属性，路由、`api/app.py`、测试与 AppState 内部回调改为 `state.<服务>.<方法>`；123 个转发删除，`app_state.py` 约 770 → 368 行；跨对象调用的 11 个服务私有方法改为公开名，后台状态加只读 `status`；测试的类级打桩迁到 `BackgroundSyncService`/`MonitorControlService`。OpenAPI 与路由表逐字节不变，全量 pytest 通过；接线测试新增“AppState 公开方法集合”检查。详见 CHANGELOG 同日小节。
 - 问题与证据：ENG-03 完成后，`services/app_state.py` 约 770 行中约 400 行是 136 个一行转发；路由与测试仍调用 `state.<方法>`。测试还在 AppState 类上打桩 `run_background_diagnostics`（约 70 处）、`bridge_status/bridge_stop`，服务间协作正是经这些 AppState 方法回调，打桩才能全局生效。
 - 方案：给各领域服务公开属性名（如 `state.bookkeeping`），路由改为直接调用；测试调用与打桩迁到服务；服务间回调改为显式依赖对象。WS-07 会按公司选择服务实例，届时路由的取用方式本来就要改，一起做可以只改一次。
 - 验收标准：路由不再经 AppState 转发；OpenAPI 与路由表逐字节不变；全量 pytest 通过；接线测试改为覆盖新的依赖方式。

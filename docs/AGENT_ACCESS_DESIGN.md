@@ -69,7 +69,7 @@ flowchart LR
 ```
 
 - **`invoicehub mcp`**：随应用分发的命令，由 Agent 按 stdio 方式启动，作用相当于 Vibe Island 的桥接程序。它只做协议转换：MCP ⇄ 网关请求；不读文件、不持有业务状态。InvoiceHub 未运行时返回明确的“InvoiceHub 未启动”工具错误，不自动拉起后台。
-- **Agent 网关**：后端内新增的一层，与现有 HTTP 路由并列，调用同一组 `AppState` 方法。HTTP 的同源写校验（`_require_same_origin_write`）只服务浏览器，不放宽；Agent 走网关自己的身份校验（§5）。
+- **Agent 网关**：后端内新增的一层，与现有 HTTP 路由并列，调用同一组领域服务方法（`state.<服务>`）。HTTP 的同源写校验（`_require_same_origin_write`）只服务浏览器，不放宽；Agent 走网关自己的身份校验（§5）。
 - **兜底命令行**：`invoicehub agent call <tool> --json '<参数>'`，供不支持 MCP 的 Agent 或脚本使用，走同一网关与审批。
 - **事件**：复用 SQLite `events` 与 SSE；网关把事件映射为 MCP 资源更新通知。对不支持通知的客户端提供 `wait_for_events(after, types, timeout≤60s)` 有界等待工具，不鼓励循环轮询。
 

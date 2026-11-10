@@ -2,6 +2,18 @@
 
 ## 未发布
 
+### 2026-11-10 路由直接依赖领域服务，删除 AppState 转发（ENG-08）
+
+- 需求：ENG-03 完成后，用户要求不等 WS-07，直接把 ENG-08 做掉，去掉 AppState 的转发。
+- 起点：本地开发线 `codex/cost-select-all-transitions` 的 `ac51c09`；在独立 worktree 的 `codex/appstate-direct-services` 施工，主工作区未改动。
+- 方案：16 个领域服务从 `self._bookkeeping` 等私有属性改为公开属性（`state.bookkeeping`、`state.documents`、`state.costs`、`state.dossier`、`state.preview_print`、`state.selection`、`state.invoices`、`state.rename`、`state.settings`、`state.monitor`、`state.background`、`state.diagnostics`、`state.about`、`state.appearance`、`state.ocr`、`state.shutdown`）。从现有转发自动生成“方法名 → 服务.方法”映射（123 项），用基于 Python tokenize 的改写器批量改写调用点：只改代码中的属性访问，跳过字符串与注释，按 token 偏移原地替换；接收者限定为 `_state(request)`、`….state.invoice_hub`、已知的 AppState 变量与 app_state.py 内的 `self`。改写覆盖路由 10 个模块、`api/app.py`、AppState 内部回调与 `create_state`、9 个测试文件，共 270 处；`test_tauri_host_rpc.py` 的 `state` 实为 `AboutService`，误改后整份撤回。随后删除 123 个转发。
+- 跨对象调用：改写后 AppState 与路由会调用服务的私有方法，11 个改为公开名（`clear_invoice_cache`、`manual_overrides_path`、`monitor_bridge`、`monitor_state`、`outbound_invoice_dir_text`、`persist_watch_dir_config`、`preferences_path`、`recent_outbound_invoice_dirs`、`recent_watch_dirs`、`watch_dir_message`），`BackgroundSyncService` 增加只读属性 `status`；各服务内部持有的同名回调属性不变。跨服务回调全部是每次现查对方服务方法的 lambda。
+- 测试迁移：类级打桩 `AppState.run_background_diagnostics`（字符串路径 71 处、`setattr(AppState, …)` 11 处、子进程脚本内 3 处）改为 `BackgroundSyncService`；`AppState.bridge_status/bridge_stop` 改为 `MonitorControlService`；实例打桩 `setattr(state, "方法", …)` 改为打桩在对应服务实例上；读取路由源码文本的两处契约断言改为新的调用写法。接线测试的服务键改为公开属性名，并新增“AppState 公开方法只剩 11 个核心与编排成员”的检查，防止转发回潮。
+- 结果：`app_state.py` 770 → 368 行，只剩组装、共享的 config/活动目标/RLock、`health`、任务与事件读取，以及切换 watch_dir、删除所选两条跨域编排；各服务模块说明中“AppState 保留同名转发”的表述改为“路由以 `state.<服务>` 直接调用”。
+- 验证：改动前后在临时根目录构建应用，OpenAPI 与路由表 JSON 逐字节一致（路由函数名未变）；静态扫描 `src/`、`tests/`、`scripts/`，没有对已删除 AppState 方法的调用；ruff、compileall 通过；全量 pytest 791 通过、16 跳过；改动前 790 通过，差额是新增的“不再长出转发”检查。变异核对：构造结束后把单据服务的出库目录回调换成提前绑定的方法对象，`test_outbound_partial_preview_and_status_reuse` 失败，说明构造后在服务实例上的打桩会经现查传到其它服务；关闭测试在构造前打桩，提前绑定对它没有影响，这一点如实记录。
+- 文档：文件地图、架构入口（依赖方向、服务表、债务表改为当前实现）、设计原因、任务导航、接口流程中的“AppState 转发/经 AppState”改为直接调用；两份设计稿中引用的 AppState 方法改为对应服务；ENG-08 标为已完成。
+- 未覆盖：未启动真实 localhost 逐页操作，未重建打包产物，未运行正式 Windows BAT/Tauri 宿主；外部入口（BAT、Tauri、Swift）只经 HTTP 访问，不受影响。
+
 ### 2026-11-10 完成 AppState 领域拆分（ENG-03 第七至十六步）
 
 - 需求：用户要求“继续，直到完成 AppState 的全部拆解”。
