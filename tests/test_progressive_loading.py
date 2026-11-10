@@ -187,3 +187,39 @@ def test_outbound_partial_preview_and_status_reuse(tmp_path, monkeypatch):
         monkeypatch.setattr(module, "build_outbound_preview", changing)
         with pytest.raises(module.DocumentError, match="变化"):
             state.document_outbound_preview(number)
+
+
+def test_cost_service_follows_watch_dir_switch(tmp_path, monkeypatch):
+    with _client(tmp_path, monkeypatch) as client:
+        state = client.app.state.invoice_hub
+        write_csv_rows(state.cost_service().detail_csv, DETAIL_HEADERS, [_detail_row()])
+        before = client.get("/api/v1/cost-analysis/view").json()
+        assert before["counts"]["details"] == 1
+        other = tmp_path / "其它发票"
+        other.mkdir()
+
+        state.update_settings({"watch_dir": str(other)})
+        after = client.get("/api/v1/cost-analysis/view").json()
+
+        assert state.cost_service().detail_csv == other.resolve() / "成本发票明细.csv"
+        assert after["watch_dir"] == str(other.resolve())
+        assert after["target_id"] == state.active_profile.id != before["target_id"]
+        assert after["counts"]["details"] == 0
+
+
+def test_cost_view_waits_for_the_app_state_lock(tmp_path, monkeypatch):
+    with _client(tmp_path, monkeypatch) as client:
+        state = client.app.state.invoice_hub
+        finished = threading.Event()
+
+        def read() -> None:
+            state.cost_view("details")
+            finished.set()
+
+        with state._lock:
+            worker = threading.Thread(target=read)
+            worker.start()
+            # The split service must capture the profile under AppState's RLock, not a private one.
+            assert not finished.wait(0.3)
+        worker.join(timeout=10)
+        assert finished.is_set()

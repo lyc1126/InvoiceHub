@@ -31,6 +31,7 @@ from invoice_hub.extraction.classification import (
 from invoice_hub.release.build_manifest import load_build_manifest
 from invoice_hub.release.package_manifest import load_package_manifest
 from invoice_hub.services.bookkeeping import BookkeepingService
+from invoice_hub.services.costs import CostService
 from invoice_hub.services.monitor_bridge import MonitorBridge
 from invoice_hub.services.document_index import DocumentIndex, InboundDetails
 from invoice_hub.services.documents import DocumentService
@@ -55,9 +56,11 @@ from invoice_hub.services.app_icons import AppIconService
 from invoice_hub.services.skins import SkinService
 from invoice_hub.services.update_service import UpdateService
 from invoice_hub.storage import SQLiteRepository, atomic_write_json, read_csv_rows, read_json_object, write_csv_rows
-from invoice_hub.storage.read_views import ReadViews, COST_FIELDS, file_signature
+from invoice_hub.storage.read_views import ReadViews, file_signature
 from invoice_hub.targets import AppConfig, ensure_runtime_layout, load_config, target_profile_for
 from invoice_hub.targets.paths import Layout, path_is_under_root, serialize_config_path
+# Keep a completed startup worker (or a cost save) scoped to the TargetProfile it captured.
+from invoice_hub.targets.paths import profile_identity as _background_profile_identity
 from invoice_hub.version import CHANGELOG_URL, LOCAL_WEBSITE_PATH, PRODUCT_DISPLAY_NAME, PRODUCT_NAME, PUBLIC_SOURCE_URL
 
 if TYPE_CHECKING:
@@ -116,17 +119,6 @@ BACKGROUND_SYNC_MAX_SECONDS = 120.0
 BACKGROUND_SYNC_JOIN_TIMEOUT_SECONDS = 5.0
 BACKGROUND_SYNC_TERMINATE_JOIN_SECONDS = 2.0
 BACKGROUND_SYNC_KILL_JOIN_SECONDS = 2.0
-
-
-def _background_profile_identity(profile: TargetProfile) -> tuple[str, str, str, str, str]:
-    """Keep a completed startup worker scoped to the TargetProfile it captured."""
-    return (
-        profile.id,
-        profile.watch_dir,
-        profile.workspace_dir,
-        profile.state_dir,
-        profile.localappdata_dir,
-    )
 
 
 def _run_background_sync_process(
@@ -202,6 +194,17 @@ class AppState:
         self._invoice_print_service = InvoicePrintService()
         self._file_preview_service = FilePreviewService()
         self._invoice_trash = InvoiceTrashService(layout.runtime_dir / "local_state" / "invoice-trash")
+        # The cost service copies the active profile and markup rate under this lock per call;
+        # it must not hold its own copies, because watch_dir and settings changes replace them.
+        self._costs = CostService(
+            lock=self._lock,
+            repo=self.repo,
+            db_path=layout.db_path,
+            config=lambda: self.config,
+            active_profile=lambda: self._active_profile,
+            recent_watch_dirs=lambda: self._recent_watch_dirs(),
+            clear_invoice_cache=lambda: self._clear_invoice_cache(),
+        )
         # Providers, not snapshots: watch_dir and outbound-dir switches replace these values,
         # and the next preview/export must follow the new directories.
         self._documents = DocumentService(
@@ -3097,13 +3100,9 @@ class AppState:
         open_local_path(path)
         return {'ok': True, 'opened': True, 'path': str(path), 'folder_path': str(path)}
 
+    # Cost use cases live in services/costs.py (ENG-03); this keeps the public name.
     def cost_service(self) -> CostProjectionService:
-        return CostProjectionService(
-            Path(self.active_profile.watch_dir),
-            Path(self.active_profile.workspace_dir),
-            self.active_profile.id,
-            reference_markup_rate=self.config.reference_markup_rate,
-        )
+        return self._costs.cost_service()
 
     def skin_service(self) -> SkinService:
         return SkinService(self.layout)
@@ -3162,77 +3161,13 @@ class AppState:
     def skin_file(self, skin_id: str, path: str):
         return self.skin_service().get_file(skin_id, path)
 
+    # Cost use cases live in services/costs.py (ENG-03); this keeps the public name.
     def cost_snapshot(self) -> dict:
-        with self._lock:
-            profile = self._active_profile.model_copy(deep=True)
-            reference_markup_rate = str(self.config.reference_markup_rate)
-            recent_watch_dirs = self._recent_watch_dirs()
-        monitor_state = MonitorState(profile, self.layout.db_path, sync_interval_seconds=60)
-        # snapshot() may repair an old CSV/XLSX schema, so its reads and writes share
-        # the same TargetProfile lock as the monitor and manual rebuild paths.
-        with monitor_state.sync_write_lock():
-            payload = CostProjectionService(
-                Path(profile.watch_dir),
-                Path(profile.workspace_dir),
-                profile.id,
-                reference_markup_rate=reference_markup_rate,
-            ).snapshot().model_dump(mode="json")
-        payload["recent_watch_dirs"] = recent_watch_dirs
-        return payload
+        return self._costs.cost_snapshot()
 
+    # Cost use cases live in services/costs.py (ENG-03); this keeps the public name.
     def cost_view(self, view: str, page: int = 1, page_size: int = 100, revision: str = "") -> dict:
-        with self._lock:
-            profile = self._active_profile.model_copy(deep=True)
-            rate = str(self.config.reference_markup_rate)
-            recent = self._recent_watch_dirs()
-        service = CostProjectionService(Path(profile.watch_dir), Path(profile.workspace_dir), profile.id, reference_markup_rate=rate)
-        views = ReadViews(profile.workspace_dir)
-        monitor = MonitorState(profile, self.layout.db_path)
-        # Never remove the projection lock to make reads fast. Publish a committed
-        # read generation under that lock, then read its pages without holding it.
-        with monitor.try_sync_write_lock() as acquired:
-            if acquired and (service.detail_csv.exists() or service.summary_xlsx.exists()):
-                service.cache_snapshot()
-            meta, rows = views.read("cost:" + view, page, page_size)
-            if not acquired and not meta.get("detail_count"):
-                partial, _ = views.read("partial:costs", page_size=0)
-                if partial.get("count"):
-                    meta = {}
-        if meta:
-            if revision and revision != meta["revision"]:
-                raise StaleInvoiceSelectionError("成本结果已更新，请刷新后重试。")
-            counts = meta["counts"]
-            if page > max(1, (counts[view] + page_size - 1) // page_size):
-                page = max(1, (counts[view] + page_size - 1) // page_size)
-                next_meta, rows = views.read("cost:" + view, page, page_size)
-                if next_meta.get("revision") != meta["revision"]:
-                    raise StaleInvoiceSelectionError("成本结果已更新，请刷新后重试。")
-                meta = next_meta
-            meta.pop("fingerprint", None)
-            meta.update(updating=not acquired, editable=acquired, provisional=False)
-        else:
-            partial, rows = views.read("partial:costs", page, page_size if view == "details" else 0)
-            if partial.get("state") == "running" and not is_pid_alive(partial.get("pid")):
-                partial["state"] = "interrupted"
-            counts = {name: 0 for name in COST_FIELDS}
-            counts["details"] = partial.get("count", 0)
-            meta = dict(watch_dir=profile.watch_dir, source_dir=profile.watch_dir, target_id=profile.id,
-                        output_detail_csv_path=str(service.detail_csv), output_summary_xlsx_path=str(service.summary_xlsx),
-                        reference_status_path=str(service.status_json), reference_markup_rate=rate,
-                        detail_count=counts["details"], reference_status_stats={},
-                        sync={"sync_state": "pending", "source_invoice_count": partial.get("total", 0),
-                              "parsed_invoice_count": partial.get("processed", 0), "pending_count": max(0, partial.get("total", 0) - partial.get("processed", 0))},
-                        revision=partial.get("revision", "pending"), progress=partial, provisional=True,
-                        updating=not acquired, editable=False, counts=counts, count=counts[view])
-            # A released writer lock is not proof of a successful projection: failed
-            # or stopped work must keep its partial rows read-only on every tab.
-            if acquired and not partial:
-                meta.update(provisional=False, editable=True)
-                meta["sync"]["sync_state"] = "empty"
-        meta.update(view=view, page=page, page_size=page_size, recent_watch_dirs=recent)
-        for name, field in COST_FIELDS.items():
-            meta[field] = rows if name == view else []
-        return meta
+        return self._costs.cost_view(view, page, page_size, revision)
 
     @staticmethod
     def _path_is_relative_to(path: Path, parent: Path) -> bool:
@@ -3539,30 +3474,9 @@ class AppState:
         self.append_event("business_dossier.opened", {"key": key, "path": str(resolved), "target_id": self.active_profile.id})
         return {"ok": True, "opened": True, "key": key, "path": str(resolved), "is_dir": resolved.is_dir(), "file_name": resolved.name}
 
+    # Cost use cases live in services/costs.py (ENG-03); this keeps the public name.
     def save_cost_reference_status(self, payload: dict) -> dict:
-        with self._lock:
-            profile = self._active_profile.model_copy(deep=True)
-            profile_identity = _background_profile_identity(profile)
-            reference_markup_rate = str(self.config.reference_markup_rate)
-        monitor_state = MonitorState(profile, self.layout.db_path, sync_interval_seconds=60)
-        with monitor_state.sync_write_lock():
-            service = CostProjectionService(
-                Path(profile.watch_dir),
-                Path(profile.workspace_dir),
-                profile.id,
-                reference_markup_rate=reference_markup_rate,
-            )
-            if payload.get("revision"):
-                service.cache_snapshot()
-                meta, _ = ReadViews(profile.workspace_dir).read("cost:reference", page_size=0)
-                if payload.get("target_id") != profile.id or payload["revision"] != meta.get("revision"):
-                    raise ValueError("成本结果或目录已更新，草稿未保存，请重新加载后核对。")
-            result = service.save_reference_status(payload or {})
-        with self._lock:
-            if profile_identity == _background_profile_identity(self._active_profile):
-                self._clear_invoice_cache()
-                self.append_event("cost_analysis.reference_status_updated", {"target_id": profile.id})
-        return result
+        return self._costs.save_cost_reference_status(payload)
 
     # Document use cases live in services/documents.py (ENG-03); these keep the public names.
     def document_inbound_selection(self, payload: dict) -> dict:
@@ -3755,13 +3669,9 @@ class AppState:
         self.append_event("invoice.local_file_location_opened", {"invoice_key": invoice_key, "file_path": str(path), "folder_path": str(folder)})
         return {"ok": True, "opened": True, "invoice_key": invoice_key, "file_path": str(path), "folder_path": str(folder), "file_name": path.name}
 
+    # Cost use cases live in services/costs.py (ENG-03); this keeps the public name.
     def open_cost_summary(self) -> dict:
-        path = self.cost_service().summary_xlsx
-        if not path.exists() or not path.is_file():
-            return {"ok": False, "opened": False, "path": str(path), "message": f"成本分析表尚未生成: {path}"}
-        open_local_path(path)
-        self.append_event("cost_analysis.summary_opened", {"path": str(path), "target_id": self.active_profile.id})
-        return {"ok": True, "opened": True, "path": str(path), "file_path": str(path), "file_name": path.name}
+        return self._costs.open_cost_summary()
 
     def pick_ocr_file(self) -> dict:
         payload = pick_file(

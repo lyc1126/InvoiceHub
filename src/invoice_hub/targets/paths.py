@@ -157,6 +157,17 @@ def canonical_path(path: Path) -> str:
         return os.path.abspath(text)
 
 
+def profile_identity(profile: TargetProfile) -> tuple[str, str, str, str, str]:
+    """Identify a TargetProfile by id and every directory it owns, for stale-result checks."""
+    return (
+        profile.id,
+        profile.watch_dir,
+        profile.workspace_dir,
+        profile.state_dir,
+        profile.localappdata_dir,
+    )
+
+
 def path_is_under_root(path: Path, root: Path) -> bool:
     resolved = Path(path).resolve()
     root = Path(root).resolve()

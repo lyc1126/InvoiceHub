@@ -3,7 +3,7 @@
 本页是 [AGENTS.md](../../../AGENTS.md) 按任务引用的强制功能规则；命中本专题时须在修改前完整读取。规则维护在本页，入口摘要不能替代正文。
 
 - 适用问题：成本明细、金额校验、成本三件套、加价率与已开快照。
-- 代码与验收定位：projections/cost_analysis.py、projections/costs.py；数据算法第 8—9 节、任务导航第 5 节。Python 模块目录（extraction/projections/monitoring/services/bookkeeping/runners/platform/release）相对 `src/invoice_hub/`，其余路径相对仓库根。
+- 代码与验收定位：projections/cost_analysis.py、projections/costs.py、services/costs.py；数据算法第 8—9 节、任务导航第 5 节。Python 模块目录（extraction/projections/monitoring/services/bookkeeping/runners/platform/release）相对 `src/invoice_hub/`，其余路径相对仓库根。
 - 待开发优化：[未来工作总览 COST-01—06](../../PRODUCT_BACKLOG.md#cost-01)（开票参考成本基数、品名别名、自动已开数量、库存核对、合同价参照，以及 v2 总体设计：[成本分析 v2 设计](../../COST_ANALYSIS_V2_DESIGN.md)）与缺陷 [BUG-01](../../PRODUCT_BACKLOG.md#bug-01)（销项税率与成本是否含税改为按公司税务设置，已实现、待真实验收）；开工前先读对应条目。
 - 导航：[任务入口](../AGENT_TASK_MAP.md#task-costs) · [架构总入口](../../DEVELOPMENT_ARCHITECTURE.md) · [文件地图](../FILE_MAP.md) · [接口与流程](../INTERFACES_AND_FLOWS.md) · [数据与算法](../DATA_AND_ALGORITHMS.md) · [设计原因](../COMMENT_RATIONALE_MAP.md)。
 

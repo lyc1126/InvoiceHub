@@ -2,6 +2,15 @@
 
 ## 未发布
 
+### 2026-11-10 AppState 拆出成本编排服务（ENG-03 第三步）
+
+- 需求：用户同意继续 ENG-03，上一轮建议的下一块是成本。开工后实测发现成本在 AppState 里只剩 5 个方法、约 110 行（算法早已在 `projections/` 里），比上一轮描述的小。已向用户说明这一点，并改为建议下一步拆业务资料夹；成本按约定先做完。
+- 起点：本地开发线 `codex/cost-select-all-transitions` 的 `7e47fbd`；在独立 worktree 的 `codex/appstate-cost-service` 施工，主工作区未改动。
+- 方案：`cost_service`、`cost_snapshot`、`cost_view`、`save_cost_reference_status`、`open_cost_summary` 原样迁到新的 `services/costs.py::CostService`，AppState 保留同名转发（AppState 内其它 7 处 `cost_service()` 调用和测试不变）。服务拿到 AppState 同一把 `_lock`、SQLite 仓库与 `layout.db_path`，活动 TargetProfile、config（加价率）与最近目录经回调读取；保存开票参考后清发票缓存是 AppState 的职责，经回调注入。只依赖 TargetProfile 的 `_background_profile_identity` 移到 `targets/paths.py::profile_identity`，AppState 以原名导入，避免循环导入。
+- 结果：`app_state.py` 3905 → 3815 行；5 个方法都是公开方法，方法数不变（211）；新文件 `costs.py` 173 行。
+- 验证：搬移前后逐方法对比，只有依赖替换（活动目标、数据库路径、身份函数名）；OpenAPI 与路由表 JSON 逐字节一致；ruff 通过；新增两条测试——切换 watch_dir 后成本视图与 `cost_service()` 指向新目录、成本视图会等待 AppState 的锁——变异核对时（构造时快照、私有 RLock）都会失败。全量 pytest 769 通过、16 跳过，基线 767 通过（差额即两条新测试）。
+- 未覆盖：未在真实 localhost 成本页操作；未重建打包产物。
+
 ### 2026-11-10 AppState 拆出单据服务（ENG-03 第二步）
 
 - 需求：用户确认继续 ENG-03，按计划拆单据（入库/出库）用例。
