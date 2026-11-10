@@ -39,3 +39,61 @@ button[aria-busy="true"] { cursor: progress; }
   .content { padding: 16px; }
 }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+
+/* ---- Companies module (WS-07) ---------------------------------------------------------- */
+.split { display: grid; grid-template-columns: minmax(220px, 280px) minmax(0, 1fr); gap: 24px; align-items: start; }
+.company-list ul { list-style: none; margin: 12px 0 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.company-item { width: 100%; text-align: left; border: 1px solid transparent; display: flex; flex-direction: column; gap: 4px; }
+.company-item[aria-selected="true"] { border-color: var(--ink); background: #fff; }
+.company-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.company-meta { display: flex; flex-wrap: wrap; gap: 6px; font-size: 12px; align-items: center; }
+.company-detail { min-width: 0; }
+.detail-header h2 { margin: 0; font-size: 18px; }
+.detail-header p { margin: 4px 0 12px; }
+.tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin-bottom: 12px; }
+.tabs [role="tab"] { border: 0; border-bottom: 2px solid transparent; border-radius: 0; }
+.tabs [role="tab"][aria-selected="true"] { border-bottom-color: var(--ink); font-weight: 600; }
+.panel { border: 1px solid var(--line); border-radius: 10px; padding: 12px 16px; margin: 12px 0; background: #fff; }
+.panel h2, .panel h3 { margin: 0 0 8px; font-size: 16px; }
+.field { display: flex; flex-direction: column; gap: 4px; margin: 0 0 12px; border: 0; padding: 0; }
+.field-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 0 0 8px; border: 0; padding: 0; }
+.field legend, .field-row legend { padding: 0; margin-bottom: 4px; }
+.field > button { align-self: flex-start; }
+input, select { font: inherit; padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px; background: #fff; min-width: 0; }
+.actions, .toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 8px 0; }
+button.primary { background: var(--ink); color: var(--paper); }
+button.danger { border-color: var(--danger); color: var(--danger); }
+button.block { width: 100%; }
+.banner--ok { color: #1a5d1a; background: #e9f6e6; }
+.banner--note { color: var(--muted); background: #f3f1ea; }
+.tag { display: inline-block; padding: 1px 6px; border-radius: 999px; border: 1px solid var(--line); font-size: 12px; white-space: nowrap; }
+.tag--accent { background: var(--accent); border-color: var(--accent); }
+.tag--danger { color: var(--danger); border-color: var(--danger); }
+.grid { border-collapse: collapse; width: 100%; font-size: 14px; }
+.grid th, .grid td { padding: 6px 8px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+.grid thead th { color: var(--muted); font-weight: 500; white-space: nowrap; }
+.grid .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.grid .nowrap { white-space: nowrap; }
+.grid tfoot th, .grid tfoot td { font-weight: 600; border-top: 2px solid var(--line); }
+.row--active { background: #f7fbe4; }
+.row--muted { color: var(--muted); }
+.row--danger td { color: var(--danger); }
+.row-actions { white-space: nowrap; }
+.row-actions button { padding: 2px 8px; font-size: 13px; }
+.path { word-break: break-all; }
+.fresh--stale, .fresh--missing_dir { color: var(--danger); }
+.fresh--unknown, .fresh--never_built { color: #8a5a00; }
+.checks { border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; margin: 8px 0; }
+.checks summary { cursor: pointer; }
+.checks ul { margin: 4px 0 0; padding-left: 18px; font-size: 13px; }
+.checks--failed { border-color: var(--danger); background: #fdecea; color: var(--danger); }
+.check--failed { color: var(--danger); font-weight: 600; }
+.warnings { margin: 8px 0; padding-left: 18px; color: #8a5a00; }
+.ledger { overflow-x: auto; display: block; font-size: 13px; }
+.ledger th, .ledger td { padding: 6px; }
+@media (max-width: 640px) {
+  .split { grid-template-columns: 1fr; }
+  /* Narrow screens scroll the whole table sideways instead of squeezing cells into columns of single characters. */
+  .grid { display: block; overflow-x: auto; }
+  .grid th, .grid td { white-space: nowrap; }
+}

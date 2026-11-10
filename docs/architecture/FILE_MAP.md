@@ -602,13 +602,21 @@
 | `frontend/src/main.ts` | 创建 Vue 应用并挂载 Pinia 与路由。 | 全局插件入口。 |
 | `frontend/src/App.vue` | 工作区外框：模块列、错误横幅与 `KeepAlive` 包裹的路由视图。 | 模块切换保留各视图实例（页面缓存）。 |
 | `frontend/src/router.ts` | 客户端路由与 `/workspace/` history 基址。 | 新模块在此登记；深链接由 FastAPI 回落到同一外壳。 |
-| `frontend/src/api/client.ts` | 同源 `/api/v1` 请求封装：超时、JSON、`detail/message` 错误映射为 `ApiError`。 | 所有视图请求经此；与后端错误模型一致。 |
+| `frontend/src/api/client.ts` | 同源 `/api/v1` 请求封装：超时、JSON、`detail/message` 错误映射为 `ApiError`，结构化错误带 `code`；`acceptPartial` 让带逐项结果的 `ok:false`（子目录补建部分失败）返回给调用方。 | 所有视图请求经此；与后端错误模型一致。 |
 | `frontend/src/api/types.ts` | 已消费 API 字段的类型子集。 | 后端字段变化时同步。 |
 | `frontend/src/stores/system.ts` | health/settings 只读快照；刷新失败保留上次结果并给出错误。 | Pinia 全局状态。 |
 | `frontend/src/views/OverviewView.vue` | 概览：版本、平台、后台状态与当前目录。 | 只读。 |
 | `frontend/src/views/DirectoryView.vue` | 目录：活动目录与目标档案（侧栏接入点）。 | 只读；单活动监控目录边界不变。 |
+| `frontend/src/stores/companies.ts` | 公司清单状态（WS-07）：读取、新建、修改、移除都带清单 revision，`COMPANY_REVISION_CONFLICT` 时重新读取再提示重试；子目录补建预览与按 `plan_hash` 确认。 | 消费 `/api/v1/companies*`。 |
+| `frontend/src/format.ts` | 纳税人类型、子目录状态与是否最新的中文标签；金额在十进制字符串上分组千分位，不经过浮点。 | 公司模块各组件共用。 |
+| `frontend/src/views/CompaniesView.vue` | “公司”模块：左栏公司清单（监控中、缺几个子目录、当前纳税人身份），右栏详情的目录 / 发票账簿 / 设置三个标签；`v-show` 保留各标签状态，账簿首次打开才加载。 | 路由 `/workspace/companies`。 |
+| `frontend/src/components/CompanyCreateForm.vue` | 新建公司表单：名称、资料夹路径、可选纳税人身份（不填即未设置）。 | `stores/companies.ts::create`。 |
+| `frontend/src/components/CompanyDirectories.vue` | 子目录表（状态、上次汇总、是否最新）、补建预览与确认、设为监控目录（确认后调用 `PUT /api/v1/settings`）、按目录的只读发票列表与分页。 | `/api/v1/companies/{id}/directories*`、`/subdirs/*`。 |
+| `frontend/src/components/CompanyLedger.vue` | 公司发票账簿：粒度与期间筛选、票面口径说明、守恒校验（成立时收起、任一不成立时展开并标红）、提示、分期表与合计、未计入的发票。 | `/api/v1/companies/{id}/ledger`。 |
+| `frontend/src/components/CompanySettings.vue` | 公司名称与纳税人身份生效期编辑、从清单移除（说明不删除任何文件）；只在切换公司时重置草稿；显示成本汇总表是否已按新身份重写。 | `stores/companies.ts::update/remove`。 |
 | `frontend/src/styles.css` | 外框基础样式与窄屏布局。 | 仅作用于 `/workspace`。 |
 | `frontend/tests/client.spec.ts` | 请求封装的成功、错误、`ok:false`、请求体与超时测试。 | Vitest + happy-dom。 |
+| `frontend/tests/companies.spec.ts` | 公司模块：默认打开监控中的公司、新建带 revision 且不假定纳税人身份、版本冲突后重新读取、补建必须先预览并发送 `plan_hash`、预览过期要求重新预览、守恒校验失败标红且展开、非监控目录只读、金额分组。 | Vitest + Vue Test Utils，桩接 `fetch`。 |
 | `frontend/tests/app.spec.ts` | 外框渲染、KeepAlive 保留实例、刷新失败保留快照测试。 | Vitest + Vue Test Utils。 |
 | `web/static/app/index.html` | 提交的构建外壳，引用带 `?v=` 的资源。 | 由 `/workspace/*` 以 no-store 返回；不手改。 |
 | `web/static/app/assets/app.js` | 提交的 Vue 应用 bundle（含 Vue/Pinia/Vue Router）。 | `?v=` 存在时按 immutable 缓存；CI 校验与源码构建逐字节一致。 |

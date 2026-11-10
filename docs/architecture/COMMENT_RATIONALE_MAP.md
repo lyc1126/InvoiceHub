@@ -1,5 +1,12 @@
 # InvoiceHub 注释与设计原因地图
 
+## 2026-11-10 工作区“公司”模块（WS-02 / WS-07 界面）
+
+- `frontend/src/api/client.ts::acceptPartial`：子目录补建部分失败时后端返回 `ok:false` 但带逐项 `created/skipped/failed`；默认把 `ok:false` 当错误会丢掉这些结果，用户就不知道哪些文件夹已经建好。守护：`companies.spec.ts` 补建用例。
+- `stores/companies.ts::write`：版本冲突时先重新读取清单再抛出提示，不自动重放写入，避免覆盖另一个页面刚做的修改。守护：`reloads the list after a revision conflict instead of overwriting`。
+- `CompanySettings.vue` 只在 `company.id` 变化时重置：切换监控目录、补建子目录都会刷新清单，若按对象变化重置，会冲掉用户正在编辑的纳税人身份。
+- `CompanyLedger.vue` 的 `<details :open="!checks_ok">`：校验全部成立时收起以免占屏，任一不成立必须展开标红，不能让失败藏在折叠里。守护：`shows failing conservation checks in red`。
+
 ## 2026-11-10 公司发票账簿（WS-07 第 3 步发票部分）
 
 - `company_ledger.py::_family_amounts`：三项金额必须同时识别并守恒才计入，否则整张列入 `excluded`。按字段分别累计（首页勾选合计的做法）会让三列合计来自不同的票集合，账簿里“不含税 + 税额 = 价税合计”就不再成立。守护：`test_formats_of_one_invoice_count_once_and_broken_ones_are_listed_not_counted`。
