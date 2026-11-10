@@ -2,6 +2,16 @@
 
 ## 未发布
 
+### 2026-11-10 AppState 拆出业务资料夹服务（ENG-03 第四步）
+
+- 需求：用户要求继续 ENG-03，拆业务资料夹。做账已依赖它推断公司目录，多公司工作区（WS-02/WS-07）也会直接复用。
+- 起点：本地开发线 `codex/cost-select-all-transitions` 的 `eebae53`；在独立 worktree 的 `codex/appstate-dossier-service` 施工，主工作区未改动。
+- 方案：公司目录推断、有界扫描、快捷入口与受限打开的 9 个方法，连同只在这里用的 4 个扫描常量（目录名、子目录提示、目录项上限、时间上限），原样迁到新的 `services/dossier.py::BusinessDossierService`；AppState 保留 `business_dossier`/`open_business_dossier` 转发。唯一有意的改名：`_business_dossier_root` 在服务里改为公开的 `business_dossier_root`，做账的公司目录回调改为直接调用它，不再经 AppState 私有方法。统计“发票源”文件的后缀集合改为引用 `extraction/parsers.py::SUPPORTED_EXTS`（与 AppState 原常量同为 `.pdf/.ofd/.xml`），避免反向导入 `app_state`。资料夹代码本来不取 AppState 锁，迁移后仍不取。
+- 测试迁移：`test_business_dossier_scan_is_bounded_and_marks_partial_counts` 与 iterator-OSError 用例的打桩目标从 `services.app_state` 改为 `services.dossier`（扫描上限常量、`os.scandir`），断言不变。
+- 结果：`app_state.py` 3815 → 3515 行，方法 211 → 204；新文件 `dossier.py` 362 行。
+- 验证：搬移前后逐方法对比，只有上述改名一处；OpenAPI 与路由表 JSON 逐字节一致；ruff 通过；新增 `test_business_dossier_follows_watch_dir_switch`（切换 watch_dir 后资料夹、快捷入口与打开范围都指向新公司，旧公司路径拒绝打开）。变异核对：资料夹服务改为构造时快照后，这条新测试和既有的做账目录跟随测试同时失败。全量 pytest 770 通过、16 跳过，基线 769 通过（差额即新测试）。文档同步了架构地图、设计原因、任务导航与两份税务设计稿里的符号引用；`rules/BOOKKEEPING.md` 的代码定位行因与主工作区未提交修改相邻，本轮未改。
+- 未覆盖：未在真实 localhost 首页点击资料夹入口；未重建打包产物。
+
 ### 2026-11-10 AppState 拆出成本编排服务（ENG-03 第三步）
 
 - 需求：用户同意继续 ENG-03，上一轮建议的下一块是成本。开工后实测发现成本在 AppState 里只剩 5 个方法、约 110 行（算法早已在 `projections/` 里），比上一轮描述的小。已向用户说明这一点，并改为建议下一步拆业务资料夹；成本按约定先做完。

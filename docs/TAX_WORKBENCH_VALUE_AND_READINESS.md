@@ -37,7 +37,7 @@
 | 计算引擎 | 不存在。`src/invoice_hub/tax/` 只剩 `__pycache__`（`engine`/`calculators`/`registry`/`effective_dates`/`errors` 的字节码）与空的 `rules/` |
 | 原型 | `docs/design/tax-calculator-prototype.html` 共 297 行，只有 12 处 `Math.`，**没有 `parseFloat`/`toFixed`/`Number()`**：它不进行任何金额运算，只播放预设案例 |
 | 设计规格 | 完备：交互、算法、政策治理、申报衔接均有可执行规格 |
-| 可复用现成代码 | `AppState._business_dossier_root` / `_scan_business_dossier` 真实存在，但属于做账资料夹导航，不是计算器 |
+| 可复用现成代码 | `services/dossier.py::BusinessDossierService.business_dossier_root` / `_scan_business_dossier` 真实存在，但属于做账资料夹导航，不是计算器 |
 
 结论：**作为会计能用的工具，完成度为零；作为可开工的规格，完成度很高。** “可点击原型”容易让人误判距离，实际差的是全部实现。
 

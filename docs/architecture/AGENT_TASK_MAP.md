@@ -45,7 +45,7 @@
 | 导航项 | 内容 |
 |---|---|
 | 状态 | 当前仅设计与合成原型，旧 MVP 不在 main；不把本文拟议路径误认成现有实现 |
-| 首先阅读 | [工作台设计](../TAX_WORKBENCH_DESIGN.md)、[税务算法与政策](../TAX_ALGORITHMS_AND_POLICY.md)、[政策来源与核验](../TAX_POLICY_SOURCES_AND_REVIEW.md)、[价值评估与就绪度](../TAX_WORKBENCH_VALUE_AND_READINESS.md)，再核对 `AppState._business_dossier_root/_scan_business_dossier` 与 W8/W9 现有边界 |
+| 首先阅读 | [工作台设计](../TAX_WORKBENCH_DESIGN.md)、[税务算法与政策](../TAX_ALGORITHMS_AND_POLICY.md)、[政策来源与核验](../TAX_POLICY_SOURCES_AND_REVIEW.md)、[价值评估与就绪度](../TAX_WORKBENCH_VALUE_AND_READINESS.md)，再核对 `services/dossier.py::BusinessDossierService.business_dossier_root/_scan_business_dossier` 与 W8/W9 现有边界 |
 | 修改入口 | D0 审查迁入旧计算器；D1 独立 router/模型/引擎/弹窗；D2 独立公司绑定、税费种认定录入、只读适配；D3 月季税额、申报表映射、征期提醒与留存备查；D4 后台任务；D5 规则包治理与政策中心 |
 | 必须联动 | 来源、规则与解释共源；当前 `watch_dir` 隔离；前后端、静态版本、build/package data 与握手能力清单；公司原生选择需联动 `platform/windows.py::pick_directory`、Python/Rust Host RPC 枚举及 `select_path`、tax picker route、平台架构 |
 | 最低验收 | 设计文档链接/结构、原型语法；正式实现按 D0—D5：数学/政策边界、API、资料身份、快照、取消、真实桌面/窄屏/皮肤/恢复入口及适用包数据；D2 覆盖双平台 desktop/browser 原生单目录选择、取消/失败/超时、重复点击、迟到返回与待保存隔离；D3 起覆盖跨期例与政策变更例、表式改版后映射 stale、征期未核验不显示推算日期、留存清单来自实际引用 |
@@ -293,7 +293,7 @@ OFD 专用入口为 `services/ofd_rendering.py`、`tools/ofd-preview/` 与 `scri
 | 导航项 | 内容 |
 |---|---|
 | 首先阅读 | 接口流程第 3.5 节；数据算法第 3.2、4.5 节；[做账](rules/BOOKKEEPING.md) |
-| 首要入口 | `AppState.business_dossier/_scan_business_dossier`；做账用例 `services/bookkeeping.py::BookkeepingService`（AppState 同名转发）；`bookkeeping/repository.py`、`validator.py`、`vouchers.py`、`decisions.py`、`catalogs.py`、`mapping.py`、`batches.py`；首页资料夹容错在 `page-index.js`，做账页在 `page-bookkeeping.js` |
+| 首要入口 | 业务资料夹 `services/dossier.py::BusinessDossierService.business_dossier/_scan_business_dossier`（AppState 转发）；做账用例 `services/bookkeeping.py::BookkeepingService`（AppState 同名转发）；`bookkeeping/repository.py`、`validator.py`、`vouchers.py`、`decisions.py`、`catalogs.py`、`mapping.py`、`batches.py`；首页资料夹容错在 `page-index.js`，做账页在 `page-bookkeeping.js` |
 | 必须联动 | 公司资料夹受控路径、profile/catalog/mapping/store 绑定、proposal revision、统一 validator、batch manifest/XLSX、API/页面 blockers、runner facts |
 | 产物与消费者 | 公司资料夹 `凭证/` 下 JSON、批次、日志；`/api/v1/business-dossier*`、`/api/v1/bookkeeping/*` 和做账页 |
 | 最低自动化 | 资料夹变化至少运行 `tests/test_api_contract.py` 的资料夹/线程池/有界扫描用例与 `tests/test_frontend_contract.py` 的资料夹刷新容错契约；做账变化运行全部 `tests/test_bookkeeping_*.py`、`test_api_bookkeeping.py`、`test_runner_dryrun.py` |

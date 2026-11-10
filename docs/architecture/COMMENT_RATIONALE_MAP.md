@@ -142,9 +142,9 @@ Windows验包测试中的假凭据在运行时拼接：保持生成文件的扫�
 | `AppState.server_shutdown_requested` 与 `api/app.py::event_stream` | WKWebView 的 EventSource 可在 shutdown 响应写回后继续持有 SSE；若 generator 不主动结束，Uvicorn graceful shutdown 会一直等待浏览器连接 | 仅在结构化 shutdown 已被成功接受后关闭 SSE；失败会重置 shutdown 标记，普通 EventSource、事件游标与 heartbeat 语义不变 | shutdown 后 SSE EOF API contract、public-preview smoke contract |
 | `tauri_public_preview.py::build` 与 `verify_tauri_public_preview.py::_verify_receipt_verification` | 首次验包需要读取尚未写入 verifier 输出的 receipt；若把这一中间态当作公开验收成功，损坏或未完成的 receipt 可被误作发布证据 | pending record 仅可由组包器首轮显式接受；随后写入 exact verifier JSON 并绑定实际 DMG SHA-256，默认 verifier 必须再次通过，字段扩展、篡改或不完整一律拒绝 | macOS public-preview receipt finalizer、builder stdout/stderr/timeout contracts |
 | `finalize_server_shutdown` | 正式启动器 PID 可能不是 Uvicorn `os.getpid()`，且关闭期间可能启动新实例 | 仅当 PID 文件内容仍等于请求快照时删除 | shutdown finalize 测试 |
-| `AppState._scan_business_dossier/business_dossier/open_business_dossier` | 公司资料夹是导航边界，不是新的扫描根；完整递归和每链接重复扫描会拖住页面，即使前端超时服务端仍会继续工作 | 单次 `os.scandir` 有目录项/时间上限、跳过符号链接；迭代途中 `OSError` 保留已累计项并以 `unreadable_entries` 标为下界；只打开业务资料夹或当前 watch_dir 内路径，open 同步路径经线程池 | business dossier API/有界扫描/iterator-OSError/线程池与首页刷新容错测试 |
+| `BusinessDossierService._scan_business_dossier/business_dossier/open_business_dossier`（`services/dossier.py`，AppState 转发） | 公司资料夹是导航边界，不是新的扫描根；完整递归和每链接重复扫描会拖住页面，即使前端超时服务端仍会继续工作 | 单次 `os.scandir` 有目录项/时间上限、跳过符号链接；迭代途中 `OSError` 保留已累计项并以 `unreadable_entries` 标为下界；只打开业务资料夹或当前 watch_dir 内路径，open 同步路径经线程池 | business dossier API/有界扫描/iterator-OSError/线程池与首页刷新容错测试 |
 | `AppState.bookkeeping_*` 与 bookkeeping repository | 做账状态写入跨进程且必须绑定当前资源 revision | 只经严格仓储/写锁/CAS；坏 schema 保留原文件并 fail closed | 全部 bookkeeping 状态/API 测试 |
-| `AppState.__init__` 构造 `BookkeepingService` / `DocumentService` / `CostService` 的回调参数 | 切换 watch_dir 会替换 AppState 的 TargetProfile 与 config；服务若在构造时捕获对象，后续做账会落到旧公司资料夹。服务若自建锁，做账写入就不再与目录切换和其它 AppState 写入串行 | 活动目标、config、公司资料夹与成本明细路径一律经回调实时读取；传入的是 AppState 同一把 RLock；单据另经回调读取出库目录与首页勾选校验，切换出库目录后预览/导出不得落到旧目录 | `test_bookkeeping_service_follows_watch_dir_switch`、`test_bookkeeping_writes_wait_for_the_app_state_lock`、`test_document_service_follows_watch_dir_and_outbound_switch`、`test_document_export_waits_for_the_app_state_lock`、`test_cost_service_follows_watch_dir_switch`、`test_cost_view_waits_for_the_app_state_lock` |
+| `AppState.__init__` 构造 `BookkeepingService` / `DocumentService` / `CostService` / `BusinessDossierService` 的回调参数 | 切换 watch_dir 会替换 AppState 的 TargetProfile 与 config；服务若在构造时捕获对象，后续做账会落到旧公司资料夹。服务若自建锁，做账写入就不再与目录切换和其它 AppState 写入串行 | 活动目标、config、公司资料夹与成本明细路径一律经回调实时读取；传入的是 AppState 同一把 RLock；单据另经回调读取出库目录与首页勾选校验，切换出库目录后预览/导出不得落到旧目录 | `test_bookkeeping_service_follows_watch_dir_switch`、`test_bookkeeping_writes_wait_for_the_app_state_lock`、`test_document_service_follows_watch_dir_and_outbound_switch`、`test_document_export_waits_for_the_app_state_lock`、`test_cost_service_follows_watch_dir_switch`、`test_cost_view_waits_for_the_app_state_lock`、`test_business_dossier_follows_watch_dir_switch`（资料夹不取锁，只守护目录跟随；做账经它取公司目录，做账那条测试同时覆盖） |
 
 ## 5. P0：票头、金额与同票纠偏
 
@@ -338,7 +338,7 @@ Windows验包测试中的假凭据在运行时拼接：保持生成文件的扫�
 
 这些注释适合在未来拆分模块时增加短区块标题，不应单独制造批量 diff：
 
-- `services/app_state.py`：配置与诊断、出库目录设置、普通汇总/重命名、列表/一致性/选择合计、monitor/关闭、成本/皮肤、OCR/平台等用例区；做账用例在 `services/bookkeeping.py`，单据用例在 `services/documents.py`，成本用例在 `services/costs.py`。
+- `services/app_state.py`：配置与诊断、出库目录设置、普通汇总/重命名、列表/一致性/选择合计、monitor/关闭、成本/皮肤、OCR/平台等用例区；做账用例在 `services/bookkeeping.py`，单据用例在 `services/documents.py`，成本用例在 `services/costs.py`，业务资料夹在 `services/dossier.py`。
 - `projections/cost_analysis.py`：格式清洗、均价/详情拆分、加价/快照、PDF 坐标、XML/OFD 明细、状态兼容、分组/工作簿七个算法区。
 - `web/static/js/page-settings.js`：只在真实拆分模块时为目录、运行、皮肤、偏好、关闭、诊断区保留导航标题。
 - Windows 启动器：预检、判重、进程启动、就绪探测、状态写入、浏览器派发的阶段标题。

@@ -1064,10 +1064,40 @@ def test_business_dossier_infers_company_folder_and_opens_known_links(tmp_path: 
     assert "当前业务资料夹" in blocked["message"]
 
 
+def test_business_dossier_follows_watch_dir_switch(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr("invoice_hub.services.app_state.AppState.run_background_diagnostics", lambda self, trigger="startup_sync": None)
+    monkeypatch.setenv("INVOICE_HUB_DISABLE_OPEN", "1")
+    first_cost = tmp_path / "公司甲" / "成本发票"
+    second_cost = tmp_path / "公司乙" / "成本发票"
+    second_bank = tmp_path / "公司乙" / "银行流水"
+    for folder in (first_cost, second_cost, second_bank):
+        folder.mkdir(parents=True)
+    config_path = tmp_path / "config" / "app.local.json"
+    config_path.parent.mkdir()
+    config_path.write_text(
+        json.dumps({"host": "127.0.0.1", "port": 8766, "watch_dir": str(first_cost), "runtime_dir": "./runtime"}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    client = TestClient(create_app(tmp_path))
+    state = client.app.state.invoice_hub
+    assert client.get("/api/v1/business-dossier").json()["business_dir"] == str(tmp_path / "公司甲")
+
+    state.update_settings({"watch_dir": str(second_cost)})
+    dossier = client.get("/api/v1/business-dossier").json()
+
+    assert dossier["business_dir"] == str(tmp_path / "公司乙")
+    assert dossier["target_id"] == state.active_profile.id
+    assert {link["key"] for link in dossier["links"]} >= {"business_dir", "watch_dir", "bank_flow_dir"}
+    opened = client.post("/api/v1/business-dossier/open", json={"key": "bank_flow_dir"}).json()
+    assert opened["ok"] is True and opened["path"] == str(second_bank.resolve())
+    stale = client.post("/api/v1/business-dossier/open", json={"path": str(first_cost)}).json()
+    assert stale["ok"] is False
+
+
 def test_business_dossier_scan_is_bounded_and_marks_partial_counts(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr("invoice_hub.services.app_state.AppState.run_background_diagnostics", lambda self, trigger="startup_sync": None)
-    monkeypatch.setattr("invoice_hub.services.app_state.BUSINESS_DOSSIER_SCAN_MAX_ENTRIES", 3)
-    monkeypatch.setattr("invoice_hub.services.app_state.BUSINESS_DOSSIER_SCAN_MAX_SECONDS", 30.0)
+    monkeypatch.setattr("invoice_hub.services.dossier.BUSINESS_DOSSIER_SCAN_MAX_ENTRIES", 3)
+    monkeypatch.setattr("invoice_hub.services.dossier.BUSINESS_DOSSIER_SCAN_MAX_SECONDS", 30.0)
     company = tmp_path / "大型公司资料夹"
     cost = company / "成本发票"
     cost.mkdir(parents=True)
@@ -1162,7 +1192,7 @@ def test_business_dossier_iterator_oserror_returns_partial_lower_bound(tmp_path:
             return InterruptedScandir(entries)
         return entries
 
-    monkeypatch.setattr("invoice_hub.services.app_state.os.scandir", scandir_with_interrupted_root)
+    monkeypatch.setattr("invoice_hub.services.dossier.os.scandir", scandir_with_interrupted_root)
 
     response = TestClient(create_app(tmp_path)).get("/api/v1/business-dossier")
 
