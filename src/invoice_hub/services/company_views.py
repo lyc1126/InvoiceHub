@@ -28,6 +28,7 @@ from invoice_hub.extraction.parsers import SUPPORTED_EXTS
 from invoice_hub.monitoring.state import PROCESSED_FILE_NAME, canonical_path as monitor_path_key
 from invoice_hub.projections.cost_analysis import COST_DETAIL_CSV_NAME
 from invoice_hub.projections.costs import CostProjectionService
+from invoice_hub.services.company_ledger import build_invoice_ledger
 from invoice_hub.services.company_registry import CompanyRegistryError, CompanyRegistryService
 from invoice_hub.services.invoice_list import InvoiceListService
 from invoice_hub.storage import SQLiteRepository
@@ -210,29 +211,7 @@ class CompanyViewService:
         filters = dict(filters or {})
         page = filters.pop("page", None)
         page_size = max(1, min(200, int(filters.pop("page_size", None) or 100)))
-        if profile.id == self.active_profile.id:
-            # The active folder keeps every homepage action; hand over to the live service.
-            payload = self._active_invoices().list_invoices(filters)
-            read_only = False
-        else:
-            reader = InvoiceListService(
-                # Private lock: this reader shares no cache or file with the active services.
-                lock=threading.RLock(),
-                repo=self.repo,
-                db_path=self._db_path,
-                active_profile=lambda: profile,
-                cost_service=lambda: CostProjectionService(
-                    Path(profile.watch_dir), Path(profile.workspace_dir), profile.id,
-                    reference_markup_rate=self.config.reference_markup_rate,
-                    company_taxpayer=lambda: company_taxpayer_for(self.config, Path(profile.watch_dir)),
-                ),
-            )
-            payload = reader.list_invoices(filters)
-            read_only = True
-            for item in payload["items"]:
-                item["detail_url"] = ""
-                item["read_only"] = True
-            payload["snapshot"]["source_label"] = "上次汇总（非监控目录，只读）"
+        payload, read_only = self._list_payload(profile, filters)
         items = payload["items"]
         count = len(items)
         if page is not None:
@@ -246,3 +225,54 @@ class CompanyViewService:
             read_only=read_only,
         )
         return payload
+
+    def _list_payload(self, profile: TargetProfile, filters: dict) -> tuple[dict, bool]:
+        """Homepage-shaped rows of one folder's projection and whether they are read-only."""
+        if profile.id == self.active_profile.id:
+            # The active folder keeps every homepage action; hand over to the live service.
+            return self._active_invoices().list_invoices(filters), False
+        reader = InvoiceListService(
+            # Private lock: this reader shares no cache or file with the active services.
+            lock=threading.RLock(),
+            repo=self.repo,
+            db_path=self._db_path,
+            active_profile=lambda: profile,
+            cost_service=lambda: CostProjectionService(
+                Path(profile.watch_dir), Path(profile.workspace_dir), profile.id,
+                reference_markup_rate=self.config.reference_markup_rate,
+                company_taxpayer=lambda: company_taxpayer_for(self.config, Path(profile.watch_dir)),
+            ),
+        )
+        payload = reader.list_invoices(filters)
+        for item in payload["items"]:
+            item["detail_url"] = ""
+            item["read_only"] = True
+        payload["snapshot"]["source_label"] = "上次汇总（非监控目录，只读）"
+        return payload, True
+
+    def company_ledger(
+        self, company_id: str, *, granularity: str = "month", start: str = "", end: str = "", check_freshness: bool = True
+    ) -> dict:
+        """进项 (成本发票) and 销项 (开具发票) of one company from their last projections."""
+        payload = self._registry.get_company(company_id)
+        company = payload["company"]
+        active_id = self.active_profile.id
+        sources = {}
+        rows = {}
+        for direction, key in (("input", "cost_invoice_dir"), ("output", "issued_invoice_dir")):
+            subdir, profile = self._directory(company, key)
+            sources[direction] = self._directory_view(subdir, profile, active_id, check_freshness=check_freshness)
+            rows[direction] = self._list_payload(profile, {})[0]["items"] if subdir["status"] == "present" else []
+        try:
+            ledger = build_invoice_ledger(
+                rows["input"], rows["output"], granularity=granularity, start=start, end=end,
+                taxpayer_periods=company["taxpayer_periods"],
+            )
+        except ValueError as exc:
+            raise CompanyRegistryError("COMPANY_LEDGER_INVALID", str(exc), status_code=422) from exc
+        for direction, label in (("input", "进项（成本发票）"), ("output", "销项（开具发票）")):
+            state = sources[direction]["freshness"]["state"]
+            if state in {"stale", "never_built", "unknown", "missing_dir"}:
+                ledger["warnings"].insert(0, {"code": f"source_{state}", "direction": direction,
+                                              "message": f"{label}：{sources[direction]['freshness']['message']}"})
+        return {"ok": True, "revision": payload["revision"], "company": company, "sources": sources, **ledger}

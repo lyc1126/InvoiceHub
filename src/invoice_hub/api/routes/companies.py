@@ -1,4 +1,4 @@
-"""Company registry (WS-07 step 1) and per-company read-only directory views (step 2).
+"""Company registry (WS-07 step 1), read-only directory views (step 2) and the invoice ledger (step 3).
 
 Handlers resolve AppState per request via _state(request) and call ``state.companies`` or
 ``state.company_views``. Nothing here switches watch_dir or the monitor; registry writes carry
@@ -101,5 +101,18 @@ def router() -> APIRouter:
         # Same filters as GET /api/v1/invoices so the workspace can reuse the homepage list.
         filters = {**dict(request.query_params), "search_scope": search_scope}
         return await _call(lambda: _state(request).company_views.directory_invoices(company_id, key, filters))
+
+    @routes.get("/api/v1/companies/{company_id}/ledger")
+    async def company_ledger(
+        request: Request,
+        company_id: str,
+        granularity: Literal["month", "quarter", "year"] = "month",
+        start: str = Query("", pattern=r"^(|\d{4}-(0[1-9]|1[0-2]))$"),
+        end: str = Query("", pattern=r"^(|\d{4}-(0[1-9]|1[0-2]))$"),
+        check_freshness: bool = Query(True),
+    ):
+        return await _call(lambda: _state(request).company_views.company_ledger(
+            company_id, granularity=granularity, start=start, end=end, check_freshness=check_freshness,
+        ))
 
     return routes

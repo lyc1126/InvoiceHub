@@ -310,10 +310,10 @@ OFD 专用入口为 `services/ofd_rendering.py`、`tools/ofd-preview/` 与 `scri
 | 导航项 | 内容 |
 |---|---|
 | 首先阅读 | 接口流程第 3.5.1 节；数据算法第 4.6、9.3 节 |
-| 首要入口 | `services/company_registry.py::CompanyRegistryService`（`_load/_save/_check_revision`、`_clean_root/_clean_subdirs`、`_plan/create_subdirs`、`_after_write`）、`detect_subdirs`；`services/company_views.py::CompanyViewService`、`directory_freshness`；`targets/companies.py::company_taxpayer_for/taxpayer_type_for`；路由 `api/routes/companies.py`；AppState 只负责构造 `state.companies`、`state.company_views` |
+| 首要入口 | `services/company_registry.py::CompanyRegistryService`（`_load/_save/_check_revision`、`_clean_root/_clean_subdirs`、`_plan/create_subdirs`、`_after_write`）、`detect_subdirs`；`services/company_views.py::CompanyViewService`、`directory_freshness`、`company_ledger`；`services/company_ledger.py::build_invoice_ledger`；`targets/companies.py::company_taxpayer_for/taxpayer_type_for`；路由 `api/routes/companies.py`；AppState 只负责构造 `state.companies`、`state.company_views` |
 | 必须联动 | 子目录提示词与 `services/dossier.py::BUSINESS_DOSSIER_DIR_HINTS` 共用；路径保存规则 `targets/paths.py::serialize_config_path`；接线测试 `SERVICES`；纳税人类型经 `company_taxpayer` 进入全部成本计价入口（见第 5 节）；只读列表行结构跟随 `InvoiceListService` |
 | 产物与消费者 | `runtime/local_state/companies.json`；`/api/v1/companies*`；后续 WS-07 按公司只读视图与 `/workspace` 侧栏 |
-| 最低自动化 | `tests/test_api_companies.py`、`tests/test_company_views.py`、`tests/test_appstate_service_wiring.py`、`tests/test_development_documentation.py`；纳税人类型相关再跑 `tests/test_summary_and_costs.py` |
+| 最低自动化 | `tests/test_api_companies.py`、`tests/test_company_views.py`、`tests/test_company_ledger.py`、`tests/test_appstate_service_wiring.py`、`tests/test_development_documentation.py`；纳税人类型相关再跑 `tests/test_summary_and_costs.py` |
 | 真实验收 | 包外中文/空格路径、网络盘、Windows 盘符与大小写不敏感卷上的重复/嵌套判断；原生目录选择器接入后另测 |
 | 高风险提醒 | 清单不是第二个 watch_dir：不得启动第二个监控、不得对非活动公司后台扫描或写投影；损坏文件不能当空清单覆盖；补建只能新建空目录，删除公司只删条目 |
 

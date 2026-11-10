@@ -1,5 +1,12 @@
 # InvoiceHub 注释与设计原因地图
 
+## 2026-11-10 公司发票账簿（WS-07 第 3 步发票部分）
+
+- `company_ledger.py::_family_amounts`：三项金额必须同时识别并守恒才计入，否则整张列入 `excluded`。按字段分别累计（首页勾选合计的做法）会让三列合计来自不同的票集合，账簿里“不含税 + 税额 = 价税合计”就不再成立。守护：`test_formats_of_one_invoice_count_once_and_broken_ones_are_listed_not_counted`。
+- `_ZERO_TAX_RATE`：免税判断只认整串为 0 或 0%，不能用子串，否则“10%”会被当成零税率，把缺失的税额补成 0。守护：同上用例中的 10% 行。
+- `build_invoice_ledger` 先判期间范围再判金额：范围外的票不应出现在“不计入”清单里；日期未识别的票在有范围时不进合计，因为无法证明它属于该期间。守护：`test_periods_ranges_and_undated_invoices`。
+- 不按公司名称剔除发票：登记名称与票面全称常不一致，自动剔除会静默丢票；改为提示购买方/销售方不一致。守护：`test_party_and_cross_listing_warnings`。
+
 ## 2026-11-10 按公司只读目录与纳税人类型（WS-07 第 2 步）
 
 - `targets/companies.py`：查找放在 `targets/` 而不是 `services/`，因为 monitor daemon 与 spawn 子进程不经过 AppState，`monitoring/` 也不能依赖 `services/`；坏清单读作“无公司”，成本页与同步照常工作，损坏由清单 API 报告。守护：`test_company_taxpayer_lookup_follows_folder_and_month`。

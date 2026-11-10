@@ -230,6 +230,26 @@ Lifecycle lease 是 host 运行态授权快照，不是可持久化业务状态�
 - 是否过期：读 `state/processed_files.json`（坏文件不修复、不备份，直接判 `unknown`），再以 `os.scandir` 不跟随目录链接、递归列出 PDF/OFD/XML（跳过 `~$`，与 `supported_invoice_files` 同口径），按 `mtime_ns + size` 比对，路径键与 monitor 一致。新增或改动任一 → `stale`；列表完整且无差异 → `fresh`；超过 20,000 个目录项或 2 秒即停止，此时删除数不计、无差异也只能判 `unknown`；没有汇总 CSV → `never_built`。活动目录直接报 `monitored`，不比对。
 - 发票列表：非活动目录用绑定该 profile 的临时 `InvoiceListService` 调用只读的 `list_invoices`（不带 `page`，避免读取渐进缓存），再在外层分页；活动目录交给 `state.invoices`。
 
+公司发票账簿（WS-07 第 3 步的发票部分，`services/company_ledger.py::build_invoice_ledger`）：
+
+```text
+输入   进项 = 成本发票目录上次投影的首页行（已套用手改字段）；销项 = 开具发票目录同上
+家族   selection_family_key：发票号 → 文件名 20 位号码 → 源文件路径（与首页勾选合计同一规则）
+期间   先按开票日期取月份；有 start/end 时，范围外的家族只计入 out_of_range，不计入、不列为“不计入”
+金额   每个家族取 价税合计、不含税、税额 的唯一合法值（selection_money_value）
+       任一字段在格式间有两个不同值 → amount_conflict
+       税额缺失且税率为 免税/不征税/免征/0% 且 不含税 = 价税合计 → 税额 = 0
+       仍有缺失 → amount_unrecognized；|不含税 + 税额 − 价税合计| > 0.01 → amount_inconsistent
+       以上三类列入 excluded，不计入任何合计
+日期   各格式月份不一致或无法识别 → undated；无范围时计入合计，有范围时只单独报告
+合计   Decimal 累加，输出时 ROUND_HALF_UP 到分；红字票为负数，直接冲减
+差额   face_difference = 销项 − 进项（不含税、税额分别计）；票面口径，不是利润或应纳税额
+校验   对每个方向和字段：各期之和（无范围时加 undated）= 合计；
+       已识别金额张数 + excluded + out_of_range = 家族数。全部在后端计算并随结果返回
+提示   进项购买方 / 销项销售方超过一个名称（NFKC、去空白、大小写折叠后比较）、两者无交集、
+       同一发票号同时出现在进项与销项、格式间日期不一致；来源目录过期/未汇总/不可用
+```
+
 ## 5. SQLite schema 与真实使用情况
 
 连接启用 WAL 和 foreign keys，并把 `row_factory` 设为 `sqlite3.Row`。
