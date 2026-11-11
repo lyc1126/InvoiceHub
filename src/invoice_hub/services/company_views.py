@@ -32,6 +32,7 @@ from invoice_hub.projections.costs import CostProjectionService
 from invoice_hub.services.company_bank import BankFlowReader, build_bank_ledger
 from invoice_hub.services.company_deduction import DeductionListReader, build_deduction_check
 from invoice_hub.services.company_inventory import build_inventory_check
+from invoice_hub.services.company_settlement import build_settlement_check
 from invoice_hub.services.company_ledger import build_invoice_ledger
 from invoice_hub.services.company_registry import CompanyRegistryError, CompanyRegistryService
 from invoice_hub.services.invoice_list import InvoiceListService
@@ -43,6 +44,8 @@ from invoice_hub.targets.companies import company_taxpayer_for
 COMPARE_RELATIONS = {
     frozenset(("cost_invoice_dir", "input_deduction_dir")): "deduction",
     frozenset(("cost_invoice_dir", "issued_invoice_dir")): "inventory",
+    frozenset(("cost_invoice_dir", "bank_flow_dir")): "settlement_payable",
+    frozenset(("issued_invoice_dir", "bank_flow_dir")): "settlement_receivable",
 }
 _MONTH_TEXT = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
 FRESHNESS_MAX_ENTRIES = 20_000
@@ -309,6 +312,8 @@ class CompanyViewService:
         company = payload["company"]
         base = {"ok": True, "revision": payload["revision"], "company": company, "a": a, "b": b,
                 "start": start, "end": end, "relation": relation}
+        if relation.startswith("settlement_"):
+            return self._compare_settlement(company, base, side=relation.removeprefix("settlement_"), start=start, end=end)
         handler = self._compare_deduction if relation == "deduction" else self._compare_inventory
         return handler(company, base, start=start, end=end)
 
@@ -360,6 +365,27 @@ class CompanyViewService:
                                  {"cost_invoice_dir": "成本发票", "issued_invoice_dir": "开具发票"})
         if not purchases["detail_rows"] and not sales["detail_rows"]:
             return {**base, "state": "no_details", "message": "两个目录都还没有成本明细（设为监控目录汇总一次后才有发票明细行）。", **result}
+        return {**base, "state": "ok", "message": "", **result}
+
+    def _compare_settlement(self, company: dict, base: dict, *, side: str, start: str, end: str) -> dict:
+        active_id = self.active_profile.id
+        key = "cost_invoice_dir" if side == "payable" else "issued_invoice_dir"
+        label = "成本发票" if side == "payable" else "开具发票"
+        invoice_subdir, invoice_view, invoice_profile = self._cost_source(company, key, active_id)
+        bank_subdir = next(item for item in company["subdirs"] if item["key"] == "bank_flow_dir")
+        sources = {key: invoice_view, "bank_flow_dir": {**bank_subdir}}
+        base = {**base, "relation": "settlement", "side": side, "sources": sources}
+        if invoice_subdir["status"] != "present" or bank_subdir["status"] != "present":
+            return {**base, "state": "missing_dir", "message": f"{label}或银行流水目录不存在。"}
+        read = self._bank_reader.read(Path(bank_subdir["path"]))
+        sources["bank_flow_dir"].update(file_count=read.file_count, cached=read.cached)
+        if read.data is None:
+            return {**base, "state": "unreadable", "message": read.error}
+        items = self._list_payload(invoice_profile, {})[0]["items"]
+        result = build_settlement_check(items, read.data, side=side, own_names={company["name"]}, start=start, end=end)
+        self._freshness_warnings(result, {key: invoice_view}, {key: label})
+        if not read.data.statements:
+            return {**base, "state": "no_statements", "message": "银行流水目录里没有可识别的对账单（目前支持中国银行 PDF）。", **result}
         return {**base, "state": "ok", "message": "", **result}
 
     def _cost_service(self, profile: TargetProfile) -> CostProjectionService:

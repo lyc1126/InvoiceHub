@@ -250,6 +250,36 @@ describe("companies module", () => {
     expect(wrapper.text()).toContain("期初库存按 0 起算");
   });
 
+  it("shows settlement balances and keeps unallocated payments apart from invoices", async () => {
+    const flow = { row_id: "S1-001", date: "2026-06-05", month: "2026-06", counterparty: "丙丁建材有限公司", details: "材料款", amount: "11300.00", file: "s.pdf", name_match: "exact" };
+    const settlement = {
+      ok: true, relation: "settlement", side: "payable", side_label: "应付", state: "ok", message: "",
+      basis_label: "往来口径（应付）：对不上的不猜。",
+      parties: [{ name: "丙丁建材有限公司", opening: "0.00", invoiced: "12430.00", settled: "12300.00", closing: "130.00", invoice_count: 2, flow_count: 2,
+        unpaid: [{ invoice_number: "2".repeat(20), invoice_date: "2026-06-20", total: "1130.00", source_files: [] }],
+        unallocated: [{ ...flow, row_id: "S1-002", date: "2026-07-05", amount: "1000.00", details: "部分货款" }] }],
+      matches: [{ kind: "one_to_one", basis: "金额一致", flow, invoices: [{ invoice_number: "1".repeat(20), invoice_date: "2026-06-03", total: "11300.00", source_files: [] }] }],
+      red_offsets: [], red_unmatched: [], ambiguous_flows: [], excluded_invoices: [],
+      non_invoice_flows: [{ ...flow, row_id: "S1-003", counterparty: "张小三", amount: "2000.00", reason: "no_party" }],
+      totals: { opening: "0.00", invoiced: "12430.00", settled: "12300.00", closing: "130.00" },
+      warnings: [], checks: [{ code: "flow_accounting", ok: true, message: "本期流水平衡" }], checks_ok: true,
+    };
+    stubBackend((url) => (url.includes("b=bank_flow_dir") ? [200, settlement] : undefined));
+    const wrapper = await mountCompanies();
+    await wrapper.get("#company-tab-compare").trigger("click");
+    await flushPromises();
+    await wrapper.get('select[aria-label="比较关系"]').setValue("payable");
+    await flushPromises();
+    expect(calls.some((call) => call.url.includes("a=cost_invoice_dir&b=bank_flow_dir"))).toBe(true);
+    const parties = wrapper.get('table[aria-label="往来单位"]');
+    expect(parties.text()).toContain("本期付款");
+    expect(parties.text()).toContain("130.00");
+    await parties.get("button.link").trigger("click");
+    expect(parties.get('[aria-label="丙丁建材有限公司 未逐笔对应流水"]').text()).toContain("部分货款");
+    expect(wrapper.get('[aria-label="逐笔对应"]').text()).toContain("1".repeat(20));
+    expect(wrapper.get('[aria-label="非发票流水"]').text()).toContain("不是发票上的往来单位");
+  });
+
   it("marks a non-monitored folder's invoice list read-only", async () => {
     stubBackend((url) => (url.includes("/directories?") || url.endsWith("/directories")
       ? [200, { ok: true, revision: 3, company: COMPANY, directories: [{ ...DIRECTORIES[1], status: "present" }] }] : undefined));

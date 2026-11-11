@@ -5,13 +5,21 @@ import type { Company, CompareResult } from "../api/types";
 import { errorText } from "../format";
 import CompanyDeductionResult from "./CompanyDeductionResult.vue";
 import CompanyInventoryResult from "./CompanyInventoryResult.vue";
+import CompanySettlementResult from "./CompanySettlementResult.vue";
 
 const props = defineProps<{ company: Company }>();
 // Folder pairs with a reconciliation relation; the backend refuses any other pair.
 const RELATIONS = [
   { id: "deduction", label: "成本发票 ⇄ 进项抵扣（勾选清单）", a: "cost_invoice_dir", b: "input_deduction_dir" },
   { id: "inventory", label: "成本发票 ⇄ 开具发票（进销存）", a: "cost_invoice_dir", b: "issued_invoice_dir" },
+  { id: "payable", label: "成本发票 ⇄ 银行流水（应付往来）", a: "cost_invoice_dir", b: "bank_flow_dir" },
+  { id: "receivable", label: "开具发票 ⇄ 银行流水（应收往来）", a: "issued_invoice_dir", b: "bank_flow_dir" },
 ] as const;
+
+// The backend names the two settlement sides one relation; the page keeps them apart.
+function relationOf(item: CompareResult): string {
+  return item.relation === "settlement" ? (item.side ?? "") : item.relation;
+}
 
 const filters = reactive({ relation: RELATIONS[0].id as string, start: "", end: "" });
 const result = ref<CompareResult | null>(null);
@@ -68,7 +76,7 @@ watch(
         {{ result.message }}
       </p>
       <!-- A stale result from the other relation must not render while the new one loads. -->
-      <template v-if="(result.state === 'ok' || result.state === 'no_lists' || result.state === 'no_details') && result.relation === filters.relation">
+      <template v-if="(result.state === 'ok' || result.state === 'no_lists' || result.state === 'no_details' || result.state === 'no_statements') && relationOf(result) === filters.relation">
         <p v-if="result.basis_label" class="banner banner--note">{{ result.basis_label }}</p>
         <details class="checks" :class="{ 'checks--failed': !result.checks_ok }" :open="!result.checks_ok" role="status">
           <summary><strong>{{ result.checks_ok ? `核对校验全部成立（${result.checks?.length ?? 0} 项）` : "核对校验不成立" }}</strong></summary>
@@ -83,7 +91,8 @@ watch(
         </ul>
 
         <CompanyDeductionResult v-if="result.relation === 'deduction'" :result="result" />
-        <CompanyInventoryResult v-else :result="result" />
+        <CompanyInventoryResult v-else-if="result.relation === 'inventory'" :result="result" />
+        <CompanySettlementResult v-else :result="result" />
       </template>
     </template>
   </section>

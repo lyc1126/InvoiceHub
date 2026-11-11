@@ -299,10 +299,37 @@ export interface InventoryItem {
   months: InventoryMonth[];
 }
 
+export interface SettlementInvoice {
+  invoice_number: string;
+  invoice_date: string;
+  total: string;
+  source_files: string[];
+}
+
+export interface SettlementFlow {
+  row_id: string;
+  date: string;
+  month: string;
+  counterparty: string;
+  details: string;
+  amount: string;
+  file: string;
+  reason?: string;
+  name_match?: string;
+}
+
+export interface SettlementParty {
+  name: string;
+  opening: string; invoiced: string; settled: string; closing: string;
+  invoice_count: number; flow_count: number;
+  unpaid: SettlementInvoice[];
+  unallocated: SettlementFlow[];
+}
+
 export interface CompareResult {
   ok: boolean;
-  relation: "deduction" | "inventory";
-  state: "ok" | "no_lists" | "no_details" | "missing_dir" | "unreadable";
+  relation: "deduction" | "inventory" | "settlement";
+  state: "ok" | "no_lists" | "no_details" | "no_statements" | "missing_dir" | "unreadable";
   message: string;
   basis_label?: string;
   periods?: {
@@ -324,5 +351,15 @@ export interface CompareResult {
   cost_label?: string;
   items?: InventoryItem[];
   excluded?: { direction: "input" | "output"; invoice_number: string; invoice_date: string; name: string; spec: string; unit: string; quantity: string; amount: string; source_file: string; reason: string }[];
-  totals?: { in_amount: string; cost: string; end_amount: string };
+  totals?: { in_amount?: string; cost?: string; end_amount?: string; opening?: string; invoiced?: string; settled?: string; closing?: string };
+  // settlement
+  side?: "payable" | "receivable";
+  side_label?: string;
+  parties?: SettlementParty[];
+  matches?: { kind: "one_to_one" | "combination"; basis: string; flow: SettlementFlow; invoices: SettlementInvoice[] }[];
+  red_offsets?: { red: SettlementInvoice; blue: SettlementInvoice }[];
+  red_unmatched?: SettlementInvoice[];
+  non_invoice_flows?: SettlementFlow[];
+  ambiguous_flows?: SettlementFlow[];
+  excluded_invoices?: { invoice_number: string; invoice_date: string; party: string; reason: string; source_files: string[] }[];
 }

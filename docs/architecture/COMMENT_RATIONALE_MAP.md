@@ -1,5 +1,12 @@
 # InvoiceHub 注释与设计原因地图
 
+## 2026-11-11 往来核对（WS-07 第 4 步）
+
+- `company_settlement.py::_party_index`：对账单“备注”列会截断长户名，只认唯一命中的 ≥4 字前缀；命中多家时不归属，因为把付款记到错误的单位比留着待查更难发现。守护：`test_a_name_that_fits_two_parties_is_not_assigned`。
+- 组合匹配只接受唯一一组：两组以上发票都能凑成同一金额时任选一组就是猜。守护：`test_more_than_one_set_of_invoices_is_left_unmatched`。
+- 红冲抵销先于收付款匹配：否则余额已经为 0，被冲的蓝字票仍显示“未付”，页面自相矛盾。守护：`test_red_letter_invoices_reduce_the_balance_and_unreadable_ones_are_listed`。
+- `party_balance` 与 `flow_accounting` 从原始发票、流水清单复算，而不是用往来单位行自己的数：同义反复的校验永远成立，发现不了漏算。守护：上述各用例的 `_ok`。
+
 ## 2026-11-11 进销存（WS-07 第 4 步）
 
 - `company_inventory.py` 调用 `bank.vouchers.cost_of_sales`，不另写加权平均：页面上的销售成本必须与做账草稿的结转同一算法，两处结果才能互相核对。守护：`test_month_end_weighted_average_rolls_stock_forward_and_merges_names`。
