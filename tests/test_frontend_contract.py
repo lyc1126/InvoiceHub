@@ -204,8 +204,8 @@ def test_cost_page_keeps_required_controls() -> None:
     assert "锁定" in js
     assert "解锁" in js
     assert "common.js?v=20260907-desktop-integrated-2" in html
-    assert "app.css?v=20261108-cost-smooth-tabs-3" in html
-    assert "page-costs.js?v=20261108-cost-smooth-tabs-3" in html
+    assert "app.css?v=20261111-cost-tooltip-viewport" in html
+    assert "page-costs.js?v=20261111-cost-tooltip-viewport" in html
     for token in (
         "发票大类",
         "特定业务类型",
@@ -323,6 +323,25 @@ def test_cost_page_keeps_required_controls() -> None:
     assert ".cost-formula-help-wrap:hover .cost-formula-tooltip" in css
     assert ".cost-formula-help-wrap:focus-within .cost-formula-tooltip" in css
     assert "bottom: calc(100% + 10px)" in css
+    # The help button sits at the left of the switcher; the tooltip must be clamped to the
+    # viewport by measurement instead of a fixed right anchor that overflowed the left edge.
+    assert 'class="cost-formula-tooltip__body"' in html
+    assert '.cost-formula-tooltip[data-placement="bottom"]' in css
+    assert "var(--cost-tooltip-arrow-x, 15px)" in css
+    assert "var(--cost-tooltip-max-height, none)" in css
+    tooltip_rule = re.search(r"\n\.cost-formula-tooltip \{(?P<body>[^}]*)\}", css)
+    assert tooltip_rule is not None
+    assert "right: 0" not in tooltip_rule.group("body")
+    assert "function positionCostFormulaTooltip()" in js
+    assert "COST_FORMULA_TOOLTIP_EDGE_PX" in js
+    assert 'costFormulaHelpWrap?.addEventListener("mouseenter", positionCostFormulaTooltip)' in js
+    assert 'costFormulaHelpWrap?.addEventListener("focusin", positionCostFormulaTooltip)' in js
+    assert 'document.querySelector(".topbar")' in js
+    # Repositioning must ignore the panel's own scroll, bridge the hover gap, and respect clientWidth.
+    assert 'event?.type === "scroll" && costFormulaTooltip?.contains(event.target)' in js
+    assert "costFormulaTooltip.style.maxWidth" in js
+    assert ".cost-formula-tooltip::before" in css
+    assert '.cost-formula-tooltip[data-placement="bottom"]::before' in css
     assert ".cost-tabs" in css
     assert "justify-content: flex-end" in css
     assert ".batch-markup-control" in css
@@ -501,7 +520,7 @@ def test_main_pages_keep_user_visible_controls() -> None:
     assert "过去保存" in index
     assert 'class="inline-panel path-inline" hidden' not in index
     assert 'id="watchDirDraft" class="watch-dir-draft" hidden' in index
-    assert "app.css?v=20261108-cost-smooth-tabs-3" in index
+    assert "app.css?v=20261111-cost-tooltip-viewport" in index
     assert "settings-actions.css?v=20260907-desktop-integrated-2" in index
     assert "common.js?v=20260907-desktop-integrated-2" in index
     assert "page-index.js?v=20261009-selection-6" in index
@@ -711,7 +730,7 @@ def test_main_pages_keep_user_visible_controls() -> None:
     assert "类型识别状态" in page_detail
     assert "类型识别说明" in page_detail
     assert "common.js?v=20260907-desktop-integrated-2" in detail
-    assert "app.css?v=20261108-cost-smooth-tabs-3" in detail
+    assert "app.css?v=20261111-cost-tooltip-viewport" in detail
     assert ".panel__head .detail-file-actions" in css
     assert ".detail-grid" in css
     assert ".detail-grid .stat-card strong { min-width: 0; overflow-wrap: anywhere; word-break: break-word; }" in css
@@ -928,7 +947,7 @@ def test_selected_invoice_summary_frontend_contract() -> None:
 
     for template_name in ("backend.html", "base_head.html", "consistency.html", "costs.html", "detail.html", "documents.html", "index.html", "ocr.html", "settings.html", "skins.html"):
         template = (ROOT / "web" / "templates" / template_name).read_text(encoding="utf-8")
-        assert "app.css?v=20261108-cost-smooth-tabs-3" in template
+        assert "app.css?v=20261111-cost-tooltip-viewport" in template
     assert "page-index.js?v=20261009-selection-6" in index
 
 
@@ -992,7 +1011,7 @@ def test_documents_page_contract() -> None:
     assert ">是</button>" in html
     assert ">否</button>" in html
     assert ">打开该文件</button>" in html
-    assert "app.css?v=20261108-cost-smooth-tabs-3" in html
+    assert "app.css?v=20261111-cost-tooltip-viewport" in html
     assert "common.js?v=20260907-desktop-integrated-2" in html
     assert "page-documents.js?v=20261009-progressive-3" in html
     assert "large-lists.css?v=20260907-large-list-1" in html
@@ -1096,7 +1115,7 @@ def test_bookkeeping_page_static_contract() -> None:
     assert 'body data-page="bookkeeping"' in html
     assert "{{BASE_HEAD}}" in html
     assert "{{BOOTSTRAP_JSON}}" in html
-    assert "app.css?v=20261108-cost-smooth-tabs-3" in base_head
+    assert "app.css?v=20261111-cost-tooltip-viewport" in base_head
     assert "page-bookkeeping.js?v=20260711-w9-ledger-review-v3" in html
     assert 'id="voucherBlockers"' in html
     assert "item.can_approve === true" in js
@@ -1302,7 +1321,7 @@ def test_settings_page_contract() -> None:
     assert 'class="settings-edit-card settings-defaults-card"' in html
     assert 'href="/skins"' in html
     assert 'href="/backend"' in html
-    assert "app.css?v=20261108-cost-smooth-tabs-3" in html
+    assert "app.css?v=20261111-cost-tooltip-viewport" in html
     assert "settings-actions.css?v=20260907-desktop-integrated-2" in html
     assert "common.js?v=20260907-desktop-integrated-2" in html
     assert "page-settings.js?v=20260907-desktop-integrated-2" in html
@@ -1590,7 +1609,7 @@ def test_skin_page_contract_and_common_skin_loader() -> None:
     assert "disabled>替换" in html
     assert "skinList" in html
     assert 'role="radiogroup"' in html
-    assert "app.css?v=20261108-cost-smooth-tabs-3" in html
+    assert "app.css?v=20261111-cost-tooltip-viewport" in html
     assert "common.js?v=20260907-desktop-integrated-2" in html
     assert "page-skins.js?v=20260907-desktop-integrated-2" in html
     assert '@app.get("/skins", response_class=HTMLResponse)' in api_app
@@ -1819,7 +1838,7 @@ def test_home_invoice_list_centers_content_and_uses_one_status_badge() -> None:
         html = template_path.read_text(encoding="utf-8")
         if "app.css?v=" not in html:
             continue
-        assert "app.css?v=20261108-cost-smooth-tabs-3" in html
+        assert "app.css?v=20261111-cost-tooltip-viewport" in html
         assert "app.css?v=20260727-invoice-list-status-layout" not in html
         assert "app.css?v=20260726-invoice-taxonomy" not in html
     index = (templates_dir / "index.html").read_text(encoding="utf-8")

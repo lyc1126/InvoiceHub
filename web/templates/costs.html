@@ -4,7 +4,7 @@
   <title>成本分析</title>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <link rel="stylesheet" href="/static/css/app.css?v=20261108-cost-smooth-tabs-3">
+  <link rel="stylesheet" href="/static/css/app.css?v=20261111-cost-tooltip-viewport">
   <link rel="stylesheet" href="/static/css/settings-actions.css?v=20260907-desktop-integrated-2">
 </head>
 <body data-page="costs">
@@ -95,11 +95,13 @@
       <div class="cost-view-switcher">
         <div class="cost-formula-help-wrap">
           <button class="cost-formula-help" type="button" aria-label="平均单价算法说明" aria-describedby="costFormulaTooltip">!</button>
-          <div id="costFormulaTooltip" class="cost-formula-tooltip" role="tooltip">
-            <strong>平均单价算法说明</strong>
-            <p><b>发票明细</b>：平均单价(含税) = (金额(除税) + 税金) / 数量；金额、税金或数量非法时留空。</p>
-            <p><b>项目规格汇总</b>：库存平均单价(除税) = sum(金额(除税)) / sum(数量)，库存平均单价(含税) = sum(金额(除税)+税金) / sum(数量)；采购参考平均单价(含税) = avg(明细行含税原始单价)，只作采购参考。</p>
-            <p><b>开票参考</b>：成本单价 = sum(金额(除税) + 不可抵扣税金) / sum(数量)，小规模纳税人的进项税全部计入成本，一般纳税人只计入普通发票（旅客运输除外）的税金；平均单价(除税) = 成本单价 × (1 + 行级加价率)，平均单价(含税) = 平均单价(除税) × (1 + 本公司销项税率)；金额、税金和价税合计随数量、加价率与税务设置联动。</p>
+          <div id="costFormulaTooltip" class="cost-formula-tooltip" role="tooltip" data-placement="top">
+            <div class="cost-formula-tooltip__body">
+              <strong>平均单价算法说明</strong>
+              <p><b>发票明细</b>：平均单价(含税) = (金额(除税) + 税金) / 数量；金额、税金或数量非法时留空。</p>
+              <p><b>项目规格汇总</b>：库存平均单价(除税) = sum(金额(除税)) / sum(数量)，库存平均单价(含税) = sum(金额(除税)+税金) / sum(数量)；采购参考平均单价(含税) = avg(明细行含税原始单价)，只作采购参考。</p>
+              <p><b>开票参考</b>：成本单价 = sum(金额(除税) + 不可抵扣税金) / sum(数量)，小规模纳税人的进项税全部计入成本，一般纳税人只计入普通发票（旅客运输除外）的税金；平均单价(除税) = 成本单价 × (1 + 行级加价率)，平均单价(含税) = 平均单价(除税) × (1 + 本公司销项税率)；金额、税金和价税合计随数量、加价率与税务设置联动。</p>
+            </div>
           </div>
         </div>
         <div class="tabs cost-tabs" role="tablist" aria-label="成本分析视图">
@@ -237,6 +239,6 @@
   {{system_controls}}
   <script src="/static/js/common.js?v=20260907-desktop-integrated-2"></script>
   <script src="/static/js/system-controls.js?v=20260907-desktop-integrated-2"></script>
-  <script src="/static/js/page-costs.js?v=20261108-cost-smooth-tabs-3"></script>
+  <script src="/static/js/page-costs.js?v=20261111-cost-tooltip-viewport"></script>
 </body>
 </html>
