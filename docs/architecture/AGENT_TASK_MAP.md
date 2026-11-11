@@ -23,6 +23,7 @@
 | 大列表卡顿、索引停止、入库/出库、批量队列 | [页面/单据/预览/皮肤](rules/WEB_UI.md)、[成本](rules/COST_ANALYSIS.md) | [10. 入库单与出库单](#task-documents) |
 | 勾选合计、搜索税率、来源追溯、超过100份预览、OFD 缺字、打印空白/漏页 | [页面/单据/预览/皮肤](rules/WEB_UI.md) | [10.1 发票预览与批量打印](#task-preview) |
 | 凭证、科目映射、审批、迁移、导出、批次、捷锐 | [做账](rules/BOOKKEEPING.md) | [10.2 业务资料夹与做账 W8/W9](#task-bookkeeping) |
+| 银行对账单、电子回单、余额勾稽、回单匹配、建议分录、脱敏底稿、参考凭证草稿、捷锐导入文件、做账习惯 | [做账](rules/BOOKKEEPING.md) | [10.3 银行流水底稿与凭证草稿](#task-bank) |
 | 明暗切换、no_skin、皮肤 ZIP 与字体资源 | [页面/单据/预览/皮肤](rules/WEB_UI.md) | [11. 皮肤系统](#task-skins) |
 | BAT/PS1、PowerShell、端口、中文路径、Tk | [Windows](rules/WINDOWS.md)、[监控与关闭](rules/MONITORING.md) | [12. Windows 正式入口与平台交互](#task-windows) |
 | NSOpenPanel、WKWebView、TCC、SwiftUI/Sparkle | [macOS 参考壳](rules/MACOS.md)、[监控与关闭](rules/MONITORING.md) | [12.1 macOS 壳、构建握手与原生桥接](#task-macos) |
@@ -300,6 +301,22 @@ OFD 专用入口为 `services/ofd_rendering.py`、`tools/ofd-preview/` 与 `scri
 | 最低自动化 | 资料夹变化至少运行 `tests/test_api_contract.py` 的资料夹/线程池/有界扫描用例与 `tests/test_frontend_contract.py` 的资料夹刷新容错契约；做账变化运行全部 `tests/test_bookkeeping_*.py`、`test_api_bookkeeping.py`、`test_runner_dryrun.py` |
 | 真实验收 | W9 profile/科目/辅助/映射人审必须基于目标账套重新采集；真实 Safari apply、读回和 reconcile-only 属 W10，每次 apply 仍需当回合明确授权 |
 | 高风险提醒 | 资料夹导航不得变成完整发票扫描或任意本机打开器；截断统计和 `os.scandir` 迭代中断后的累计统计都必须显式标为下界且不能阻塞发票列表。做账不得自动迁移、不绕过 blockers、不猜最新 XLSX、不直接写状态 JSON；测试通过不授权真实账套迁移、审批、导出或导入 |
+
+<a id="task-bank"></a>
+
+## 10.3 银行流水底稿与凭证草稿
+
+必读功能规则：[做账](rules/BOOKKEEPING.md)（“银行流水底稿规则”一节）。
+
+| 导航项 | 内容 |
+|---|---|
+| 首先阅读 | 数据算法第 4.6 节；接口流程第 3.5.1 节；[做账](rules/BOOKKEEPING.md) |
+| 首要入口 | `bank/workpaper.py::run/discover/analyze/build_tables`；适配器 `bank/boc.py`；校验 `checks.py`；匹配 `matching.py`；分类 `classify.py::suggest`；脱敏 `redaction.py::RedactedView/scan`；命令行 `bank/__main__.py`；凭证草稿 `vouchers.py::build_drafts/_input_policy`、科目定位 `ledger.py::Ledger.find`、审核与导出 `jierui.py::write_review_xlsx/export`、命令行 `voucher_cli.py` |
+| 必须联动 | 标准记录字段（models）与全部适配器；分类文案不含户名的约束与脱敏视图；底稿表头与 `WORKPAPER_SCHEMA`；`往来单位.json` 合并语义 |
+| 产物与消费者 | 输出目录（默认公司资料夹 `银行流水整理/`）下私有 JSON/XLSX、`往来单位.json`、`.脱敏密钥`、`脱敏对照表.json`；`脱敏/` 下脱敏 JSON/XLSX 与脱敏报告；消费者是会计人员和外部 AI 辅助 |
+| 最低自动化 | `tests/test_bank_workpaper.py`、`tests/test_bank_vouchers.py`；改动脱敏或分类时还需检查泄漏扫描与 fail-closed 用例，改动导出时检查整月拦截与重复导出保护 |
+| 真实验收 | 用户本机真实对账单/回单运行一次，核对校验结果、回单匹配率与脱敏底稿；真实产物留在公司资料夹，不进仓库 |
+| 高风险提醒 | 不把建议分录写入 `凭证/` 或导入账套；不按文件名猜版式；不放宽泄漏扫描；不把密钥/对照表放进脱敏目录；不在测试中使用真实资料 |
 
 <a id="task-skins"></a>
 

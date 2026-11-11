@@ -225,6 +225,7 @@ flowchart TB
 ├─ src/invoice_hub/
 │  ├─ domain/                                领域模型与外部契约
 │  ├─ bookkeeping/                           W8/W9 做账状态、校验、映射和批次
+│  ├─ bank/                                  银行对账单/回单整理、勾稽、建议分录与脱敏底稿（命令行）
 │  ├─ extraction/                            票头提取、分类、同票纠偏
 │  ├─ projections/                           汇总、成本、单据及 Excel 模板
 │  ├─ targets/                               配置解析、运行目录和档案隔离
@@ -277,6 +278,7 @@ flowchart LR
 | `extraction` | `extract_invoice_record`、`apply_invoice_family_corrections` | 票头证据、分类、同票纠偏 | CSV/XLSX 展示 |
 | `projections` | `build_summary`、`CostProjectionService`、单据函数 | 可重建投影和报表 | 长期主数据 |
 | `bookkeeping` | `VoucherExecutabilityValidator`、映射/迁移/批次仓储 | W8/W9 做账协议与确定性状态 | 浏览器自动化和平台窗口 |
+| `bank` | `workpaper.run`、`boc` 适配器、`RedactedView` | 银行流水标准记录、勾稽、回单匹配、建议分录与私有/脱敏底稿 | `凭证/` 状态写入、账套或税局操作、HTTP 路由 |
 | `storage` | `atomic_write_json`、`SQLiteRepository` | 原子读写、任务、事件 | 发票主存储 |
 | `monitoring` | `run_monitor`、`MonitorSynchronizer.run_sync` | 持续观察、变化判断、自动重建 | Web 页面生命周期 |
 | `services` | `AppState`（组装根）、各领域服务（`bookkeeping`、`documents`、`costs`、`dossier`、`preview_print`、`invoice_selection`、`invoice_list`、`invoice_rename`、`settings`、`diagnostics`、`monitor_control`、`background_sync`、`about`、`appearance`、`ocr`、`server_shutdown`）、`MonitorBridge`、`SkinService`、`UpdateService` | 用例编排、并发锁、平台协调与受限更新检查 | HTTP 细节 |

@@ -140,6 +140,7 @@
 - `src/invoice_hub/services`：业务服务
 - `src/invoice_hub/platform`：Windows 启停、进程、通知、原生选择器、打开文件
 - `src/invoice_hub/storage`：文件真值读写与 SQLite 任务/事件
+- `src/invoice_hub/bank`：银行对账单/回单适配器、勾稽、回单匹配、建议分录、脱敏底稿，以及参考凭证草稿与捷锐导入文件（只读源文件与 `凭证/`，命令行入口）
 - `src/invoice_hub/release`：发布构建与验收辅助
 - `web`：模板与静态资源；`web/static/app/` 只放 `frontend/` 的提交构建产物，不手改
 - `frontend`：Vue 3 工作区前端源码（Vite/TypeScript/Pinia/Vue Router/Vitest），新界面功能在这里实现，构建到 `web/static/app/`
@@ -425,6 +426,24 @@
 | `src/invoice_hub/runners/__init__.py` | 随包 runner 包边界。 | 不直接写做账状态。 |
 | `src/invoice_hub/runners/jierui_voucher_import.py` | batch-bound dry-run runner。 | W8 不开放真实 apply；只接受显式 `--batch-manifest`。 |
 
+## 10.2 银行流水底稿
+
+| 文件 | 职责与入口 | 关系与修改影响 |
+|---|---|---|
+| `src/invoice_hub/bank/__init__.py` | 包说明与 `WORKPAPER_SCHEMA`。 | 底稿 JSON schema 变化需递增版本并同步数据算法第 4.6 节。 |
+| `src/invoice_hub/bank/__main__.py` | `python -m invoice_hub.bank` 命令行入口，参数校验与默认输出目录。 | 只调用 `workpaper.run`；不写 `凭证/`，不连接账套或电子税务局。 |
+| `src/invoice_hub/bank/models.py` | 标准记录：对账单、行、回单、税费明细、校验问题；Decimal 金额解析。 | 所有银行适配器的唯一输出契约；方向按企业视角。 |
+| `src/invoice_hub/bank/boc.py` | 中国银行对账单（竖线表格）与电子回单（按坐标配对标签与值）适配器。 | 新增银行另写适配器并在 `workpaper.discover` 注册；未知版式必须报错不猜。 |
+| `src/invoice_hub/bank/checks.py` | 逐行余额、页脚合计、月度衔接/断档、账面期初差额、重复行。 | 底稿“校验结果”来源；错误项须先于做账处理。 |
+| `src/invoice_hub/bank/matching.py` | 流水行与回单匹配：流水号+金额优先，退到日期+金额+方向唯一。 | 多候选不猜，进入人工确认。 |
+| `src/invoice_hub/bank/classify.py` | 往来角色推断与建议分录（手续费/利息/缴税拆分/自然人/客户/供应商/油卡）。 | 依据文本不得含户名；户名只在 `aux`，供脱敏统一替换。 |
+| `src/invoice_hub/bank/redaction.py` | 私有/脱敏视图、HMAC 稳定化名、用途词白名单、泄漏扫描。 | 扫描命中即拒绝写出；密钥与对照表只在私有目录。 |
+| `src/invoice_hub/bank/ledger.py` | 读取 `凭证/科目表.json`、辅助核算档案和映射规则；按名称路径定位末级科目。 | 找不到或不唯一时返回空编码，由草稿列入待补科目，不猜相近科目。 |
+| `src/invoice_hub/bank/vouchers.py` | 凭证草稿生成：销项/进项发票、银行流水、待认证进项转出、月末增值税与附加、季度印花税；默认短摘要；账套读回（序时账）对账与补记；银行对账与月度核对；原件速查；`申报数据.json` 模板。 | 读 `workpaper.analyze` 结果与发票明细投影；只产出建议凭证，不写 `凭证/`。 |
+| `src/invoice_hub/bank/jierui.py` | 凭证审核表（带边框、下拉审核）、读回审核表、逐张校验、按月写捷锐导入模板、`做账习惯.json` 与 `已导出凭证.json`。 | 只导出“通过”的凭证；任一凭证不合格则该月整月不导出；同一凭证签名不重复导出。 |
+| `src/invoice_hub/bank/voucher_cli.py` | `python -m invoice_hub.bank.voucher_cli draft|export` 命令行。 | 输出到公司资料夹 `做账草稿/`；只读 `凭证/`。 |
+| `src/invoice_hub/bank/workpaper.py` | 发现源文件、分析、建表、原子写出私有与脱敏 JSON/XLSX、`往来单位.json` 合并。 | 两份底稿由同一构建函数经不同视图产出；不覆盖人工角色。 |
+
 ## 11. Monitor
 
 | 文件 | 职责与入口 | 关系与修改影响 |
@@ -560,6 +579,8 @@
 | `tests/test_bookkeeping_mapping_migration.py` | 映射 v1/v2 preview/apply。 | mapping_migration。 |
 | `tests/test_bookkeeping_profile.py` | 账套、科目和辅助档案绑定。 | catalogs、validator。 |
 | `tests/test_bookkeeping_projection.py` | 凭证生成、posting key 和 revision。 | vouchers、status。 |
+| `tests/test_bank_vouchers.py` | 合成公司资料夹上的科目定位、进项抵扣推断、增值税测算与申报差异、审核导出、习惯学习、重复导出保护、账套读回匹配与补记编号、银行对账与原件链接、CLI。 | bank/ledger、vouchers、jierui、voucher_cli。 |
+| `tests/test_bank_workpaper.py` | 合成中国银行对账单/回单 PDF 的解析、勾稽、匹配、建议分录、脱敏 fail-closed 与 CLI。 | bank 全部模块；不得引用真实业务资料。 |
 | `tests/test_bookkeeping_status.py` | 严格状态仓储与迁移。 | repository、status。 |
 | `tests/test_bookkeeping_validator_w9.py` | W9 可执行性 blockers。 | validator、decisions、catalogs。 |
 | `tests/test_runner_dryrun.py` | batch-bound dry-run 与禁止猜测最新文件。 | runners、scripts/tools。 |

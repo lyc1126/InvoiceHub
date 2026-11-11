@@ -351,6 +351,59 @@ L10-D 复用 L10-R/C 的 lease、marker、fixed-loopback bridge 和 pure coordin
 | `PATCH /api/v1/bookkeeping/import-result` | 废弃路由 | 固定 HTTP 410 `BATCH_FINALIZE_REQUIRED` | 禁止逐张绕过 batch finalize |
 | `GET /api/v1/bookkeeping/state` | `bookkeeping_state` | 公司、store revision、草稿和批次总览 | 页面只读后再发显式动作 |
 
+### 3.5.1 银行流水底稿命令行（2026-10-02，无 HTTP 路由）
+
+银行流水整理目前只有命令行入口，未注册 API、页面或 SSE；业务资料夹的“银行流水”统计仍只是文件计数。
+
+```text
+python -m invoice_hub.bank <对账单/回单 PDF 或目录...> [--out 目录] [--from YYYY-MM] [--to YYYY-MM]
+    [--book-balance 金额 --book-date YYYY-MM-DD] [--sales-invoices 销项发票目录]
+    [--invoice-csv 发票明细.csv ...] [--customer 名称 ...] [--supplier 名称 ...]
+    [--sensitive-term 词 ...] [--no-redacted]
+```
+
+| 退出码 | 含义 |
+|---|---|
+| 0 | 私有底稿已写出；未加 `--no-redacted` 时脱敏底稿也已写出且泄漏扫描通过 |
+| 2 | 参数错误（账面余额与日期须成对）、找不到可识别对账单、发票明细 CSV 缺列 |
+| 3 | 脱敏泄漏扫描命中，本次不写任何底稿 |
+
+```mermaid
+flowchart LR
+    PDF["对账单/回单 PDF（只读）"] --> Discover["discover：按内容识别版式"]
+    Discover --> Adapter["boc 适配器 → 标准记录"]
+    Adapter --> Checks["checks：余额/合计/断档/账面差额/重复"]
+    Adapter --> Match["matching：流水号+金额 → 日期+金额+方向"]
+    Match --> Classify["classify：角色 + 建议分录"]
+    Directory["往来单位.json（人工优先）"] --> Classify
+    Checks --> Build["build_tables（同一构建函数）"]
+    Classify --> Build
+    Build -->|RedactedView| Scan{"泄漏扫描"}
+    Scan -->|通过| Redacted["脱敏/ 底稿 + 报告"]
+    Scan -->|命中| Stop["退出码 3，不写出"]
+    Build -->|PrivateView| Private["私有底稿 + 往来单位.json"]
+```
+
+顺序约束：先解析全部对账单得到本公司账号，再解析回单判断收付方向；脱敏表先构建并扫描通过，才写私有底稿和脱敏底稿，避免留下“私有已更新、脱敏失败”的半套产物。
+
+### 3.5.2 参考凭证草稿命令行（2026-10-10，无 HTTP 路由）
+
+```text
+python -m invoice_hub.bank.voucher_cli draft  --company <公司资料夹> --from YYYY-MM --to YYYY-MM [--bank 目录] [--out 目录] [--month-end] [--ledger 科目表.json] [--booked 序时账.txt ...]
+python -m invoice_hub.bank.voucher_cli export --company <公司资料夹> [--draft 审核表] [--out 目录] [--voucher-type 记] [--allow-reexport] [--ledger 科目表.json] [--after YYYY-MM:NNN ...] --preparer 制单人
+```
+
+| 命令 | 退出码 |
+|---|---|
+| draft | 0 已生成审核表（首次同时生成 `申报数据.json` 模板）；2 缺科目表、发票明细、对账单或参数错误 |
+| export | 0 无校验错误（可能没有可导出的凭证）；1 有凭证未通过校验，相关月份整月未导出；2 找不到审核表或输入错误 |
+
+`--ledger`：在捷锐新建科目后，指向 `做账草稿/账套读回/` 下的科目表读回快照（结构同 `凭证/科目表.json`）；只读，不回写 `凭证/`，draft 与 export 须用同一份。
+
+`--booked`：已入账月份的捷锐“序时账”复制文本（9 列制表符分隔：日期、凭证号、摘要、科目编码、科目名称、数量、外币、借方、贷方），可多次指定；这些月份只补记漏掉的银行流水。draft 在终端逐月打印银行核对结论，并列出补记、账有银无与未生成凭证的流水。
+
+流程：draft 生成审核表 → 会计人员先看“月度核对”“银行对账”，再按“待补科目”在捷锐补建科目/供应商、补填 `申报数据.json` 后重跑 draft → 在审核表中修改并选“通过” → export 生成按月导入文件并更新习惯 → 会计人员在捷锐手工导入（首次只导入一张核对）。
+
 ### 3.6 皮肤
 
 | 方法与路径 | AppState 入口 | 主要请求/返回 | HTTP 语义 |
