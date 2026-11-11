@@ -1,9 +1,12 @@
 <script setup lang="ts">
-import { computed, reactive } from "vue";
+import { computed, inject, reactive } from "vue";
 import type { CompareResult } from "../api/types";
+import { COMPARE_FOCUS } from "../compareFocus";
 import { money } from "../format";
 
 const props = defineProps<{ result: CompareResult }>();
+const showSource = inject(COMPARE_FOCUS, () => undefined);
+const EMPTY = { a: [] as string[], b: [] as string[] };
 const verb = computed(() => (props.result.side === "receivable" ? "收款" : "付款"));
 const REASONS: Record<string, string> = {
   no_party: "不是发票上的往来单位",
@@ -31,7 +34,10 @@ function toggle(name: string): void {
       <tbody>
         <template v-for="party in result.parties" :key="party.name">
           <tr>
-            <th scope="row">{{ party.name }}</th>
+            <th scope="row">
+              <button type="button" class="link" :title="`${party.name}：期初、本期发票与收付款的来源`"
+                      @click="showSource({ label: party.name, record_ids: party.record_ids ?? EMPTY, steps: party.steps ?? [] })">{{ party.name }}</button>
+            </th>
             <td class="num">{{ money(party.opening) }}</td>
             <td class="num">{{ money(party.invoiced) }}</td>
             <td class="num">{{ money(party.settled) }}</td>
@@ -90,7 +96,14 @@ function toggle(name: string): void {
             <td>{{ item.flow.counterparty }}<span v-if="item.flow.name_match === 'prefix'" class="muted">（户名截断）</span></td>
             <td class="num">{{ money(item.flow.amount) }}</td>
             <td>{{ item.invoices.map((inv) => `${inv.invoice_number}（${money(inv.total)}）`).join("、") }}</td>
-            <td class="nowrap">{{ item.basis }}</td>
+            <td class="nowrap">
+              {{ item.basis }}
+              <button type="button" class="link" @click="showSource({
+                label: `${item.flow.date} ${item.flow.counterparty} ${money(item.flow.amount)}`,
+                record_ids: item.record_ids ?? EMPTY,
+                steps: [`${item.basis}：流水 ${money(item.flow.amount)} = ${item.invoices.map((inv) => money(inv.total)).join(' + ')}`],
+              })">来源</button>
+            </td>
           </tr>
         </tbody>
       </table>

@@ -1,9 +1,12 @@
 <script setup lang="ts">
-import { computed, reactive, ref, watch } from "vue";
+import { computed, provide, reactive, ref, watch } from "vue";
 import { request } from "../api/client";
 import type { Company, CompareResult } from "../api/types";
 import { errorText } from "../format";
+import { COMPARE_FOCUS, type CompareFocus } from "../compareFocus";
 import { RELATIONS } from "../relations";
+import CompareDrawer from "./CompareDrawer.vue";
+import CompareSources from "./CompareSources.vue";
 import CompanyDeductionResult from "./CompanyDeductionResult.vue";
 import CompanyInventoryResult from "./CompanyInventoryResult.vue";
 import CompanySettlementResult from "./CompanySettlementResult.vue";
@@ -22,7 +25,18 @@ const loading = ref(false);
 const error = ref("");
 const relation = computed(() => RELATIONS.find((item) => item.id === filters.relation) ?? RELATIONS[0]);
 
+// WS-04: the clicked category; the drawer explains it and the source lists narrow to it.
+const focus = ref<CompareFocus | null>(null);
+provide(COMPARE_FOCUS, (next: CompareFocus) => {
+  focus.value = next;
+});
+const labels = computed(() => {
+  const name = (key: string) => props.company.subdirs.find((item) => item.key === key)?.label ?? key;
+  return { a: name(relation.value.a), b: name(relation.value.b) };
+});
+
 async function load(): Promise<void> {
+  focus.value = null;
   loading.value = true;
   error.value = "";
   const query = new URLSearchParams({ a: relation.value.a, b: relation.value.b });
@@ -88,6 +102,8 @@ watch(
         <CompanyDeductionResult v-if="result.relation === 'deduction'" :result="result" />
         <CompanyInventoryResult v-else-if="result.relation === 'inventory'" :result="result" />
         <CompanySettlementResult v-else :result="result" />
+        <CompareSources v-if="result.records" :records="result.records" :labels="labels" :focus="focus" @clear="focus = null" />
+        <CompareDrawer v-if="focus" :focus="focus" :labels="labels" @close="focus = null" />
       </template>
     </template>
   </section>

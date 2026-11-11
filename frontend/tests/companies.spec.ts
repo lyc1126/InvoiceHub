@@ -279,6 +279,43 @@ describe("companies module", () => {
     expect(specRows[1]!.text()).not.toContain("28,000");
   });
 
+  it("opens a category's calculation and narrows the side-by-side source records to it", async () => {
+    const month = { month: "2026-06", open_qty: "0", open_amount: "0.00", in_qty: "15", in_amount: "61000.00", out_qty: "12", cost: "48800.00", end_qty: "3", end_amount: "12200.00", unit_price: "4066.67", note: "",
+      steps: ["加权单价 =（0.00 + 61000.00）÷（0 + 15）= 4066.67", "销售成本 = 12 × 61000.00 ÷ 15 = 48800.00（按未舍入单价计算）"] };
+    const record = (id: string, number: string) => ({ id, invoice_number: number, invoice_date: "2026-06-03", counterpart: "丙丁建材", amount: "40000.00", source_file: `${number}.xml` });
+    const inventory = {
+      ok: true, relation: "inventory", state: "ok", message: "", basis_label: "进销存口径", first_month: "2026-06", cost_label: "不含税", excluded: [],
+      totals: { open_amount: "0.00", in_amount: "61000.00", cost: "48800.00", end_amount: "12200.00" },
+      opening: { source: "zero", month: "2026-06", read_months: [], files: [], items: [], unassigned: [], error: "" },
+      items: [
+        { key: "螺纹钢\u001f吨", name: "螺纹钢", unit: "吨", account_code: "", ...month, oversold: false, sold_never_bought: false, months: [month], specs: [], record_ids: { a: ["input:1", "input:2"], b: ["output:9"] } },
+        { key: "盘螺\u001f吨", name: "盘螺", unit: "吨", account_code: "", ...month, oversold: false, sold_never_bought: false, months: [month], specs: [], record_ids: { a: ["input:3"], b: [] } },
+      ],
+      records: { a: [record("input:1", "11"), record("input:2", "22"), record("input:3", "33")], b: [record("output:9", "99")] },
+      warnings: [], checks: [], checks_ok: true,
+    };
+    stubBackend((url) => (url.includes("b=issued_invoice_dir") ? [200, inventory] : undefined));
+    const wrapper = await mountCompanies();
+    await wrapper.get("#company-tab-compare").trigger("click");
+    await flushPromises();
+    await wrapper.get('select[aria-label="比较关系"]').setValue("inventory");
+    await flushPromises();
+    const sources = () => wrapper.get('[aria-label="原始记录并排"]');
+    expect(sources().get('table[aria-label="成本发票 原始记录"]').findAll("tbody tr")).toHaveLength(3);
+    await wrapper.findAll('table[aria-label="进销存"] th button.link').find((item) => item.text() === "螺纹钢")!.trigger("click");
+    const drawer = wrapper.get('[role="dialog"][aria-label="螺纹钢（吨） 明细"]');
+    expect(drawer.text()).toContain("销售成本 = 12 × 61000.00 ÷ 15 = 48800.00");
+    expect(document.activeElement?.getAttribute("aria-label")).toBe("关闭明细");
+    expect(sources().get('table[aria-label="成本发票 原始记录"]').findAll("tbody tr").map((row) => row.text())).toEqual([
+      expect.stringContaining("11"), expect.stringContaining("22"),
+    ]);
+    expect(sources().get('table[aria-label="开具发票 原始记录"]').text()).toContain("99");
+    await sources().get("button.link").trigger("click"); // 显示全部
+    expect(sources().get('table[aria-label="成本发票 原始记录"]').findAll("tbody tr")).toHaveLength(3);
+    await drawer.trigger("keydown", { key: "Escape" });
+    expect(wrapper.find('[role="dialog"]').exists()).toBe(false);
+  });
+
   it("shows settlement balances and keeps unallocated payments apart from invoices", async () => {
     const flow = { row_id: "S1-001", date: "2026-06-05", month: "2026-06", counterparty: "丙丁建材有限公司", details: "材料款", amount: "11300.00", file: "s.pdf", name_match: "exact" };
     const settlement = {
@@ -303,7 +340,7 @@ describe("companies module", () => {
     const parties = wrapper.get('table[aria-label="往来单位"]');
     expect(parties.text()).toContain("本期付款");
     expect(parties.text()).toContain("130.00");
-    await parties.get("button.link").trigger("click");
+    await parties.findAll("button.link").find((item) => item.text() === "明细")!.trigger("click");
     expect(parties.get('[aria-label="丙丁建材有限公司 未逐笔对应流水"]').text()).toContain("部分货款");
     expect(wrapper.get('[aria-label="逐笔对应"]').text()).toContain("1".repeat(20));
     expect(wrapper.get('[aria-label="非发票流水"]').text()).toContain("不是发票上的往来单位");

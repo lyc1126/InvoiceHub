@@ -198,6 +198,13 @@ def build_settlement_check(invoice_items: list[dict], bank: WorkpaperInput, *, s
         return {"invoice_number": invoice["invoice_number"], "invoice_date": invoice["invoice_date"],
                 "total": _money(invoice["total"]), "source_files": invoice["source_files"]}
 
+    # Side-by-side source lists (WS-04): a = the invoice folder, b = the statements; ids tie categories to rows.
+    def invoice_id(invoice: dict) -> str:
+        return f"inv:{invoice['family_key']}"
+
+    def flow_id(flow: dict) -> str:
+        return f"flow:{flow['row_id']}"
+
     party_rows = []
     for key in sorted(parties, key=lambda item: parties[item]["name"]):
         party = parties[key]
@@ -211,6 +218,11 @@ def build_settlement_check(invoice_items: list[dict], bank: WorkpaperInput, *, s
             "invoice_count": party["invoice_count"], "flow_count": party["flow_count"],
             "unpaid": [public_invoice(item) for item in party["unpaid"]],
             "unallocated": [public_flow(item) for item in party["unallocated"]],
+            "record_ids": {"a": [invoice_id(item) for item in invoices if item["party_key"] == key and in_range(item["month"])],
+                           "b": [flow_id(item) for item in flows if item["party_key"] == key and in_range(item["month"])]},
+            "steps": [f"期初 {_money(party['opening'])}（{start or '最早'} 之前的发票 − {spec['verb']}）",
+                      f"期初 {_money(party['opening'])} + 本期发票 {_money(party['invoiced'])}（{party['invoice_count']} 张）"
+                      f" − 本期{spec['verb']} {_money(party['settled'])}（{party['flow_count']} 笔）= 期末 {_money(closing)}"],
         })
 
     in_range_flows = [flow for flow in flows if in_range(flow["month"])]
@@ -266,7 +278,19 @@ def build_settlement_check(invoice_items: list[dict], bank: WorkpaperInput, *, s
         "basis_label": f"往来口径（{spec['label']}）：价税合计对银行{spec['verb']}；只按金额与户名确定性对应，对不上的不猜。",
         "parties": party_rows,
         "matches": [{"kind": item["kind"], "basis": item["basis"], "flow": public_flow(item["flow"]),
-                     "invoices": [public_invoice(inv) for inv in item["invoices"]]} for item in in_range_matches],
+                     "invoices": [public_invoice(inv) for inv in item["invoices"]],
+                     "record_ids": {"a": [invoice_id(inv) for inv in item["invoices"]], "b": [flow_id(item["flow"])]}}
+                    for item in in_range_matches],
+        "records": {
+            "a": [{"id": invoice_id(item), "invoice_number": item["invoice_number"], "invoice_date": item["invoice_date"],
+                   "counterpart": party_names.get(item["party_key"], item["party"]), "amount": _money(item["total"]),
+                   "source_file": item["source_files"][0] if item["source_files"] else ""}
+                  for item in invoices if in_range(item["month"])],
+            "b": [{"id": flow_id(item), "invoice_number": "", "invoice_date": item["date"], "counterpart": item["counterparty"],
+                   "amount": _money(item["amount"]), "source_file": item["file"], "details": item["details"]}
+                  for item in sorted(in_range_flows + [f for f in non_invoice + ambiguous if in_range(f["month"])],
+                                     key=lambda item: (item["date"], item["row_id"]))],
+        },
         "red_offsets": [{"red": public_invoice(item["red"]), "blue": public_invoice(item["blue"])}
                         for item in offsets if in_range(item["red"]["month"]) or in_range(item["blue"]["month"])],
         "red_unmatched": [public_invoice(item) for item in red_unmatched if in_range(item["month"])],

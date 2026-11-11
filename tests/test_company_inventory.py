@@ -246,3 +246,20 @@ def test_compare_api_reads_both_projections_without_writing(app, client, tmp_pat
     assert payload["checks_ok"] and payload["opening"]["source"] == "ledger"
     (item,) = payload["items"]
     assert (item["open_qty"], item["open_amount"], item["end_qty"]) == ("2", "7000.00", "8")
+
+
+def test_categories_point_at_their_invoices_and_explain_the_month():
+    purchases = [line("1", "2026-06-03", "螺纹钢", "10", "40000.00", spec="HRB400 18"), line("2", "2026-06-04", "螺纹钢", "5", "21000.00", spec="HRB400 20")]
+    sales = [line("9", "2026-06-20", "钢筋", "12", "60000.00", spec="HRB400 18")]
+    result = _ok(build_inventory_check(purchases, [check("1"), check("2")], sales, item_catalog=CATALOG, tax_profile=GENERAL))
+    item = _item(result)
+    assert item["record_ids"] == {"a": ["input:1", "input:2"], "b": ["output:9"]}
+    spec18 = next(spec for spec in item["specs"] if spec["spec"] == "HRB40018")
+    assert spec18["record_ids"] == {"a": ["input:1"], "b": ["output:9"]}
+    assert [record["id"] for record in result["records"]["a"]] == ["input:1", "input:2"]
+    assert (result["records"]["b"][0]["counterpart"], result["records"]["b"][0]["amount"]) == ("甲公司", "60000.00")
+    # The drawer shows the numbers cost_of_sales used: (0 + 61000) / 15, 12 of 15 sold.
+    steps = item["months"][0]["steps"]
+    assert "加权单价 =（0.00 + 61000.00）÷（0 + 15）= 4066.67" in steps
+    assert "销售成本 = 12 × 61000.00 ÷ 15 = 48800.00（按未舍入单价计算）" in steps
+    assert steps[-1] == "期末 = 15 − 12 = 3 吨；61000.00 − 48800.00 = 12200.00"

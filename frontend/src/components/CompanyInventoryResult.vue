@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { reactive } from "vue";
-import type { CompareResult } from "../api/types";
+import { inject, reactive } from "vue";
+import type { CompareResult, InventoryItem, InventorySpec } from "../api/types";
+import { COMPARE_FOCUS } from "../compareFocus";
 import { money } from "../format";
 
 defineProps<{ result: CompareResult }>();
@@ -8,6 +9,25 @@ defineProps<{ result: CompareResult }>();
 // Monthly rows open as a full-width row under the item; a nested table in one cell gets clipped.
 const specsOpen = reactive(new Set<string>());
 const monthsOpen = reactive(new Set<string>());
+
+const showSource = inject(COMPARE_FOCUS, () => undefined);
+
+function focusItem(item: InventoryItem): void {
+  // Each month's steps come from the backend with the numbers cost_of_sales used.
+  const steps = item.months.length === 1
+    ? item.months[0]!.steps ?? []
+    : item.months.flatMap((row) => (row.steps ?? []).map((step) => `${row.month}：${step}`));
+  showSource({ label: `${item.name}（${item.unit}）`, record_ids: item.record_ids ?? { a: [], b: [] }, steps });
+}
+
+function focusSpec(item: InventoryItem, spec: InventorySpec): void {
+  showSource({
+    label: `${item.name} · ${spec.spec || "无规格"}`,
+    record_ids: spec.record_ids ?? { a: [], b: [] },
+    steps: [`购入 ${spec.in_qty} ${spec.unit}，${money(spec.in_amount)}；销售 ${spec.out_qty} ${spec.unit}；净增 ${spec.net_qty} ${spec.unit}`,
+            "期初与销售成本只在品类上按月末一次加权平均计算，不分摊到规格。"],
+  });
+}
 
 function toggle(set: Set<string>, key: string): void {
   if (set.has(key)) set.delete(key);
@@ -38,7 +58,7 @@ function toggle(set: Set<string>, key: string): void {
                 :aria-label="`${item.name} 的 ${item.specs.length} 个规格`"
                 @click="toggle(specsOpen, item.key)"
               >{{ specsOpen.has(item.key) ? "▾" : "▸" }}</button>
-              {{ item.name }}
+              <button type="button" class="link" :title="`${item.name}：逐月计算过程与来源发票`" @click="focusItem(item)">{{ item.name }}</button>
               <span v-if="item.account_code" class="muted" :title="`库存商品明细科目 ${item.account_code}`">{{ item.account_code }}</span>
             </th>
             <td class="nowrap">{{ item.unit }}</td>
@@ -60,7 +80,9 @@ function toggle(set: Set<string>, key: string): void {
           <template v-if="specsOpen.has(item.key)">
             <tr v-for="spec in item.specs" :key="spec.key" class="row--spec">
               <!-- The standard name repeats only when it differs from the category (e.g. a catalog name under 螺纹钢). -->
-              <td class="spec-name"><template v-if="spec.name !== item.name">{{ spec.name }} </template>{{ spec.spec || "（无规格）" }}</td>
+              <td class="spec-name">
+                <button type="button" class="link" @click="focusSpec(item, spec)"><template v-if="spec.name !== item.name">{{ spec.name }} </template>{{ spec.spec || "（无规格）" }}</button>
+              </td>
               <td class="nowrap">{{ spec.unit }}</td>
               <td class="num muted" colspan="2" title="期初只在品类上，不分摊到规格">—</td>
               <td class="num">{{ spec.in_qty }}</td>

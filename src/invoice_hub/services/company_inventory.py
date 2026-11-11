@@ -132,6 +132,54 @@ def _line_ref(row: dict, direction: str, reason: str = "") -> dict:
     }
 
 
+def _record_id(row: dict, direction: str) -> str:
+    number = str(row.get("发票号码") or "").strip()
+    return f"{direction}:{number}" if number else f"{direction}:file:{str(row.get('源文件') or '').strip()}"
+
+
+def _invoice_ref(row: dict, direction: str, record_id: str, month: str) -> dict:
+    return {"id": record_id, "invoice_number": str(row.get("发票号码") or ""), "invoice_date": str(row.get("开票日期") or ""),
+            "month": month, "counterpart": str(row.get("销售方" if direction == "input" else "购买方") or ""),
+            "source_file": str(row.get("源文件") or ""), "_amount": ZERO}
+
+
+def _ids(refs: dict[str, set[tuple[str, str]]], in_range) -> dict[str, list[str]]:
+    found = {"a": set(), "b": set()}
+    for month, pairs in refs.items():
+        if in_range(month):
+            for side, record_id in pairs:
+                found[side].add(record_id)
+    return {side: sorted(ids) for side, ids in found.items()}
+
+
+def _records(refs: dict[str, dict], lines: list[tuple], in_range) -> dict[str, list[dict]]:
+    shown = {line[6] for line in lines if in_range(line[1])}
+    out: dict[str, list[dict]] = {"a": [], "b": []}
+    for record_id in sorted(shown, key=lambda item: (refs[item]["invoice_date"], item)):
+        ref = refs[record_id]
+        side = "a" if record_id.startswith("input:") else "b"
+        out[side].append({**{key: value for key, value in ref.items() if not key.startswith("_")}, "amount": _money(ref["_amount"])})
+    return out
+
+
+def _month_steps(item) -> list[str]:
+    """The month's calculation with the numbers ``cost_of_sales`` used, for the detail drawer (WS-04)."""
+    unit = item.unit
+    qty, amt = item.open_qty + item.in_qty, item.open_amt + item.in_amt
+    steps = [f"期初 {_qty(item.open_qty)} {unit}，{_money(item.open_amt)}；本月购入 {_qty(item.in_qty)} {unit}，{_money(item.in_amt)}",
+             f"可供销售 {_qty(qty)} {unit}，{_money(amt)}"]
+    if item.price is not None:
+        steps.append(f"加权单价 =（{_money(item.open_amt)} + {_money(item.in_amt)}）÷（{_qty(item.open_qty)} + {_qty(item.in_qty)}）= {_money(item.price)}")
+    if item.out_qty and qty > 0 and item.out_qty < qty:
+        steps.append(f"销售成本 = {_qty(item.out_qty)} × {_money(amt)} ÷ {_qty(qty)} = {_money(item.cost)}（按未舍入单价计算）")
+    elif item.out_qty and qty > 0:
+        steps.append(f"销售 {_qty(item.out_qty)} {unit} ≥ 可供销售 {_qty(qty)} {unit}：结转全部余额 {_money(item.cost)}")
+    elif item.out_qty:
+        steps.append(f"无库存却销售 {_qty(item.out_qty)} {unit}：成本未结转")
+    steps.append(f"期末 = {_qty(qty)} − {_qty(item.out_qty)} = {_qty(item.end_qty)} {unit}；{_money(amt)} − {_money(item.cost)} = {_money(item.end_amt)}")
+    return steps
+
+
 def _book_opening(book: BookInputs, before: str, family_units: dict[str, set[str]]) -> dict:
     """Book 库存商品 balances before ``before``, put on category rows; anything that cannot be placed is listed."""
     parent = book.ledger.find_node(P_INVENTORY) if book.ledger else ""
@@ -177,7 +225,9 @@ def build_inventory_check(
     end: str = "",
 ) -> dict:
     deductibility = input_tax_index(purchase_checks)
-    lines: list[tuple[str, str, str, str, Decimal, Decimal]] = []  # direction, month, category, spec, qty, amount
+    # direction, month, category, spec, qty, amount, invoice record id (WS-04 side-by-side lists)
+    lines: list[tuple[str, str, str, str, Decimal, Decimal, str]] = []
+    invoice_refs: dict[str, dict] = {}
     excluded: list[dict] = []
     pending_sources: set[str] = set()
     taxed_lines = 0
@@ -195,8 +245,11 @@ def build_inventory_check(
                 excluded.append(_line_ref(row, direction, "数量或单位未识别"))
                 continue
             category = _category_key(goods_family(str(row.get("内部项目名称") or "").strip()), unit)
+            record_id = _record_id(row, direction)
+            invoice_refs.setdefault(record_id, _invoice_ref(row, direction, record_id, month))
             if direction == "output":
-                lines.append((direction, month, category, _spec_key(row), quantity, ZERO))
+                lines.append((direction, month, category, _spec_key(row), quantity, ZERO, record_id))
+                invoice_refs[record_id]["_amount"] += amount or ZERO
                 continue
             if amount is None:
                 excluded.append(_line_ref(row, direction, "金额未识别"))
@@ -213,7 +266,8 @@ def build_inventory_check(
                 taxed_lines += 1
             elif status == INPUT_TAX_PENDING:
                 pending_sources.add(source)
-            lines.append((direction, month, category, _spec_key(row), quantity, amount))
+            lines.append((direction, month, category, _spec_key(row), quantity, amount, record_id))
+            invoice_refs[record_id]["_amount"] += amount
 
     family_units: dict[str, set[str]] = defaultdict(set)
     for _direction, _month, category, *_rest in lines:
@@ -235,8 +289,14 @@ def build_inventory_check(
     bought: dict[str, dict[str, list[Decimal]]] = defaultdict(lambda: defaultdict(lambda: [ZERO, ZERO]))
     sold: dict[str, dict[str, Decimal]] = defaultdict(lambda: defaultdict(lambda: ZERO))
     spec_moves: dict[str, dict[str, dict[str, list[Decimal]]]] = defaultdict(lambda: defaultdict(lambda: defaultdict(lambda: [ZERO, ZERO, ZERO])))
+    # Which invoices fed each category / spec in which month, for the side-by-side source lists.
+    category_refs: dict[str, dict[str, set[tuple[str, str]]]] = defaultdict(lambda: defaultdict(set))
+    spec_refs: dict[str, dict[str, set[tuple[str, str]]]] = defaultdict(lambda: defaultdict(set))
     counted = {"input": ZERO, "output": ZERO}
-    for direction, month, category, spec, quantity, amount in lines:
+    for direction, month, category, spec, quantity, amount, record_id in lines:
+        side = "a" if direction == "input" else "b"
+        category_refs[category][month].add((side, record_id))
+        spec_refs[f"{category}{KEY_SEPARATOR * 2}{spec}"][month].add((side, record_id))
         counted[direction] += quantity
         move = spec_moves[category][spec][month]
         if direction == "output":
@@ -283,6 +343,7 @@ def build_inventory_check(
                     "end_qty": _qty(item.end_qty), "end_amount": _money(item.end_amt),
                     "unit_price": None if item.price is None else _money(item.price),
                     "note": item.note,
+                    "steps": _month_steps(item),
                 })
                 if item.note:
                     oversold.append({**_category_label(item.code), "month": month, "note": item.note})
@@ -312,7 +373,8 @@ def build_inventory_check(
             out_qty = sum((move[2] for move in moves), ZERO)
             specs.append({"key": spec, **_spec_label(spec), "in_qty": _qty(in_qty),
                           "in_amount": _money(sum((move[1] for move in moves), ZERO)),
-                          "out_qty": _qty(out_qty), "net_qty": _qty(in_qty - out_qty)})
+                          "out_qty": _qty(out_qty), "net_qty": _qty(in_qty - out_qty),
+                          "record_ids": _ids(spec_refs.get(f"{key}{KEY_SEPARATOR * 2}{spec}", {}), in_range)})
         item = {
             "key": key,
             **label,
@@ -327,6 +389,7 @@ def build_inventory_check(
             "sold_never_bought": key not in account_codes and not any(bought[month].get(key) for month in bought),
             "months": monthly,
             "specs": specs,
+            "record_ids": _ids(category_refs.get(key, {}), in_range),
         }
         # The drop-down must add up to the category row it breaks down.
         for field_name in ("in_qty", "in_amount", "out_qty"):
@@ -379,6 +442,8 @@ def build_inventory_check(
         "opening": opening,
         "cost_label": "含税" if taxed_lines and tax_profile.taxpayer_type == TAXPAYER_SMALL_SCALE else ("部分含税" if taxed_lines else "不含税"),
         "items": items,
+        # Side-by-side source lists (WS-04): a = 成本发票, b = 开具发票, only invoices in the shown months.
+        "records": _records(invoice_refs, lines, in_range),
         "oversold": oversold,
         "excluded": excluded,
         "totals": {

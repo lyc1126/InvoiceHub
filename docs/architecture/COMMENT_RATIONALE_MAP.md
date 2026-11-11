@@ -20,6 +20,11 @@
 - 红冲抵销先于收付款匹配：否则余额已经为 0，被冲的蓝字票仍显示“未付”，页面自相矛盾。守护：`test_red_letter_invoices_reduce_the_balance_and_unreadable_ones_are_listed`。
 - `party_balance` 与 `flow_accounting` 从原始发票、流水清单复算，而不是用往来单位行自己的数：同义反复的校验永远成立，发现不了漏算。守护：上述各用例的 `_ok`。
 
+## 2026-11-11 比较明细与并排原始记录（WS-04）
+
+- 计算过程 `steps` 在后端用 `cost_of_sales` 实际用到的数值生成（销售成本写成“金额 × 数量 ÷ 可售数量”而不是“数量 × 舍入单价”）：前端拼式子会因舍入与真实结果差几分，等于另写一份算法。守护：`test_categories_point_at_their_invoices_and_explain_the_month`。
+- 类目与并排记录共用后端 id，前端只过滤：类目归属（品类、往来单位、所属期）是后端判断，页面按名称或金额去猜会与核对结果不一致。守护：`test_parties_and_matches_point_at_their_rows_side_by_side`、抵扣用例的 `record_ids` 断言、`companies.spec.ts` 的 “opens a category's calculation…”。
+
 ## 2026-11-11 工作区外框（WS-01）
 
 - 首页标签用 `v-show` 常驻、以 `id#refresh` 为 key：关闭才丢缓存，双击 `hi.` 只让当前标签的 `refresh` 加一而重建，其他标签不受影响。守护：`app.spec.ts` 的 “opens sidebar nodes as tabs once…” 与 “refreshes only the active tab…”。

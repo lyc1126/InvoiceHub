@@ -161,6 +161,14 @@ def _public_row(item: dict) -> dict:
     return {key: (_money(value) if isinstance(value, Decimal) else value) for key, value in item.items()}
 
 
+def _invoice_id(number: str) -> str:
+    return f"inv:{number}"
+
+
+def _list_id(row: dict) -> str:
+    return f"list:{row['file']}:{row['period']}:{row['invoice_number']}"
+
+
 def build_deduction_check(cost_items: list[dict], data: DeductionInput, *, start: str = "", end: str = "") -> dict:
     def in_range(month: str | None) -> bool:
         return month is not None and not ((start and month < start) or (end and month > end))
@@ -255,6 +263,7 @@ def build_deduction_check(cost_items: list[dict], data: DeductionInput, *, start
         skipped = [item for item in not_selected if item["period"] == period]
         total_rows = sum(summary["rows"] for summary in list_summaries if summary["period"] == period)
         deductible = sum((Decimal(item["有效抵扣税额"]) for item in rows + only if item["有效抵扣税额"] is not None), ZERO)
+        duplicate_extra = sum(len(item["periods"]) - 1 for item in duplicates if period in item["periods"][1:])
         period_rows.append({
             "period": period,
             "list_rows": total_rows,
@@ -264,8 +273,12 @@ def build_deduction_check(cost_items: list[dict], data: DeductionInput, *, start
             "list_only": len(only),
             "not_selected": len(skipped),
             "deductible_tax": _money(deductible),
+            "record_ids": {"a": sorted({_invoice_id(item["invoice_number"]) for item in rows}),
+                           "b": sorted({_list_id(item) for item in rows + only + skipped})},
+            "steps": [f"清单 {total_rows} 行 = 对上发票 {len(rows)} + 目录无 {len(only)} + 未勾选 {len(skipped)}"
+                      f"{f' + 重复 {duplicate_extra}' if duplicate_extra else ''}",
+                      f"有效抵扣税额 = 已勾选行（对上 + 目录无）的“有效抵扣税额”之和 = {_money(deductible)}"],
         })
-        duplicate_extra = sum(len(item["periods"]) - 1 for item in duplicates if period in item["periods"][1:])
         checks.append({"code": f"period_rows:{period}", "ok": len(rows) + len(only) + len(skipped) + duplicate_extra == total_rows,
                        "message": f"{period}：对上发票 {len(rows)} + 目录无 {len(only)} + 未勾选 {len(skipped)}"
                                   f"{f' + 重复 {duplicate_extra}' if duplicate_extra else ''} = 清单 {total_rows} 行"})
@@ -291,8 +304,21 @@ def build_deduction_check(cost_items: list[dict], data: DeductionInput, *, start
         "periods": period_rows,
         "lists": list_summaries,
         "list_periods": periods,
-        "matched": matched,
+        "matched": [{**item, "record_ids": {"a": [_invoice_id(item["invoice_number"])], "b": [_list_id(item)]}} for item in matched],
         "list_only": list_only,
+        # Side-by-side source lists (WS-04): a = 成本发票 (by invoice number), b = 清单行 of the periods shown.
+        "records": {
+            "a": [{"id": _invoice_id(number), "invoice_number": number, "invoice_date": invoice["invoice_date"],
+                   "counterpart": invoice["seller"], "amount": "" if invoice["tax"] is None else _money(invoice["tax"]),
+                   "source_file": invoice["source_files"][0] if invoice["source_files"] else ""}
+                  for number, invoice in sorted(invoices.items(), key=lambda pair: (pair[1]["invoice_date"], pair[0]))
+                  if in_range(invoice["month"]) or number in {item["invoice_number"] for item in matched}],
+            "b": [{"id": _list_id(item), "invoice_number": item["invoice_number"], "invoice_date": item.get("invoice_date") or "",
+                   "counterpart": item.get("seller") or "", "amount": item.get("税额") or "",
+                   "source_file": item["file"], "details": f"{item['period']} · {item.get('status') or ''}"}
+                  for item in sorted(matched + list_only + [_public_row(row) for row in not_selected],
+                                     key=lambda row: (row["period"], row["invoice_number"]))],
+        },
         "not_selected": [_public_row(item) for item in not_selected],
         "duplicates": duplicates,
         "not_listed": not_listed,

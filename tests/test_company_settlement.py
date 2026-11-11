@@ -171,3 +171,18 @@ def test_compare_api_matches_cost_invoices_to_statement_payments(app, client, tm
 
     receivable = client.get(f"/api/v1/companies/{company_id}/compare?a=issued_invoice_dir&b=bank_flow_dir").json()
     assert receivable["state"] == "missing_dir"
+
+
+
+def test_parties_and_matches_point_at_their_rows_side_by_side():
+    result = _ok(build_settlement_check(INVOICES, FLOWS, side="payable"))
+    (party,) = result["parties"]
+    one, combo = result["matches"]
+    a_ids = {record["id"] for record in result["records"]["a"]}
+    b_ids = {record["id"] for record in result["records"]["b"]}
+    assert set(party["record_ids"]["a"]) <= a_ids and len(party["record_ids"]["a"]) == party["invoice_count"]
+    assert set(party["record_ids"]["b"]) <= b_ids and len(party["record_ids"]["b"]) == party["flow_count"]
+    assert len(combo["record_ids"]["a"]) == 2 and combo["record_ids"]["b"][0] in b_ids
+    # Statement rows that settle no invoice stay in the list, so the side-by-side view shows every row.
+    assert len(result["records"]["b"]) == party["flow_count"] + len(result["non_invoice_flows"])
+    assert party["steps"][-1] == "期初 0.00 + 本期发票 23730.00（5 张） − 本期付款 20010.00（4 笔）= 期末 3720.00"

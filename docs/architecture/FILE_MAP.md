@@ -672,7 +672,10 @@
 | `frontend/src/components/CompanyDirectories.vue` | 公司的子目录表（状态、上次汇总、是否最新）、补建预览与确认、设为监控目录；“查看发票”打开该目录的标签。 | `/api/v1/companies/{id}/directories`、`subdirs/*`；`WatchSwitchConfirm.vue`。 |
 | `frontend/src/components/CompanyLedger.vue` | 公司发票账簿：粒度与期间筛选、票面口径说明、守恒校验（成立时收起、任一不成立时展开并标红）、提示、分期表与合计、未计入的发票。 | `/api/v1/companies/{id}/ledger`。 |
 | `frontend/src/components/CompanyBankLedger.vue` | 公司账簿的“银行流水”区：目录不可用 / 无对账单的说明、余额校验（成立时收起、不成立时展开标红）、对账单问题、按账户的分期表（缺月行标红、余额显示“—”）与来源计数。 | 由 `CompanyLedger.vue` 渲染 `ledger.bank`。 |
-| `frontend/src/components/CompanyCompare.vue` | “勾稽”外壳（公司标签的“勾稽”分区与侧栏打开的 ⇄ 比较标签共用，`relation` 预选关系）：关系选择（成本发票 ⇄ 进项抵扣、成本发票 ⇄ 开具发票、成本 / 开具发票 ⇄ 银行流水，切换即重新核对）与期间、口径说明、核对校验（不成立时展开标红）、提示，再按关系交给结果组件。 | `/api/v1/companies/{id}/compare`。 |
+| `frontend/src/components/CompanyCompare.vue` | “勾稽”外壳（公司标签的“勾稽”分区与侧栏打开的 ⇄ 比较标签共用，`relation` 预选关系；提供类目聚焦，渲染明细抽屉与并排原始记录，重新核对时清除聚焦）：关系选择（成本发票 ⇄ 进项抵扣、成本发票 ⇄ 开具发票、成本 / 开具发票 ⇄ 银行流水，切换即重新核对）与期间、口径说明、核对校验（不成立时展开标红）、提示，再按关系交给结果组件。 | `/api/v1/companies/{id}/compare`。 |
+| `frontend/src/compareFocus.ts` | 比较明细的注入键与类型（WS-04）：结果组件把点到的类目（标签、`record_ids`、`steps`）交给比较页。 | `CompanyCompare.vue` provide；各结果组件 inject。 |
+| `frontend/src/components/CompareDrawer.vue` | 类目明细抽屉：来源条数与后端计算过程，打开时焦点到关闭按钮，Esc 关闭。 | 由 `CompanyCompare.vue` 渲染。 |
+| `frontend/src/components/CompareSources.vue` | 两个目录的原始记录并排（`records.a/b`）；有聚焦类目时两边只留其 `record_ids`，可“显示全部”。 | 由 `CompanyCompare.vue` 渲染。 |
 | `frontend/src/components/CompanyDeductionResult.vue` | 抵扣核对结果：各所属期表、清单有目录无、已勾选并对上（税额不一致标红）、目录有清单无、重复勾选与未识别文件。 | 由 `CompanyCompare.vue` 渲染。 |
 | `frontend/src/components/CompanyInventoryResult.vue` | 进销存结果：品类表（明细科目编码，期初/购入/销售/成本/期末，卖超与“进项和期初中没有”标红），品类前的 ▸ 在同一列下展开规格行（只有购入、销售与净增，期初与成本显示 —），“逐月”在品类下展开整行明细（加权单价与说明），合计、未计入期初的账套明细与未计入的明细行。 | 由 `CompanyCompare.vue` 渲染。 |
 | `frontend/src/components/CompanySettlementResult.vue` | 往来核对结果：往来单位余额表（“明细”整行展开未对上发票与未逐笔对应流水）、逐笔对应、红字发票、户名不唯一、非发票流水（折叠）与未识别发票。 | 由 `CompanyCompare.vue` 渲染。 |

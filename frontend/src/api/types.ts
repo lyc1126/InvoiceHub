@@ -1,3 +1,4 @@
+import type { RecordIds } from "../compareFocus";
 // Subsets of /api/v1 payloads consumed by the workspace shell. Field names follow
 // AppState.health() and AppState.settings(); extend here before using a new field.
 export interface HealthPayload {
@@ -290,6 +291,7 @@ export interface InventoryMonth {
   out_qty: string; cost: string; end_qty: string; end_amount: string;
   unit_price: string | null;
   note: string;
+  steps?: string[];
 }
 
 // One spec under a category: purchases and sales only; opening stock and cost stay on the category.
@@ -297,6 +299,7 @@ export interface InventorySpec {
   key: string;
   name: string; spec: string; unit: string;
   in_qty: string; in_amount: string; out_qty: string; net_qty: string;
+  record_ids?: RecordIds;
 }
 
 export interface InventoryItem {
@@ -309,6 +312,7 @@ export interface InventoryItem {
   sold_never_bought: boolean;
   months: InventoryMonth[];
   specs: InventorySpec[];
+  record_ids?: RecordIds;
 }
 
 export interface InventoryOpeningEntry {
@@ -350,6 +354,19 @@ export interface SettlementParty {
   invoice_count: number; flow_count: number;
   unpaid: SettlementInvoice[];
   unallocated: SettlementFlow[];
+  record_ids?: RecordIds;
+  steps?: string[];
+}
+
+/** One row of a side-by-side source list (WS-04): an invoice, a statement row or a list row. */
+export interface CompareRecord {
+  id: string;
+  invoice_number: string;
+  invoice_date: string;
+  counterpart: string;
+  amount: string;
+  source_file: string;
+  details?: string;
 }
 
 export interface CompareResult {
@@ -361,6 +378,7 @@ export interface CompareResult {
   periods?: {
     period: string; list_rows: number; matched_current: number; matched_carried: number; matched_other: number;
     list_only: number; not_selected: number; deductible_tax: string;
+    record_ids?: RecordIds; steps?: string[];
   }[];
   lists?: { file: string; period: string; rows: number; selected: number; in_range: boolean }[];
   matched?: DeductionMatched[];
@@ -383,7 +401,8 @@ export interface CompareResult {
   side?: "payable" | "receivable";
   side_label?: string;
   parties?: SettlementParty[];
-  matches?: { kind: "one_to_one" | "combination"; basis: string; flow: SettlementFlow; invoices: SettlementInvoice[] }[];
+  matches?: { kind: "one_to_one" | "combination"; basis: string; flow: SettlementFlow; invoices: SettlementInvoice[]; record_ids?: RecordIds }[];
+  records?: { a: CompareRecord[]; b: CompareRecord[] };
   red_offsets?: { red: SettlementInvoice; blue: SettlementInvoice }[];
   red_unmatched?: SettlementInvoice[];
   non_invoice_flows?: SettlementFlow[];

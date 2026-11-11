@@ -1,9 +1,11 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, inject } from "vue";
+import { COMPARE_FOCUS } from "../compareFocus";
 import type { CompareResult } from "../api/types";
 import { money } from "../format";
 
 const props = defineProps<{ result: CompareResult }>();
+const showSource = inject(COMPARE_FOCUS, () => undefined);
 const TIMING: Record<string, string> = {
   current: "当期开票当期勾选",
   carried: "前期开票本期勾选",
@@ -25,7 +27,9 @@ const unlisted = computed(() => [...unlistedSpecial.value, ...(props.result.not_
       </thead>
       <tbody>
         <tr v-for="row in result.periods" :key="row.period">
-          <th scope="row" class="nowrap">{{ row.period }}</th>
+          <th scope="row" class="nowrap">
+            <button type="button" class="link" @click="showSource({ label: `所属期 ${row.period}`, record_ids: row.record_ids ?? { a: [], b: [] }, steps: row.steps ?? [] })">{{ row.period }}</button>
+          </th>
           <td class="num">{{ row.list_rows }}</td>
           <td class="num">{{ row.matched_current }}</td>
           <td class="num">{{ row.matched_carried }}</td>

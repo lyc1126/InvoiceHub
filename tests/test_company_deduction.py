@@ -88,8 +88,15 @@ def test_lists_and_invoices_are_matched_by_number_and_period(tmp_path: Path):
     assert result["not_listed"]["ordinary"] == 1
     assert [item["invoice_number"] for item in result["not_listed"]["unknown_type"]] == [N[7]]
     (june,) = result["periods"]
+    ids, steps = june.pop("record_ids"), june.pop("steps")
     assert june == {"period": "2026-06", "list_rows": 4, "matched_current": 1, "matched_carried": 1, "matched_other": 0,
                     "list_only": 1, "not_selected": 1, "deductible_tax": "455.00"}
+    # Side-by-side lists (WS-04): the period points at its two matched invoices and all four list rows.
+    assert ids["a"] == sorted(f"inv:{N[i]}" for i in (1, 2)) and len(ids["b"]) == 4
+    assert {record["id"] for record in result["records"]["b"]} == set(ids["b"])
+    assert set(ids["a"]) <= {record["id"] for record in result["records"]["a"]}
+    assert result["matched"][0]["record_ids"]["a"] == [f"inv:{result['matched'][0]['invoice_number']}"]
+    assert steps[-1] == "有效抵扣税额 = 已勾选行（对上 + 目录无）的“有效抵扣税额”之和 = 455.00"
 
 
 def _input(folder: Path, rows: list[list], *, total: tuple | None = None):
