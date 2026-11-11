@@ -292,14 +292,37 @@ export interface InventoryMonth {
   note: string;
 }
 
-export interface InventoryItem {
+// One spec under a category: purchases and sales only; opening stock and cost stay on the category.
+export interface InventorySpec {
   key: string;
   name: string; spec: string; unit: string;
+  in_qty: string; in_amount: string; out_qty: string; net_qty: string;
+}
+
+export interface InventoryItem {
+  key: string;
+  name: string; unit: string;
+  account_code: string;
   open_qty: string; open_amount: string; in_qty: string; in_amount: string;
   out_qty: string; cost: string; end_qty: string; end_amount: string;
   oversold: boolean;
   sold_never_bought: boolean;
   months: InventoryMonth[];
+  specs: InventorySpec[];
+}
+
+export interface InventoryOpeningEntry {
+  code: string; account: string; family: string; unit: string; qty: string; amount: string; reason?: string;
+}
+
+export interface InventoryOpening {
+  source: "ledger" | "zero";
+  month: string;
+  read_months: string[];
+  files: string[];
+  items: InventoryOpeningEntry[];
+  unassigned: InventoryOpeningEntry[];
+  error: string;
 }
 
 export interface SettlementInvoice {
@@ -353,8 +376,9 @@ export interface CompareResult {
   first_month?: string | null;
   cost_label?: string;
   items?: InventoryItem[];
+  opening?: InventoryOpening;
   excluded?: { direction: "input" | "output"; invoice_number: string; invoice_date: string; name: string; spec: string; unit: string; quantity: string; amount: string; source_file: string; reason: string }[];
-  totals?: { in_amount?: string; cost?: string; end_amount?: string; opening?: string; invoiced?: string; settled?: string; closing?: string };
+  totals?: { open_amount?: string; in_amount?: string; cost?: string; end_amount?: string; opening?: string; invoiced?: string; settled?: string; closing?: string };
   // settlement
   side?: "payable" | "receivable";
   side_label?: string;

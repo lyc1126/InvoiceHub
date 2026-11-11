@@ -228,14 +228,20 @@ describe("companies module", () => {
     expect(panel.text()).toContain("普票 2 张不能抵扣");
   });
 
-  it("switches to the stock check and marks items sold beyond purchases", async () => {
-    const month = { month: "2026-06", open_qty: "0", open_amount: "0.00", in_qty: "5", in_amount: "20000.00", out_qty: "8", cost: "20000.00", end_qty: "-3", end_amount: "0.00", unit_price: "4000.00", note: "库存不足" };
+  it("switches to the stock check, marks oversold categories and drops specs down under them", async () => {
+    const month = { month: "2026-06", open_qty: "2", open_amount: "8000.00", in_qty: "5", in_amount: "20000.00", out_qty: "8", cost: "28000.00", end_qty: "-1", end_amount: "0.00", unit_price: "4000.00", note: "库存不足" };
+    const spec = (name: string, specText: string, inQty: string, outQty: string, net: string) =>
+      ({ key: `螺纹钢\u001f${specText}\u001f吨`, name, spec: specText, unit: "吨", in_qty: inQty, in_amount: "10000.00", out_qty: outQty, net_qty: net });
     const inventory = {
-      ok: true, relation: "inventory", state: "ok", message: "", basis_label: "进销存口径：月末一次加权平均。",
-      first_month: "2026-06", cost_label: "不含税", excluded: [], totals: { in_amount: "20000.00", cost: "20000.00", end_amount: "0.00" },
-      items: [{ key: "螺纹钢\u001fHRB40018\u001f吨", name: "螺纹钢", spec: "HRB40018", unit: "吨", ...month, oversold: true, sold_never_bought: false, months: [month] }],
-      warnings: [{ code: "opening_zero", message: "期初库存按 0 起算（从 2026-06 起）" }, { code: "oversold", message: "1 个品目月份卖超" }],
-      checks: [{ code: "input_quantity", ok: true, message: "进项计入数量 5 = 5" }], checks_ok: true,
+      ok: true, relation: "inventory", state: "ok", message: "", basis_label: "进销存口径：按品类，月末一次加权平均。",
+      first_month: "2026-06", cost_label: "不含税", excluded: [], totals: { open_amount: "8000.00", in_amount: "20000.00", cost: "28000.00", end_amount: "0.00" },
+      opening: { source: "ledger", month: "2026-06", read_months: ["2026-04", "2026-05"], files: ["序时账_2026-04.txt", "序时账_2026-05.txt"], error: "",
+        items: [{ code: "140501", account: "库存商品_螺纹钢", family: "螺纹钢", unit: "吨", qty: "2", amount: "8000.00" }],
+        unassigned: [{ code: "140509", account: "库存商品_其他", family: "其他", unit: "", qty: "1", amount: "10.00", reason: "账套分录没有单位" }] },
+      items: [{ key: "螺纹钢\u001f吨", name: "螺纹钢", unit: "吨", account_code: "140501", ...month, oversold: true, sold_never_bought: false, months: [month],
+        specs: [spec("螺纹钢", "HRB40018", "2.5", "3", "-0.5"), spec("螺纹钢", "HRB400E20", "2.5", "5", "-2.5")] }],
+      warnings: [{ code: "opening_ledger", message: "期初取账套读回 2026-04～2026-05" }, { code: "oversold", message: "1 个品类月份卖超" }],
+      checks: [{ code: "spec_breakdown", ok: true, message: "规格之和 = 品类合计" }], checks_ok: true,
     };
     stubBackend((url) => (url.includes("b=issued_invoice_dir") ? [200, inventory] : undefined));
     const wrapper = await mountCompanies();
@@ -247,8 +253,19 @@ describe("companies module", () => {
     const table = wrapper.get('table[aria-label="进销存"]');
     expect(table.get("tbody tr").classes()).toContain("row--failed");
     expect(table.text()).toContain("卖超");
-    expect(table.text()).toContain("-3");
-    expect(wrapper.text()).toContain("期初库存按 0 起算");
+    expect(table.text()).toContain("140501");
+    expect(wrapper.text()).toContain("期初取账套读回 2026-04～2026-05");
+    expect(wrapper.get('[aria-label="未计入期初的账套明细"]').text()).toContain("账套分录没有单位");
+    // Specs stay closed until asked for, then open as rows without an opening or a cost of their own.
+    expect(table.findAll("tr.row--spec")).toHaveLength(0);
+    const toggle = table.get('button[aria-label="螺纹钢 的 2 个规格"]');
+    await toggle.trigger("click");
+    expect(toggle.attributes("aria-expanded")).toBe("true");
+    const specRows = table.findAll("tr.row--spec");
+    expect(specRows).toHaveLength(2);
+    expect(specRows[0]!.text()).toContain("HRB40018");
+    expect(specRows[1]!.text()).toContain("净 -2.5");
+    expect(specRows[1]!.text()).not.toContain("28,000");
   });
 
   it("shows settlement balances and keeps unallocated payments apart from invoices", async () => {

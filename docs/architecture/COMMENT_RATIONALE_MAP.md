@@ -24,6 +24,8 @@
 
 - `company_inventory.py` 调用 `bank.vouchers.cost_of_sales`，不另写加权平均：页面上的销售成本必须与做账草稿的结转同一算法，两处结果才能互相核对。守护：`test_month_end_weighted_average_rolls_stock_forward_and_merges_names`。
 - 逐月从最早月份滚到最晚月份（包括没有发票的月份），`start/end` 只筛选显示：从范围首月重新按 0 起算会丢掉之前的结存。守护：`test_range_starts_from_the_rolled_forward_stock`。
+- 库存按品类（`goods_family` + 单位）而不是规格计算：账套库存商品按品类设明细，只有同一粒度，账套读回的期初才能落到对应的行；规格行只细分购销，不分摊期初与成本，否则规格成本之和会因舍入与品类不符。守护：`test_specs_are_a_breakdown_of_the_category_row`、`test_opening_comes_from_the_book_readback_per_category`。
+- 账套期初只在读回包含期初月份之前的月份时采用，并把这些月份的发票移出滚动：账套余额已经包含它们，再计一次就重复；读回不足时按 0 起算并写明原因，不拿半截读回当期初。没有单位的分录不猜单位。守护：`test_book_readback_without_earlier_months_keeps_the_zero_opening`、`test_unit_less_book_line_is_not_guessed_onto_one_of_several_units`、`test_broken_or_incomplete_books_never_stop_the_check`。
 - `projections/costs.py::read_only_inputs`：比较的两个目录多半不是监控目录，`snapshot` 会刷新 schema、重写工作簿，读取就会改动用户目录。守护：`test_compare_api_reads_both_projections_without_writing`（前后文件 mtime 不变）。
 - `_qty`：`cost_of_sales` 的零值带两位小数，数量直接 `str` 会变成“5.00 吨”；数量要保留自己的精度（2.345 吨），不能按金额格式化。
 - `CompanyInventoryResult.vue` 的逐月明细放在品目下方整行展开：嵌在“说明”格里的子表在窄屏会被截断。

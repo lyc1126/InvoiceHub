@@ -1,4 +1,6 @@
-"""WS-07 step 4 (进销存): cost invoices ⇄ issued invoices, month-end weighted average from zero.
+"""WS-07 step 4 (进销存): cost invoices ⇄ issued invoices, month-end weighted average per category.
+
+The opening is zero unless the company folder has the books' 序时账 read-back before the opening month.
 
 Line items are synthetic dicts in the 成本发票明细.csv shape; the API test builds both folders'
 projections from synthetic XML invoices.
@@ -6,6 +8,7 @@ projections from synthetic XML invoices.
 
 from __future__ import annotations
 
+import json
 from decimal import Decimal
 from pathlib import Path
 
@@ -14,7 +17,7 @@ from fastapi.testclient import TestClient
 
 from invoice_hub.api.app import create_app
 from invoice_hub.projections.cost_analysis import TAXPAYER_SMALL_SCALE, ReferenceTaxProfile
-from invoice_hub.services.company_inventory import KEY_SEPARATOR, build_inventory_check
+from invoice_hub.services.company_inventory import KEY_SEPARATOR, BookInputs, build_inventory_check, read_book_inputs
 from test_company_views import _company, _sync
 from test_summary_and_costs import _xml_invoice
 
@@ -51,7 +54,7 @@ def test_month_end_weighted_average_rolls_stock_forward_and_merges_names():
     sales = [line("9", "2026-06-20", "钢筋", "5", "22000.00"), line("8", "2026-07-25", "螺纹钢", "12", "55000.00")]
     result = _ok(build_inventory_check(purchases, [check("1"), check("2")], sales, item_catalog=CATALOG, tax_profile=GENERAL))
     item = _item(result)
-    assert (item["spec"], item["unit"]) == ("HRB40018", "吨")  # spec whitespace unified like the cost page
+    assert item["unit"] == "吨" and [spec["spec"] for spec in item["specs"]] == ["HRB40018"]  # spec whitespace unified like the cost page
     june, july = item["months"]
     assert (june["in_amount"], june["out_qty"], june["cost"], june["end_qty"], june["end_amount"]) == ("40000.00", "5", "20000.00", "5", "20000.00")
     # July: (20000 + 42000) / (5 + 10) per ton, 12 tons sold.
@@ -106,12 +109,102 @@ def test_range_starts_from_the_rolled_forward_stock():
     assert (item["open_qty"], item["open_amount"], item["in_qty"], item["end_qty"]) == ("6", "24000.00", "10", "16")
 
 
-def test_specs_are_kept_apart_and_key_has_three_parts():
+def test_specs_are_a_breakdown_of_the_category_row():
     purchases = [line("1", "2026-06-03", "螺纹钢", "1", "4000.00", spec="HRB400 18"),
                  line("2", "2026-06-03", "螺纹钢", "1", "4100.00", spec="HRB400E 18")]
+    sales = [line("9", "2026-06-20", "螺纹钢", "1.5", "7000.00", spec="HRB400E 18")]
+    result = _ok(build_inventory_check(purchases, [check("1"), check("2")], sales, item_catalog=CATALOG, tax_profile=GENERAL))
+    (item,) = result["items"]
+    assert item["key"].count(KEY_SEPARATOR) == 1 and (item["name"], item["unit"]) == ("螺纹钢", "吨")
+    # One weighted average for the category: (4000 + 4100) / 2 per ton.
+    assert (item["in_qty"], item["out_qty"], item["cost"], item["end_qty"]) == ("2", "1.5", "6075.00", "0.5")
+    specs = {spec["spec"]: spec for spec in item["specs"]}
+    assert all(spec["key"].count(KEY_SEPARATOR) == 2 for spec in item["specs"])
+    assert (specs["HRB40018"]["in_qty"], specs["HRB40018"]["out_qty"], specs["HRB40018"]["net_qty"]) == ("1", "0", "1")
+    assert (specs["HRB400E18"]["in_amount"], specs["HRB400E18"]["out_qty"], specs["HRB400E18"]["net_qty"]) == ("4100.00", "1.5", "-0.5")
+    # A spec selling more than it bought is not oversold when the category still has stock.
+    assert not item["oversold"] and not result["oversold"]
+    assert "cost" not in specs["HRB400E18"] and "open_qty" not in specs["HRB400E18"]
+
+
+def test_units_split_a_category_and_are_flagged():
+    purchases = [line("1", "2026-06-03", "螺纹钢", "1", "4000.00"), line("2", "2026-06-03", "螺纹钢", "10", "400.00", unit="根")]
     result = _ok(build_inventory_check(purchases, [check("1"), check("2")], [], item_catalog=CATALOG, tax_profile=GENERAL))
-    assert sorted(item["spec"] for item in result["items"]) == ["HRB40018", "HRB400E18"]
-    assert all(item["key"].count(KEY_SEPARATOR) == 2 for item in result["items"])
+    assert sorted(item["unit"] for item in result["items"]) == ["吨", "根"]
+    assert "mixed_units" in {item["code"] for item in result["warnings"]}
+
+
+LEDGER = {"accounts": [
+    {"code": "1405", "name": "库存商品", "is_leaf": False},
+    {"code": "140501", "name": "螺纹钢", "is_leaf": True},
+    {"code": "140502", "name": "盘螺", "is_leaf": True},
+]}
+
+
+def _books(root: Path, lines: list[str], ledger: dict | None = LEDGER) -> Path:
+    folder = root / "做账草稿" / "账套读回"
+    folder.mkdir(parents=True)
+    (folder / "序时账_2026-05.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    if ledger is not None:
+        (root / "凭证").mkdir()
+        (root / "凭证" / "科目表.json").write_text(json.dumps(ledger, ensure_ascii=False), encoding="utf-8")
+    return root
+
+
+def booked(day: str, code: str, name: str, qty: str, debit: str = "0", credit: str = "0") -> str:
+    return "\t".join((day, "记-001", "购钢材", code, name, qty, "", debit, credit))
+
+
+def test_opening_comes_from_the_book_readback_per_category(tmp_path: Path):
+    root = _books(tmp_path, [booked("2026-05-10", "140501", "库存商品_螺纹钢", "8.000 吨", debit="32000.00"),
+                             booked("2026-05-31", "140501", "库存商品_螺纹钢", "3.000 吨", credit="12000.00"),
+                             booked("2026-05-31", "140502", "库存商品_盘螺", "2.000 吨", debit="8200.00"),
+                             booked("2026-05-31", "2202", "应付账款", "", credit="40200.00")])
+    book = read_book_inputs(root)
+    assert book.error == "" and book.files == ["序时账_2026-05.txt"]
+    purchases = [line("1", "2026-05-08", "螺纹钢", "8", "32000.00"), line("2", "2026-06-03", "螺纹钢", "5", "21000.00")]
+    sales = [line("9", "2026-06-20", "钢筋", "6", "30000.00")]
+    result = _ok(build_inventory_check(purchases, [check("1"), check("2")], sales, item_catalog=CATALOG, tax_profile=GENERAL,
+                                       book=book, start="2026-06"))
+    assert result["opening"]["source"] == "ledger" and result["opening"]["read_months"] == ["2026-05"]
+    rebar = _item(result)
+    # Opening 5 t / 20000 from the books; the May invoice is inside it and not counted again.
+    assert (rebar["account_code"], rebar["open_qty"], rebar["open_amount"], rebar["in_qty"]) == ("140501", "5", "20000.00", "5")
+    assert (rebar["cost"], rebar["end_qty"], rebar["end_amount"]) == ("24600.00", "4", "16400.00")
+    coil = _item(result, "盘螺")
+    assert (coil["open_qty"], coil["in_qty"], coil["end_amount"], coil["specs"], coil["sold_never_bought"]) == ("2", "0", "8200.00", [], False)
+    assert result["totals"]["open_amount"] == "28200.00"
+    codes = {item["code"] for item in result["warnings"]}
+    assert {"opening_ledger", "before_opening"} <= codes and "opening_zero" not in codes
+
+
+def test_book_readback_without_earlier_months_keeps_the_zero_opening(tmp_path: Path):
+    book = read_book_inputs(_books(tmp_path, [booked("2026-06-10", "140501", "库存商品_螺纹钢", "8.000 吨", debit="32000.00")]))
+    purchases = [line("1", "2026-06-03", "螺纹钢", "5", "21000.00")]
+    result = _ok(build_inventory_check(purchases, [check("1")], [], item_catalog=CATALOG, tax_profile=GENERAL, book=book))
+    assert result["opening"]["source"] == "zero" and "2026-06 之前" in result["opening"]["error"]
+    assert _item(result)["open_qty"] == "0"
+    assert "opening_zero" in {item["code"] for item in result["warnings"]}
+
+
+def test_broken_or_incomplete_books_never_stop_the_check(tmp_path: Path):
+    assert read_book_inputs(tmp_path) == BookInputs()
+    no_ledger = read_book_inputs(_books(tmp_path / "a", [booked("2026-05-10", "140501", "x", "1 吨", debit="1")], ledger=None))
+    assert no_ledger.booked and no_ledger.ledger is None and "科目表" in no_ledger.error
+    broken = _books(tmp_path / "b", ["not a booked line"])
+    assert "序时账" in read_book_inputs(broken).error
+    result = _ok(build_inventory_check([line("1", "2026-06-03", "螺纹钢", "5", "21000.00")], [check("1")], [], item_catalog=CATALOG,
+                                       tax_profile=GENERAL, book=read_book_inputs(broken)))
+    assert result["opening"]["source"] == "zero" and "opening_zero" in {item["code"] for item in result["warnings"]}
+
+
+def test_unit_less_book_line_is_not_guessed_onto_one_of_several_units(tmp_path: Path):
+    book = read_book_inputs(_books(tmp_path, [booked("2026-05-10", "140501", "库存商品_螺纹钢", "8", debit="32000.00")]))
+    purchases = [line("1", "2026-06-03", "螺纹钢", "1", "4000.00"), line("2", "2026-06-03", "螺纹钢", "10", "400.00", unit="根")]
+    result = _ok(build_inventory_check(purchases, [check("1"), check("2")], [], item_catalog=CATALOG, tax_profile=GENERAL, book=book))
+    assert result["opening"]["items"] == [] and result["opening"]["unassigned"][0]["code"] == "140501"
+    assert all(item["open_qty"] == "0" for item in result["items"])
+    assert "opening_unassigned" in {item["code"] for item in result["warnings"]}
 
 
 @pytest.fixture
@@ -144,3 +237,12 @@ def test_compare_api_reads_both_projections_without_writing(app, client, tmp_pat
     (item,) = payload["items"]
     assert (item["unit"], item["in_qty"], item["out_qty"], item["cost"], item["end_qty"]) == ("吨", "10", "4", "16000.00", "6")
     assert {path: path.stat().st_mtime_ns for path in root.rglob("*")} == before
+    assert payload["opening"]["source"] == "zero"
+
+    # The books' read-back in the company folder supplies the opening on the next request.
+    ledger = {"accounts": [{"code": "1405", "name": "库存商品", "is_leaf": False}, {"code": "140503", "name": "钢筋"}]}
+    _books(root, [booked("2025-12-31", "140503", "库存商品_钢筋", "2.000 吨", debit="7000.00")], ledger)
+    payload = client.get(url).json()
+    assert payload["checks_ok"] and payload["opening"]["source"] == "ledger"
+    (item,) = payload["items"]
+    assert (item["open_qty"], item["open_amount"], item["end_qty"]) == ("2", "7000.00", "8")

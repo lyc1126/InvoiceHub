@@ -31,7 +31,7 @@ from invoice_hub.projections.cost_analysis import COST_DETAIL_CSV_NAME
 from invoice_hub.projections.costs import CostProjectionService
 from invoice_hub.services.company_bank import BankFlowReader, build_bank_ledger
 from invoice_hub.services.company_deduction import DeductionListReader, build_deduction_check
-from invoice_hub.services.company_inventory import build_inventory_check
+from invoice_hub.services.company_inventory import build_inventory_check, read_book_inputs
 from invoice_hub.services.company_projects import ProjectAssignmentStore, build_project_summary
 from invoice_hub.services.company_settlement import build_settlement_check
 from invoice_hub.services.invoice_tags import TAG_DEFINITIONS_NAME, InvoiceTagStore
@@ -381,10 +381,13 @@ class CompanyViewService:
         # Read-only: these folders may not be the watch_dir, so nothing may refresh their projection.
         purchases = self._cost_service(cost_profile).read_only_inputs()
         sales = self._cost_service(sale_profile).read_only_inputs()
+        # The opening comes from the books' 序时账 read-back in the company folder (read-only, request time);
+        # without one the check starts from zero and says so.
+        book = read_book_inputs(Path(company["root_path"])) if company.get("root_status") == "present" else None
         # The item catalog and taxpayer type belong to the purchase side (the 成本发票 folder).
         result = build_inventory_check(
             purchases["detail_rows"], purchases["check_rows"], sales["detail_rows"],
-            item_catalog=purchases["item_catalog"], tax_profile=purchases["tax_profile"], start=start, end=end,
+            item_catalog=purchases["item_catalog"], tax_profile=purchases["tax_profile"], book=book, start=start, end=end,
         )
         self._freshness_warnings(result, {"cost_invoice_dir": cost_view, "issued_invoice_dir": sale_view},
                                  {"cost_invoice_dir": "成本发票", "issued_invoice_dir": "开具发票"})
