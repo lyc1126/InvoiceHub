@@ -56,8 +56,11 @@ def file_sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def discover(paths: list[Path]) -> WorkpaperInput:
-    """按内容（而非文件名）识别对账单与回单；识别不了的文件列为未识别，不猜格式。"""
+def discover(paths: list[Path], *, parse_receipts: bool = True) -> WorkpaperInput:
+    """按内容（而非文件名）识别对账单与回单；识别不了的文件列为未识别，不猜格式。
+
+    `parse_receipts=False` 供公司账簿（WS-07）只读余额链：回单仍按首页识别并计入来源，但不解析。
+    """
     import fitz
 
     files: list[Path] = []
@@ -75,7 +78,9 @@ def discover(paths: list[Path]) -> WorkpaperInput:
     for path in files:
         sha = file_sha256(path)
         with fitz.open(path) as doc:
-            pages = [str(page.get_text()) for page in doc]
+            # 版式只看首页；只有对账单才需要全部页面（回单另由 parse_receipt_document 读坐标）。
+            first = str(doc[0].get_text()) if doc.page_count else ""
+            pages = [str(page.get_text()) for page in doc] if first and boc.is_boc_statement(first) else [first]
         if pages and boc.is_boc_statement(pages[0]):
             try:
                 statement = boc.parse_statement_pages(pages, statement_id="", source_file=path.name, source_sha256=sha)
@@ -94,7 +99,7 @@ def discover(paths: list[Path]) -> WorkpaperInput:
             issues.append(CheckIssue("警告", "UNSUPPORTED_FILE", f"{path.name} 不是已支持的格式，已跳过"))
     # 回单方向依赖本公司账号，所以先解析完全部对账单再解析回单。
     own = sorted(own_accounts)[0] if len(own_accounts) == 1 else ""
-    for path, sha in receipt_docs:
+    for path, sha in receipt_docs if parse_receipts else ():
         with fitz.open(path) as doc:
             try:
                 receipts += boc.parse_receipt_document(doc, source_file=path.name, source_sha256=sha, own_account=own)

@@ -28,6 +28,7 @@ from invoice_hub.extraction.parsers import SUPPORTED_EXTS
 from invoice_hub.monitoring.state import PROCESSED_FILE_NAME, canonical_path as monitor_path_key
 from invoice_hub.projections.cost_analysis import COST_DETAIL_CSV_NAME
 from invoice_hub.projections.costs import CostProjectionService
+from invoice_hub.services.company_bank import BankFlowReader, build_bank_ledger
 from invoice_hub.services.company_ledger import build_invoice_ledger
 from invoice_hub.services.company_registry import CompanyRegistryError, CompanyRegistryService
 from invoice_hub.services.invoice_list import InvoiceListService
@@ -142,6 +143,7 @@ class CompanyViewService:
         active_profile: Callable[[], TargetProfile],
         registry: CompanyRegistryService,
         active_invoices: Callable[[], InvoiceListService],
+        bank_reader: BankFlowReader | None = None,
     ) -> None:
         self._lock = lock
         self.repo = repo
@@ -150,6 +152,7 @@ class CompanyViewService:
         self._active_profile = active_profile
         self._registry = registry
         self._active_invoices = active_invoices
+        self._bank_reader = bank_reader or BankFlowReader()
 
     @property
     def config(self) -> AppConfig:
@@ -251,9 +254,10 @@ class CompanyViewService:
         return payload, True
 
     def company_ledger(
-        self, company_id: str, *, granularity: str = "month", start: str = "", end: str = "", check_freshness: bool = True
+        self, company_id: str, *, granularity: str = "month", start: str = "", end: str = "", check_freshness: bool = True,
+        include_bank: bool = True,
     ) -> dict:
-        """进项 (成本发票) and 销项 (开具发票) of one company from their last projections."""
+        """进项 (成本发票) and 销项 (开具发票) from their last projections, plus 银行流水 statements."""
         payload = self._registry.get_company(company_id)
         company = payload["company"]
         active_id = self.active_profile.id
@@ -275,4 +279,22 @@ class CompanyViewService:
             if state in {"stale", "never_built", "unknown", "missing_dir"}:
                 ledger["warnings"].insert(0, {"code": f"source_{state}", "direction": direction,
                                               "message": f"{label}：{sources[direction]['freshness']['message']}"})
-        return {"ok": True, "revision": payload["revision"], "company": company, "sources": sources, **ledger}
+        bank = self._bank_ledger(company, granularity=granularity, start=start, end=end) if include_bank else None
+        return {"ok": True, "revision": payload["revision"], "company": company, "sources": sources, **ledger, "bank": bank}
+
+    def _bank_ledger(self, company: dict, *, granularity: str, start: str, end: str) -> dict:
+        # Bank figures sit beside the invoice ledger, not inside it: its checks_ok stays about
+        # invoices, and a bank folder that cannot be read never hides the invoice totals.
+        subdir = next(item for item in company["subdirs"] if item["key"] == "bank_flow_dir")
+        base = {"path": subdir["path"], "status": subdir["status"]}
+        if subdir["status"] != "present":
+            return {**base, "state": "missing_dir", "message": FRESHNESS_MESSAGES["missing_dir"]}
+        read = self._bank_reader.read(Path(subdir["path"]))
+        base.update(file_count=read.file_count, cached=read.cached)
+        if read.data is None:
+            return {**base, "state": "unreadable", "message": read.error}
+        if not read.data.statements:
+            return {**base, "state": "no_statements", "message": "没有可识别的银行对账单（目前支持中国银行 PDF）。",
+                    **build_bank_ledger(read.data, granularity=granularity, start=start, end=end)}
+        return {**base, "state": "ok", "message": "",
+                **build_bank_ledger(read.data, granularity=granularity, start=start, end=end)}

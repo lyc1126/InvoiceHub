@@ -89,8 +89,13 @@ button.block { width: 100%; }
 .checks--failed { border-color: var(--danger); background: #fdecea; color: var(--danger); }
 .check--failed { color: var(--danger); font-weight: 600; }
 .warnings { margin: 8px 0; padding-left: 18px; color: #8a5a00; }
+.warnings--compact { font-size: 13px; }
+.warnings--compact .check--failed { font-weight: 400; }
 .ledger { overflow-x: auto; display: block; font-size: 13px; }
 .ledger th, .ledger td { padding: 6px; }
+.ledger caption { text-align: left; font-weight: 600; padding: 6px 0; }
+.ledger + .ledger { margin-top: 12px; }
+.row--failed th, .row--failed td { color: var(--danger); }
 @media (max-width: 640px) {
   .split { grid-template-columns: 1fr; }
   /* Narrow screens scroll the whole table sideways instead of squeezing cells into columns of single characters. */

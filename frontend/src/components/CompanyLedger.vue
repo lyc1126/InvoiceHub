@@ -2,6 +2,7 @@
 import { reactive, ref, watch } from "vue";
 import { request } from "../api/client";
 import type { Company, LedgerPayload, LedgerTotals } from "../api/types";
+import CompanyBankLedger from "./CompanyBankLedger.vue";
 import { errorText, money, taxpayerLabel } from "../format";
 
 const props = defineProps<{ company: Company }>();
@@ -136,6 +137,8 @@ watch(
           </tbody>
         </table>
       </section>
+
+      <CompanyBankLedger v-if="ledger.bank" :bank="ledger.bank" />
     </template>
   </section>
 </template>

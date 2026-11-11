@@ -199,4 +199,52 @@ export interface LedgerPayload {
   checks: { code: string; ok: boolean; message: string }[];
   checks_ok: boolean;
   sources: { input: CompanyDirectory; output: CompanyDirectory };
+  bank: BankLedger | null;
+}
+
+export interface LedgerCheck {
+  code: string;
+  ok: boolean;
+  message: string;
+}
+
+/** One account (or all accounts) over one period; null balances mean a month had no statement. */
+export interface BankBucket {
+  opening: string | null;
+  inflow: string;
+  outflow: string;
+  closing: string | null;
+  rows: number;
+  missing_months: string[];
+  ok: boolean;
+}
+
+export interface BankAccount {
+  account_no: string;
+  account_tail: string;
+  account_name: string;
+  bank_name: string;
+  label: string;
+  first_month: string;
+  last_month: string;
+  statement_files: string[];
+  periods: (BankBucket & { period: string })[];
+  totals: BankBucket;
+}
+
+export interface BankLedger {
+  path: string;
+  status: string;
+  state: "ok" | "no_statements" | "missing_dir" | "unreadable";
+  message: string;
+  file_count?: number;
+  cached?: boolean;
+  basis_label?: string;
+  accounts?: BankAccount[];
+  periods?: { period: string; inflow: string; outflow: string; opening: string | null; closing: string | null; rows: number; complete: boolean }[];
+  totals?: { inflow: string; outflow: string; rows: number };
+  sources?: { statements: number; receipts: number; unrecognized: { file: string; message: string }[] };
+  issues?: { level: "错误" | "警告" | "提示"; code: string; message: string }[];
+  checks?: LedgerCheck[];
+  checks_ok?: boolean;
 }

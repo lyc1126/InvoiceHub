@@ -1,5 +1,12 @@
 # InvoiceHub 注释与设计原因地图
 
+## 2026-11-11 公司账簿的银行流水（WS-07 第 3 步银行部分）
+
+- `company_bank.py::BankFlowReader.read`：目录列不全（超过 2,000 个 PDF 或 2 秒）时整体拒绝汇总。只汇总列出来的那部分，会让缺掉的月份看起来像“没有收支”。守护：`list_bank_pdfs` 的完整性返回与 `test_receipts_are_recognised_but_not_parsed`。
+- `_bucket`：没有对账单的月份不给余额（`null`），任一缺月让该期校验不成立。用 0 或上月期末补齐会让缺月与“当月无交易”无法区分，守恒校验也会被凑平。守护：`test_a_month_without_a_statement_is_missing_not_zero`、`test_a_quarter_with_a_missing_month_fails_even_when_the_ends_exist`。
+- `company_views.py::_bank_ledger` 与发票账簿并列返回、`checks_ok` 分开：银行口径（收付款）和票面口径不能互相抵消；银行目录读不了也不能挡住发票汇总。守护：`test_ledger_api_adds_bank_flows_beside_the_invoice_ledger`。
+- `bank/workpaper.py::discover(parse_receipts=False)`：账簿只需要余额链，回单逐页按坐标解析很慢；版式改为只看首页识别，对账单才读全部页面。CLI 默认仍解析回单。守护：`test_reader_reuses_the_parse_until_a_file_changes`（断言调用参数）与 `tests/test_bank_workpaper.py`。
+
 ## 2026-11-10 工作区“公司”模块（WS-02 / WS-07 界面）
 
 - `frontend/src/api/client.ts::acceptPartial`：子目录补建部分失败时后端返回 `ok:false` 但带逐项 `created/skipped/failed`；默认把 `ok:false` 当错误会丢掉这些结果，用户就不知道哪些文件夹已经建好。守护：`companies.spec.ts` 补建用例。

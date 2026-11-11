@@ -110,9 +110,11 @@ def router() -> APIRouter:
         start: str = Query("", pattern=r"^(|\d{4}-(0[1-9]|1[0-2]))$"),
         end: str = Query("", pattern=r"^(|\d{4}-(0[1-9]|1[0-2]))$"),
         check_freshness: bool = Query(True),
+        include_bank: bool = Query(True),
     ):
         return await _call(lambda: _state(request).company_views.company_ledger(
             company_id, granularity=granularity, start=start, end=end, check_freshness=check_freshness,
+            include_bank=include_bank,
         ))
 
     return routes

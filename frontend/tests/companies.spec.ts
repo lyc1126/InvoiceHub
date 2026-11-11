@@ -157,6 +157,48 @@ describe("companies module", () => {
     expect(wrapper.text()).toContain("票面口径");
   });
 
+  it("shows a bank month without a statement as missing, never as zero", async () => {
+    const bucket = { opening: "10000.00", inflow: "500.00", outflow: "100.00", closing: "10400.00", rows: 2, missing_months: [], ok: true };
+    const missing = { opening: null, inflow: "0.00", outflow: "0.00", closing: null, rows: 0, missing_months: ["2026-08"], ok: false };
+    const bank = {
+      path: "/合成/甲/银行流水", status: "present", state: "ok", message: "", file_count: 2, cached: false,
+      basis_label: "银行口径：对账单收支与余额；收付款不等于收入或成本。",
+      accounts: [{
+        account_no: "600011112222", account_tail: "2222", account_name: "甲公司", bank_name: "中国银行测试支行",
+        label: "中国银行测试支行 尾号2222", first_month: "2026-07", last_month: "2026-09", statement_files: ["7月.pdf", "9月.pdf"],
+        periods: [{ period: "2026-07", ...bucket }, { period: "2026-08", ...missing }],
+        totals: { ...bucket, missing_months: ["2026-08"], ok: false },
+      }],
+      periods: [], totals: { inflow: "500.00", outflow: "100.00", rows: 2 },
+      sources: { statements: 2, receipts: 3, unrecognized: [] },
+      issues: [{ level: "错误", code: "PERIOD_GAP", message: "缺少 2026-08-01 ~ 2026-08-31 的对账单" }],
+      checks: [{ code: "bank_balance:600011112222:2026-08", ok: false, message: "缺 2026-08 的对账单" }], checks_ok: false,
+    };
+    stubBackend((url) => (url.includes("/ledger") ? [200, { ...LEDGER, checks_ok: true, checks: [], bank }] : undefined));
+    const wrapper = await mountCompanies();
+    await wrapper.findAll('[role="tab"]')[1]!.trigger("click");
+    await flushPromises();
+    const section = wrapper.get('[aria-label="银行流水"]');
+    expect(section.get(".checks").classes()).toContain("checks--failed");
+    const august = section.findAll("tbody tr")[1]!;
+    expect(august.classes()).toContain("row--failed");
+    expect(august.text()).toContain("缺 2026-08 对账单");
+    expect(august.findAll("td")[0]!.text()).toBe("—"); // no opening balance is made up
+    expect(section.text()).toContain("10,400.00");
+    expect(section.text()).toContain("回单 3 份（回单不参与汇总）");
+  });
+
+  it("explains a missing bank folder instead of showing an empty table", async () => {
+    const bank = { path: "/合成/甲/银行流水", status: "missing", state: "missing_dir", message: "目录不存在或不可用。" };
+    stubBackend((url) => (url.includes("/ledger") ? [200, { ...LEDGER, bank }] : undefined));
+    const wrapper = await mountCompanies();
+    await wrapper.findAll('[role="tab"]')[1]!.trigger("click");
+    await flushPromises();
+    const section = wrapper.get('[aria-label="银行流水"]');
+    expect(section.text()).toContain("目录不存在或不可用。");
+    expect(section.findAll("table")).toHaveLength(0);
+  });
+
   it("marks a non-monitored folder's invoice list read-only", async () => {
     stubBackend((url) => (url.includes("/directories?") || url.endsWith("/directories")
       ? [200, { ok: true, revision: 3, company: COMPANY, directories: [{ ...DIRECTORIES[1], status: "present" }] }] : undefined));
