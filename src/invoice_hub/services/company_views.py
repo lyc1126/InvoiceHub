@@ -32,6 +32,7 @@ from invoice_hub.projections.costs import CostProjectionService
 from invoice_hub.services.company_bank import BankFlowReader, build_bank_ledger
 from invoice_hub.services.company_deduction import DeductionListReader, build_deduction_check
 from invoice_hub.services.company_inventory import build_inventory_check
+from invoice_hub.services.company_projects import ProjectAssignmentStore, build_project_summary
 from invoice_hub.services.company_settlement import build_settlement_check
 from invoice_hub.services.company_ledger import build_invoice_ledger
 from invoice_hub.services.company_registry import CompanyRegistryError, CompanyRegistryService
@@ -167,6 +168,7 @@ class CompanyViewService:
         self._active_invoices = active_invoices
         self._bank_reader = bank_reader or BankFlowReader()
         self._deduction_reader = deduction_reader or DeductionListReader()
+        self._projects = ProjectAssignmentStore()
 
     @property
     def config(self) -> AppConfig:
@@ -387,6 +389,44 @@ class CompanyViewService:
         if not read.data.statements:
             return {**base, "state": "no_statements", "message": "银行流水目录里没有可识别的对账单（目前支持中国银行 PDF）。", **result}
         return {**base, "state": "ok", "message": "", **result}
+
+    def _company_root(self, company: dict) -> Path:
+        if company.get("root_status") != "present":
+            raise CompanyRegistryError("COMPANY_ROOT_UNAVAILABLE", "公司资料夹不存在或不可用。", status_code=409)
+        return Path(company["root_path"])
+
+    def company_projects(self, company_id: str, *, granularity: str = "month", start: str = "", end: str = "") -> dict:
+        """Project summary (WS-03): remark project names, manual assignments win, 未归属 kept apart."""
+        payload = self._registry.get_company(company_id)
+        company = payload["company"]
+        root = self._company_root(company)
+        assignments = self._projects.load(root)
+        active_id = self.active_profile.id
+        rows, details, sources = {}, {}, {}
+        for direction, key in (("input", "cost_invoice_dir"), ("output", "issued_invoice_dir")):
+            subdir, view, profile = self._cost_source(company, key, active_id)
+            sources[direction] = view
+            present = subdir["status"] == "present"
+            rows[direction] = self._list_payload(profile, {})[0]["items"] if present else []
+            details[direction] = self._cost_service(profile).read_only_inputs()["detail_rows"] if present else []
+        try:
+            result = build_project_summary(
+                rows["input"], rows["output"], input_details=details["input"], output_details=details["output"],
+                manual={number: item["project"] for number, item in assignments["invoices"].items() if isinstance(item, dict) and item.get("project")},
+                granularity=granularity, start=start, end=end,
+            )
+        except ValueError as exc:
+            raise CompanyRegistryError("COMPANY_PROJECTS_INVALID", str(exc)) from exc
+        self._freshness_warnings(result, {"cost_invoice_dir": sources["input"], "issued_invoice_dir": sources["output"]},
+                                 {"cost_invoice_dir": "成本发票", "issued_invoice_dir": "开具发票"})
+        return {"ok": True, "revision": payload["revision"], "company": company, "sources": sources,
+                "assignments_revision": assignments["revision"], **result}
+
+    def save_project_assignments(self, company_id: str, body: object) -> dict:
+        # Written into the company folder on the user's explicit save only; rebuilds never touch it.
+        company = self._registry.get_company(company_id)["company"]
+        saved = self._projects.update(self._company_root(company), body)
+        return {"ok": True, "assignments_revision": saved["revision"], "count": len(saved["invoices"])}
 
     def _cost_service(self, profile: TargetProfile) -> CostProjectionService:
         return CostProjectionService(

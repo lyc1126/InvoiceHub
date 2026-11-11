@@ -363,3 +363,36 @@ export interface CompareResult {
   ambiguous_flows?: SettlementFlow[];
   excluded_invoices?: { invoice_number: string; invoice_date: string; party: string; reason: string; source_files: string[] }[];
 }
+
+export interface ProjectInvoice {
+  direction: "input" | "output";
+  invoice_number: string;
+  invoice_date: string;
+  counterpart: string;
+  total: string;
+  project: string;
+  source: "remark" | "manual" | "conflict" | "none";
+  remark_projects: string[];
+  assignable: boolean;
+  source_files: string[];
+}
+
+export interface ProjectSummary {
+  ok: boolean;
+  basis_label: string;
+  assignments_revision: number;
+  projects: {
+    project: string;
+    unassigned: boolean;
+    input: LedgerTotals;
+    output: LedgerTotals;
+    face_difference_pretax: string;
+    periods: { period: string; input_pretax: string; output_pretax: string }[];
+  }[];
+  project_names: string[];
+  unassigned_invoices: ProjectInvoice[];
+  manual_invoices: ProjectInvoice[];
+  warnings: { code: string; message: string }[];
+  checks: LedgerCheck[];
+  checks_ok: boolean;
+}

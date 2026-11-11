@@ -128,4 +128,22 @@ def router() -> APIRouter:
     ):
         return await _call(lambda: _state(request).company_views.compare(company_id, a, b, start=start, end=end))
 
+    @routes.get("/api/v1/companies/{company_id}/projects")
+    async def company_projects(
+        request: Request,
+        company_id: str,
+        granularity: Literal["month", "quarter", "year"] = "month",
+        start: str = Query("", pattern=r"^(|\d{4}-(0[1-9]|1[0-2]))$"),
+        end: str = Query("", pattern=r"^(|\d{4}-(0[1-9]|1[0-2]))$"),
+    ):
+        return await _call(lambda: _state(request).company_views.company_projects(
+            company_id, granularity=granularity, start=start, end=end,
+        ))
+
+    @routes.put("/api/v1/companies/{company_id}/projects/assignments")
+    async def save_company_project_assignments(request: Request, company_id: str):
+        _require_same_origin_write(request)
+        payload = await _json_body(request)
+        return await _call(lambda: _state(request).company_views.save_project_assignments(company_id, payload))
+
     return routes

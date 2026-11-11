@@ -4,13 +4,15 @@ import CompanyCompare from "../components/CompanyCompare.vue";
 import CompanyCreateForm from "../components/CompanyCreateForm.vue";
 import CompanyDirectories from "../components/CompanyDirectories.vue";
 import CompanyLedger from "../components/CompanyLedger.vue";
+import CompanyProjects from "../components/CompanyProjects.vue";
 import CompanySettings from "../components/CompanySettings.vue";
 import { useCompaniesStore } from "../stores/companies";
 
-type Tab = "directories" | "ledger" | "compare" | "settings";
+type Tab = "directories" | "ledger" | "projects" | "compare" | "settings";
 const TABS: { id: Tab; label: string }[] = [
   { id: "directories", label: "目录" },
   { id: "ledger", label: "发票账簿" },
+  { id: "projects", label: "项目" },
   { id: "compare", label: "勾稽" },
   { id: "settings", label: "设置" },
 ];
@@ -23,9 +25,11 @@ const createdNotice = ref("");
 // then stays mounted (hidden) to keep its filters and result.
 const ledgerOpened = ref(false);
 const compareOpened = ref(false);
+const projectsOpened = ref(false);
 watch(tab, (value) => {
   if (value === "ledger") ledgerOpened.value = true;
   if (value === "compare") compareOpened.value = true;
+  if (value === "projects") projectsOpened.value = true;
 });
 
 function onCreated(sources: Record<string, string>): void {
@@ -105,6 +109,9 @@ onMounted(() => {
           </div>
           <div v-if="tab === 'ledger' || ledgerOpened" v-show="tab === 'ledger'" :id="'company-panel-ledger'" role="tabpanel" aria-labelledby="company-tab-ledger">
             <CompanyLedger :company="companies.selected" />
+          </div>
+          <div v-if="tab === 'projects' || projectsOpened" v-show="tab === 'projects'" :id="'company-panel-projects'" role="tabpanel" aria-labelledby="company-tab-projects">
+            <CompanyProjects :company="companies.selected" />
           </div>
           <div v-if="tab === 'compare' || compareOpened" v-show="tab === 'compare'" :id="'company-panel-compare'" role="tabpanel" aria-labelledby="company-tab-compare">
             <CompanyCompare :company="companies.selected" />

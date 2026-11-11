@@ -1,5 +1,12 @@
 # InvoiceHub 注释与设计原因地图
 
+## 2026-11-11 公司项目汇总（WS-03）
+
+- `company_projects.py::ProjectAssignmentStore`：人工项目归属存在公司资料夹根目录而不是 `runtime/`，资料夹换机器或换人接手时人工判断随资料走；它和 `成本开票状态.json` 一样只在用户保存时写，重新汇总不读写。守护：`test_manual_assignment_is_saved_in_the_company_folder_and_survives`。
+- 损坏的 `项目归属.json` 拒绝读写而不是当作空文件：当空文件覆盖会一次丢掉全部人工归属。守护：`test_bad_requests_and_a_damaged_file_are_refused`。
+- 一张票备注出现两个项目名称时不择一：选哪个都是猜，列入未归属等人工指定。守护：`test_projects_come_from_remarks_and_manual_values_win`。
+- `build_project_summary` 与 `build_invoice_ledger` 交叉校验：项目页和账簿页对同一批票必须给出同一个合计，否则用户无法判断哪个对。
+
 ## 2026-11-11 往来核对（WS-07 第 4 步）
 
 - `company_settlement.py::_party_index`：对账单“备注”列会截断长户名，只认唯一命中的 ≥4 字前缀；命中多家时不归属，因为把付款记到错误的单位比留着待查更难发现。守护：`test_a_name_that_fits_two_parties_is_not_assigned`。

@@ -2,6 +2,14 @@
 
 ## 未发布
 
+### 2026-11-11 公司项目汇总与人工项目归属（WS-03 / WS-07 第 5 步）
+
+- 需求：继续 WS 线。第 4 步比较已全部就绪，账套读回期初需要用户决定库存科目与规格的对应方式，先做待办里已有明确方案的 WS-03：项目取自发票备注“项目名称：xxx”，没有的人工填写并按受保护字段保存，未归属单列不分摊。起点 `da8815b`。
+- 方案：新增 `services/company_projects.py`。项目名来自两个目录 `成本发票明细.csv` 的“备注项目名称”（成本投影已从备注提取）；一张票只有一个名称才采用，多个名称列入未归属。人工归属由 `ProjectAssignmentStore` 写入公司资料夹根目录 `项目归属.json`（按发票号码，带 revision 与锁；空值清除；损坏文件拒绝读写，不当空文件覆盖），人工值优先于备注。`build_project_summary` 与发票账簿同一家族、金额与期间规则，并与 `build_invoice_ledger` 交叉校验张数与价税合计。新增 `GET /api/v1/companies/{id}/projects` 与 `PUT .../projects/assignments`（同源写）。前端新增“项目”标签（`CompanyProjects.vue`）：项目汇总表（未归属单列）、未归属与已人工指定发票的项目输入（已有项目名候选），只提交改动并带 revision，冲突时刷新再提示。
+- 文档：接口流程（两条路由）、数据算法（项目汇总）、做账规则与页面规则、文件地图（3 个新文件，`CompaniesView.vue` 职责）、任务导航 10.4（产物新增 `项目归属.json`）、设计原因地图、未来工作总览（WS-02/03/07 总览状态改为进行中，WS-07 进度）、实现状态。
+- 验证：新增 `tests/test_company_projects.py`（5 项）；前端 `vue-tsc`、Vitest 22 项（新增项目归属用例）、`vite build` 通过；真实浏览器（专用 Chrome 经 CDP + Playwright，临时根目录 8799 端口，合成公司 2 张成本发票、1 张开具发票，均无备注）：保存前全部未归属，给两张填“甲项目”保存后甲项目进项 1,130.00、销项 1,695.00、差额 500.00，未归属剩 1 张，与账簿一致 4 项成立，`项目归属.json` revision 为 1；1280px 与 390px 无横向溢出，控制台无错误。macOS 本机全量 pytest（绝对 `PYTHONPATH`，`-x`）退出码 0；`compileall src tests`、`ruff check --select E9,F`、`git diff --check` 通过。
+- 未覆盖：PDF 备注的项目名识别只沿用成本投影既有提取（本轮未改提取，也未用真实发票验证）；旧首页项目列；Windows、Tauri 与打包产物。只做了本地提交，未推送、未合并到 main。
+
 ### 2026-11-11 往来核对：发票 ⇄ 银行流水（WS-07 第 4 步）
 
 - 需求：用户要求继续完成 WS 线。起点 `codex/ws-07-company-registry` 的 `6c7b023`（进销存）。

@@ -280,6 +280,43 @@ describe("companies module", () => {
     expect(wrapper.get('[aria-label="非发票流水"]').text()).toContain("不是发票上的往来单位");
   });
 
+  it("assigns projects to unassigned invoices and sends only the changes with the revision", async () => {
+    const totals = { count: 1, pretax: "1000.00", tax: "130.00", total: "1130.00" };
+    const empty = { count: 0, pretax: "0.00", tax: "0.00", total: "0.00" };
+    const invoice = (number: string, source: string, project = "") => ({
+      direction: "input", invoice_number: number, invoice_date: "2026-06-03", counterpart: "丙丁建材", total: "1130.00",
+      project, source, remark_projects: [], assignable: true, source_files: [`${number}.xml`],
+    });
+    const summary = {
+      ok: true, basis_label: "票面口径：差额不是项目利润。", assignments_revision: 4,
+      projects: [
+        { project: "甲项目", unassigned: false, input: totals, output: empty, face_difference_pretax: "-1000.00", periods: [] },
+        { project: "", unassigned: true, input: totals, output: empty, face_difference_pretax: "-1000.00", periods: [] },
+      ],
+      project_names: ["甲项目"], unassigned_invoices: [invoice("1".repeat(20), "none")], manual_invoices: [invoice("2".repeat(20), "manual", "甲项目")],
+      warnings: [], checks: [{ code: "input_total_ledger", ok: true, message: "一致" }], checks_ok: true,
+    };
+    stubBackend((url, init) => {
+      if (url.includes("/projects/assignments")) return [200, { ok: true, assignments_revision: 5, count: 2 }];
+      if (url.includes("/projects")) return [200, summary];
+      return undefined;
+    });
+    const wrapper = await mountCompanies();
+    await wrapper.get("#company-tab-projects").trigger("click");
+    await flushPromises();
+    const table = wrapper.get('table[aria-label="项目汇总"]');
+    expect(table.text()).toContain("未归属");
+    expect(table.findAll("tbody tr")[1]!.classes()).toContain("row--muted");
+    const form = wrapper.get('form[aria-label="项目归属"]');
+    expect(form.get("button.primary").attributes("disabled")).toBeDefined(); // nothing changed yet
+    await form.get(`input[aria-label="${"1".repeat(20)} 项目"]`).setValue("甲项目");
+    await form.trigger("submit");
+    await flushPromises();
+    const put = calls.find((call) => call.method === "PUT")!;
+    expect(put.body).toEqual({ revision: 4, assignments: { ["1".repeat(20)]: "甲项目" } });
+    expect(wrapper.text()).toContain("已保存 1 张发票");
+  });
+
   it("marks a non-monitored folder's invoice list read-only", async () => {
     stubBackend((url) => (url.includes("/directories?") || url.endsWith("/directories")
       ? [200, { ok: true, revision: 3, company: COMPANY, directories: [{ ...DIRECTORIES[1], status: "present" }] }] : undefined));

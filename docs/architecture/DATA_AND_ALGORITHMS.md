@@ -402,6 +402,18 @@ Lifecycle lease 是 host 运行态授权快照，不是可持久化业务状态�
        本期发票：已对上 + 红冲抵销 + 未对上 + 未找到原票的红字 = 张数；对账单自检无错误
 ```
 
+公司项目汇总（WS-03，`services/company_projects.py`）：
+
+```text
+项目   发票号码 → 两个目录 成本发票明细.csv 的“备注项目名称”（成本投影从备注“项目名称：xxx”提取）；
+       同一张票只有一个名称才采用，多个名称 → conflict，列入未归属
+人工   公司资料夹根目录 项目归属.json：{version: 1, revision, invoices: {发票号码: {project, updated_at}}}；
+       人工值优先于备注；空字符串清除；写入带 revision 与锁，损坏文件拒绝覆盖；重新汇总不读写它
+归集   与发票账簿同一家族、同一金额规则、同一期间过滤；未归属单列，不分摊
+校验   各项目 + 未归属 的张数与价税合计 = build_invoice_ledger 的合计（每个方向）
+口径   票面口径，差额不是项目利润
+```
+
 ## 5. SQLite schema 与真实使用情况
 
 连接启用 WAL 和 foreign keys，并把 `row_factory` 设为 `sqlite3.Row`。
