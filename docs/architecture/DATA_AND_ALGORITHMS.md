@@ -34,6 +34,18 @@ Windows回收在PreDeleteItem保护后，再检查PostDeleteItem返回的实际�
 - 首页最终列表按 CSV、手改状态和档案指纹复用构造结果；全量筛选/排序/统计后取当前页，位置键不改成页内编号。未传 page 的旧消费者仍只读完整投影，全选明确请求完整筛选结果。
 - `InboundDetails` 按成本 CSV 路径及文件签名缓存分组，选票只展开对应号码；完整一致副本折叠和冲突阻断沿用 documents 规则。出库只缓存目标文件名所需的号码/日期，源文件签名变化即失效，预览前后再次比对；正式导出仍实时解析并要求完整目录索引。
 
+功能约束按需读取：[提取与分类](rules/INVOICE_EXTRACTION.md)、[成本](rules/COST_ANALYSIS.md)、[做账](rules/BOOKKEEPING.md)、[税务设计](rules/TAX_WORKBENCH.md)。先按 [任务快速索引](AGENT_TASK_MAP.md#quick-lookup) 定位全部命中项，再读取规则全文及对应实现章节；AGENTS.md 保留全局必读规则。
+
+## 税务计算模型提案（2026-09-11，未实施）
+
+[税务算法与政策规格](../TAX_ALGORITHMS_AND_POLICY.md)定义后端 Decimal、公式与舍入节点、独立事实期间、票面/应纳/已缴语义、逐月留抵、季度累计预缴和解释 trace；[工作台设计](../TAX_WORKBENCH_DESIGN.md)定义来源 hash、公司绑定与可重建缓存。两份文件是拟议设计，不新增当前模型、SQLite schema 或业务真值文件。
+
+实施重点：未知不为零；发票税额不是完整应缴税额；附加计税依据遵循法定定义而不是任意银行支付总额；2026 小规模起征点与教育费免征比较符分开；合同/资本印花税不能按票数/本数计算。解释须与同次运行结果绑定，不从浏览器或模型另算。
+
+拟议界面偏好 `tax_calculator_placement` 只允许 `floating/header`，缺省为 `floating`；`tax_calculator_anchor` 可空或为 `[0,1]` 内有限归一化坐标，窗口变化后按当前视口/导航栏边界重新夹紧。它们进入现有 `runtime/local_state/preferences.json`，不进入公司事实或税额指纹，不因换公司而改写；原型只保存会话内状态。
+
+自定义税率草案以 `custom_rate_percent` 表达百分数字符串，支持 0—100、最多四位小数，后端 Decimal 除以 100 后进入既有比例公式；与比例输入字段互斥，来源固定为 `user_assumption`。未填或非法值保持未知/输入错误，不回退 13%；0% 只表示用户假设，不代表免税或法定零税率。原型的整数精度比较仅校验输入，不计算税额。
+
 2026-09-08 本附录与开发架构总入口统一以 `main` 的 PR #20 合并提交为产品实现及后续发行源码基线，精确身份见 [分支记录](../BRANCH_STATUS.md)；下文旧分支名只记录来源，不能再作为并行真值。源码 CI 不替代平台成品验收。
 
 2026-09-08 监控状态采用独立 `state_dir/.invoice_monitor_status.lock` 保护短读写，状态更新仍在完整 sync 锁内按 sync -> status 顺序执行；状态读取不取 sync 锁。锁文件不是运行真值，PID 与 `.invoice_monitor.lock` 的判定保持不变。

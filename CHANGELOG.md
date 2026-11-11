@@ -311,6 +311,21 @@
 - 规则页与地图同步：[税务规则](docs/architecture/rules/TAX_WORKBENCH.md) 增加来源分级、三项申报交付物、税费种认定、资格回放与输出边界条目；FILE_MAP、AGENT_TASK_MAP 税务行（D2/D3/D5 与最低验收）、DEVELOPMENT_ARCHITECTURE、COMMENT_RATIONALE_MAP（四条新不变量）、MIGRATION_GAP_CHECKLIST 与 IMPLEMENTATION_STATUS 一并回填。
 - 验证：`python3 -m pytest tests/test_development_documentation.py` 通过，`git diff --check` 通过。本轮仅改文档：未运行产品 Python 回归（本工作树无 `.backend-venv`），未覆盖浏览器、原生界面、Windows BAT、打包产物或任何真实税务申报对照；未执行任何政策抓取，未核验新的文号、比例或地方口径，设计中的政策事实仍以 2026-09-11 核对范围为准；未提交、未推送。
 
+### 2026-09-11 精简 Agent 必读入口并按功能组织规则
+
+- 用户要求保留 AGENTS.md 的通用必读内容，将功能细则划入架构地图以便快速查找问题；随后明确可以在 main 执行。开工在 `codex/tax-workbench-design`，与本地 main 同为 `ee0f2c2`；切回 main 时完整保留既有税务设计、原型、未跟踪文件和 ignored 运行态。
+- AGENTS.md 保留开工、项目/数据/公开历史边界、文档与注释、Git/授权、验收和收尾；功能规则逐条迁入 `docs/architecture/rules/` 的提取、成本、监控、页面、做账、税务、Windows、macOS、Tauri 与发行十个专题。目录细则归 FILE_MAP，Git 命令细则归现有 Git 指南；必读规则按命中功能完整读取，跨功能取并集。
+- 任务地图前部增加问题关键词 → 强制规则 → 原有任务行的索引与稳定锚点；更新各专题、文件地图和架构入口的引用，修复失效的“到 AGENTS 读功能细则”指引。CLAUDE.md 改为共用入口，保留架构快捷查询与税务设计定位，并统一 README 定点维护约定。未改产品代码、真实配置、原型或发布输入，也未增加交接脚本。
+- 验证：AGENTS.md 从 72,780 bytes 缩至约 13.4 KB，CLAUDE.md 为 2,770 bytes；核对原 AGENTS 的 262 个规则块，260 个原文保留（仅规范化空白和迁移链接），另 2 项分别合并到更完整的验收清单、改为按所属规则归档风险，约束未删减。16 项文档契约通过，覆盖新增专题的文件地图/链接、双向定位锚点、入口大小预算与既有规则语义；`git diff --check` 通过。保留旧 CLAUDE 的前端、监控与原生停止补充约束到对应专题。纯文档与文档契约变化，未运行产品全回归，未覆盖前端、localhost、Windows BAT、原生壳、账套操作或打包产物验收；未提交、未推送。
+
+### 2026-09-11 同步 CLAUDE.md 与 AGENTS.md 入口约束
+
+- 用户要求以 `AGENTS.md` 及其它现行真值文档为准更新 `CLAUDE.md`；随后补充三项要求：删除 `AGENTS.md` 中过期的开发主线计划行、把税务工作台/税务计算器这条新功能线写入两份总文档、并让 `CLAUDE.md` 具备架构地图的快捷查询能力。继续在 `codex/tax-workbench-design` 施工，保留前序设计与原型修改。
+- `CLAUDE.md` 修正过期基线：删除“下一开发主线为 `codex/tauri2-unified-desktop`、起始 `0.3.0-alpha.1`”这类已失效表述（该分支已合并清理，Tauri 2 已在 `main` 的 `src-tauri/` 内），版本与发布参照改指 `src/invoice_hub/version.py` 和 `release/build_manifest.py` 的 `API_CAPABILITIES`，并明确已发布资产不授权更新 Feed 或启用 updater；分支、提交与工作区状态一律以实时 Git 为准，不再写入该文件。
+- `CLAUDE.md` 新增“架构快捷查询”一节：列出六张地图各自回答什么、按改动类型给出首要入口与对应章节（提取、分类、成本、路径、monitor、设置、前端、单据与打印、做账、Windows 平台、macOS 壳、Tauri host、发行、API/存储、税务），并写明同一任务内必须回填的地图。
+- 两份总文档同步写入税务工作台规则：`CLAUDE.md` 新增“税务工作台与公司资料”，`AGENTS.md` 新增“税务工作台与税务计算器规则”，并删除项目边界中那条过期计划行（Tauri 的所有权边界仍保留在“开源冻结与 Tauri 2 规则”一节，未丢失约束）。规则写明当前只是设计阶段：不注册 API、不读取公司资料、不入包；未知用 `null` 不用 `0.00`；金额税率走 Python `Decimal`、解释与结果共用 `CalculationTrace`；公司绑定独立于 `watch_dir`；自定义税率只作用户假设；D0 必须替换旧草稿错误规则。
+- 验证：`python3 -m pytest tests/test_development_documentation.py` 15 项文档契约通过（含两份总文档的本地链接可解析、无本机绝对路径、无 commit 式哈希、无 stale marker），`git diff --check` 通过。本轮仅改文档，不运行产品 Python 回归（本工作树无 `.backend-venv`，系统 `python3` 亦无 fastapi），未覆盖前端、浏览器、原生界面、Windows BAT 或打包产物验收；未提交、未推送。
+
 ### 2026-09-11 缩小计算器界面并增加自定义税率
 
 - 用户要求完整按键无需下划，并增加自定义税率；继续在 `codex/tax-workbench-design`（开工主线 `ee0f2c2`）调整设计与原型。
