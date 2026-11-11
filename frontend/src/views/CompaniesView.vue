@@ -6,6 +6,7 @@ import CompanyDirectories from "../components/CompanyDirectories.vue";
 import CompanyLedger from "../components/CompanyLedger.vue";
 import CompanyProjects from "../components/CompanyProjects.vue";
 import CompanySettings from "../components/CompanySettings.vue";
+import InvoiceTagsEditor from "../components/InvoiceTagsEditor.vue";
 import { useCompaniesStore } from "../stores/companies";
 
 type Tab = "directories" | "ledger" | "projects" | "compare" | "settings";
@@ -19,6 +20,7 @@ const TABS: { id: Tab; label: string }[] = [
 
 const companies = useCompaniesStore();
 const creating = ref(false);
+const editingTags = ref(false);
 const tab = ref<Tab>("directories");
 const createdNotice = ref("");
 // The ledger reads two folders and checks their freshness, so it loads on first open and
@@ -59,7 +61,8 @@ onMounted(() => {
 
     <div class="split">
       <aside class="company-list" aria-label="公司清单">
-        <button type="button" class="primary block" @click="creating = !creating">{{ creating ? "收起" : "新建公司" }}</button>
+        <button type="button" class="primary block" @click="creating = !creating; editingTags = false">{{ creating ? "收起" : "新建公司" }}</button>
+        <button type="button" class="block" :aria-pressed="editingTags" @click="editingTags = !editingTags; creating = false">发票标签</button>
         <p v-if="companies.list && !companies.companies.length" class="muted">还没有登记公司。</p>
         <ul role="listbox" aria-label="公司">
           <li v-for="item in companies.companies" :key="item.id">
@@ -84,7 +87,8 @@ onMounted(() => {
       </aside>
 
       <div class="company-detail">
-        <CompanyCreateForm v-if="creating" @created="onCreated" @cancel="creating = false" />
+        <InvoiceTagsEditor v-if="editingTags" @close="editingTags = false" />
+        <CompanyCreateForm v-else-if="creating" @created="onCreated" @cancel="creating = false" />
         <template v-else-if="companies.selected">
           <header class="detail-header">
             <h2>{{ companies.selected.name }}</h2>

@@ -414,6 +414,16 @@ Lifecycle lease 是 host 运行态授权快照，不是可持久化业务状态�
 口径   票面口径，差额不是项目利润
 ```
 
+发票标签（WS-06，`services/invoice_tags.py`）：
+
+```text
+定义   runtime/local_state/invoice_tags.json：{version: 1, revision, tags: [{id: tag_xxxxxxxx, name, color: #rrggbb, meaning}]}，本机级
+标记   公司资料夹根目录 发票标签.json：{version: 1, revision, invoices: {发票号码: [标签 id]}, updated_at}
+读取   目录发票列表复制首页行后附加 tags（按定义顺序，忽略已删除的标签 id）；tag 参数在分页前筛选
+删除   删除定义时逐个已登记且可用的公司资料夹移除该标签的标记，不可用的列入 purge_failed（读取时仍会隐藏）
+边界   不写源发票、CSV 或任何投影字段，不影响金额、状态与勾选合计；损坏文件拒绝读写
+```
+
 ## 5. SQLite schema 与真实使用情况
 
 连接启用 WAL 和 foreign keys，并把 `row_factory` 设为 `sqlite3.Row`。

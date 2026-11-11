@@ -159,7 +159,11 @@ def test_active_directory_hands_over_to_the_live_invoice_list(app, client, compa
     payload = client.get(f"/api/v1/companies/{company_id}/directories/cost_invoice_dir/invoices").json()
     assert payload["read_only"] is False and payload["count"] == 2
     assert payload["items"][0]["detail_url"].startswith("/invoices/")
-    assert payload == {**client.get("/api/v1/invoices").json(), **{key: payload[key] for key in ("company_id", "directory_key", "directory", "read_only")}}
+    homepage = client.get("/api/v1/invoices").json()
+    assert "tags_error" not in homepage and all("tags" not in item for item in homepage["items"])  # no leak back
+    company_keys = ("company_id", "directory_key", "directory", "read_only", "tags_error")
+    stripped = {**payload, "items": [{key: value for key, value in item.items() if key != "tags"} for item in payload["items"]]}
+    assert stripped == {**homepage, **{key: payload[key] for key in company_keys}}
 
 
 # ---- taxpayer type: the company registry wins (2026-11-10) -----------------------------------

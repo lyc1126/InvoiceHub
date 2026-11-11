@@ -2,6 +2,15 @@
 
 ## 未发布
 
+### 2026-11-11 发票自定义标签（WS-06）
+
+- 需求：继续 WS 线，做待办 WS-06：设置里自定义标签（颜色、名称、意义），发票列表右键打标签、悬停看意义、按标签筛选；标签按受保护的人工数据保存，不改变金额、状态与勾选合计。起点 `b78e45f`。
+- 方案：新增 `services/invoice_tags.py::InvoiceTagStore`。标签定义存 `runtime/local_state/invoice_tags.json`（与公司清单同目录，本机级；整表替换，带 revision，名称 1—12 字不重复、颜色 `#RRGGBB`、意义 ≤120 字、最多 30 个）；标记存公司资料夹根目录 `发票标签.json`（按发票号码）。删除标签时逐个公司清除标记，不可用的资料夹列入 `purge_failed`，读取时忽略已删除的 id。损坏文件拒绝读写。`CompanyViewService.directory_invoices` 给每行附加 `tags`、支持 `tag` 筛选（先筛后分页），标记文件读不出时列表照常并返回 `tags_error`。新增 `GET/PUT /api/v1/invoice-tags` 与 `GET/PUT /api/v1/companies/{id}/invoice-tags`（同源写）。前端：左栏“发票标签”按钮打开 `InvoiceTagsEditor.vue`；`CompanyDirectories.vue` 的发票列表名称前固定一格放色点（多个叠放，悬停显示名称与意义），右键或 Shift+F10 打开标签菜单（焦点进入菜单，Esc 回到原行），打标签后只局部更新该行；按标签筛选。新增 `stores/tags.ts`。
+- 实现中发现并修正：`directory_invoices` 原先在首页服务返回的 payload 上原地追加公司字段，活动目录时可能让首页响应带上这些字段；现在先复制 payload 和每一行，并在守护测试中断言首页响应不含 `tags`。
+- 文档：接口流程（四条路由与目录列表参数）、数据算法（发票标签）、做账规则与页面规则、文件地图（5 个新文件，`CompanyDirectories.vue` 职责）、任务导航 10.4、设计原因地图、未来工作总览、实现状态。
+- 验证：新增 `tests/test_invoice_tags.py`（4 项），`tests/test_company_views.py` 的活动目录用例改为剥离标签后比较并检查首页不被污染；前端 `vue-tsc`、Vitest 23 项（新增打标签与筛选用例）、`vite build` 通过；真实浏览器（专用 Chrome 经 CDP + Playwright，临时根目录 8799 端口，合成公司 2 张成本发票）：新建“待核实”标签、右键第一行打上，色点悬停显示“待核实：金额待和供应商确认”，Shift+F10 菜单焦点落在复选框、Esc 回到行，按标签筛选剩 1 行，`发票标签.json` 已写入，无横向溢出与控制台错误。macOS 本机全量 pytest（绝对 `PYTHONPATH`，`-x`）退出码 0；`compileall src tests`、`ruff check --select E9,F`、`git diff --check` 通过。
+- 未覆盖：多行批量打标签；旧首页列表；深色与其它皮肤（工作区不加载皮肤）；Windows、Tauri 与打包产物。只做了本地提交，未推送、未合并到 main。
+
 ### 2026-11-11 公司项目汇总与人工项目归属（WS-03 / WS-07 第 5 步）
 
 - 需求：继续 WS 线。第 4 步比较已全部就绪，账套读回期初需要用户决定库存科目与规格的对应方式，先做待办里已有明确方案的 WS-03：项目取自发票备注“项目名称：xxx”，没有的人工填写并按受保护字段保存，未归属单列不分摊。起点 `da8815b`。

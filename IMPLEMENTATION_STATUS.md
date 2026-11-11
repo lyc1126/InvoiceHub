@@ -1,5 +1,10 @@
 # IMPLEMENTATION_STATUS
 
+## 2026-11-11 发票自定义标签（WS-06，工作分支 `codex/ws-07-company-registry`）
+
+- `/workspace/companies` 左栏“发票标签”管理颜色、名称与意义；公司目录的发票列表在名称前显示标签色点（悬停看名称与意义），右键或 Shift+F10 打标签，可按标签筛选。标签定义存本机，标记存公司资料夹 `发票标签.json`；不改变金额、状态、勾选合计或任何投影字段。
+- 未完成：多行批量打标签；旧首页列表接入（随 WS-01）。
+
 ## 2026-11-11 公司项目汇总（WS-03，工作分支 `codex/ws-07-company-registry`）
 
 - `/workspace/companies` 新增“项目”标签与 `GET/PUT /api/v1/companies/{id}/projects*`：按发票备注的项目名称归集进项与销项，没有或不一致的可人工指定，人工值存在公司资料夹根目录 `项目归属.json`（带 revision，重新汇总不覆盖）；未归属单列不分摊；合计与发票账簿交叉校验。

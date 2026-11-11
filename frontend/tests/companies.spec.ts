@@ -60,6 +60,7 @@ function defaultResponse(url: string, method: string, revision: number): [number
   if (url.includes("/subdirs/plan")) return [200, { ok: true, company_id: "co_1", revision, plan_hash: "h1", create_count: 1, blocked_count: 0, items: [{ ...SUBDIRS[1], action: "create", reason: "" }] }];
   if (url.includes("/subdirs/create")) return [200, { ok: true, revision, company: COMPANY, created: ["issued_invoice_dir"], skipped: [], failed: [] }];
   if (url.includes("/ledger")) return [200, LEDGER];
+  if (url === "/api/v1/invoice-tags" && method === "GET") return [200, { ok: true, revision: 1, tags: [] }];
   if (url.includes("/invoices")) return [200, { ok: true, count: 1, page: 1, page_size: 50, read_only: true, directory: DIRECTORIES[1], items: [] }];
   return [404, { detail: `unexpected ${method} ${url}` }];
 }
@@ -315,6 +316,36 @@ describe("companies module", () => {
     const put = calls.find((call) => call.method === "PUT")!;
     expect(put.body).toEqual({ revision: 4, assignments: { ["1".repeat(20)]: "甲项目" } });
     expect(wrapper.text()).toContain("已保存 1 张发票");
+  });
+
+  it("tags an invoice from the row menu, updates the dots in place and filters by tag", async () => {
+    const tags = [{ id: "tag_aaaaaaaa", name: "待核实", color: "#e5484d", meaning: "金额待确认" }];
+    const row = { invoice_key: "0", source_file: "a.xml", file_format: "XML", invoice_number: "1".repeat(20), seller: "丙丁", buyer: "甲", amount: "1130.00", tags: [] };
+    const directory = { ...DIRECTORIES[0]!, projection: { ...DIRECTORIES[0]!.projection, summary_exists: true } };
+    stubBackend((url, init) => {
+      if (url === "/api/v1/invoice-tags") return [200, { ok: true, revision: 3, tags }];
+      if (url.endsWith("/invoice-tags") && (init.method ?? "GET") === "GET") return [200, { ok: true, revision: 7, invoices: {} }];
+      if (url.endsWith("/invoice-tags")) return [200, { ok: true, revision: 8, invoices: { ["1".repeat(20)]: ["tag_aaaaaaaa"] } }];
+      if (url.includes("/invoices")) return [200, { ok: true, count: 1, page: 1, page_size: 50, read_only: false, directory, items: [row] }];
+      return undefined;
+    });
+    const wrapper = await mountCompanies();
+    const open = wrapper.findAll("button").find((button) => button.text() === "查看发票")!;
+    await open.trigger("click");
+    await flushPromises();
+    const tr = wrapper.get('[aria-label="目录发票"] tbody tr');
+    await tr.trigger("keydown", { key: "F10", shiftKey: true });
+    const menu = wrapper.get('[role="menu"]');
+    await menu.get('input[type="checkbox"]').setValue(true);
+    await flushPromises();
+    const put = calls.find((call) => call.method === "PUT")!;
+    expect(put.body).toEqual({ revision: 7, changes: { ["1".repeat(20)]: ["tag_aaaaaaaa"] } });
+    const dot = wrapper.get('[aria-label="目录发票"] tbody tr .tag-dot');
+    expect(dot.attributes("title")).toBe("待核实：金额待确认");
+    expect(calls.filter((call) => call.url.includes("/invoices?")).length).toBe(1); // no reload, no flicker
+    await wrapper.get('select[aria-label="按标签筛选"]').setValue("tag_aaaaaaaa");
+    await flushPromises();
+    expect(calls.some((call) => call.url.includes("&tag=tag_aaaaaaaa"))).toBe(true);
   });
 
   it("marks a non-monitored folder's invoice list read-only", async () => {

@@ -137,6 +137,8 @@ export interface DirectoriesPayload {
 
 export interface InvoiceRow {
   invoice_key: string;
+  /** WS-06 tag ids in definition order; display data only. */
+  tags?: string[];
   source_file: string;
   file_format: string;
   invoice_type: string;
@@ -157,6 +159,7 @@ export interface DirectoryInvoicesPayload {
   page_size?: number;
   read_only: boolean;
   directory: CompanyDirectory;
+  tags_error?: string;
 }
 
 export interface LedgerTotals {
@@ -395,4 +398,25 @@ export interface ProjectSummary {
   warnings: { code: string; message: string }[];
   checks: LedgerCheck[];
   checks_ok: boolean;
+}
+
+export interface InvoiceTag {
+  id: string;
+  name: string;
+  color: string;
+  meaning: string;
+}
+
+export interface InvoiceTagDefinitions {
+  ok: boolean;
+  revision: number;
+  tags: InvoiceTag[];
+  purged_companies?: number;
+  purge_failed?: string[];
+}
+
+export interface InvoiceTagMarks {
+  ok: boolean;
+  revision: number;
+  invoices: Record<string, string[]>;
 }

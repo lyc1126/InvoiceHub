@@ -146,4 +146,24 @@ def router() -> APIRouter:
         payload = await _json_body(request)
         return await _call(lambda: _state(request).company_views.save_project_assignments(company_id, payload))
 
+    @routes.get("/api/v1/invoice-tags")
+    async def invoice_tags(request: Request):
+        return await _call(_state(request).company_views.invoice_tags)
+
+    @routes.put("/api/v1/invoice-tags")
+    async def save_invoice_tags(request: Request):
+        _require_same_origin_write(request)
+        payload = await _json_body(request)
+        return await _call(lambda: _state(request).company_views.save_invoice_tags(payload))
+
+    @routes.get("/api/v1/companies/{company_id}/invoice-tags")
+    async def company_invoice_tags(request: Request, company_id: str):
+        return await _call(lambda: _state(request).company_views.company_invoice_tags(company_id))
+
+    @routes.put("/api/v1/companies/{company_id}/invoice-tags")
+    async def save_company_invoice_tags(request: Request, company_id: str):
+        _require_same_origin_write(request)
+        payload = await _json_body(request)
+        return await _call(lambda: _state(request).company_views.save_company_invoice_tags(company_id, payload))
+
     return routes

@@ -34,6 +34,7 @@ from invoice_hub.services.company_deduction import DeductionListReader, build_de
 from invoice_hub.services.company_inventory import build_inventory_check
 from invoice_hub.services.company_projects import ProjectAssignmentStore, build_project_summary
 from invoice_hub.services.company_settlement import build_settlement_check
+from invoice_hub.services.invoice_tags import TAG_DEFINITIONS_NAME, InvoiceTagStore
 from invoice_hub.services.company_ledger import build_invoice_ledger
 from invoice_hub.services.company_registry import CompanyRegistryError, CompanyRegistryService
 from invoice_hub.services.invoice_list import InvoiceListService
@@ -169,6 +170,8 @@ class CompanyViewService:
         self._bank_reader = bank_reader or BankFlowReader()
         self._deduction_reader = deduction_reader or DeductionListReader()
         self._projects = ProjectAssignmentStore()
+        # Tag definitions live beside the company registry; marks live in each company folder.
+        self._tags = InvoiceTagStore(Path(registry.registry_path).parent / TAG_DEFINITIONS_NAME)
 
     @property
     def config(self) -> AppConfig:
@@ -230,8 +233,27 @@ class CompanyViewService:
         filters = dict(filters or {})
         page = filters.pop("page", None)
         page_size = max(1, min(200, int(filters.pop("page_size", None) or 100)))
+        tag_filter = str(filters.pop("tag", "") or "")
         payload, read_only = self._list_payload(profile, filters)
-        items = payload["items"]
+        # Copies: the active folder's rows come from the live homepage service, whose payload
+        # must not pick up the company fields or tags added here.
+        payload = dict(payload)
+        items = [dict(item) for item in payload["items"]]
+        payload["items"] = items
+        # Tags are display data only: attached after the list is built, never fed back into it.
+        tags_error = ""
+        marks: dict[str, list[str]] = {}
+        if company.get("root_status") == "present":
+            try:
+                marks = self._tags.visible_marks(Path(company["root_path"]))
+            except CompanyRegistryError as exc:
+                tags_error = exc.message
+        for item in items:
+            item["tags"] = marks.get(str(item.get("invoice_number") or ""), [])
+        if tag_filter:
+            items = [item for item in items if tag_filter in item["tags"]]
+            payload["items"] = items
+            payload["count"] = len(items)
         count = len(items)
         if page is not None:
             last_page = max(1, (count + page_size - 1) // page_size)
@@ -242,6 +264,7 @@ class CompanyViewService:
             directory_key=key,
             directory=self._directory_view(subdir, profile, self.active_profile.id, check_freshness=False),
             read_only=read_only,
+            tags_error=tags_error,
         )
         return payload
 
@@ -427,6 +450,36 @@ class CompanyViewService:
         company = self._registry.get_company(company_id)["company"]
         saved = self._projects.update(self._company_root(company), body)
         return {"ok": True, "assignments_revision": saved["revision"], "count": len(saved["invoices"])}
+
+    def invoice_tags(self) -> dict:
+        return {"ok": True, **self._tags.definitions()}
+
+    def save_invoice_tags(self, body: object) -> dict:
+        saved, removed = self._tags.save_definitions(body)
+        purged, failed = 0, []
+        if removed:
+            # A deleted tag disappears from every company folder; offline folders are listed and
+            # their stale marks stay hidden because reads ignore unknown tag ids.
+            for company in self._registry.list_companies()["companies"]:
+                if company.get("root_status") != "present":
+                    failed.append(company["name"])
+                    continue
+                try:
+                    purged += int(self._tags.purge(Path(company["root_path"]), removed))
+                except (CompanyRegistryError, OSError):
+                    failed.append(company["name"])
+        return {"ok": True, **saved, "purged_companies": purged, "purge_failed": failed}
+
+    def company_invoice_tags(self, company_id: str) -> dict:
+        company = self._registry.get_company(company_id)["company"]
+        root = self._company_root(company)
+        return {"ok": True, "revision": self._tags.marks(root)["revision"], "invoices": self._tags.visible_marks(root)}
+
+    def save_company_invoice_tags(self, company_id: str, body: object) -> dict:
+        company = self._registry.get_company(company_id)["company"]
+        root = self._company_root(company)
+        saved = self._tags.save_marks(root, body)
+        return {"ok": True, "revision": saved["revision"], "invoices": self._tags.visible_marks(root)}
 
     def _cost_service(self, profile: TargetProfile) -> CostProjectionService:
         return CostProjectionService(

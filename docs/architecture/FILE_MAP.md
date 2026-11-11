@@ -469,6 +469,7 @@
 | `src/invoice_hub/services/company_inventory.py` | 进销存（WS-07 第 4 步）：`build_inventory_check` 按品目表标准名称 + 规格 + 单位归并两个目录的明细行，进货额按开票参考口径（不含税 + 不可抵扣税金），逐月调用 `bank.vouchers.cost_of_sales` 做月末一次加权，期初按 0 起算；卖超、销项品目在进项中找不到、未计入的明细行与数量守恒校验。 | 由 `company_views.py::compare` 调用；输入来自 `CostProjectionService.read_only_inputs`；与做账库存同一函数。 |
 | `src/invoice_hub/services/company_settlement.py` | 往来核对（WS-07 第 4 步）：`build_settlement_check` 应付/应收两向，户名唯一归属（含截断前缀）、本公司账户识别，红冲抵销 → 一对一同额 → 唯一 2—3 张组合的确定性匹配，未逐笔对应流水、非发票流水、户名不唯一，按往来单位的期初/本期/期末与守恒校验。 | 由 `company_views.py::compare` 调用；对账单来自 `BankFlowReader`；发票规则复用 `company_ledger`。 |
 | `src/invoice_hub/services/company_projects.py` | 公司项目汇总（WS-03）：`remark_projects` 从成本明细读备注项目名称，`ProjectAssignmentStore` 读写公司资料夹根目录 `项目归属.json`（revision、锁、损坏拒绝覆盖），`build_project_summary` 按项目归集并与发票账簿交叉校验。 | 由 `company_views.py::company_projects/save_project_assignments` 调用；复用 `company_ledger`。 |
+| `src/invoice_hub/services/invoice_tags.py` | 发票标签（WS-06）：`InvoiceTagStore` 读写本机标签定义（校验、revision、整体替换）与公司资料夹 `发票标签.json` 标记（按发票号码），删除标签时按公司清除标记，读取时忽略已删除的标签。 | 由 `company_views.py` 调用（定义路径取公司清单同目录）；只用于显示与筛选。 |
 | `src/invoice_hub/services/company_registry.py` | `CompanyRegistryService`：`runtime/local_state/companies.json` 的唯一写入者（RLock + revision CAS + 原子替换，损坏时保留原文件并拒写）；六类标准子目录与识别提示（前四类复用 `dossier.BUSINESS_DOSSIER_DIR_HINTS`）、纳税人身份生效期（`taxpayer_type_for`）、子目录补建 `plan_hash` 预览/确认与仅新建空目录。 | 上接 `api/routes/companies.py`；读活动 TargetProfile 只用于标记 `monitored`；`services/company_views.py` 从这里取公司与子目录，不把它当第二个 watch_dir；写入改变活动公司当月纳税人类型时回调 `state.costs.refresh_workbook_tax_profile`。守护测试 `tests/test_api_companies.py`。 |
 | `src/invoice_hub/services/dossier.py` | `BusinessDossierService`：解析当前公司资料夹、一次有界扫描快捷入口/统计并限制打开路径（ENG-03 从 AppState 原样迁出；扫描上限常量也在此）。路由以 `state.dossier` 直接调用，做账经 `business_dossier_root()` 取公司目录。 | `/api/v1/business-dossier*` 和首页消费；不得改变 `watch_dir` 扫描语义；截断统计必须明确为下界。 |
 | `src/invoice_hub/services/document_rendering.py` | MuPDF 文档打开和安全分页 PNG 渲染的共享适配。 | preview/print 共用；缺依赖、加密、空文档、页尺寸和渲染失败保持结构化错误。 |
@@ -588,6 +589,7 @@
 | `tests/test_company_inventory.py` | 进销存：跨月加权与品目表合并、小规模/普票/待核对的进货额、卖超与进项中没有、非货物与不可读行、期间范围从滚动库存起算（含无发票的月份）、规格分开，以及 compare API（未汇总时 `no_details`、汇总后结果、读取不改任何文件）。 | services/company_inventory、company_views、projections/costs.read_only_inputs。 |
 | `tests/test_company_settlement.py` | 往来核对：一对一与唯一组合、多组不对应、同额先开先结、户名不唯一、期间期初、应收方向、红冲抵销与无原票红字、未识别发票、对账单自检失败，以及 compare API（合成中国银行对账单 PDF，只读）。 | services/company_settlement、company_views。 |
 | `tests/test_company_projects.py` | 项目汇总：备注识别与人工优先、备注冲突列未归属、期间与粒度、未识别金额排除，以及 API（读取不写文件、保存写入公司资料夹、重新汇总后保留、版本冲突、清除、非法请求、损坏文件拒绝覆盖、跨源写拒绝）。 | services/company_projects、company_views。 |
+| `tests/test_invoice_tags.py` | 发票标签：定义校验与版本、改名保留 id、打标记与定义顺序、目录列表附带标签且其余字段不变、按标签筛选、重新汇总后保留、删除标签清除各公司标记、损坏文件不覆盖且列表照常、跨源写拒绝。 | services/invoice_tags、company_views。 |
 | `tests/test_company_views.py` | 按公司只读目录与纳税人类型优先级：投影/过期判断（新增、改动、删除、坏记录）、读取不建目录不改文件、只读列表与分页、活动目录交接、`company_taxpayer_for` 按月份、清单类型计价与保存拒绝、清单变化重写工作簿、所有 `CostProjectionService`/`MonitorSynchronizer` 构造都传入查找。 | services/company_views、targets/companies、projections/costs、services/company_registry。 |
 | `tests/test_api_companies.py` | 公司清单 API：空清单不建文件、子目录识别与歧义回退、revision CAS、根目录重复/嵌套、相对/绝对路径保存、子目录越界、纳税人生效期、补建预览/确认/过期、链接逃逸、损坏文件拒写、删除不碰文件、`monitored` 标记且不切换目录、跨来源拒绝。 | services/company_registry、api/routes/companies。 |
 | `tests/test_api_bookkeeping.py` | 做账 API、错误模型和废弃接口 410。 | AppState、api、bookkeeping。 |
@@ -662,7 +664,7 @@
 | `frontend/src/format.ts` | 纳税人类型、子目录状态与是否最新的中文标签；金额在十进制字符串上分组千分位，不经过浮点。 | 公司模块各组件共用。 |
 | `frontend/src/views/CompaniesView.vue` | “公司”模块：左栏公司清单（监控中、缺几个子目录、当前纳税人身份），右栏详情的目录 / 发票账簿 / 项目 / 勾稽 / 设置五个标签；`v-show` 保留各标签状态，账簿、项目与勾稽首次打开才加载。 | 路由 `/workspace/companies`。 |
 | `frontend/src/components/CompanyCreateForm.vue` | 新建公司表单：名称、资料夹路径、可选纳税人身份（不填即未设置）。 | `stores/companies.ts::create`。 |
-| `frontend/src/components/CompanyDirectories.vue` | 子目录表（状态、上次汇总、是否最新）、补建预览与确认、设为监控目录（确认后调用 `PUT /api/v1/settings`）、按目录的只读发票列表与分页。 | `/api/v1/companies/{id}/directories*`、`/subdirs/*`。 |
+| `frontend/src/components/CompanyDirectories.vue` | 子目录表（状态、上次汇总、是否最新）、补建预览与确认、设为监控目录（确认后调用 `PUT /api/v1/settings`）、按目录的只读发票列表与分页。发票行前有标签色点列，右键 / Shift+F10 打开标签菜单（打标签后只更新该行），可按标签筛选。 | `/api/v1/companies/{id}/directories*`、`/subdirs/*`。 |
 | `frontend/src/components/CompanyLedger.vue` | 公司发票账簿：粒度与期间筛选、票面口径说明、守恒校验（成立时收起、任一不成立时展开并标红）、提示、分期表与合计、未计入的发票。 | `/api/v1/companies/{id}/ledger`。 |
 | `frontend/src/components/CompanyBankLedger.vue` | 公司账簿的“银行流水”区：目录不可用 / 无对账单的说明、余额校验（成立时收起、不成立时展开标红）、对账单问题、按账户的分期表（缺月行标红、余额显示“—”）与来源计数。 | 由 `CompanyLedger.vue` 渲染 `ledger.bank`。 |
 | `frontend/src/components/CompanyCompare.vue` | “勾稽”标签外壳：关系选择（成本发票 ⇄ 进项抵扣、成本发票 ⇄ 开具发票、成本 / 开具发票 ⇄ 银行流水，切换即重新核对）与期间、口径说明、核对校验（不成立时展开标红）、提示，再按关系交给结果组件。 | `/api/v1/companies/{id}/compare`。 |
@@ -670,6 +672,8 @@
 | `frontend/src/components/CompanyInventoryResult.vue` | 进销存结果：品目表（期初/购入/销售/成本/期末，卖超与进项中没有标红），“逐月”在品目下展开整行明细（加权单价与说明），合计与未计入的明细行。 | 由 `CompanyCompare.vue` 渲染。 |
 | `frontend/src/components/CompanySettlementResult.vue` | 往来核对结果：往来单位余额表（“明细”整行展开未对上发票与未逐笔对应流水）、逐笔对应、红字发票、户名不唯一、非发票流水（折叠）与未识别发票。 | 由 `CompanyCompare.vue` 渲染。 |
 | `frontend/src/components/CompanyProjects.vue` | “项目”标签：粒度与期间、与账簿一致的校验、项目汇总表（未归属单列），未归属与已人工指定发票的项目输入（已有项目名候选），只提交改动并带 revision，冲突时刷新提示。 | `/api/v1/companies/{id}/projects*`。 |
+| `frontend/src/components/InvoiceTagsEditor.vue` | 发票标签管理：颜色、名称、意义的增删改，整表保存带 revision，删除时说明会移除已打标记，冲突时刷新。 | `stores/tags.ts`，`/api/v1/invoice-tags`。 |
+| `frontend/src/stores/tags.ts` | 标签定义的 Pinia store：读取、整表保存（带 revision，冲突时重读）与按 id 查找。 | `InvoiceTagsEditor.vue`、`CompanyDirectories.vue`。 |
 | `frontend/src/components/CompanySettings.vue` | 公司名称与纳税人身份生效期编辑、从清单移除（说明不删除任何文件）；只在切换公司时重置草稿；显示成本汇总表是否已按新身份重写。 | `stores/companies.ts::update/remove`。 |
 | `frontend/src/styles.css` | 外框基础样式与窄屏布局。 | 仅作用于 `/workspace`。 |
 | `frontend/tests/client.spec.ts` | 请求封装的成功、错误、`ok:false`、请求体与超时测试。 | Vitest + happy-dom。 |

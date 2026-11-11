@@ -1,5 +1,11 @@
 # InvoiceHub 注释与设计原因地图
 
+## 2026-11-11 发票标签（WS-06）
+
+- `company_views.py::directory_invoices` 先复制首页服务返回的 payload 与每一行再附加公司字段和 `tags`：活动目录的行来自首页服务，原地修改会让首页响应带上不属于它的字段。守护：`test_active_directory_hands_over_to_the_live_invoice_list`（断言首页响应没有 `tags`/`tags_error`）。
+- 标签定义放本机、标记放公司资料夹：标签的含义是使用者的习惯，标记是对某家公司发票的判断，后者要随资料走。删除定义时逐个公司清除；资料夹离线时读侧忽略未知 id，避免删掉的标签又冒出来。守护：`test_deleting_a_tag_removes_its_marks_everywhere`。
+- `CompanyDirectories.vue::toggleTag` 只局部更新该行：重新加载列表会重置页码与滚动，用户对“点一下就抖”敏感。守护：前端用例断言打标签后没有再请求列表。
+
 ## 2026-11-11 公司项目汇总（WS-03）
 
 - `company_projects.py::ProjectAssignmentStore`：人工项目归属存在公司资料夹根目录而不是 `runtime/`，资料夹换机器或换人接手时人工判断随资料走；它和 `成本开票状态.json` 一样只在用户保存时写，重新汇总不读写。守护：`test_manual_assignment_is_saved_in_the_company_folder_and_survives`。
