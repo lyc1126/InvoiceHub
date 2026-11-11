@@ -27,7 +27,6 @@ ARCHITECTURE_RULES = tuple(
         "WEB_UI",
         "BOOKKEEPING",
         "TAX_WORKBENCH",
-
         "WINDOWS",
         "MACOS",
         "TAURI_HOST",
@@ -35,6 +34,13 @@ ARCHITECTURE_RULES = tuple(
     )
 )
 ARCHITECTURE_DOCS = (ARCHITECTURE_ENTRY, *ARCHITECTURE_APPENDICES, *ARCHITECTURE_RULES)
+HANDOFF_FILES = tuple(ROOT / path for path in (
+    "scripts/dev/agent_handoff.py",
+    "scripts/dev/build_agent_handoff.py",
+    "docs/AGENT_HANDOFF.md",
+    "tests/test_agent_handoff.py",
+    "tests/test_agent_handoff_packaging.py",
+))
 MACOS_ENGINEERING_FILES = tuple(
     ROOT / path
     for path in (
@@ -131,6 +137,7 @@ TAURI_FOUNDATION_FILES = tuple(
 )
 CURRENT_FACT_DOCS = (
     *ARCHITECTURE_DOCS,
+    ROOT / "docs/AGENT_HANDOFF.md",
     ROOT / "AGENTS.md",
     ROOT / "README.md",
     ROOT / "IMPLEMENTATION_STATUS.md",
@@ -155,6 +162,8 @@ PUBLIC_RELEASE_FILES = (
 HISTORY_SANITIZATION_EXECUTION = ROOT / "docs" / "release" / "HISTORY_SANITIZATION_EXECUTION.md"
 NEW_GOVERNED_FILES = {
     path.relative_to(ROOT).as_posix() for path in ARCHITECTURE_DOCS
+} | {
+    path.relative_to(ROOT).as_posix() for path in HANDOFF_FILES
 } | {
     path.relative_to(ROOT).as_posix()
     for path in (*MACOS_ENGINEERING_FILES, *LOCAL_EXTENSION_FILES)

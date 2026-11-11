@@ -2,6 +2,10 @@
 
 Read [AGENTS.md](AGENTS.md) in full before analysis, edits, tests, or conclusions. It contains the common project boundaries, Git/authorization rules, verification requirements, and closeout workflow for every coding agent.
 
+## Shared task checkpoints
+
+Follow [the neutral handoff protocol](docs/AGENT_HANDOFF.md). Use a ticket or registered thread link/ID with `resume --ref`. Read the short summary once; expand omitted constraints via `show --section` before acting. Claim verifies live files. Do not poll or resend full history; save meaningful changes only, preferably `release --input` in one write. Keep state and model audit logs outside the repository; permissions do not transfer with a link.
+
 ## Read only the relevant feature rules
 
 1. Check live Git status, branch, HEAD, and existing changes as required by AGENTS.md. Do not infer the workspace from another session.

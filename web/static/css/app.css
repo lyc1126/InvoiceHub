@@ -804,12 +804,17 @@ textarea { min-height: 160px; resize: vertical; }
   color: var(--primary-strong);
   background: #eef4ff;
 }
+/* page-costs.js measures the viewport on every show and writes left, data-placement,
+   --cost-tooltip-arrow-x and --cost-tooltip-max-height; these defaults are the no-JS fallback. */
 .cost-formula-tooltip {
   position: absolute;
-  right: 0;
+  left: 0;
   bottom: calc(100% + 10px);
   z-index: 30;
-  width: min(460px, calc(100vw - 48px));
+  display: flex;
+  flex-direction: column;
+  width: min(460px, calc(100vw - 24px));
+  max-height: var(--cost-tooltip-max-height, none);
   padding: 12px 14px;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -825,17 +830,47 @@ textarea { min-height: 160px; resize: vertical; }
   transition: opacity 160ms ease, transform 160ms ease, visibility 160ms ease;
   pointer-events: none;
 }
+.cost-formula-tooltip[data-placement="bottom"] {
+  top: calc(100% + 10px);
+  bottom: auto;
+  transform: translateY(-4px);
+}
+/* Hover bridge across the 10px gap so the pointer can reach (and scroll) the panel. */
+.cost-formula-tooltip::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 100%;
+  height: 12px;
+}
+.cost-formula-tooltip[data-placement="bottom"]::before {
+  top: auto;
+  bottom: 100%;
+}
+.cost-formula-tooltip__body {
+  min-height: 0;
+  overflow-y: auto;
+}
 .cost-formula-tooltip::after {
   content: "";
   position: absolute;
-  right: 10px;
+  left: calc(var(--cost-tooltip-arrow-x, 15px) - 5px);
   bottom: -6px;
   width: 10px;
   height: 10px;
   border-right: 1px solid var(--line);
   border-bottom: 1px solid var(--line);
-  background: #fff;
+  /* Skin selectors such as :is(...) cannot match ::after; inheriting keeps the arrow on the panel color. */
+  background: inherit;
   transform: rotate(45deg);
+}
+.cost-formula-tooltip[data-placement="bottom"]::after {
+  top: -6px;
+  bottom: auto;
+  border: 0;
+  border-top: 1px solid var(--line);
+  border-left: 1px solid var(--line);
 }
 .cost-formula-tooltip strong {
   display: block;
@@ -850,6 +885,8 @@ textarea { min-height: 160px; resize: vertical; }
   margin-top: 8px;
   padding-top: 8px;
   border-top: 1px solid #eef2f7;
+  /* Follow the panel text color so dark skins do not get bright white rules. */
+  border-top-color: color-mix(in srgb, currentColor 14%, transparent);
 }
 .cost-formula-help-wrap:hover .cost-formula-tooltip,
 .cost-formula-help-wrap:focus-within .cost-formula-tooltip {
@@ -2303,12 +2340,6 @@ body[data-page="documents"] .document-preview-scroll {
   }
   .cost-view-switcher { align-items: flex-start; flex-direction: column; }
   .cost-formula-help { width: 30px; }
-  .cost-formula-tooltip {
-    right: auto;
-    left: 0;
-    width: min(460px, calc(100vw - 32px));
-  }
-  .cost-formula-tooltip::after { right: auto; left: 10px; }
   .watch-dir-history__group { grid-template-columns: 1fr; gap: 4px; }
   .watch-dir-option { max-width: 100%; width: 100%; }
   .invoice-selection-tools {

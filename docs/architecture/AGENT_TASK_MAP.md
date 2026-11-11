@@ -23,13 +23,15 @@
 | 大列表卡顿、索引停止、入库/出库、批量队列 | [页面/单据/预览/皮肤](rules/WEB_UI.md)、[成本](rules/COST_ANALYSIS.md) | [10. 入库单与出库单](#task-documents) |
 | 勾选合计、搜索税率、来源追溯、超过100份预览、OFD 缺字、打印空白/漏页 | [页面/单据/预览/皮肤](rules/WEB_UI.md) | [10.1 发票预览与批量打印](#task-preview) |
 | 凭证、科目映射、审批、迁移、导出、批次、捷锐 | [做账](rules/BOOKKEEPING.md) | [10.2 业务资料夹与做账 W8/W9](#task-bookkeeping) |
-| 公司清单、多公司工作区后端（WS-07）、标准子目录检测与补建、纳税人身份生效期 | [做账（公司清单）](rules/BOOKKEEPING.md#company-registry)、[监控与关闭](rules/MONITORING.md)、[页面/API](rules/WEB_UI.md) | [10.3 公司清单（WS-07）](#task-companies) |
+| 银行对账单、电子回单、余额勾稽、回单匹配、建议分录、脱敏底稿、参考凭证草稿、捷锐导入文件、做账习惯 | [做账](rules/BOOKKEEPING.md) | [10.3 银行流水底稿与凭证草稿](#task-bank) |
+| 公司清单、多公司工作区后端（WS-07）、标准子目录检测与补建、纳税人身份生效期 | [做账（公司清单）](rules/BOOKKEEPING.md#company-registry)、[监控与关闭](rules/MONITORING.md)、[页面/API](rules/WEB_UI.md) | [10.4 公司清单（WS-07）](#task-companies) |
 | 明暗切换、no_skin、皮肤 ZIP 与字体资源 | [页面/单据/预览/皮肤](rules/WEB_UI.md) | [11. 皮肤系统](#task-skins) |
 | BAT/PS1、PowerShell、端口、中文路径、Tk | [Windows](rules/WINDOWS.md)、[监控与关闭](rules/MONITORING.md) | [12. Windows 正式入口与平台交互](#task-windows) |
 | NSOpenPanel、WKWebView、TCC、SwiftUI/Sparkle | [macOS 参考壳](rules/MACOS.md)、[监控与关闭](rules/MONITORING.md) | [12.1 macOS 壳、构建握手与原生桥接](#task-macos) |
 | Tauri、desktop/browser、Host RPC、所有权与退出 | [Tauri 宿主](rules/TAURI_HOST.md)、[构建与发行](rules/RELEASE.md) | [13. 公开基线与新平台构建](#task-tauri) |
 | 构建、签名、公证、RC、SBOM、receipt、Feed/updater | [构建与发行](rules/RELEASE.md)、[Tauri 宿主](rules/TAURI_HOST.md) | [13.1 About、更新 Feed 与平台安装](#task-release) |
 | 路由、返回字段、SQLite、仓储与跨层接口 | [页面/单据/预览/皮肤](rules/WEB_UI.md) | [14. API、SQLite 与存储基础设施](#task-api) |
+| 跨 Agent 接手、线程链接/ID、摘要 token、写盘、检查点、便携工具 | [交接协议](../AGENT_HANDOFF.md) | [开发工具交接](#task-handoff) |
 | 规则重组、文件地图、文档契约与注释维护 | AGENTS.md 与被修改专题 | [15. 测试与文档治理](#task-governance) |
 | 未来功能、设计稿与原型、待开发优化、待修复缺陷、下个版本做什么、需求登记与排期 | [未来工作总览](../PRODUCT_BACKLOG.md)（先看“设计稿与原型索引”，再按条目编号查找，读条目“影响范围”列出的功能规则） | 条目内“影响范围”与对应任务行 |
 
@@ -301,15 +303,31 @@ OFD 专用入口为 `services/ofd_rendering.py`、`tools/ofd-preview/` 与 `scri
 | 真实验收 | W9 profile/科目/辅助/映射人审必须基于目标账套重新采集；真实 Safari apply、读回和 reconcile-only 属 W10，每次 apply 仍需当回合明确授权 |
 | 高风险提醒 | 资料夹导航不得变成完整发票扫描或任意本机打开器；截断统计和 `os.scandir` 迭代中断后的累计统计都必须显式标为下界且不能阻塞发票列表。做账不得自动迁移、不绕过 blockers、不猜最新 XLSX、不直接写状态 JSON；测试通过不授权真实账套迁移、审批、导出或导入 |
 
+<a id="task-bank"></a>
+
+## 10.3 银行流水底稿与凭证草稿
+
+必读功能规则：[做账](rules/BOOKKEEPING.md)（“银行流水底稿规则”一节）。
+
+| 导航项 | 内容 |
+|---|---|
+| 首先阅读 | 数据算法第 4.6 节；接口流程第 3.5.1 节；[做账](rules/BOOKKEEPING.md) |
+| 首要入口 | `bank/workpaper.py::run/discover/analyze/build_tables`；适配器 `bank/boc.py`；校验 `checks.py`；匹配 `matching.py`；分类 `classify.py::suggest`；脱敏 `redaction.py::RedactedView/scan`；命令行 `bank/__main__.py`；凭证草稿 `vouchers.py::build_drafts/_input_policy`、科目定位 `ledger.py::Ledger.find`、审核与导出 `jierui.py::write_review_xlsx/export`、命令行 `voucher_cli.py` |
+| 必须联动 | 标准记录字段（models）与全部适配器；分类文案不含户名的约束与脱敏视图；底稿表头与 `WORKPAPER_SCHEMA`；`往来单位.json` 合并语义 |
+| 产物与消费者 | 输出目录（默认公司资料夹 `银行流水整理/`）下私有 JSON/XLSX、`往来单位.json`、`.脱敏密钥`、`脱敏对照表.json`；`脱敏/` 下脱敏 JSON/XLSX 与脱敏报告；消费者是会计人员和外部 AI 辅助 |
+| 最低自动化 | `tests/test_bank_workpaper.py`、`tests/test_bank_vouchers.py`；改动脱敏或分类时还需检查泄漏扫描与 fail-closed 用例，改动导出时检查整月拦截与重复导出保护 |
+| 真实验收 | 用户本机真实对账单/回单运行一次，核对校验结果、回单匹配率与脱敏底稿；真实产物留在公司资料夹，不进仓库 |
+| 高风险提醒 | 不把建议分录写入 `凭证/` 或导入账套；不按文件名猜版式；不放宽泄漏扫描；不把密钥/对照表放进脱敏目录；不在测试中使用真实资料 |
+
 <a id="task-companies"></a>
 
-## 10.3 公司清单（WS-07）
+## 10.4 公司清单（WS-07）
 
 必读功能规则：[做账（公司清单）](rules/BOOKKEEPING.md#company-registry)、[监控与关闭](rules/MONITORING.md)、[页面/API](rules/WEB_UI.md)；方案与后续步骤见[未来工作总览 WS-07](../PRODUCT_BACKLOG.md#ws-07)。
 
 | 导航项 | 内容 |
 |---|---|
-| 首先阅读 | 接口流程第 3.5.1 节；数据算法第 4.6、9.3 节 |
+| 首先阅读 | 接口流程第 3.5.3 节；数据算法第 4.8、9.3 节 |
 | 首要入口 | `services/company_registry.py::CompanyRegistryService`（`_load/_save/_check_revision`、`_clean_root/_clean_subdirs`、`_plan/create_subdirs`、`_after_write`）、`detect_subdirs`；`services/company_views.py::CompanyViewService`、`directory_freshness`、`company_ledger`；`services/company_ledger.py::build_invoice_ledger`；`targets/companies.py::company_taxpayer_for/taxpayer_type_for`；路由 `api/routes/companies.py`；AppState 只负责构造 `state.companies`、`state.company_views` |
 | 必须联动 | 子目录提示词与 `services/dossier.py::BUSINESS_DOSSIER_DIR_HINTS` 共用；路径保存规则 `targets/paths.py::serialize_config_path`；接线测试 `SERVICES`；纳税人类型经 `company_taxpayer` 进入全部成本计价入口（见第 5 节）；只读列表行结构跟随 `InvoiceListService` |
 | 产物与消费者 | `runtime/local_state/companies.json`；`/api/v1/companies*`；`/workspace/companies`（`frontend/src/views/CompaniesView.vue` 与 `components/Company*.vue`、`stores/companies.ts`） |
@@ -447,6 +465,20 @@ L6-RRRRR 追加门禁：hosted check 锁竞争必须在 busy 后直接返回，�
 | 最低自动化 | 文档契约测试、所有本地 Markdown 链接、`git diff --check`；代码任务按风险加业务测试与 compileall |
 | 真实验收 | 文档任务不冒充运行验收；测试任务也不能凭单测宣称 BAT/浏览器/选择器/包已通过 |
 | 高风险提醒 | 不维护固定测试总数或易漂移行数；CHANGELOG 历史记录可以保留当时数字，但快速入口不能把旧数字当当前事实。代码变更必须识别不由局部代码自明的衔接；跨功能交接处的注释要说明上游、下游、顺序/不变量与失败后果，而非逐字复述代码。原始非公开 Changelog 只能在私有归档人工查证，禁止复制、链接、暂存、提交或写入公开工作树。 |
+
+<a id="task-handoff"></a>
+
+## 开发工具：通用检查点与便携接手
+
+全局调用是可选的用户级安装：工具本体与简短技能分开存放，CLI 通过 PATH 或明确路径调用。其它项目须显式选择 project/workspace；技能按交接意图触发，不安装轮询服务，也不改写各项目自己的规则。全局配置与私有状态不作为本仓库发布输入。
+
+| 导航项 | 内容 |
+|---|---|
+| 首先阅读 | [交接协议](../AGENT_HANDOFF.md)、AGENTS 检查点/公开历史/Git 规则 |
+| 首要入口 | `scripts/dev/agent_handoff.py`（标准库 CLI、引用映射、短摘要、现场采集、CAS、增量事件与投影）；`scripts/dev/build_agent_handoff.py`（白名单源码、固定运行时、便携 ZIP） |
+| 必须联动 | AGENTS/CLAUDE 入口、本文档、FILE_MAP、DATA/INTERFACES/COMMENT 地图、实现状态和迁移清单 |
+| 最低验证 | `tests/test_agent_handoff.py`、`tests/test_agent_handoff_packaging.py`、`tests/test_development_documentation.py`；当前平台解压后的内嵌运行时与实际接手演练 |
+| 高风险提醒 | 检查点和模型审计日志在仓库外；不得打包私有数据、自动执行笔记命令、凭 actor 标签授予权限或把未知结果当失败重试。Windows 静态包验证不等于原生执行；工具不进入发票 API/主存储 |
 
 ## 16. 常用测试命令
 

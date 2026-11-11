@@ -38,6 +38,26 @@
 原文件缺失、移动、替换或内容变化时返回 unavailable 文件名且省略整个线程 items；查看、自动刷新和复制均重新校验。关闭弹窗保留草稿，识别继续；关闭 backend 收束 worker。关闭自动打开时通过“查看本次识别结果”或历史进入。图片/纯扫描件需 OCR，当前临时功能不启用 OCR。
 
 
+## 开发工具交接流程
+
+[交接工具](../AGENT_HANDOFF.md) CLI：init/bind 登记线程别名 → ticket/resolve 定位 → resume 一次读摘要 → claim 内置一次现场校验 → release --input 一次保存并交出。resume 默认不哈希目录，--verify/check 才显式核对；show --section/--full 按需展开。引用歧义不猜最新，无轮询、无网络读取聊天。增量事件 fsync 后仅更新本任务 CURRENT 与变化的 INDEX，revision 过期拒绝写入。
+
+功能约束按需读取：[页面/单据/预览/皮肤](rules/WEB_UI.md)、[监控与关闭](rules/MONITORING.md)、[做账](rules/BOOKKEEPING.md)、[Tauri 宿主](rules/TAURI_HOST.md)、[构建与发行](rules/RELEASE.md)。先按 [任务快速索引](AGENT_TASK_MAP.md#quick-lookup) 定位全部命中项，再读取规则全文及对应实现章节；AGENTS.md 保留全局必读规则。
+
+## 税务工作台接口草案（2026-09-11，未注册）
+
+拟议的单税/多税计算、nullable 公司绑定、角色检测、异步归集、取消、快照读取、归档、申报期限与申报表映射见[设计第 6—7 节](../TAX_WORKBENCH_DESIGN.md)。当前 main 未接入这些路由；设计不改变本文件下方已有 API 契约。
+
+后续链路为 `独立 tax router → 规范化输入/TaxWorkspaceService → 来源快照 → Decimal 引擎 → 同源结果与解释`。归集不得改变 `watch_dir`、成本投影或 W8/W9 状态；缺资料逐项阻断，旧绑定/任务/规则的完成结果不能覆盖新场景。实施时同时更新 API、SSE 重连消费、前端文本、缓存版本与契约。
+
+补充原生目录选择草案：`POST /api/v1/tax/workspace/pick-directory → platform.pick_directory → owned Host RPC pick_tax_company_dir → 系统单目录选择窗口 → 待保存草稿 → detect → PUT workspace`。这是拟议第五类 picker 用途，当前下文四个既有 picker route 的实现状态不变；空请求、固定枚举、同源与 ownership 校验，选择成功仅返回 `selected_path/requires_save`，取消保留旧草稿，失败脱敏 503。草稿改变或页面关闭后丢弃旧请求返回，不因选择动作切换 `watch_dir` 或自动保存。
+
+申报衔接草案：`GET /api/v1/tax/filing-calendar` 只读返回申报期限与顺延，必须带来源与核对日期，未核验期间标注而不是给出推算日期；`GET /api/v1/tax/runs/{run_id}/form-mapping` 把一次运行映射到适用表式与行次，绑定表式版本，表式变更后返回 `stale` 而不是旧行次。期限信息只作提醒，不构成已申报证据；缺表式样例时不输出行次。来源分级与签署要求见[政策来源与核验](../TAX_POLICY_SOURCES_AND_REVIEW.md)。
+
+入口偏好草案：在现有 `GET/PUT /api/v1/preferences` 扩展 `tax_calculator_placement=floating|header` 与可选归一化 `tax_calculator_anchor`。20px 图标在界面内悬浮，或固定在置顶栏“首页”按钮左侧并纵向居中；置顶入口使用模块导航之前的独立工具槽，不插在各模块之间，同一页面只显示一处；切换位置不重置计算器草稿，不读取/切换公司资料。原型仅会话内展示，正式偏好持久化及失败恢复属于 D1。
+
+紧凑布局与自定义税率草案：正面固定按可用高度分配 20 键空间，长解释和结果独立滚动；税率预设与自定义编辑共用一行。自定义请求明确模式和 `custom_rate_percent` 十进制字符串，后端统一转换比例、验证 0—100%/最多四位小数并返回 `user_assumption`；不允许客户端同时提供比例字段。切换模式/修改税率使旧结果和解释失效，空值/非法输入不回退预设。当前原型只演示校验与待重算，生产契约待 D1 实施。
+
 2026-09-10：alpha.2 优化版 1 已完成同源 Mac 构建并发布，内置平台 Python/Java/OFD 组件；离线、包内两页 OFD 和实际正常配置的 ready/页面/monitor 验收通过。隔离 HOME 自动样本未通过，其他平台原生与签名限制仍保留。精确身份、发布状态与来源见[分支记录](../BRANCH_STATUS.md)；后续开发以 main 为准，制品身份由优化批次 Tag 固定。
 
 2026-09-09 Windows portable 完成暂存校验后的目录发布，只对 WinError 5/32/33 最多重试 20 次、累计 1.9 秒；其它错误或持续失败仍停止构建，不生成放行 receipt。
@@ -331,9 +351,62 @@ L10-D 复用 L10-R/C 的 lease、marker、fixed-loopback bridge 和 pure coordin
 | `PATCH /api/v1/bookkeeping/import-result` | 废弃路由 | 固定 HTTP 410 `BATCH_FINALIZE_REQUIRED` | 禁止逐张绕过 batch finalize |
 | `GET /api/v1/bookkeeping/state` | `bookkeeping_state` | 公司、store revision、草稿和批次总览 | 页面只读后再发显式动作 |
 
-### 3.5.1 公司清单、按公司只读目录与发票账簿（WS-07 第 1—3 步）
+### 3.5.1 银行流水底稿命令行（2026-10-02，无 HTTP 路由）
 
-公司清单存于 `runtime/local_state/companies.json`（schema v1，见数据算法 §4.6），由 `state.companies`（`services/company_registry.py::CompanyRegistryService`）读写。它与单目录设置分开：任何清单操作都不改变活动 `watch_dir`、TargetProfile 或 monitor；没有清单文件时列表为空、`revision=0`，且读取不会创建文件。写请求经同源校验，并携带清单 `revision`（CAS）。
+银行流水整理目前只有命令行入口，未注册 API、页面或 SSE；业务资料夹的“银行流水”统计仍只是文件计数。
+
+```text
+python -m invoice_hub.bank <对账单/回单 PDF 或目录...> [--out 目录] [--from YYYY-MM] [--to YYYY-MM]
+    [--book-balance 金额 --book-date YYYY-MM-DD] [--sales-invoices 销项发票目录]
+    [--invoice-csv 发票明细.csv ...] [--customer 名称 ...] [--supplier 名称 ...]
+    [--sensitive-term 词 ...] [--no-redacted]
+```
+
+| 退出码 | 含义 |
+|---|---|
+| 0 | 私有底稿已写出；未加 `--no-redacted` 时脱敏底稿也已写出且泄漏扫描通过 |
+| 2 | 参数错误（账面余额与日期须成对）、找不到可识别对账单、发票明细 CSV 缺列 |
+| 3 | 脱敏泄漏扫描命中，本次不写任何底稿 |
+
+```mermaid
+flowchart LR
+    PDF["对账单/回单 PDF（只读）"] --> Discover["discover：按内容识别版式"]
+    Discover --> Adapter["boc 适配器 → 标准记录"]
+    Adapter --> Checks["checks：余额/合计/断档/账面差额/重复"]
+    Adapter --> Match["matching：流水号+金额 → 日期+金额+方向"]
+    Match --> Classify["classify：角色 + 建议分录"]
+    Directory["往来单位.json（人工优先）"] --> Classify
+    Checks --> Build["build_tables（同一构建函数）"]
+    Classify --> Build
+    Build -->|RedactedView| Scan{"泄漏扫描"}
+    Scan -->|通过| Redacted["脱敏/ 底稿 + 报告"]
+    Scan -->|命中| Stop["退出码 3，不写出"]
+    Build -->|PrivateView| Private["私有底稿 + 往来单位.json"]
+```
+
+顺序约束：先解析全部对账单得到本公司账号，再解析回单判断收付方向；脱敏表先构建并扫描通过，才写私有底稿和脱敏底稿，避免留下“私有已更新、脱敏失败”的半套产物。
+
+### 3.5.2 参考凭证草稿命令行（2026-10-10，无 HTTP 路由）
+
+```text
+python -m invoice_hub.bank.voucher_cli draft  --company <公司资料夹> --from YYYY-MM --to YYYY-MM [--bank 目录] [--out 目录] [--month-end] [--ledger 科目表.json] [--booked 序时账.txt ...]
+python -m invoice_hub.bank.voucher_cli export --company <公司资料夹> [--draft 审核表] [--out 目录] [--voucher-type 记] [--allow-reexport] [--ledger 科目表.json] [--after YYYY-MM:NNN ...] --preparer 制单人
+```
+
+| 命令 | 退出码 |
+|---|---|
+| draft | 0 已生成审核表（首次同时生成 `申报数据.json` 模板）；2 缺科目表、发票明细、对账单或参数错误 |
+| export | 0 无校验错误（可能没有可导出的凭证）；1 有凭证未通过校验，相关月份整月未导出；2 找不到审核表或输入错误 |
+
+`--ledger`：在捷锐新建科目后，指向 `做账草稿/账套读回/` 下的科目表读回快照（结构同 `凭证/科目表.json`）；只读，不回写 `凭证/`，draft 与 export 须用同一份。
+
+`--booked`：已入账月份的捷锐“序时账”复制文本（9 列制表符分隔：日期、凭证号、摘要、科目编码、科目名称、数量、外币、借方、贷方），可多次指定；这些月份只补记漏掉的银行流水。draft 在终端逐月打印银行核对结论，并列出补记、账有银无与未生成凭证的流水。
+
+流程：draft 生成审核表 → 会计人员先看“月度核对”“银行对账”，再按“待补科目”在捷锐补建科目/供应商、补填 `申报数据.json` 后重跑 draft → 在审核表中修改并选“通过” → export 生成按月导入文件并更新习惯 → 会计人员在捷锐手工导入（首次只导入一张核对）。
+
+### 3.5.3 公司清单、按公司只读目录与发票账簿（WS-07 第 1—3 步）
+
+公司清单存于 `runtime/local_state/companies.json`（schema v1，见数据算法 §4.8），由 `state.companies`（`services/company_registry.py::CompanyRegistryService`）读写。它与单目录设置分开：任何清单操作都不改变活动 `watch_dir`、TargetProfile 或 monitor；没有清单文件时列表为空、`revision=0`，且读取不会创建文件。写请求经同源校验，并携带清单 `revision`（CAS）。
 
 | 方法与路径 | 服务入口 | 当前语义 | 错误与安全边界 |
 |---|---|---|---|

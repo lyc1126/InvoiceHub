@@ -20,6 +20,10 @@
 
 本轮起点为 已核验的本地 `main`（精确起点见本轮 CHANGELOG），实现在 `codex/progressive-data-loading`，尚未合并或发布。首页改为服务端分页；成本页按标签分页读取上次完整快照；首次无正式投影时，普通汇总和成本各自在解析阶段发布只读临时批次。`storage/read_views.py` 管理每个 TargetProfile workspace 中的可重建 SQLite 读取缓存，CSV/XLSX/JSON 与源发票的权威关系不变。单据入库候选提前发布，首页批量入库只准备所选票，出库候选增量更新。接口、缓存代际和保护语义见架构专题同日条目。
 
+## 开发工具接力入口
+
+[通用交接协议](AGENT_HANDOFF.md) 与任务导航的交接行定义独立开发小工具。它以仓库外 JSONL 为任务事实、Markdown/JSON 为可重建交接视图，复用现有文档导航，不接入 InvoiceHub 产品 API、数据库或源发票目录。 用户级可选接入采用 `~/.agents/tools/agent-handoff` 存工具、`~/.agents/skills/agent-handoff` 存简短技能、`~/.local/bin/agent-handoff` 提供全局命令，Claude 的个人技能入口引用同一规则；这是本机个人配置，不要求其它 clone 已安装。
+
 功能约束按需读取：[提取与分类](architecture/rules/INVOICE_EXTRACTION.md)、[成本](architecture/rules/COST_ANALYSIS.md)、[监控与关闭](architecture/rules/MONITORING.md)、[页面/单据/预览/皮肤](architecture/rules/WEB_UI.md)、[做账](architecture/rules/BOOKKEEPING.md)、[税务设计](architecture/rules/TAX_WORKBENCH.md)、[Windows](architecture/rules/WINDOWS.md)、[macOS 参考壳](architecture/rules/MACOS.md)、[Tauri 宿主](architecture/rules/TAURI_HOST.md)、[构建与发行](architecture/rules/RELEASE.md)。先按 [任务快速索引](architecture/AGENT_TASK_MAP.md#quick-lookup) 定位全部命中项，再读取规则全文及对应实现章节；AGENTS.md 保留全局必读规则。
 
 2026-09-12 设计入口：[税务计算器与公司财税工作台](TAX_WORKBENCH_DESIGN.md)、[算法与政策规格](TAX_ALGORITHMS_AND_POLICY.md)、[政策来源与核验](TAX_POLICY_SOURCES_AND_REVIEW.md)、[价值评估与就绪度](TAX_WORKBENCH_VALUE_AND_READINESS.md)（决策页，记录就绪度与是否投入的判断）。当前仅有文档和独立合成原型；其新增目录、接口、数据模型、公司绑定、申报表映射、征期与政策中心均为拟议内容，不属于下文 main 当前实现。开发按任务导航中的税务设计行进入。
@@ -221,6 +225,7 @@ flowchart TB
 ├─ src/invoice_hub/
 │  ├─ domain/                                领域模型与外部契约
 │  ├─ bookkeeping/                           W8/W9 做账状态、校验、映射和批次
+│  ├─ bank/                                  银行对账单/回单整理、勾稽、建议分录与脱敏底稿（命令行）
 │  ├─ extraction/                            票头提取、分类、同票纠偏
 │  ├─ projections/                           汇总、成本、单据及 Excel 模板
 │  ├─ targets/                               配置解析、运行目录和档案隔离
@@ -273,6 +278,7 @@ flowchart LR
 | `extraction` | `extract_invoice_record`、`apply_invoice_family_corrections` | 票头证据、分类、同票纠偏 | CSV/XLSX 展示 |
 | `projections` | `build_summary`、`CostProjectionService`、单据函数 | 可重建投影和报表 | 长期主数据 |
 | `bookkeeping` | `VoucherExecutabilityValidator`、映射/迁移/批次仓储 | W8/W9 做账协议与确定性状态 | 浏览器自动化和平台窗口 |
+| `bank` | `workpaper.run`、`boc` 适配器、`RedactedView` | 银行流水标准记录、勾稽、回单匹配、建议分录与私有/脱敏底稿 | `凭证/` 状态写入、账套或税局操作、HTTP 路由 |
 | `storage` | `atomic_write_json`、`SQLiteRepository` | 原子读写、任务、事件 | 发票主存储 |
 | `monitoring` | `run_monitor`、`MonitorSynchronizer.run_sync` | 持续观察、变化判断、自动重建 | Web 页面生命周期 |
 | `services` | `AppState`（组装根）、各领域服务（`bookkeeping`、`documents`、`costs`、`dossier`、`preview_print`、`invoice_selection`、`invoice_list`、`invoice_rename`、`settings`、`diagnostics`、`monitor_control`、`background_sync`、`about`、`appearance`、`ocr`、`server_shutdown`、`company_registry`（WS-07 公司清单，`state.companies`）、`company_views`（按公司只读目录，`state.company_views`））、`MonitorBridge`、`SkinService`、`UpdateService` | 用例编排、并发锁、平台协调与受限更新检查 | HTTP 细节 |

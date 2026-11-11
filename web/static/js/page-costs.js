@@ -1597,10 +1597,83 @@ document.addEventListener("click", (event) => {
 });
 refs.batchMarkupLockBtn?.addEventListener("click", () => applySelectedMarkup(true));
 refs.batchMarkupUnlockBtn?.addEventListener("click", () => applySelectedMarkup(false));
+const COST_FORMULA_TOOLTIP_EDGE_PX = 12;
+const COST_FORMULA_TOOLTIP_GAP_PX = 10;
+const COST_FORMULA_TOOLTIP_ARROW_INSET_PX = 14;
+const costFormulaHelpWrap = document.querySelector(".cost-formula-help-wrap");
+const costFormulaHelpButton = costFormulaHelpWrap?.querySelector(".cost-formula-help");
+const costFormulaTooltip = document.getElementById("costFormulaTooltip");
+let costFormulaTooltipFrame = 0;
+
+function clampNumber(value, min, max) {
+  return Math.min(Math.max(value, min), Math.max(min, max));
+}
+
+function costFormulaTooltipOpen() {
+  return Boolean(costFormulaHelpWrap?.matches(":hover, :focus-within"));
+}
+
+function positionCostFormulaTooltip() {
+  if (!costFormulaHelpWrap || !costFormulaHelpButton || !costFormulaTooltip) return;
+  // The help button moves with responsive toolbar wrapping, so a fixed left/right anchor
+  // eventually pushes the 460px panel past a viewport edge. Measure on every show and
+  // keep the panel inside the viewport and below the sticky topbar.
+  const viewportWidth = document.documentElement.clientWidth || window.innerWidth;
+  const viewportHeight = document.documentElement.clientHeight || window.innerHeight;
+  const topbarBottom = document.querySelector(".topbar")?.getBoundingClientRect().bottom || 0;
+  const minTop = Math.max(COST_FORMULA_TOOLTIP_EDGE_PX, topbarBottom + COST_FORMULA_TOOLTIP_EDGE_PX);
+  const maxBottom = viewportHeight - COST_FORMULA_TOOLTIP_EDGE_PX;
+  costFormulaTooltip.style.removeProperty("--cost-tooltip-max-height");
+  // CSS 100vw includes a classic (Windows) scrollbar; clientWidth does not.
+  costFormulaTooltip.style.maxWidth = `${Math.max(0, viewportWidth - COST_FORMULA_TOOLTIP_EDGE_PX * 2)}px`;
+
+  const wrapRect = costFormulaHelpWrap.getBoundingClientRect();
+  const buttonRect = costFormulaHelpButton.getBoundingClientRect();
+  const width = costFormulaTooltip.offsetWidth;
+  const height = costFormulaTooltip.offsetHeight;
+  const buttonCenter = buttonRect.left + buttonRect.width / 2;
+  const left = clampNumber(
+    buttonCenter - width / 2,
+    COST_FORMULA_TOOLTIP_EDGE_PX,
+    viewportWidth - COST_FORMULA_TOOLTIP_EDGE_PX - width,
+  );
+
+  const spaceAbove = buttonRect.top - COST_FORMULA_TOOLTIP_GAP_PX - minTop;
+  const spaceBelow = maxBottom - buttonRect.bottom - COST_FORMULA_TOOLTIP_GAP_PX;
+  let placement = "top";
+  if (spaceAbove < height && (spaceBelow >= height || spaceBelow > spaceAbove)) placement = "bottom";
+  const available = Math.floor(placement === "top" ? spaceAbove : spaceBelow);
+  if (available < height) {
+    costFormulaTooltip.style.setProperty("--cost-tooltip-max-height", `${Math.max(available, 80)}px`);
+  }
+
+  costFormulaTooltip.dataset.placement = placement;
+  costFormulaTooltip.style.left = `${Math.round(left - wrapRect.left)}px`;
+  costFormulaTooltip.style.setProperty(
+    "--cost-tooltip-arrow-x",
+    `${Math.round(clampNumber(buttonCenter - left, COST_FORMULA_TOOLTIP_ARROW_INSET_PX, width - COST_FORMULA_TOOLTIP_ARROW_INSET_PX))}px`,
+  );
+}
+
+function scheduleCostFormulaTooltipPosition(event) {
+  // Re-measuring drops max-height and would reset the panel's own scrollTop to 0.
+  if (event?.type === "scroll" && costFormulaTooltip?.contains(event.target)) return;
+  if (costFormulaTooltipFrame || !costFormulaTooltipOpen()) return;
+  costFormulaTooltipFrame = window.requestAnimationFrame(() => {
+    costFormulaTooltipFrame = 0;
+    if (costFormulaTooltipOpen()) positionCostFormulaTooltip();
+  });
+}
+
+costFormulaHelpWrap?.addEventListener("mouseenter", positionCostFormulaTooltip);
+costFormulaHelpWrap?.addEventListener("focusin", positionCostFormulaTooltip);
+window.addEventListener("scroll", scheduleCostFormulaTooltipPosition, { capture: true, passive: true });
+
 window.addEventListener("resize", app.debounce(() => {
   updateReferenceTextMarquee();
   scheduleCostTableSizing(state.activeView);
 }, 150));
+window.addEventListener("resize", scheduleCostFormulaTooltipPosition);
 if (document.fonts?.ready) {
   document.fonts.ready.then(() => scheduleCostTableSizing(state.activeView)).catch(() => {});
 }

@@ -11,6 +11,7 @@ Tauri 新增固定私有枚举 `pick_temporary_files`，调用 dialog 多文件�
 
 功能约束按需读取：[Windows](rules/WINDOWS.md)、[macOS 参考壳](rules/MACOS.md)、[Tauri 宿主](rules/TAURI_HOST.md)、[构建与发行](rules/RELEASE.md)。先按 [任务快速索引](AGENT_TASK_MAP.md#quick-lookup) 定位全部命中项，再读取规则全文及对应实现章节；AGENTS.md 保留全局必读规则。
 
+2026-09-11 拟议能力：[税务工作台设计](../TAX_WORKBENCH_DESIGN.md)增加公司业务资料夹原生单目录选择。Tauri desktop/browser 模式共用现有 owned Host RPC 与 `select_path`，只增加固定 `pick_tax_company_dir` 用途；macOS 使用 `NSOpenPanel`，Windows 使用系统文件夹窗口，Windows 非 Tauri 源码入口复用已有 `pick_directory` 适配。选择结果只是待保存草稿，检测与保存留在后端业务服务；保留 Origin/token/lifecycle 与 120/125 秒预算，不能由浏览器文件上传替代根路径绑定。本轮仅设计与原型演示，真实原生窗口、取消/失败/迟到返回及跨平台验收列入 D2，不属于当前实现。
 
 2026-09-08 本附录与开发架构总入口统一以 `main` 的 PR #20 合并提交为产品实现及后续发行源码基线，精确身份见 [分支记录](../BRANCH_STATUS.md)；下文旧分支名只记录来源，不能再作为并行真值。源码 CI 不替代平台成品验收。
 

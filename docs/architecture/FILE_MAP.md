@@ -30,11 +30,21 @@
 | `tests/test_progressive_loading.py` | 暂停第二张解析证明首批可见；分页/全量统计/缓存复用/写锁并发/失败临时数据/过期保存/单据按需预览回归 |
 
 `TargetProfile.workspace_dir/read-views.sqlite3` 及 WAL/SHM 仅为可重建读取缓存，不作为发票主存储或发行输入。现有 `document_index.py` 增加成本 CSV 分组内存缓存与阶段性候选发布；三个 page 脚本继续由各自模板加载；成本与单据版本为 `20261009-progressive-3`，首页后续升级为 `20261009-selection-6`。未改变成本三件套所在目录。
+
+## 税务工作台设计文件（2026-09-11）
+
+| 文件 | 职责 | 实现状态与关联 |
+|---|---|---|
 | `docs/TAX_WORKBENCH_DESIGN.md` | 首页交互、独立公司资料绑定、证据/任务/API 草案与 D0—D5 计划 | 设计提案，不表示拟议工程文件已创建；关联算法规格及合成原型 |
 | `docs/TAX_ALGORITHMS_AND_POLICY.md` | Decimal、价税、月度 VAT、附加、印花、季度所得税公式，官方依据和独立预期 | 记录已核对与待补证边界，不是现行生产规则包 |
 | `docs/TAX_POLICY_SOURCES_AND_REVIEW.md` | 政策来源分级（A 官方原文 / B 解释与征管口径 / C 线索 / D 视频号自媒体）、四层政策中心、变更流水线、订阅与待办、覆盖声明与漏报保障、版本差异、运营成本与核验签署 | 设计与治理规格；本轮未执行抓取、轮询或外部请求，不新增未核验文号；D5 的前置约束 |
 | `docs/TAX_WORKBENCH_VALUE_AND_READINESS.md` | 决策文档：会计痛点、计算器就绪度与草稿定位核查、政策中心价值与护城河、最小可用形态、开发者重新评估清单与停止条件 | 记录当前事实与判断，不是设计规格；结论可被实现推翻，推翻时同步更新本页 |
 | `docs/design/tax-calculator-prototype.html` | 小图标/入口位置、紧凑 20 键、预设/自定义税率输入、税种切换/勾选、独立滚动的翻面/结果、资料选择模拟 | 自定义只校验输入并标记待重算；位置偏好仅会话内；选择器不打开真实系统窗口；不进入 `web/` 或包资源清单，无税务运算、业务 IO 或生产 API；图标 ISC 来源参照 `website/assets/LICENSE-lucide` |
+
+## 多公司工作区设计原型（2026-11-01）
+
+| 文件 | 职责 | 实现状态与关联 |
+|---|---|---|
 | `docs/design/workspace-sidebar-prototype.html` | 左侧模块列（含临时识别、↑ 更新入口）、可拖动调宽的公司 › 项目 / 目录侧栏与右键置顶、悬停全名卡片；目录页保留现有首页发票列表与勾选合计详情、右键标签；`⇄` 比较标签按关系勾稽（进销存、往来、抵扣），类目可点开明细、下方原始文件并排联动；首页标签可全部关闭（空白起始页），其他模块不显示标签并各自缓存对象与滚动位置；公司/项目票面汇总、原始凭证缩略图、缺失子目录创建与新建工作区向导；做账（可编辑凭证、年月小日历选所属期、记账日期、跨期单据、通用凭证导出、库存加权、工资社保、税费）；双击 `hi.` 刷新本页缓存；银行版式识别与余额链 | 单文件合成数据交互原型：进项、销项、流水、勾选清单由同一份合成账簿派生；不读写真实目录、不进入 `web/` 或包资源清单、无生产 API；仍是单活动监控目录。分阶段落地见 [产品待办 WS-01—06](../PRODUCT_BACKLOG.md#ws-01) 与 [BANK-01](../PRODUCT_BACKLOG.md#bank-01) |
 
 2026-09-08 OFD 预览新增工程文件：
@@ -130,6 +140,7 @@
 - `src/invoice_hub/services`：业务服务
 - `src/invoice_hub/platform`：Windows 启停、进程、通知、原生选择器、打开文件
 - `src/invoice_hub/storage`：文件真值读写与 SQLite 任务/事件
+- `src/invoice_hub/bank`：银行对账单/回单适配器、勾稽、回单匹配、建议分录、脱敏底稿，以及参考凭证草稿与捷锐导入文件（只读源文件与 `凭证/`，命令行入口）
 - `src/invoice_hub/release`：发布构建与验收辅助
 - `web`：模板与静态资源；`web/static/app/` 只放 `frontend/` 的提交构建产物，不手改
 - `frontend`：Vue 3 工作区前端源码（Vite/TypeScript/Pinia/Vue Router/Vitest），新界面功能在这里实现，构建到 `web/static/app/`
@@ -207,6 +218,16 @@
 | `docs/architecture/rules/TAURI_HOST.md` | Tauri 宿主、所有权与更新事务的强制约束。 | 从 AGENT_TASK_MAP 按问题进入；维护功能规则并回查对应源码与验收。 |
 | `docs/architecture/rules/RELEASE.md` | 公开基线、构建与发行的强制约束。 | 从 AGENT_TASK_MAP 按问题进入；维护功能规则并回查对应源码与验收。 |
 
+## 通用交接开发工具
+
+| 文件 | 职责 | 联动与验收 |
+|---|---|---|
+| `scripts/dev/agent_handoff.py` | Agent 无关的线程引用映射、短摘要、按需详情、现场指纹、CAS、增量事件和中断恢复。 | 私有 JSON/Markdown 只写仓库外；交接协议、入口、合成回归。 |
+| `scripts/dev/build_agent_handoff.py` | 从明确公开源码与固定运行时或可信旧包的 runtime 生成便携包及逐文件清单。 | 拒绝归档越界、私有成员与篡改；双平台运行限制分别记录。 |
+| `docs/AGENT_HANDOFF.md` | 通用协议、命令、字段、恢复步骤及跨 Agent 接手入口；也是便携包说明。 | AGENTS/CLAUDE 共用，独立于厂商会话。 |
+| `tests/test_agent_handoff.py` | 普通文件接力、并发 CAS、坏状态/断尾恢复、未知操作与私有目录边界。 | 不使用真实业务资料或模型 API。 |
+| `tests/test_agent_handoff_packaging.py` | 合成 runtime 的白名单、复现、路径/哈希和包篡改拒绝。 | 合成平台载荷不冒充真实内嵌运行时或平台验收。 |
+
 ## 3. 文档
 
 | 文件 | 职责与入口 | 关系与修改影响 |
@@ -222,7 +243,7 @@
 | `docs/legacy/OLD_WORKSPACE_CHANGELOG_INDEX.md` | 旧工作区功能与故障的脱敏回溯索引。 | 只提供类别、不变量和当前查询入口；原始非公开 Changelog 不得复制、链接或写入公开工作树。 |
 | `docs/GIT_BRANCH_WORKTREE_FORK_GUIDE.md` | 分支、worktree、PR 和回退操作指南。 | 受 AGENTS Git 规则约束；稳定基线变化时同步。 |
 | `docs/MAC_WINDOWS_WORKFLOW.md` | Mac 开发与 Windows 正式验收分工。 | 与 Docker、PowerShell、正式 BAT 和发布验收相关。 |
-| `docs/MIGRATION_GAP_CHECKLIST.md` | 旧能力迁移缺口和验收状态。 | 功能迁移、验收口径变化时更新。 |
+| `docs/MIGRATION_GAP_CHECKLIST.md` | 旧能力迁移缺口和验收状态。 | 功能迁移、验收口径和开发交接能力变化时更新。 |
 | `docs/PRODUCT_BACKLOG.md` | 未来工作总览：设计稿与原型索引、已确认但未排期的优化与新功能、待修复缺陷，含编号、优先级、状态、证据、方案、验收标准与影响范围。 | 发现值得做但本轮不做的改进时登记；排期、完成或放弃时更新状态并链接 CHANGELOG；证据不得含真实业务数据。 |
 | `docs/COST_ANALYSIS_V2_DESIGN.md` | 成本分析 v2 设计提案：已确认决策、公司级品目表（别名、库存科目、类型、税率）、成本基数（进项税是否计入、结存加权单价）、销项税率与计税方式、灵活定价规则（加价率 / 目标毛利 / 固定加价 / 合同价 / 阶梯 / 市场价底线）与 4 层优先级、页面结构、兼容迁移与落地顺序。 | 未实现；现行规则以 COST_ANALYSIS 规则页为准；落地拆分见 PRODUCT_BACKLOG 的 COST-06、COST-01—05 与 BUG-01。 |
 | `docs/AGENT_ACCESS_DESIGN.md` | Agent 接入设计提案：参照 Vibe Island 接入形态，MCP 主通道与命令行兜底、本机 socket / 命名管道与配对令牌、L0—L2 能力分级与禁止项、灵活控制模型（预设 / 询问卡片 / 规则表）、辅助导入（Agent 起草版式档案或逐格更正、软件校验、暂存确认）、应用内审批与活动面板、一键安装适配器、分阶段与验收要点。 | 未实现；2026-11-09 确认先只读、WorkBuddy 优先；现行接口以 INTERFACES_AND_FLOWS 为准；落地拆分见 PRODUCT_BACKLOG 的 AGENT-01—04。 |
@@ -407,6 +428,24 @@
 | `src/invoice_hub/runners/__init__.py` | 随包 runner 包边界。 | 不直接写做账状态。 |
 | `src/invoice_hub/runners/jierui_voucher_import.py` | batch-bound dry-run runner。 | W8 不开放真实 apply；只接受显式 `--batch-manifest`。 |
 
+## 10.2 银行流水底稿
+
+| 文件 | 职责与入口 | 关系与修改影响 |
+|---|---|---|
+| `src/invoice_hub/bank/__init__.py` | 包说明与 `WORKPAPER_SCHEMA`。 | 底稿 JSON schema 变化需递增版本并同步数据算法第 4.6 节。 |
+| `src/invoice_hub/bank/__main__.py` | `python -m invoice_hub.bank` 命令行入口，参数校验与默认输出目录。 | 只调用 `workpaper.run`；不写 `凭证/`，不连接账套或电子税务局。 |
+| `src/invoice_hub/bank/models.py` | 标准记录：对账单、行、回单、税费明细、校验问题；Decimal 金额解析。 | 所有银行适配器的唯一输出契约；方向按企业视角。 |
+| `src/invoice_hub/bank/boc.py` | 中国银行对账单（竖线表格）与电子回单（按坐标配对标签与值）适配器。 | 新增银行另写适配器并在 `workpaper.discover` 注册；未知版式必须报错不猜。 |
+| `src/invoice_hub/bank/checks.py` | 逐行余额、页脚合计、月度衔接/断档、账面期初差额、重复行。 | 底稿“校验结果”来源；错误项须先于做账处理。 |
+| `src/invoice_hub/bank/matching.py` | 流水行与回单匹配：流水号+金额优先，退到日期+金额+方向唯一。 | 多候选不猜，进入人工确认。 |
+| `src/invoice_hub/bank/classify.py` | 往来角色推断与建议分录（手续费/利息/缴税拆分/自然人/客户/供应商/油卡）。 | 依据文本不得含户名；户名只在 `aux`，供脱敏统一替换。 |
+| `src/invoice_hub/bank/redaction.py` | 私有/脱敏视图、HMAC 稳定化名、用途词白名单、泄漏扫描。 | 扫描命中即拒绝写出；密钥与对照表只在私有目录。 |
+| `src/invoice_hub/bank/ledger.py` | 读取 `凭证/科目表.json`、辅助核算档案和映射规则；按名称路径定位末级科目。 | 找不到或不唯一时返回空编码，由草稿列入待补科目，不猜相近科目。 |
+| `src/invoice_hub/bank/vouchers.py` | 凭证草稿生成：销项/进项发票、银行流水、待认证进项转出、月末增值税与附加、季度印花税；默认短摘要；账套读回（序时账）对账与补记；银行对账与月度核对；原件速查；`申报数据.json` 模板。 | 读 `workpaper.analyze` 结果与发票明细投影；只产出建议凭证，不写 `凭证/`。 |
+| `src/invoice_hub/bank/jierui.py` | 凭证审核表（带边框、下拉审核）、读回审核表、逐张校验、按月写捷锐导入模板、`做账习惯.json` 与 `已导出凭证.json`。 | 只导出“通过”的凭证；任一凭证不合格则该月整月不导出；同一凭证签名不重复导出。 |
+| `src/invoice_hub/bank/voucher_cli.py` | `python -m invoice_hub.bank.voucher_cli draft|export` 命令行。 | 输出到公司资料夹 `做账草稿/`；只读 `凭证/`。 |
+| `src/invoice_hub/bank/workpaper.py` | 发现源文件、分析、建表、原子写出私有与脱敏 JSON/XLSX、`往来单位.json` 合并。 | 两份底稿由同一构建函数经不同视图产出；不覆盖人工角色。 |
+
 ## 11. Monitor
 
 | 文件 | 职责与入口 | 关系与修改影响 |
@@ -548,6 +587,8 @@
 | `tests/test_bookkeeping_mapping_migration.py` | 映射 v1/v2 preview/apply。 | mapping_migration。 |
 | `tests/test_bookkeeping_profile.py` | 账套、科目和辅助档案绑定。 | catalogs、validator。 |
 | `tests/test_bookkeeping_projection.py` | 凭证生成、posting key 和 revision。 | vouchers、status。 |
+| `tests/test_bank_vouchers.py` | 合成公司资料夹上的科目定位、进项抵扣推断、增值税测算与申报差异、审核导出、习惯学习、重复导出保护、账套读回匹配与补记编号、银行对账与原件链接、CLI。 | bank/ledger、vouchers、jierui、voucher_cli。 |
+| `tests/test_bank_workpaper.py` | 合成中国银行对账单/回单 PDF 的解析、勾稽、匹配、建议分录、脱敏 fail-closed 与 CLI。 | bank 全部模块；不得引用真实业务资料。 |
 | `tests/test_bookkeeping_status.py` | 严格状态仓储与迁移。 | repository、status。 |
 | `tests/test_bookkeeping_validator_w9.py` | W9 可执行性 blockers。 | validator、decisions、catalogs。 |
 | `tests/test_runner_dryrun.py` | batch-bound dry-run 与禁止猜测最新文件。 | runners、scripts/tools。 |
