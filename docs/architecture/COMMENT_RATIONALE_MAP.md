@@ -1,5 +1,13 @@
 # InvoiceHub 注释与设计原因地图
 
+## 2026-11-11 抵扣核对（WS-07 第 4 步）
+
+- `company_deduction.py::parse_deduction_workbook`：当期没有勾选时，电子税务局只导出一格“发票清单”，文件里没有所属期。按文件夹名（“5月”）推断会把用户随手起的名字当成事实，所以只报告为“空清单、所属期未知”。守护：`test_empty_and_unrecognised_files_are_reported_not_guessed`。
+- `_amount`：清单金额是 Excel 浮点数，必须经 `str()` 的最短表示再到 Decimal，直接 `Decimal(float)` 会带出二进制尾数，合计行核对会差几厘。守护：`test_parser_reads_period_rows_and_total`。
+- `read_deduction_lists` 按相对路径命名：每月导出都叫 `用途确认信息.xlsx`，只给文件名时用户分不清是哪个月。守护：同上空清单用例断言 `5月/用途确认信息.xlsx`。
+- `build_deduction_check` 的“目录有、清单无”只列专票，并给出所属期不早于开票月的已有清单：有这样的清单说明“该勾未勾”，没有则只是“还没有清单”，两者不能混为一谈；普票不能抵扣，只计数。守护：`test_lists_and_invoices_are_matched_by_number_and_period`。
+- `company_views.py::COMPARE_RELATIONS`：算法由两类资料的关系决定，不由请求决定；没有勾稽关系的组合直接拒绝，避免页面给出拼凑的关联。守护：`test_compare_api_refuses_unrelated_pairs_and_bad_months`。
+
 ## 2026-11-11 公司账簿的银行流水（WS-07 第 3 步银行部分）
 
 - `company_bank.py::BankFlowReader.read`：目录列不全（超过 2,000 个 PDF 或 2 秒）时整体拒绝汇总。只汇总列出来的那部分，会让缺掉的月份看起来像“没有收支”。守护：`list_bank_pdfs` 的完整性返回与 `test_receipts_are_recognised_but_not_parsed`。

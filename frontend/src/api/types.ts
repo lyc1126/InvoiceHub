@@ -248,3 +248,57 @@ export interface BankLedger {
   checks?: LedgerCheck[];
   checks_ok?: boolean;
 }
+
+/** One 用途确认信息 row as the backend returns it; amounts are decimal strings. */
+export interface DeductionRow {
+  invoice_number: string;
+  invoice_code: string;
+  status: string;
+  invoice_date: string;
+  seller: string;
+  period: string;
+  file: string;
+  金额: string | null;
+  税额: string | null;
+  有效抵扣税额: string | null;
+}
+
+export interface DeductionMatched extends DeductionRow {
+  timing: "current" | "carried" | "after_period" | "unknown";
+  invoice_month: string | null;
+  invoice_tax: string | null;
+  tax_ok: boolean;
+  source_files: string[];
+}
+
+export interface DeductionUnlisted {
+  invoice_number: string;
+  invoice_date: string;
+  seller: string;
+  invoice_type: string;
+  tax: string | null;
+  later_list_periods: string[];
+  source_files: string[];
+}
+
+export interface CompareResult {
+  ok: boolean;
+  relation: "deduction";
+  state: "ok" | "no_lists" | "missing_dir" | "unreadable";
+  message: string;
+  basis_label?: string;
+  periods?: {
+    period: string; list_rows: number; matched_current: number; matched_carried: number; matched_other: number;
+    list_only: number; not_selected: number; deductible_tax: string;
+  }[];
+  lists?: { file: string; period: string; rows: number; selected: number; in_range: boolean }[];
+  matched?: DeductionMatched[];
+  list_only?: DeductionRow[];
+  not_selected?: DeductionRow[];
+  duplicates?: { invoice_number: string; periods: string[]; files: string[] }[];
+  not_listed?: { special: DeductionUnlisted[]; ordinary: number; unknown_type: DeductionUnlisted[] };
+  unrecognized?: { file: string; message: string }[];
+  warnings?: { code: string; message: string }[];
+  checks?: LedgerCheck[];
+  checks_ok?: boolean;
+}

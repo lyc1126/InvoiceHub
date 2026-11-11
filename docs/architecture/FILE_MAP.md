@@ -464,7 +464,8 @@
 | `src/invoice_hub/services/__init__.py` | 导出 `AppState`、过期选择（来自 `errors.py`）、预览和打印异常及 `create_state`。 | API 应用工厂依赖。 |
 | `src/invoice_hub/services/app_state.py` | 组装根：构造全部领域服务并作为公开属性暴露（`state.bookkeeping`、`state.settings` 等），持有 config、活动 TargetProfile 与 RLock，保留 health、切换 watch_dir（`update_settings`）与删除所选两条跨域编排；不再有转发方法（ENG-08）。 | 上接 API 路由与测试，下接 `services/` 下的领域服务；服务读共享状态一律经 provider，跨服务协作经 lambda 每次现查对方服务方法（对服务类或实例的打桩因此全局生效），由 `tests/test_appstate_service_wiring.py` 守护（含“AppState 不再长出转发”检查）。 |
 | `src/invoice_hub/services/company_ledger.py` | 公司发票账簿纯算法 `build_invoice_ledger`（WS-07 第 3 步发票部分）：同票家族去重、三项金额与守恒判定、按月/季/年分期、期间范围、日期未识别、票面差额、各期纳税人类型、主体与跨目录提示，以及后端守恒校验。 | 由 `services/company_views.py::company_ledger` 调用；复用 `invoice_selection.selection_family_key/selection_money_value`。守护测试 `tests/test_company_ledger.py`。 |
-| `src/invoice_hub/services/company_bank.py` | 公司账簿的银行流水（WS-07 第 3 步银行部分）：`list_bank_pdfs` 有界列出、`BankFlowReader` 按文件签名缓存的只读解析（只解析对账单）、`build_bank_ledger` 按账户与月/季/年汇总期初/收入/支出/期末、缺月与余额校验、对账单自检。 | 由 `company_views.py::company_ledger` 调用，复用 `bank/workpaper.discover`、`bank/checks.py`；不写公司资料夹，不后台扫描。 |
+| `src/invoice_hub/services/company_bank.py` | 公司账簿的银行流水（WS-07 第 3 步银行部分）：`list_files`/`list_bank_pdfs` 有界列出、`CachedFolderReader` 按文件签名缓存的只读解析（抵扣清单也复用）、`BankFlowReader`（只解析对账单）、`build_bank_ledger` 按账户与月/季/年汇总期初/收入/支出/期末、缺月与余额校验、对账单自检。 | 由 `company_views.py::company_ledger` 调用，复用 `bank/workpaper.discover`、`bank/checks.py`；不写公司资料夹，不后台扫描。 |
+| `src/invoice_hub/services/company_deduction.py` | 抵扣核对（WS-07 第 4 步）：`parse_deduction_workbook` 读电子税务局“用途确认信息”导出（只认“发票”表、所属期与必需表头，空清单无所属期）、`read_deduction_lists`（相对路径命名、未识别清单）、`DeductionListReader`（签名缓存）、`build_deduction_check`（按号码匹配、当期/前期开票、清单有目录无、目录有清单无、未勾选、重复勾选、税额核对与后端校验）。 | 由 `company_views.py::compare` 调用；复用 `company_ledger` 的家族与月份规则；只读。 |
 | `src/invoice_hub/services/company_registry.py` | `CompanyRegistryService`：`runtime/local_state/companies.json` 的唯一写入者（RLock + revision CAS + 原子替换，损坏时保留原文件并拒写）；六类标准子目录与识别提示（前四类复用 `dossier.BUSINESS_DOSSIER_DIR_HINTS`）、纳税人身份生效期（`taxpayer_type_for`）、子目录补建 `plan_hash` 预览/确认与仅新建空目录。 | 上接 `api/routes/companies.py`；读活动 TargetProfile 只用于标记 `monitored`；`services/company_views.py` 从这里取公司与子目录，不把它当第二个 watch_dir；写入改变活动公司当月纳税人类型时回调 `state.costs.refresh_workbook_tax_profile`。守护测试 `tests/test_api_companies.py`。 |
 | `src/invoice_hub/services/dossier.py` | `BusinessDossierService`：解析当前公司资料夹、一次有界扫描快捷入口/统计并限制打开路径（ENG-03 从 AppState 原样迁出；扫描上限常量也在此）。路由以 `state.dossier` 直接调用，做账经 `business_dossier_root()` 取公司目录。 | `/api/v1/business-dossier*` 和首页消费；不得改变 `watch_dir` 扫描语义；截断统计必须明确为下界。 |
 | `src/invoice_hub/services/document_rendering.py` | MuPDF 文档打开和安全分页 PNG 渲染的共享适配。 | preview/print 共用；缺依赖、加密、空文档、页尺寸和渲染失败保持结构化错误。 |
@@ -580,6 +581,7 @@
 | `tests/test_macos_release_contract.py` | Mac runtime/build/verify/Sparkle/签名脚本静态契约。 | macOS 正式发行文件。 |
 | `tests/test_company_ledger.py` | 公司发票账簿：多格式去重、冲突/未识别/不守恒不计入、免税与“10% 不是零税率”、红字冲减、文件名号码家族、季/年分期与各期纳税人类型、期间范围与日期未识别、主体与跨目录提示、种子合成账簿逐月对照，以及 API（两目录、手改字段生效、参数校验）。 | services/company_ledger、services/company_views、api/routes/companies。 |
 | `tests/test_company_bank.py` | 银行流水账簿：月度期初/收支/期末、季度汇总、缺月不补 0、季度内缺月不成立、范围外月份、余额错误使自检不成立、签名缓存与文件变化、回单只计数不解析、API（并列返回、只读、`include_bank=false`、缺目录、无对账单）。 | services/company_bank、company_views、bank/workpaper；合成中国银行对账单 PDF。 |
+| `tests/test_company_deduction.py` | 抵扣核对：按真实导出版式在测试内生成合成清单；解析、当期/前期匹配与各类单列、税额不一致、跨期重复勾选、合计行不符、空清单与未识别文件、期间范围、旧版发票代码号码，以及 compare API（只读、顺序无关、拒绝无关组合与非法月份、缺目录）。 | services/company_deduction、company_views；不含真实清单。 |
 | `tests/test_company_views.py` | 按公司只读目录与纳税人类型优先级：投影/过期判断（新增、改动、删除、坏记录）、读取不建目录不改文件、只读列表与分页、活动目录交接、`company_taxpayer_for` 按月份、清单类型计价与保存拒绝、清单变化重写工作簿、所有 `CostProjectionService`/`MonitorSynchronizer` 构造都传入查找。 | services/company_views、targets/companies、projections/costs、services/company_registry。 |
 | `tests/test_api_companies.py` | 公司清单 API：空清单不建文件、子目录识别与歧义回退、revision CAS、根目录重复/嵌套、相对/绝对路径保存、子目录越界、纳税人生效期、补建预览/确认/过期、链接逃逸、损坏文件拒写、删除不碰文件、`monitored` 标记且不切换目录、跨来源拒绝。 | services/company_registry、api/routes/companies。 |
 | `tests/test_api_bookkeeping.py` | 做账 API、错误模型和废弃接口 410。 | AppState、api、bookkeeping。 |
@@ -652,11 +654,12 @@
 | `frontend/src/views/DirectoryView.vue` | 目录：活动目录与目标档案（侧栏接入点）。 | 只读；单活动监控目录边界不变。 |
 | `frontend/src/stores/companies.ts` | 公司清单状态（WS-07）：读取、新建、修改、移除都带清单 revision，`COMPANY_REVISION_CONFLICT` 时重新读取再提示重试；子目录补建预览与按 `plan_hash` 确认。 | 消费 `/api/v1/companies*`。 |
 | `frontend/src/format.ts` | 纳税人类型、子目录状态与是否最新的中文标签；金额在十进制字符串上分组千分位，不经过浮点。 | 公司模块各组件共用。 |
-| `frontend/src/views/CompaniesView.vue` | “公司”模块：左栏公司清单（监控中、缺几个子目录、当前纳税人身份），右栏详情的目录 / 发票账簿 / 设置三个标签；`v-show` 保留各标签状态，账簿首次打开才加载。 | 路由 `/workspace/companies`。 |
+| `frontend/src/views/CompaniesView.vue` | “公司”模块：左栏公司清单（监控中、缺几个子目录、当前纳税人身份），右栏详情的目录 / 发票账簿 / 勾稽 / 设置四个标签；`v-show` 保留各标签状态，账簿与勾稽首次打开才加载。 | 路由 `/workspace/companies`。 |
 | `frontend/src/components/CompanyCreateForm.vue` | 新建公司表单：名称、资料夹路径、可选纳税人身份（不填即未设置）。 | `stores/companies.ts::create`。 |
 | `frontend/src/components/CompanyDirectories.vue` | 子目录表（状态、上次汇总、是否最新）、补建预览与确认、设为监控目录（确认后调用 `PUT /api/v1/settings`）、按目录的只读发票列表与分页。 | `/api/v1/companies/{id}/directories*`、`/subdirs/*`。 |
 | `frontend/src/components/CompanyLedger.vue` | 公司发票账簿：粒度与期间筛选、票面口径说明、守恒校验（成立时收起、任一不成立时展开并标红）、提示、分期表与合计、未计入的发票。 | `/api/v1/companies/{id}/ledger`。 |
 | `frontend/src/components/CompanyBankLedger.vue` | 公司账簿的“银行流水”区：目录不可用 / 无对账单的说明、余额校验（成立时收起、不成立时展开标红）、对账单问题、按账户的分期表（缺月行标红、余额显示“—”）与来源计数。 | 由 `CompanyLedger.vue` 渲染 `ledger.bank`。 |
+| `frontend/src/components/CompanyCompare.vue` | “勾稽”标签：关系选择（目前只有成本发票 ⇄ 进项抵扣）与期间、核对校验（不成立时展开标红）、提示、各所属期表、清单有目录无、已勾选并对上（税额不一致标红）、目录有清单无、重复勾选与未识别文件。 | `/api/v1/companies/{id}/compare`。 |
 | `frontend/src/components/CompanySettings.vue` | 公司名称与纳税人身份生效期编辑、从清单移除（说明不删除任何文件）；只在切换公司时重置草稿；显示成本汇总表是否已按新身份重写。 | `stores/companies.ts::update/remove`。 |
 | `frontend/src/styles.css` | 外框基础样式与窄屏布局。 | 仅作用于 `/workspace`。 |
 | `frontend/tests/client.spec.ts` | 请求封装的成功、错误、`ok:false`、请求体与超时测试。 | Vitest + happy-dom。 |

@@ -21,7 +21,7 @@ from collections import OrderedDict, defaultdict
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Generic, TypeVar
 
 from invoice_hub.bank.checks import check_continuity, check_statement, find_duplicate_rows
 from invoice_hub.bank.models import BankStatement
@@ -34,10 +34,10 @@ BANK_CACHE_FOLDERS = 8
 ZERO = Decimal("0")
 
 
-def list_bank_pdfs(directory: Path) -> tuple[dict[str, tuple[int, int]], bool]:
-    """PDFs under ``directory`` -> (mtime_ns, size); bounded, hidden entries skipped, no links.
+def list_files(directory: Path, suffixes: tuple[str, ...]) -> tuple[dict[str, tuple[int, int]], bool]:
+    """Files with ``suffixes`` under ``directory`` -> (mtime_ns, size); bounded, no link following.
 
-    Mirrors ``bank.workpaper.discover`` (recursive ``*.pdf``, parts starting with "." skipped).
+    Entries starting with "." (hidden, like ``discover``) or "~$" (Office lock files) are skipped.
     Returns (signatures, complete).
     """
     signatures: dict[str, tuple[int, int]] = {}
@@ -50,12 +50,12 @@ def list_bank_pdfs(directory: Path) -> tuple[dict[str, tuple[int, int]], bool]:
                 for entry in entries:
                     if time.monotonic() > deadline:
                         return signatures, False
-                    if entry.name.startswith("."):
+                    if entry.name.startswith((".", "~$")):
                         continue
                     if entry.is_dir(follow_symlinks=False):
                         pending.append(Path(entry.path))
                         continue
-                    if not entry.is_file(follow_symlinks=False) or Path(entry.name).suffix.lower() != ".pdf":
+                    if not entry.is_file(follow_symlinks=False) or Path(entry.name).suffix.lower() not in suffixes:
                         continue
                     if len(signatures) >= BANK_MAX_FILES:
                         return signatures, False
@@ -66,43 +66,67 @@ def list_bank_pdfs(directory: Path) -> tuple[dict[str, tuple[int, int]], bool]:
     return signatures, True
 
 
+def list_bank_pdfs(directory: Path) -> tuple[dict[str, tuple[int, int]], bool]:
+    """PDFs under ``directory`` the same way ``bank.workpaper.discover`` finds them."""
+    return list_files(directory, (".pdf",))
+
+
+T = TypeVar("T")
+
+
 @dataclass
-class BankRead:
-    data: WorkpaperInput | None
+class FolderRead(Generic[T]):
+    data: T | None
     file_count: int
     complete: bool
     cached: bool
     error: str = ""
 
 
-class BankFlowReader:
-    """Request-time, read-only statement parse with a small per-folder signature cache."""
+BankRead = FolderRead[WorkpaperInput]
 
-    def __init__(self, discover_files: Callable[..., WorkpaperInput] = discover) -> None:
-        self._discover = discover_files
+
+class CachedFolderReader(Generic[T]):
+    """Request-time, read-only parse of one folder's files with a small per-folder signature cache.
+
+    ``parse`` gets the sorted file list. The cached result is reused only while every file keeps
+    its (mtime_ns, size) and no file appears or disappears.
+    """
+
+    def __init__(self, parse: Callable[[list[Path]], T], suffixes: tuple[str, ...], label: str) -> None:
+        self._parse = parse
+        self._suffixes = suffixes
+        self._label = label
         self._lock = threading.Lock()
-        self._cache: OrderedDict[str, tuple[dict[str, tuple[int, int]], WorkpaperInput]] = OrderedDict()
+        self._cache: OrderedDict[str, tuple[dict[str, tuple[int, int]], T]] = OrderedDict()
 
-    def read(self, directory: Path) -> BankRead:
-        signatures, complete = list_bank_pdfs(directory)
+    def read(self, directory: Path) -> FolderRead[T]:
+        signatures, complete = list_files(directory, self._suffixes)
         if not complete:
             # A partial listing would silently drop months; refuse instead of summing part of them.
-            return BankRead(None, len(signatures), False, False, "银行流水目录过大或无法完整读取，未汇总。")
+            return FolderRead(None, len(signatures), False, False, f"{self._label}目录过大或无法完整读取，未汇总。")
         key = str(directory)
         with self._lock:
             hit = self._cache.get(key)
             if hit is not None and hit[0] == signatures:
                 self._cache.move_to_end(key)
-                return BankRead(hit[1], len(signatures), True, True)
+                return FolderRead(hit[1], len(signatures), True, True)
             try:
-                data = self._discover([Path(path) for path in sorted(signatures)], parse_receipts=False)
-            except Exception as exc:  # a broken PDF must not take the invoice ledger down with it
-                return BankRead(None, len(signatures), True, False, f"银行流水读取失败：{exc}")
+                data = self._parse([Path(path) for path in sorted(signatures)])
+            except Exception as exc:  # one broken file must not take the invoice ledger down with it
+                return FolderRead(None, len(signatures), True, False, f"{self._label}读取失败：{exc}")
             self._cache[key] = (signatures, data)
             self._cache.move_to_end(key)
             while len(self._cache) > BANK_CACHE_FOLDERS:
                 self._cache.popitem(last=False)
-            return BankRead(data, len(signatures), True, False)
+            return FolderRead(data, len(signatures), True, False)
+
+
+class BankFlowReader(CachedFolderReader[WorkpaperInput]):
+    """Statements only: the ledger needs the balance chain, and receipts are slow to parse."""
+
+    def __init__(self, discover_files: Callable[..., WorkpaperInput] = discover) -> None:
+        super().__init__(lambda paths: discover_files(paths, parse_receipts=False), (".pdf",), "银行流水")
 
 
 def _month_key(day) -> str:
@@ -142,16 +166,6 @@ def _statement_months(statement: BankStatement) -> dict[str, dict]:
             "statement_id": statement.statement_id,
         }
     return result
-
-
-def _period_months(period: str, granularity: str) -> list[str]:
-    if granularity == "month":
-        return [period]
-    if granularity == "quarter":
-        year, quarter = period.split("-Q")
-        first = (int(quarter) - 1) * 3 + 1
-        return [f"{year}-{month:02d}" for month in range(first, first + 3)]
-    return [f"{period}-{month:02d}" for month in range(1, 13)]
 
 
 def _optional_money(value: Decimal | None) -> str | None:

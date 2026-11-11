@@ -1,4 +1,4 @@
-"""Company registry (WS-07 step 1), read-only directory views (step 2) and the invoice ledger (step 3).
+"""Company registry (WS-07 step 1), read-only directory views (step 2), the ledger (step 3) and comparisons (step 4).
 
 Handlers resolve AppState per request via _state(request) and call ``state.companies`` or
 ``state.company_views``. Nothing here switches watch_dir or the monitor; registry writes carry
@@ -116,5 +116,16 @@ def router() -> APIRouter:
             company_id, granularity=granularity, start=start, end=end, check_freshness=check_freshness,
             include_bank=include_bank,
         ))
+
+    @routes.get("/api/v1/companies/{company_id}/compare")
+    async def company_compare(
+        request: Request,
+        company_id: str,
+        a: str = Query(..., min_length=1),
+        b: str = Query(..., min_length=1),
+        start: str = Query(""),
+        end: str = Query(""),
+    ):
+        return await _call(lambda: _state(request).company_views.compare(company_id, a, b, start=start, end=end))
 
     return routes

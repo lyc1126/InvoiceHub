@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import threading
 import time
 from datetime import datetime
@@ -29,6 +30,7 @@ from invoice_hub.monitoring.state import PROCESSED_FILE_NAME, canonical_path as 
 from invoice_hub.projections.cost_analysis import COST_DETAIL_CSV_NAME
 from invoice_hub.projections.costs import CostProjectionService
 from invoice_hub.services.company_bank import BankFlowReader, build_bank_ledger
+from invoice_hub.services.company_deduction import DeductionListReader, build_deduction_check
 from invoice_hub.services.company_ledger import build_invoice_ledger
 from invoice_hub.services.company_registry import CompanyRegistryError, CompanyRegistryService
 from invoice_hub.services.invoice_list import InvoiceListService
@@ -36,6 +38,11 @@ from invoice_hub.storage import SQLiteRepository
 from invoice_hub.targets import AppConfig, target_profile_for
 from invoice_hub.targets.companies import company_taxpayer_for
 
+# Folder pair -> comparison algorithm. Only pairs with a reconciliation relation are listed.
+COMPARE_RELATIONS = {
+    frozenset(("cost_invoice_dir", "input_deduction_dir")): "deduction",
+}
+_MONTH_TEXT = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
 FRESHNESS_MAX_ENTRIES = 20_000
 FRESHNESS_MAX_SECONDS = 2.0
 FRESHNESS_MESSAGES = {
@@ -144,6 +151,7 @@ class CompanyViewService:
         registry: CompanyRegistryService,
         active_invoices: Callable[[], InvoiceListService],
         bank_reader: BankFlowReader | None = None,
+        deduction_reader: DeductionListReader | None = None,
     ) -> None:
         self._lock = lock
         self.repo = repo
@@ -153,6 +161,7 @@ class CompanyViewService:
         self._registry = registry
         self._active_invoices = active_invoices
         self._bank_reader = bank_reader or BankFlowReader()
+        self._deduction_reader = deduction_reader or DeductionListReader()
 
     @property
     def config(self) -> AppConfig:
@@ -281,6 +290,48 @@ class CompanyViewService:
                                               "message": f"{label}：{sources[direction]['freshness']['message']}"})
         bank = self._bank_ledger(company, granularity=granularity, start=start, end=end) if include_bank else None
         return {"ok": True, "revision": payload["revision"], "company": company, "sources": sources, **ledger, "bank": bank}
+
+    def compare(self, company_id: str, a: str, b: str, *, start: str = "", end: str = "") -> dict:
+        """Compare two folders of one company by their relation (WS-07 step 4).
+
+        The algorithm follows the pair, not the request: pairs with no reconciliation relation are
+        refused, so the page never shows a made-up link between unrelated documents.
+        """
+        for label, value in (("start", start), ("end", end)):
+            if value and not _MONTH_TEXT.match(value):
+                raise CompanyRegistryError("COMPANY_COMPARE_INVALID", f"{label} 须为 YYYY-MM。", status_code=422, field=label)
+        if start and end and start > end:
+            raise CompanyRegistryError("COMPANY_COMPARE_INVALID", "开始月份不能晚于结束月份。", status_code=422, field="start")
+        relation = COMPARE_RELATIONS.get(frozenset((a, b)))
+        if relation is None:
+            raise CompanyRegistryError(
+                "COMPANY_COMPARE_UNSUPPORTED", "这两类资料之间没有可勾稽的关系，只能分别查看。", status_code=422, field="b",
+            )
+        payload = self._registry.get_company(company_id)
+        company = payload["company"]
+        active_id = self.active_profile.id
+        cost_subdir, cost_profile = self._directory(company, "cost_invoice_dir")
+        list_subdir = next(item for item in company["subdirs"] if item["key"] == "input_deduction_dir")
+        sources = {
+            "cost_invoice_dir": self._directory_view(cost_subdir, cost_profile, active_id, check_freshness=True),
+            "input_deduction_dir": {**list_subdir},
+        }
+        cost_rows = self._list_payload(cost_profile, {})[0]["items"] if cost_subdir["status"] == "present" else []
+        base = {"ok": True, "revision": payload["revision"], "company": company, "a": a, "b": b,
+                "start": start, "end": end, "sources": sources}
+        if list_subdir["status"] != "present":
+            return {**base, "relation": relation, "state": "missing_dir", "message": FRESHNESS_MESSAGES["missing_dir"]}
+        read = self._deduction_reader.read(Path(list_subdir["path"]))
+        sources["input_deduction_dir"].update(file_count=read.file_count, cached=read.cached)
+        if read.data is None:
+            return {**base, "relation": relation, "state": "unreadable", "message": read.error}
+        result = build_deduction_check(cost_rows, read.data, start=start, end=end)
+        state = sources["cost_invoice_dir"]["freshness"]["state"]
+        if state in {"stale", "never_built", "unknown", "missing_dir"}:
+            result["warnings"].insert(0, {"code": f"source_{state}",
+                                          "message": f"成本发票：{sources['cost_invoice_dir']['freshness']['message']}"})
+        return {**base, "state": "ok" if read.data.lists else "no_lists",
+                "message": "" if read.data.lists else "进项抵扣目录里没有可识别的用途确认信息导出（.xlsx）。", **result}
 
     def _bank_ledger(self, company: dict, *, granularity: str, start: str, end: str) -> dict:
         # Bank figures sit beside the invoice ledger, not inside it: its checks_ok stays about

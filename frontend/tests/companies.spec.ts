@@ -110,7 +110,7 @@ describe("companies module", () => {
       init.method === "PATCH" ? [409, { ok: false, detail: "公司清单已被修改", error: { code: "COMPANY_REVISION_CONFLICT" } }] : undefined,
     );
     const wrapper = await mountCompanies();
-    await wrapper.findAll('[role="tab"]')[2]!.trigger("click");
+    await wrapper.get("#company-tab-settings").trigger("click");
     const before = calls.filter((call) => call.url === "/api/v1/companies" && call.method === "GET").length;
     await wrapper.get('form[aria-label="公司设置"]').trigger("submit");
     await flushPromises();
@@ -197,6 +197,34 @@ describe("companies module", () => {
     const section = wrapper.get('[aria-label="银行流水"]');
     expect(section.text()).toContain("目录不存在或不可用。");
     expect(section.findAll("table")).toHaveLength(0);
+  });
+
+  it("checks the deduction lists against the cost invoices and flags what is missing", async () => {
+    const row = { invoice_code: "", status: "已勾选", invoice_date: "2026-06-10 10:00:00", seller: "丙丁建材", file: "用途确认信息.xlsx", 金额: "1000.00", 有效抵扣税额: "130.00" };
+    const compare = {
+      ok: true, relation: "deduction", state: "ok", message: "", basis_label: "抵扣口径：已勾选不等于已申报，以申报表为准。",
+      periods: [{ period: "2026-06", list_rows: 3, matched_current: 1, matched_carried: 0, matched_other: 0, list_only: 1, not_selected: 1, deductible_tax: "195.00" }],
+      lists: [], duplicates: [], unrecognized: [], warnings: [],
+      matched: [{ ...row, invoice_number: "1".repeat(20), period: "2026-06", 税额: "130.00", timing: "current", invoice_month: "2026-06", invoice_tax: "131.00", tax_ok: false, source_files: ["a.xml"] }],
+      list_only: [{ ...row, invoice_number: "2".repeat(20), period: "2026-06", 税额: "65.00" }],
+      not_selected: [],
+      not_listed: { special: [{ invoice_number: "3".repeat(20), invoice_date: "2026-07-01", seller: "丙丁建材", invoice_type: "增值税专用发票", tax: "52.00", later_list_periods: [], source_files: [] }], ordinary: 2, unknown_type: [] },
+      checks: [{ code: "tax_matches", ok: false, message: "1 张已勾选发票的税额与目录中的发票不一致" }], checks_ok: false,
+    };
+    stubBackend((url) => (url.includes("/compare") ? [200, compare] : undefined));
+    const wrapper = await mountCompanies();
+    expect(calls.some((call) => call.url.includes("/compare"))).toBe(false); // loads on first open
+    await wrapper.get("#company-tab-compare").trigger("click");
+    await flushPromises();
+    const url = calls.find((call) => call.url.includes("/compare"))!.url;
+    expect(url).toContain("a=cost_invoice_dir");
+    expect(url).toContain("b=input_deduction_dir");
+    const panel = wrapper.get('[aria-label="勾稽"]');
+    expect(panel.get(".checks").classes()).toContain("checks--failed");
+    expect(panel.get('[aria-label="已勾选并对上的发票"] tbody tr').classes()).toContain("row--failed");
+    expect(panel.get('[aria-label="清单有、目录无"]').text()).toContain("2".repeat(20));
+    expect(panel.get('[aria-label="目录有、清单无"]').text()).toContain("还没有清单");
+    expect(panel.text()).toContain("普票 2 张不能抵扣");
   });
 
   it("marks a non-monitored folder's invoice list read-only", async () => {
