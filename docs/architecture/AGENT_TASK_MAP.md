@@ -244,11 +244,11 @@ flowchart TD
 | 导航项 | 内容 |
 |---|---|
 | 首先阅读 | 文件地图 15.1 节；接口流程第 2 节 `/workspace` 行；[未来工作总览](../PRODUCT_BACKLOG.md) 的 WS 条目与原型 |
-| 首要入口 | `frontend/src/router.ts`、`App.vue`、`api/client.ts`、`stores/`、`views/`；后端 `api/app.py::workspace_shell` |
+| 首要入口 | `frontend/src/router.ts`、`App.vue`（模块列与 `hi.` 刷新）、`views/HomeView.vue`（标签）、`components/WorkspaceSidebar.vue`、`stores/workspace.ts`（标签、置顶、宽度、比较选择）、`relations.ts`、`api/client.ts`、`stores/`；后端 `api/app.py::workspace_shell` |
 | 必须联动 | 后端 API 与 `frontend/src/api/types.ts`、提交构建 `web/static/app/`、THIRD_PARTY_NOTICES（新运行时依赖）、FILE_MAP 15.1 |
 | 产物与消费者 | 浏览器/Tauri WebView 中的 `/workspace/*`；发布包随 `web/` 携带构建产物 |
 | 最低自动化 | `cd frontend && pnpm run typecheck && pnpm test && pnpm run build`；`tests/test_workspace_frontend.py` |
-| 真实验收 | localhost 上 `/workspace` 深链接、桌面/390px、控制台、模块切换保留状态；系统原生能力仍需真实应用窗口 |
+| 真实验收 | localhost 上 `/workspace` 深链接、桌面/390px（侧栏抽屉）、控制台、标签切换保留状态、侧栏拖动限位与持久化、右键比较；系统原生能力仍需真实应用窗口 |
 | 高风险提醒 | 不手改 `web/static/app`；不把业务口径写进前端；依赖只用精确版本；`/workspace` 不进 OpenAPI |
 
 <a id="task-documents"></a>
@@ -330,7 +330,7 @@ OFD 专用入口为 `services/ofd_rendering.py`、`tools/ofd-preview/` 与 `scri
 | 首先阅读 | 接口流程第 3.5.3 节；数据算法第 4.8、9.3 节 |
 | 首要入口 | `services/company_registry.py::CompanyRegistryService`（`_load/_save/_check_revision`、`_clean_root/_clean_subdirs`、`_plan/create_subdirs`、`_after_write`）、`detect_subdirs`；`services/company_views.py::CompanyViewService`、`directory_freshness`、`company_ledger`；`services/company_ledger.py::build_invoice_ledger`；`services/company_bank.py::BankFlowReader/build_bank_ledger`（银行流水，复用 `bank/workpaper.discover` 与 `bank/checks.py`）；`company_views.py::compare` 与 `COMPARE_RELATIONS`、`services/company_deduction.py::build_deduction_check`（抵扣核对）；`services/company_settlement.py::build_settlement_check`（往来核对）；`services/company_projects.py::build_project_summary/ProjectAssignmentStore`（项目汇总与人工归属）；`services/invoice_tags.py::InvoiceTagStore`（发票标签）；`services/company_inventory.py::build_inventory_check`（进销存，复用 `bank/vouchers.cost_of_sales` 与 `projections/costs.py::read_only_inputs`）；`targets/companies.py::company_taxpayer_for/taxpayer_type_for`；路由 `api/routes/companies.py`；AppState 只负责构造 `state.companies`、`state.company_views` |
 | 必须联动 | 子目录提示词与 `services/dossier.py::BUSINESS_DOSSIER_DIR_HINTS` 共用；路径保存规则 `targets/paths.py::serialize_config_path`；接线测试 `SERVICES`；纳税人类型经 `company_taxpayer` 进入全部成本计价入口（见第 5 节）；只读列表行结构跟随 `InvoiceListService` |
-| 产物与消费者 | `runtime/local_state/companies.json`；公司资料夹根目录 `项目归属.json`、`发票标签.json`（用户保存时写）；只读消费公司资料夹 `做账草稿/账套读回/序时账_*.txt` 与 `凭证/科目表.json`（进销存期初）；`runtime/local_state/invoice_tags.json`；`/api/v1/companies*`；`/workspace/companies`（`frontend/src/views/CompaniesView.vue` 与 `components/Company*.vue`、`stores/companies.ts`） |
+| 产物与消费者 | `runtime/local_state/companies.json`；公司资料夹根目录 `项目归属.json`、`发票标签.json`（用户保存时写）；只读消费公司资料夹 `做账草稿/账套读回/序时账_*.txt` 与 `凭证/科目表.json`（进销存期初）；`runtime/local_state/invoice_tags.json`；`/api/v1/companies*`；`/workspace/` 首页（`frontend/src/views/HomeView.vue`、`components/WorkspaceSidebar.vue`、`CompanyPanel.vue`、`DirectoryPanel.vue` 与 `components/Company*.vue`、`stores/companies.ts`、`stores/workspace.ts`） |
 | 最低自动化 | 前端改动另跑 `frontend` 的 typecheck/test/build 与 `tests/test_workspace_frontend.py`；`tests/test_api_companies.py`、`tests/test_company_views.py`、`tests/test_company_ledger.py`、`tests/test_company_bank.py`、`tests/test_company_deduction.py`、`tests/test_company_inventory.py`、`tests/test_company_settlement.py`、`tests/test_company_projects.py`、`tests/test_invoice_tags.py`、`tests/test_appstate_service_wiring.py`、`tests/test_development_documentation.py`；纳税人类型相关再跑 `tests/test_summary_and_costs.py` |
 | 真实验收 | 包外中文/空格路径、网络盘、Windows 盘符与大小写不敏感卷上的重复/嵌套判断；原生目录选择器接入后另测 |
 | 高风险提醒 | 清单不是第二个 watch_dir：不得启动第二个监控、不得对非活动公司后台扫描或写投影；损坏文件不能当空清单覆盖；补建只能新建空目录，删除公司只删条目 |

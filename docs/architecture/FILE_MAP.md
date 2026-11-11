@@ -653,32 +653,37 @@
 | `frontend/env.d.ts` | Vite 客户端类型声明。 | 类型检查入口。 |
 | `frontend/index.html` | 开发与构建的 HTML 入口。 | 构建后成为 `web/static/app/index.html`。 |
 | `frontend/src/main.ts` | 创建 Vue 应用并挂载 Pinia 与路由。 | 全局插件入口。 |
-| `frontend/src/App.vue` | 工作区外框：模块列、错误横幅与 `KeepAlive` 包裹的路由视图。 | 模块切换保留各视图实例（页面缓存）。 |
-| `frontend/src/router.ts` | 客户端路由与 `/workspace/` history 基址。 | 新模块在此登记；深链接由 FastAPI 回落到同一外壳。 |
+| `frontend/src/App.vue` | 工作区外框（WS-01）：最左模块列（首页为 Vue 工作区；成本分析、单据、做账、OCR、一致性、设置在迁移前链接经典页面；左下“更新”进设置、“经典界面”回首页）、错误横幅与 `KeepAlive` 包裹的路由视图；双击 `hi.` 只刷新当前首页标签并重读公司清单。 | 模块切换保留各视图实例（页面缓存）；`stores/workspace.ts::refreshActive`。 |
+| `frontend/src/router.ts` | 客户端路由与 `/workspace/` history 基址：`/` 为首页（HomeView），旧的 `/companies`、`/directory` 与未知路径重定向到首页。 | 新模块在此登记；深链接由 FastAPI 回落到同一外壳。 |
 | `frontend/src/api/client.ts` | 同源 `/api/v1` 请求封装：超时、JSON、`detail/message` 错误映射为 `ApiError`，结构化错误带 `code`；`acceptPartial` 让带逐项结果的 `ok:false`（子目录补建部分失败）返回给调用方。 | 所有视图请求经此；与后端错误模型一致。 |
 | `frontend/src/api/types.ts` | 已消费 API 字段的类型子集。 | 后端字段变化时同步。 |
 | `frontend/src/stores/system.ts` | health/settings 只读快照；刷新失败保留上次结果并给出错误。 | Pinia 全局状态。 |
-| `frontend/src/views/OverviewView.vue` | 概览：版本、平台、后台状态与当前目录。 | 只读。 |
-| `frontend/src/views/DirectoryView.vue` | 目录：活动目录与目标档案（侧栏接入点）。 | 只读；单活动监控目录边界不变。 |
 | `frontend/src/stores/companies.ts` | 公司清单状态（WS-07）：读取、新建、修改、移除都带清单 revision，`COMPANY_REVISION_CONFLICT` 时重新读取再提示重试；子目录补建预览与按 `plan_hash` 确认。 | 消费 `/api/v1/companies*`。 |
 | `frontend/src/format.ts` | 纳税人类型、子目录状态与是否最新的中文标签；金额在十进制字符串上分组千分位，不经过浮点。 | 公司模块各组件共用。 |
-| `frontend/src/views/CompaniesView.vue` | “公司”模块：左栏公司清单（监控中、缺几个子目录、当前纳税人身份），右栏详情的目录 / 发票账簿 / 项目 / 勾稽 / 设置五个标签；`v-show` 保留各标签状态，账簿、项目与勾稽首次打开才加载。 | 路由 `/workspace/companies`。 |
+| `frontend/src/views/HomeView.vue` | 首页模块（WS-01）：工作区侧栏 + 顶部标签（公司、目录、项目、⇄ 比较、添加公司、发票标签）；每个打开的标签以 `v-show` 常驻（筛选、结果、滚动保留），关闭即丢弃；全部关闭显示起始页（版本、后台状态、当前监控目录）；首次进入自动打开监控中的公司一次；公司被删除时其标签自动关闭；窄屏侧栏改为抽屉。 | 路由 `/workspace/`；`stores/workspace.ts`。 |
+| `frontend/src/stores/workspace.ts` | 首页的标签、置顶、展开的公司、侧栏宽度与“选择以进行比较”的目录；标签 id 由类型 + 对象组成（同一对象只开一个）；`refresh` 计数让双击 `hi.` 只重建当前标签；置顶、展开与宽度存本机 `localStorage`（`invoicehub.workspace.v1`，仅界面偏好）；`clampSidebar` 限制 220—460px 且内容区至少 620px。 | `HomeView.vue`、`WorkspaceSidebar.vue`、`App.vue`。 |
+| `frontend/src/components/WorkspaceSidebar.vue` | 工作区侧栏：`InvoiceHub ⌄` 菜单（刷新公司清单、发票标签、返回经典界面）、添加公司资料夹、置顶区、公司 › 项目 / 六类目录树（项目在展开时才读取；监控中目录带绿点；缺失目录灰显）、右键 / 行尾 ⋯ / Shift+F10 菜单（打开、置顶、选择以进行比较、与已选项进行比较，无勾稽关系或不同公司时禁用并说明）、已选时可比较的行直接显示“⇄ 比较”、悬停名片（全名与路径）、可拖动调宽的分隔条（键盘左右键、Home/双击复位、到限位提示）与底部监控状态。 | `relations.ts`；`/api/v1/companies/{id}/projects`。 |
+| `frontend/src/relations.ts` | 同一公司可勾稽的四组目录（抵扣、进销存、应付、应收）与 `relationFor`；只用于提供后端接受的组合，不做任何计算。 | `CompanyCompare.vue`、`WorkspaceSidebar.vue`。 |
+| `frontend/src/components/CompanyPanel.vue` | 公司标签：名称、纳税人身份与资料夹路径，目录 / 发票账簿 / 项目 / 勾稽 / 设置五个分区；`v-show` 保留各分区状态，账簿、项目与勾稽首次打开才加载。 | 由 `HomeView.vue` 渲染。 |
+| `frontend/src/components/DirectoryPanel.vue` | 目录标签：子目录状态、是否最新、上次汇总、重新检查与“设为监控目录”，下方为该目录发票列表。 | `/api/v1/companies/{id}/directories`；`DirectoryInvoices.vue`。 |
+| `frontend/src/components/DirectoryInvoices.vue` | 目录发票列表（上次投影；非监控目录只读）：标签色点列，右键 / Shift+F10 打标签（只更新该行），按标签筛选与分页。 | `/api/v1/companies/{id}/directories/{key}/invoices`、`invoice-tags`。 |
+| `frontend/src/components/WatchSwitchConfirm.vue` | “设为监控目录”确认：说明只监控一个目录，确认后调用 `PUT /api/v1/settings` 并刷新系统快照与公司清单。 | `CompanyDirectories.vue`、`DirectoryPanel.vue`。 |
 | `frontend/src/components/CompanyCreateForm.vue` | 新建公司表单：名称、资料夹路径、可选纳税人身份（不填即未设置）。 | `stores/companies.ts::create`。 |
-| `frontend/src/components/CompanyDirectories.vue` | 子目录表（状态、上次汇总、是否最新）、补建预览与确认、设为监控目录（确认后调用 `PUT /api/v1/settings`）、按目录的只读发票列表与分页。发票行前有标签色点列，右键 / Shift+F10 打开标签菜单（打标签后只更新该行），可按标签筛选。 | `/api/v1/companies/{id}/directories*`、`/subdirs/*`。 |
+| `frontend/src/components/CompanyDirectories.vue` | 公司的子目录表（状态、上次汇总、是否最新）、补建预览与确认、设为监控目录；“查看发票”打开该目录的标签。 | `/api/v1/companies/{id}/directories`、`subdirs/*`；`WatchSwitchConfirm.vue`。 |
 | `frontend/src/components/CompanyLedger.vue` | 公司发票账簿：粒度与期间筛选、票面口径说明、守恒校验（成立时收起、任一不成立时展开并标红）、提示、分期表与合计、未计入的发票。 | `/api/v1/companies/{id}/ledger`。 |
 | `frontend/src/components/CompanyBankLedger.vue` | 公司账簿的“银行流水”区：目录不可用 / 无对账单的说明、余额校验（成立时收起、不成立时展开标红）、对账单问题、按账户的分期表（缺月行标红、余额显示“—”）与来源计数。 | 由 `CompanyLedger.vue` 渲染 `ledger.bank`。 |
-| `frontend/src/components/CompanyCompare.vue` | “勾稽”标签外壳：关系选择（成本发票 ⇄ 进项抵扣、成本发票 ⇄ 开具发票、成本 / 开具发票 ⇄ 银行流水，切换即重新核对）与期间、口径说明、核对校验（不成立时展开标红）、提示，再按关系交给结果组件。 | `/api/v1/companies/{id}/compare`。 |
+| `frontend/src/components/CompanyCompare.vue` | “勾稽”外壳（公司标签的“勾稽”分区与侧栏打开的 ⇄ 比较标签共用，`relation` 预选关系）：关系选择（成本发票 ⇄ 进项抵扣、成本发票 ⇄ 开具发票、成本 / 开具发票 ⇄ 银行流水，切换即重新核对）与期间、口径说明、核对校验（不成立时展开标红）、提示，再按关系交给结果组件。 | `/api/v1/companies/{id}/compare`。 |
 | `frontend/src/components/CompanyDeductionResult.vue` | 抵扣核对结果：各所属期表、清单有目录无、已勾选并对上（税额不一致标红）、目录有清单无、重复勾选与未识别文件。 | 由 `CompanyCompare.vue` 渲染。 |
 | `frontend/src/components/CompanyInventoryResult.vue` | 进销存结果：品类表（明细科目编码，期初/购入/销售/成本/期末，卖超与“进项和期初中没有”标红），品类前的 ▸ 在同一列下展开规格行（只有购入、销售与净增，期初与成本显示 —），“逐月”在品类下展开整行明细（加权单价与说明），合计、未计入期初的账套明细与未计入的明细行。 | 由 `CompanyCompare.vue` 渲染。 |
 | `frontend/src/components/CompanySettlementResult.vue` | 往来核对结果：往来单位余额表（“明细”整行展开未对上发票与未逐笔对应流水）、逐笔对应、红字发票、户名不唯一、非发票流水（折叠）与未识别发票。 | 由 `CompanyCompare.vue` 渲染。 |
-| `frontend/src/components/CompanyProjects.vue` | “项目”标签：粒度与期间、与账簿一致的校验、项目汇总表（未归属单列），未归属与已人工指定发票的项目输入（已有项目名候选），只提交改动并带 revision，冲突时刷新提示。 | `/api/v1/companies/{id}/projects*`。 |
-| `frontend/src/components/InvoiceTagsEditor.vue` | 发票标签管理：颜色、名称、意义的增删改，整表保存带 revision，删除时说明会移除已打标记，冲突时刷新。 | `stores/tags.ts`，`/api/v1/invoice-tags`。 |
-| `frontend/src/stores/tags.ts` | 标签定义的 Pinia store：读取、整表保存（带 revision，冲突时重读）与按 id 查找。 | `InvoiceTagsEditor.vue`、`CompanyDirectories.vue`。 |
+| `frontend/src/components/CompanyProjects.vue` | “项目”分区（项目标签以 `focus` 标出该项目并列出各期）：粒度与期间、与账簿一致的校验、项目汇总表（未归属单列），未归属与已人工指定发票的项目输入（已有项目名候选），只提交改动并带 revision，冲突时刷新提示。 | `/api/v1/companies/{id}/projects*`。 |
+| `frontend/src/components/InvoiceTagsEditor.vue` | 发票标签管理：颜色、名称、意义的增删改，整表保存带 revision，删除时说明会移除已打标记，冲突时刷新。 | `stores/tags.ts`，`/api/v1/invoice-tags`；首页“发票标签”标签。 |
+| `frontend/src/stores/tags.ts` | 标签定义的 Pinia store：读取、整表保存（带 revision，冲突时重读）与按 id 查找。 | `InvoiceTagsEditor.vue`、`DirectoryInvoices.vue`。 |
 | `frontend/src/components/CompanySettings.vue` | 公司名称与纳税人身份生效期编辑、从清单移除（说明不删除任何文件）；只在切换公司时重置草稿；显示成本汇总表是否已按新身份重写。 | `stores/companies.ts::update/remove`。 |
-| `frontend/src/styles.css` | 外框基础样式与窄屏布局。 | 仅作用于 `/workspace`。 |
+| `frontend/src/styles.css` | 外框基础样式、模块列、工作区侧栏与标签、窄屏布局（900px 以下侧栏改抽屉，640px 以下模块列横排）。 | 仅作用于 `/workspace`。 |
 | `frontend/tests/client.spec.ts` | 请求封装的成功、错误、`ok:false`、请求体与超时测试。 | Vitest + happy-dom。 |
-| `frontend/tests/companies.spec.ts` | 公司模块：默认打开监控中的公司、新建带 revision 且不假定纳税人身份、版本冲突后重新读取、补建必须先预览并发送 `plan_hash`、预览过期要求重新预览、守恒校验失败标红且展开、非监控目录只读、金额分组。 | Vitest + Vue Test Utils，桩接 `fetch`。 |
-| `frontend/tests/app.spec.ts` | 外框渲染、KeepAlive 保留实例、刷新失败保留快照测试。 | Vitest + Vue Test Utils。 |
+| `frontend/tests/companies.spec.ts` | 公司标签：侧栏列出公司并默认打开监控中的公司、新建带 revision 且不假定纳税人身份、版本冲突后重新读取、补建必须先预览并发送 `plan_hash`、预览过期要求重新预览、守恒校验失败标红且展开、非监控目录只读、金额分组。 | Vitest + Vue Test Utils，桩接 `fetch`。 |
+| `frontend/tests/app.spec.ts` | 外框与首页（WS-01）：无公司时的起始页与 health、旧路径重定向、未迁移模块链接经典页面、刷新失败保留快照；侧栏节点打开为标签且不重复、隐藏标签保持挂载、全部关闭后停在起始页、项目展开时才读取、Shift+F10 菜单置顶并写入本机偏好、同公司有勾稽关系才可比较（无关系与不同公司禁用并说明）并以预选关系打开 ⇄ 标签、双击 `hi.` 只重载当前标签、侧栏宽度限位。 | Vitest + Vue Test Utils，桩接 `fetch`。 |
 | `web/static/app/index.html` | 提交的构建外壳，引用带 `?v=` 的资源。 | 由 `/workspace/*` 以 no-store 返回；不手改。 |
 | `web/static/app/assets/app.js` | 提交的 Vue 应用 bundle（含 Vue/Pinia/Vue Router）。 | `?v=` 存在时按 immutable 缓存；CI 校验与源码构建逐字节一致。 |
 | `web/static/app/assets/app.css` | 提交的工作区样式。 | 同上。 |

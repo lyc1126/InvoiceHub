@@ -20,6 +20,13 @@
 - 红冲抵销先于收付款匹配：否则余额已经为 0，被冲的蓝字票仍显示“未付”，页面自相矛盾。守护：`test_red_letter_invoices_reduce_the_balance_and_unreadable_ones_are_listed`。
 - `party_balance` 与 `flow_accounting` 从原始发票、流水清单复算，而不是用往来单位行自己的数：同义反复的校验永远成立，发现不了漏算。守护：上述各用例的 `_ok`。
 
+## 2026-11-11 工作区外框（WS-01）
+
+- 首页标签用 `v-show` 常驻、以 `id#refresh` 为 key：关闭才丢缓存，双击 `hi.` 只让当前标签的 `refresh` 加一而重建，其他标签不受影响。守护：`app.spec.ts` 的 “opens sidebar nodes as tabs once…” 与 “refreshes only the active tab…”。
+- `DirectoryPanel` / `DirectoryInvoices` 的 `watch` 用 `公司 id/目录键` 字符串：公司清单刷新会换成新的 company 对象，返回数组的 getter 每次都“变化”，会让列表无故重载。守护：“refreshes only the active tab…”（隐藏的公司标签不重读）。
+- 首次进入只自动打开一次监控中的公司（`seeded`）：用户全部关闭后停在起始页，刷新公司清单不得把标签重新打开。守护：同上第一条。
+- 侧栏的比较组合只来自 `relations.ts`（与后端 `COMPARE_RELATIONS` 相同的四组），前端不计算任何结果；不同公司或无勾稽关系时禁用并说明，后端仍会拒绝。守护：“compares two folders of one company…”。
+
 ## 2026-11-11 进销存（WS-07 第 4 步）
 
 - `company_inventory.py` 调用 `bank.vouchers.cost_of_sales`，不另写加权平均：页面上的销售成本必须与做账草稿的结转同一算法，两处结果才能互相核对。守护：`test_month_end_weighted_average_rolls_stock_forward_and_merges_names`。

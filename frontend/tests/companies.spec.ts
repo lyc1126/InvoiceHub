@@ -77,24 +77,33 @@ async function mountCompanies() {
 afterEach(() => {
   vi.unstubAllGlobals();
   document.body.innerHTML = "";
+  localStorage.clear();
 });
 
 describe("companies module", () => {
   it("lists companies, opens the monitored one and shows directory states", async () => {
     stubBackend();
     const wrapper = await mountCompanies();
-    expect(wrapper.findAll(".company-item").map((item) => item.find(".company-name").text())).toEqual(["乙公司", "甲公司"]);
-    expect(wrapper.get('[aria-selected="true"].company-item').text()).toContain("监控中");
-    expect(wrapper.get(".detail-header h2").text()).toBe("甲公司");
+    expect(wrapper.findAll(".ws-row--company .ws-label").map((item) => item.text())).toEqual(["乙公司", "甲公司"]);
+    // The monitored company opens as the first tab; the sidebar footer names the one watched folder.
+    expect(wrapper.get('.ws-tab [aria-selected="true"]').text()).toContain("甲公司");
+    expect(wrapper.get(".ws-status").text()).toContain("甲公司 · 成本发票");
+    expect(wrapper.get(".detail-header h2").text()).toContain("甲公司");
     expect(wrapper.text()).toContain("补建缺失子目录（1）");
     const states = wrapper.findAll(".fresh").map((cell) => cell.text());
     expect(states).toEqual(["监控中", "目录缺失"]);
   });
 
   it("creates a company with the current revision and no assumed taxpayer type", async () => {
-    stubBackend();
+    let created = false;
+    stubBackend((url, init) => {
+      if (url === "/api/v1/companies" && init.method === "POST") created = true;
+      return url === "/api/v1/companies" && (init.method ?? "GET") === "GET" && created
+        ? [200, { ok: true, revision: 4, companies: [OTHER, COMPANY, { ...OTHER, id: "co_3", name: "丙公司" }], monitored_company_id: "co_1", target_id: "t1", watch_dir: "" }]
+        : undefined;
+    });
     const wrapper = await mountCompanies();
-    await wrapper.get("button.block").trigger("click");
+    await wrapper.get("button.ws-add").trigger("click");
     const form = wrapper.get('form[aria-label="新建公司"]');
     const [name, root] = form.findAll("input");
     await name!.setValue("丙公司");
@@ -104,6 +113,8 @@ describe("companies module", () => {
     const post = calls.find((call) => call.method === "POST");
     expect(post?.body).toEqual({ name: "丙公司", root_dir: "/合成/丙", taxpayer_periods: [], revision: 3 });
     expect(wrapper.text()).toContain("识别到 1 个已有子目录");
+    // The form tab closes and the new company opens in its place.
+    expect(wrapper.findAll(".ws-tab__title").map((item) => item.text())).toEqual(["甲公司", "丙公司"]);
   });
 
   it("reloads the list after a revision conflict instead of overwriting", async () => {
@@ -148,7 +159,7 @@ describe("companies module", () => {
     stubBackend();
     const wrapper = await mountCompanies();
     expect(calls.some((call) => call.url.includes("/ledger"))).toBe(false); // loads on first open
-    await wrapper.findAll('[role="tab"]')[1]!.trigger("click");
+    await wrapper.get("#company-tab-ledger").trigger("click");
     await flushPromises();
     expect(wrapper.get(".checks").classes()).toContain("checks--failed");
     expect(wrapper.get(".checks").attributes("open")).toBeDefined(); // a failure is never collapsed
@@ -177,7 +188,7 @@ describe("companies module", () => {
     };
     stubBackend((url) => (url.includes("/ledger") ? [200, { ...LEDGER, checks_ok: true, checks: [], bank }] : undefined));
     const wrapper = await mountCompanies();
-    await wrapper.findAll('[role="tab"]')[1]!.trigger("click");
+    await wrapper.get("#company-tab-ledger").trigger("click");
     await flushPromises();
     const section = wrapper.get('[aria-label="银行流水"]');
     expect(section.get(".checks").classes()).toContain("checks--failed");
@@ -193,7 +204,7 @@ describe("companies module", () => {
     const bank = { path: "/合成/甲/银行流水", status: "missing", state: "missing_dir", message: "目录不存在或不可用。" };
     stubBackend((url) => (url.includes("/ledger") ? [200, { ...LEDGER, bank }] : undefined));
     const wrapper = await mountCompanies();
-    await wrapper.findAll('[role="tab"]')[1]!.trigger("click");
+    await wrapper.get("#company-tab-ledger").trigger("click");
     await flushPromises();
     const section = wrapper.get('[aria-label="银行流水"]');
     expect(section.text()).toContain("目录不存在或不可用。");

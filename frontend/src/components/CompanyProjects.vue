@@ -4,7 +4,8 @@ import { ApiError, request } from "../api/client";
 import type { Company, ProjectInvoice, ProjectSummary } from "../api/types";
 import { errorText, money } from "../format";
 
-const props = defineProps<{ company: Company }>();
+// `focus` is the project a sidebar node opened: its row is marked and its periods listed.
+const props = defineProps<{ company: Company; focus?: string }>();
 const filters = reactive({ granularity: "month", start: "", end: "" });
 const summary = ref<ProjectSummary | null>(null);
 const loading = ref(false);
@@ -20,6 +21,7 @@ const original = computed<Record<string, string>>(() => {
   for (const item of summary.value?.manual_invoices ?? []) values[item.invoice_number] = item.project;
   return values;
 });
+const focused = computed(() => (props.focus ? summary.value?.projects.find((row) => !row.unassigned && row.project === props.focus) ?? null : null));
 const SOURCE: Record<ProjectInvoice["source"], string> = {
   remark: "备注",
   manual: "人工",
@@ -116,7 +118,7 @@ watch(
           <tr><th class="num">张数</th><th class="num">价税合计</th><th class="num">张数</th><th class="num">价税合计</th></tr>
         </thead>
         <tbody>
-          <tr v-for="row in summary.projects" :key="row.project" :class="{ 'row--muted': row.unassigned }">
+          <tr v-for="row in summary.projects" :key="row.project" :class="{ 'row--muted': row.unassigned, 'row--active': !row.unassigned && row.project === focus }">
             <th scope="row">{{ row.unassigned ? "未归属" : row.project }}</th>
             <td class="num">{{ row.input.count }}</td><td class="num">{{ money(row.input.total) }}</td>
             <td class="num">{{ row.output.count }}</td><td class="num">{{ money(row.output.total) }}</td>
@@ -124,6 +126,17 @@ watch(
           </tr>
         </tbody>
       </table>
+
+      <table v-if="focused" class="grid ledger" :aria-label="`${focused.project} 各期`">
+        <caption>{{ focused.project }} · 各期不含税金额</caption>
+        <thead><tr><th>期间</th><th class="num">进项</th><th class="num">销项</th></tr></thead>
+        <tbody>
+          <tr v-for="period in focused.periods" :key="period.period">
+            <td class="nowrap">{{ period.period }}</td><td class="num">{{ money(period.input_pretax) }}</td><td class="num">{{ money(period.output_pretax) }}</td>
+          </tr>
+        </tbody>
+      </table>
+      <p v-else-if="focus" class="muted">所选期间没有“{{ focus }}”的发票。</p>
 
       <datalist id="company-project-names">
         <option v-for="name in summary.project_names" :key="name" :value="name" />
