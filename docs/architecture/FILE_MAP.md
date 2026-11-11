@@ -217,6 +217,16 @@
 | `docs/architecture/rules/TAURI_HOST.md` | Tauri 宿主、所有权与更新事务的强制约束。 | 从 AGENT_TASK_MAP 按问题进入；维护功能规则并回查对应源码与验收。 |
 | `docs/architecture/rules/RELEASE.md` | 公开基线、构建与发行的强制约束。 | 从 AGENT_TASK_MAP 按问题进入；维护功能规则并回查对应源码与验收。 |
 
+## 通用交接开发工具
+
+| 文件 | 职责 | 联动与验收 |
+|---|---|---|
+| `scripts/dev/agent_handoff.py` | Agent 无关的线程引用映射、短摘要、按需详情、现场指纹、CAS、增量事件和中断恢复。 | 私有 JSON/Markdown 只写仓库外；交接协议、入口、合成回归。 |
+| `scripts/dev/build_agent_handoff.py` | 从明确公开源码与固定运行时或可信旧包的 runtime 生成便携包及逐文件清单。 | 拒绝归档越界、私有成员与篡改；双平台运行限制分别记录。 |
+| `docs/AGENT_HANDOFF.md` | 通用协议、命令、字段、恢复步骤及跨 Agent 接手入口；也是便携包说明。 | AGENTS/CLAUDE 共用，独立于厂商会话。 |
+| `tests/test_agent_handoff.py` | 普通文件接力、并发 CAS、坏状态/断尾恢复、未知操作与私有目录边界。 | 不使用真实业务资料或模型 API。 |
+| `tests/test_agent_handoff_packaging.py` | 合成 runtime 的白名单、复现、路径/哈希和包篡改拒绝。 | 合成平台载荷不冒充真实内嵌运行时或平台验收。 |
+
 ## 3. 文档
 
 | 文件 | 职责与入口 | 关系与修改影响 |
@@ -232,7 +242,7 @@
 | `docs/legacy/OLD_WORKSPACE_CHANGELOG_INDEX.md` | 旧工作区功能与故障的脱敏回溯索引。 | 只提供类别、不变量和当前查询入口；原始非公开 Changelog 不得复制、链接或写入公开工作树。 |
 | `docs/GIT_BRANCH_WORKTREE_FORK_GUIDE.md` | 分支、worktree、PR 和回退操作指南。 | 受 AGENTS Git 规则约束；稳定基线变化时同步。 |
 | `docs/MAC_WINDOWS_WORKFLOW.md` | Mac 开发与 Windows 正式验收分工。 | 与 Docker、PowerShell、正式 BAT 和发布验收相关。 |
-| `docs/MIGRATION_GAP_CHECKLIST.md` | 旧能力迁移缺口和验收状态。 | 功能迁移、验收口径变化时更新。 |
+| `docs/MIGRATION_GAP_CHECKLIST.md` | 旧能力迁移缺口和验收状态。 | 功能迁移、验收口径和开发交接能力变化时更新。 |
 | `docs/PRODUCT_BACKLOG.md` | 未来工作总览：设计稿与原型索引、已确认但未排期的优化与新功能、待修复缺陷，含编号、优先级、状态、证据、方案、验收标准与影响范围。 | 发现值得做但本轮不做的改进时登记；排期、完成或放弃时更新状态并链接 CHANGELOG；证据不得含真实业务数据。 |
 | `docs/COST_ANALYSIS_V2_DESIGN.md` | 成本分析 v2 设计提案：已确认决策、公司级品目表（别名、库存科目、类型、税率）、成本基数（进项税是否计入、结存加权单价）、销项税率与计税方式、灵活定价规则（加价率 / 目标毛利 / 固定加价 / 合同价 / 阶梯 / 市场价底线）与 4 层优先级、页面结构、兼容迁移与落地顺序。 | 未实现；现行规则以 COST_ANALYSIS 规则页为准；落地拆分见 PRODUCT_BACKLOG 的 COST-06、COST-01—05 与 BUG-01。 |
 | `docs/AGENT_ACCESS_DESIGN.md` | Agent 接入设计提案：参照 Vibe Island 接入形态，MCP 主通道与命令行兜底、本机 socket / 命名管道与配对令牌、L0—L2 能力分级与禁止项、灵活控制模型（预设 / 询问卡片 / 规则表）、辅助导入（Agent 起草版式档案或逐格更正、软件校验、暂存确认）、应用内审批与活动面板、一键安装适配器、分阶段与验收要点。 | 未实现；2026-11-09 确认先只读、WorkBuddy 优先；现行接口以 INTERFACES_AND_FLOWS 为准；落地拆分见 PRODUCT_BACKLOG 的 AGENT-01—04。 |

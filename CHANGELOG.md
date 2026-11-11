@@ -311,6 +311,35 @@
 - 规则页与地图同步：[税务规则](docs/architecture/rules/TAX_WORKBENCH.md) 增加来源分级、三项申报交付物、税费种认定、资格回放与输出边界条目；FILE_MAP、AGENT_TASK_MAP 税务行（D2/D3/D5 与最低验收）、DEVELOPMENT_ARCHITECTURE、COMMENT_RATIONALE_MAP（四条新不变量）、MIGRATION_GAP_CHECKLIST 与 IMPLEMENTATION_STATUS 一并回填。
 - 验证：`python3 -m pytest tests/test_development_documentation.py` 通过，`git diff --check` 通过。本轮仅改文档：未运行产品 Python 回归（本工作树无 `.backend-venv`），未覆盖浏览器、原生界面、Windows BAT、打包产物或任何真实税务申报对照；未执行任何政策抓取，未核验新的文号、比例或地方口径，设计中的政策事实仍以 2026-09-11 核对范围为准；未提交、未推送。
 
+### 2026-09-12 配置用户级全局 Agent Handoff 入口
+
+- 用户希望工具可放在用户 `.agents` 目录并从任意项目调用。沿当前 main 与既有未提交修改继续；核对 Codex 官方用户技能目录和本机 Claude 技能链接方式后，采用“工具本体、共享技能、全局命令、私有状态”分离布局。
+- 已将 SHA 匹配的 1.1 Mac 便携包安装到用户 `.agents/tools/agent-handoff`；简短技能放在 `.agents/skills/agent-handoff`，Claude 的 `.claude/skills/agent-handoff` 使用相对软链接共享规则；`.local/bin/agent-handoff` 为启动脚本，可用 `AGENT_HANDOFF_TOOL_DIR` 指定其它解压位置。既有 PATH 已包含该 bin 目录，未修改 Shell 配置、全局 AGENTS/CLAUDE 或权限设置。
+- 技能按保存/接手/交接意图发现，正文约 2.2 KB，不要求每次对话加载或写检查点；其它项目明确传 project/workspace，不沿用 InvoiceHub 默认项目名。个人安装、技能与审计留在仓库外，不纳入源码或便携包输入。
+- 验证：原包外层 SHA 与全部成员校验通过；技能 frontmatter 验证通过；全局命令在工作区外返回 1.1.0，另一临时项目的 init/resume/release/ticket 通过且未生成源目录状态文件；Claude 链接解析到同一技能。系统临时目录中的验证器解释器缺少 PyYAML，已改用项目验证环境完成同一验证，未安装额外依赖；工具运行本身只依赖内嵌标准库。
+- 本轮只配置本机用户级入口并同步说明，不重复业务回归或调用模型测试自动匹配；新会话的技能发现遵循各客户端机制，未覆盖其它电脑、Windows 全局安装或新的权限授权。个人安装持续保留供使用，暂存解压和临时验证资料收尾清理；未提交、推送或发布。
+
+### 2026-09-12 优化任务链接定位与检查点开销
+
+- 用户要求切换 Agent 时能明确指定任务线，核查是否可用线程深度链接/ID 接手，并减少轮询、SSD 重复写入和模型上下文冗余。沿已授权 main（起点 `ee0f2c2`）继续，保留前序工具与设计修改。
+- 核查确认无后台定时轮询；原实现会每次保存完整状态并重写同项目所有 CURRENT，且一份实际 CURRENT 为 19,826 bytes，存在正文/JSON 重复。1.1 增加本地 bind/resolve/ticket，支持明确 handoff URI、已登记线程链接与 UUID；未登记或歧义均拒绝猜测，不读取聊天数据库或调用模型。
+- 默认摘要预算 3,000 字符、按需 section/full 展开；省略关键约束时显式要求展开，全文保留。默认 resume 不扫描文件，claim 只校验一次；无变化不增加 revision、不写检查点；只更新当前任务 CURRENT，v2 后续事件保存增量并保持 v1 历史原字节可读。交出任务可用 release --input 合并保存，list 默认有界，入口规则禁止逐工具调用保存或循环轮询。
+- 便携构建支持从可信 SHA 的旧包仅复用已验证 runtime，重新复制当前公开工具/说明，本轮无运行时网络下载。64 项聚焦测试和 4 个子测试通过；包含新旧日志混合读取、错误 delta 拒绝、同内容不写盘、其它任务 CURRENT 不被改写、默认读取不哈希、claim 仅哈希一次、引用歧义与预算/全文保留。相关源码编译与 diff 检查通过。
+- 同一真实历史检查点的默认 CURRENT 从 19,826 bytes 降为 4,766 bytes（约 76%）；默认 resume 为 2,632 字符。同一历史认领事件的完整/增量编码对比为 4,885/413 bytes。原 journal 没有为测量或压缩重写；仅对原 CURRENT 执行一次显式 repair。上述是字节/字符计量，不宣称精确模型 token 或物理 SSD 写入量。
+- 最终 1.1 Mac arm64 ZIP 为 41,753,765 bytes，SHA-256 `2fd0c122cdb792edbe94ed5f0d33230f724b2c9f4687ffe9634474f5e1fb7570`；Windows x64 ZIP 为 12,328,124 bytes，SHA-256 `af58cc3dde112b0ef929c698fa8c8d09171316a887679f1b5c0be248df060dd9`。两包当前源码/说明逐字节一致，私有状态成员为零。Mac 在新中文/空格目录、内嵌 Python 下完成 19 次 CLI 调用验收，覆盖链接/ID、无变化零改写、摘要按需展开、显式漂移检查与增量交接。
+- 私有状态、真实引用和验收报告均留在仓库外；1.0 包保留作回退，1.1 包与 SHA 留在 ignored `dist/agent-handoff/`。未重新调用模型做全文总结，未提交、推送或发布。Windows 原生、GUI 双击/Gatekeeper、网络盘互斥和 InvoiceHub 业务验收未覆盖；本轮临时验收脚本/目录与新增缓存收尾清理。
+
+### 2026-09-12 实现通用任务检查点与便携接力工具
+
+- 用户要求完整实施通用交接架构、随后交给 Claude Code 补充，检查点不绑定厂商，并能打包解压使用；仓库外私有内容不得上传。沿用户此前明确选择继续 main（开工 `ee0f2c2`），保留已有规则重组、税务设计和未跟踪草稿。
+- 新增标准库单文件 CLI 与通用协议：项目索引、任务检查点、文件/Git 指纹、CAS 更新/认领/释放、已开始/未知/确认操作和损坏恢复。私有状态默认位于用户目录下 `.agent-handoff`，不落入公开工作树。入口只规定阶段性维护，不宣称安装了自动 hook 或模型切换服务。
+- 便携包从明确公开白名单与 SHA 固定的 Mac arm64/Windows x64 CPython 3.14.6 原始运行时组装，保留许可、使用固定 ZIP 时间/顺序并生成逐文件 manifest 和外层 SHA；不递归复制本机配置、日志、检查点、Git 历史或业务数据。
+- Claude Code 已从同一私有检查点实际核对、认领、补充实现与 13 项测试、保存并释放，Codex 按协议接回。首轮因 Claude 会话缺少私有目录与指定命令许可而停止；仅补齐本次会话权限后续接，未放宽全局配置。一次回合上限中断后的检查点收尾也已完成，审计记录只保留在仓库外。
+- Codex 独立复核后补齐跨 project 共用私有根目录锁（避免扫描后并发双认领）、Git 环境覆盖变量隔离、普通文件交互入口、UTF-8 输出，以及 Mac runtime 九项跨平台辅助文件精确移除与未知 Windows 载荷拒绝。53 项聚焦测试、4 个子测试和相关编译检查通过；文档契约继续守护两份入口与规则导航。
+- 最终 Mac arm64 ZIP 为 41,752,045 bytes，SHA-256 `e69a8f0cd1e38ce1ccbf6bb4b50eed2df25b859f7d4538867b3bc9248b43c463`；Windows x64 ZIP 为 12,326,406 bytes，SHA-256 `2979044e6ee1affcd2096954768a0616aaf994b727f5e0ec033d7c47659d4b45`。两包内工具/协议/许可与本轮公开源文件逐字节一致，逐文件清单通过，私有检查点/模型审计成员为零；Windows Python 的 PE x64 身份已静态核对。
+- Mac 最终包从新的中文/空格路径解压，以内嵌 Python 3.14.6 arm64、排除系统 Python 的 PATH 和无效 PYTHONHOME/PYTHONPATH 完成 16 步 CLI 验收：普通文件任务、通用 actor 接手、状态漂移、未知结果阻断、确认后完成与投影修复均通过，工作目录仅保留原合成源文件。Windows 仅静态验证，未运行原生 Windows/msvcrt、双击 Terminal、Gatekeeper/quarantine、签名/公证或网络盘并发；不等同于 InvoiceHub 产品启动/业务/发行验收。
+- 便携包与校验文件保留于 ignored `dist/agent-handoff/` 供使用，私有任务及 Claude 审计/验收报告留在仓库外；本轮临时下载、解压和验证脚本收尾清理。未提交、未推送、未发布应用或工具 Release。
+
 ### 2026-09-11 精简 Agent 必读入口并按功能组织规则
 
 - 用户要求保留 AGENTS.md 的通用必读内容，将功能细则划入架构地图以便快速查找问题；随后明确可以在 main 执行。开工在 `codex/tax-workbench-design`，与本地 main 同为 `ee0f2c2`；切回 main 时完整保留既有税务设计、原型、未跟踪文件和 ignored 运行态。

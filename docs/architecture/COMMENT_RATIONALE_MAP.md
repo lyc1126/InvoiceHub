@@ -53,6 +53,12 @@ Windows验包测试中的假凭据在运行时拼接：保持生成文件的扫�
 | `DocumentIndex.build_index` / `document_state` | 入库准备与出库解析分阶段；首页勾选已给出票的身份，无需触发无关出库扫描 | selection_only 无扫描、进程停止/恢复与候选预览回归 |
 | `document_outbound_preview` | 元数据复用仅节省紧随预览的文件状态读取；源文件变化或导出仍需验证 | 状态不重复解析、源文件中途变化拒绝、临时预览导出拒绝 |
 
+## 通用检查点的恢复与私有边界
+
+`agent_handoff.py::Store.save` 先提交 journal 再更新投影，避免多文件中断导致已确认进度丢失；expected revision 与 私有根目录锁防旧执行者覆盖新记录。`build_agent_handoff.py::package` 仅复制公开白名单及固定 runtime，不能递归复制工作目录。对应工具/打包回归覆盖中断、并发、未知结果和私有成员拒绝；actor 是协作标签，不是系统安全边界。跨 project 可用性扫描与写入必须共用私有根目录锁；仅共享扫描而各自加 project 锁仍会发生双认领。Git 采集清除调用环境中的工作区/索引覆盖变量，避免把另一任务的 Git 身份当成本目录真值。
+
+1.1 的 `brief` 明确省略字段与行动前展开标记，防止为了省 token 隐去约束或未知结果；默认 resume 不调用 snapshot，claim 只复核一次。`Store.save` 先比较去除时间/revision 的内容，无变化零提交；增量事件可重建全文，更新一个任务不能改写其它 CURRENT。`resolve_reference` 只查本地明确绑定，多个匹配直接拒绝，不读取聊天或按时间选任务。守护测试覆盖摘要预算/全文保留、无变化无写入、只读不哈希、引用歧义、v1→v2追加和坏delta恢复拒绝。
+
 功能约束按需读取：规则正文维护在 `rules/`，本页维护原因、不变量与守护测试的对应关系。先按 [任务快速索引](AGENT_TASK_MAP.md#quick-lookup) 定位全部命中项，再读取规则全文及对应实现章节；AGENTS.md 保留全局必读规则。
 
 ## Agent 入口与功能规则分层

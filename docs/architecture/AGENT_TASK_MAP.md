@@ -29,6 +29,7 @@
 | Tauri、desktop/browser、Host RPC、所有权与退出 | [Tauri 宿主](rules/TAURI_HOST.md)、[构建与发行](rules/RELEASE.md) | [13. 公开基线与新平台构建](#task-tauri) |
 | 构建、签名、公证、RC、SBOM、receipt、Feed/updater | [构建与发行](rules/RELEASE.md)、[Tauri 宿主](rules/TAURI_HOST.md) | [13.1 About、更新 Feed 与平台安装](#task-release) |
 | 路由、返回字段、SQLite、仓储与跨层接口 | [页面/单据/预览/皮肤](rules/WEB_UI.md) | [14. API、SQLite 与存储基础设施](#task-api) |
+| 跨 Agent 接手、线程链接/ID、摘要 token、写盘、检查点、便携工具 | [交接协议](../AGENT_HANDOFF.md) | [开发工具交接](#task-handoff) |
 | 规则重组、文件地图、文档契约与注释维护 | AGENTS.md 与被修改专题 | [15. 测试与文档治理](#task-governance) |
 | 未来功能、设计稿与原型、待开发优化、待修复缺陷、下个版本做什么、需求登记与排期 | [未来工作总览](../PRODUCT_BACKLOG.md)（先看“设计稿与原型索引”，再按条目编号查找，读条目“影响范围”列出的功能规则） | 条目内“影响范围”与对应任务行 |
 
@@ -430,6 +431,20 @@ L6-RRRRR 追加门禁：hosted check 锁竞争必须在 busy 后直接返回，�
 | 最低自动化 | 文档契约测试、所有本地 Markdown 链接、`git diff --check`；代码任务按风险加业务测试与 compileall |
 | 真实验收 | 文档任务不冒充运行验收；测试任务也不能凭单测宣称 BAT/浏览器/选择器/包已通过 |
 | 高风险提醒 | 不维护固定测试总数或易漂移行数；CHANGELOG 历史记录可以保留当时数字，但快速入口不能把旧数字当当前事实。代码变更必须识别不由局部代码自明的衔接；跨功能交接处的注释要说明上游、下游、顺序/不变量与失败后果，而非逐字复述代码。原始非公开 Changelog 只能在私有归档人工查证，禁止复制、链接、暂存、提交或写入公开工作树。 |
+
+<a id="task-handoff"></a>
+
+## 开发工具：通用检查点与便携接手
+
+全局调用是可选的用户级安装：工具本体与简短技能分开存放，CLI 通过 PATH 或明确路径调用。其它项目须显式选择 project/workspace；技能按交接意图触发，不安装轮询服务，也不改写各项目自己的规则。全局配置与私有状态不作为本仓库发布输入。
+
+| 导航项 | 内容 |
+|---|---|
+| 首先阅读 | [交接协议](../AGENT_HANDOFF.md)、AGENTS 检查点/公开历史/Git 规则 |
+| 首要入口 | `scripts/dev/agent_handoff.py`（标准库 CLI、引用映射、短摘要、现场采集、CAS、增量事件与投影）；`scripts/dev/build_agent_handoff.py`（白名单源码、固定运行时、便携 ZIP） |
+| 必须联动 | AGENTS/CLAUDE 入口、本文档、FILE_MAP、DATA/INTERFACES/COMMENT 地图、实现状态和迁移清单 |
+| 最低验证 | `tests/test_agent_handoff.py`、`tests/test_agent_handoff_packaging.py`、`tests/test_development_documentation.py`；当前平台解压后的内嵌运行时与实际接手演练 |
+| 高风险提醒 | 检查点和模型审计日志在仓库外；不得打包私有数据、自动执行笔记命令、凭 actor 标签授予权限或把未知结果当失败重试。Windows 静态包验证不等于原生执行；工具不进入发票 API/主存储 |
 
 ## 16. 常用测试命令
 

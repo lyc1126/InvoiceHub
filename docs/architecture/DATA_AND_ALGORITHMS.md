@@ -34,6 +34,10 @@ Windows回收在PreDeleteItem保护后，再检查PostDeleteItem返回的实际�
 - 首页最终列表按 CSV、手改状态和档案指纹复用构造结果；全量筛选/排序/统计后取当前页，位置键不改成页内编号。未传 page 的旧消费者仍只读完整投影，全选明确请求完整筛选结果。
 - `InboundDetails` 按成本 CSV 路径及文件签名缓存分组，选票只展开对应号码；完整一致副本折叠和冲突阻断沿用 documents 规则。出库只缓存目标文件名所需的号码/日期，源文件签名变化即失效，预览前后再次比对；正式导出仍实时解析并要求完整目录索引。
 
+## 开发工具检查点模型
+
+[交接协议](../AGENT_HANDOFF.md) 使用 v2 状态（含 references），兼容原字节 v1 事件；首事件完整，后续 put/edit/drop 增量通过哈希链重建状态。CURRENT 是有预算的摘要，全文仍在 journal，INDEX 是定位投影；无语义变化不提交，只更新本任务视图，日志缓存仅在单次命令内有效。所有 project 共用私有根目录写锁，实例数据只在仓库外，不进入发票或 SQLite 主数据。
+
 功能约束按需读取：[提取与分类](rules/INVOICE_EXTRACTION.md)、[成本](rules/COST_ANALYSIS.md)、[做账](rules/BOOKKEEPING.md)、[税务设计](rules/TAX_WORKBENCH.md)。先按 [任务快速索引](AGENT_TASK_MAP.md#quick-lookup) 定位全部命中项，再读取规则全文及对应实现章节；AGENTS.md 保留全局必读规则。
 
 ## 税务计算模型提案（2026-09-11，未实施）

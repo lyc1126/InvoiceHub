@@ -20,6 +20,10 @@
 
 本轮起点为 已核验的本地 `main`（精确起点见本轮 CHANGELOG），实现在 `codex/progressive-data-loading`，尚未合并或发布。首页改为服务端分页；成本页按标签分页读取上次完整快照；首次无正式投影时，普通汇总和成本各自在解析阶段发布只读临时批次。`storage/read_views.py` 管理每个 TargetProfile workspace 中的可重建 SQLite 读取缓存，CSV/XLSX/JSON 与源发票的权威关系不变。单据入库候选提前发布，首页批量入库只准备所选票，出库候选增量更新。接口、缓存代际和保护语义见架构专题同日条目。
 
+## 开发工具接力入口
+
+[通用交接协议](AGENT_HANDOFF.md) 与任务导航的交接行定义独立开发小工具。它以仓库外 JSONL 为任务事实、Markdown/JSON 为可重建交接视图，复用现有文档导航，不接入 InvoiceHub 产品 API、数据库或源发票目录。 用户级可选接入采用 `~/.agents/tools/agent-handoff` 存工具、`~/.agents/skills/agent-handoff` 存简短技能、`~/.local/bin/agent-handoff` 提供全局命令，Claude 的个人技能入口引用同一规则；这是本机个人配置，不要求其它 clone 已安装。
+
 功能约束按需读取：[提取与分类](architecture/rules/INVOICE_EXTRACTION.md)、[成本](architecture/rules/COST_ANALYSIS.md)、[监控与关闭](architecture/rules/MONITORING.md)、[页面/单据/预览/皮肤](architecture/rules/WEB_UI.md)、[做账](architecture/rules/BOOKKEEPING.md)、[税务设计](architecture/rules/TAX_WORKBENCH.md)、[Windows](architecture/rules/WINDOWS.md)、[macOS 参考壳](architecture/rules/MACOS.md)、[Tauri 宿主](architecture/rules/TAURI_HOST.md)、[构建与发行](architecture/rules/RELEASE.md)。先按 [任务快速索引](architecture/AGENT_TASK_MAP.md#quick-lookup) 定位全部命中项，再读取规则全文及对应实现章节；AGENTS.md 保留全局必读规则。
 
 2026-09-12 设计入口：[税务计算器与公司财税工作台](TAX_WORKBENCH_DESIGN.md)、[算法与政策规格](TAX_ALGORITHMS_AND_POLICY.md)、[政策来源与核验](TAX_POLICY_SOURCES_AND_REVIEW.md)、[价值评估与就绪度](TAX_WORKBENCH_VALUE_AND_READINESS.md)（决策页，记录就绪度与是否投入的判断）。当前仅有文档和独立合成原型；其新增目录、接口、数据模型、公司绑定、申报表映射、征期与政策中心均为拟议内容，不属于下文 main 当前实现。开发按任务导航中的税务设计行进入。

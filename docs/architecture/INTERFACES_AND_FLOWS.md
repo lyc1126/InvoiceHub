@@ -38,6 +38,10 @@
 原文件缺失、移动、替换或内容变化时返回 unavailable 文件名且省略整个线程 items；查看、自动刷新和复制均重新校验。关闭弹窗保留草稿，识别继续；关闭 backend 收束 worker。关闭自动打开时通过“查看本次识别结果”或历史进入。图片/纯扫描件需 OCR，当前临时功能不启用 OCR。
 
 
+## 开发工具交接流程
+
+[交接工具](../AGENT_HANDOFF.md) CLI：init/bind 登记线程别名 → ticket/resolve 定位 → resume 一次读摘要 → claim 内置一次现场校验 → release --input 一次保存并交出。resume 默认不哈希目录，--verify/check 才显式核对；show --section/--full 按需展开。引用歧义不猜最新，无轮询、无网络读取聊天。增量事件 fsync 后仅更新本任务 CURRENT 与变化的 INDEX，revision 过期拒绝写入。
+
 功能约束按需读取：[页面/单据/预览/皮肤](rules/WEB_UI.md)、[监控与关闭](rules/MONITORING.md)、[做账](rules/BOOKKEEPING.md)、[Tauri 宿主](rules/TAURI_HOST.md)、[构建与发行](rules/RELEASE.md)。先按 [任务快速索引](AGENT_TASK_MAP.md#quick-lookup) 定位全部命中项，再读取规则全文及对应实现章节；AGENTS.md 保留全局必读规则。
 
 ## 税务工作台接口草案（2026-09-11，未注册）
