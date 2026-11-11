@@ -227,6 +227,29 @@ describe("companies module", () => {
     expect(panel.text()).toContain("普票 2 张不能抵扣");
   });
 
+  it("switches to the stock check and marks items sold beyond purchases", async () => {
+    const month = { month: "2026-06", open_qty: "0", open_amount: "0.00", in_qty: "5", in_amount: "20000.00", out_qty: "8", cost: "20000.00", end_qty: "-3", end_amount: "0.00", unit_price: "4000.00", note: "库存不足" };
+    const inventory = {
+      ok: true, relation: "inventory", state: "ok", message: "", basis_label: "进销存口径：月末一次加权平均。",
+      first_month: "2026-06", cost_label: "不含税", excluded: [], totals: { in_amount: "20000.00", cost: "20000.00", end_amount: "0.00" },
+      items: [{ key: "螺纹钢\u001fHRB40018\u001f吨", name: "螺纹钢", spec: "HRB40018", unit: "吨", ...month, oversold: true, sold_never_bought: false, months: [month] }],
+      warnings: [{ code: "opening_zero", message: "期初库存按 0 起算（从 2026-06 起）" }, { code: "oversold", message: "1 个品目月份卖超" }],
+      checks: [{ code: "input_quantity", ok: true, message: "进项计入数量 5 = 5" }], checks_ok: true,
+    };
+    stubBackend((url) => (url.includes("b=issued_invoice_dir") ? [200, inventory] : undefined));
+    const wrapper = await mountCompanies();
+    await wrapper.get("#company-tab-compare").trigger("click");
+    await flushPromises();
+    await wrapper.get('select[aria-label="比较关系"]').setValue("inventory");
+    await flushPromises();
+    expect(calls.some((call) => call.url.includes("b=issued_invoice_dir"))).toBe(true); // reloads on switch
+    const table = wrapper.get('table[aria-label="进销存"]');
+    expect(table.get("tbody tr").classes()).toContain("row--failed");
+    expect(table.text()).toContain("卖超");
+    expect(table.text()).toContain("-3");
+    expect(wrapper.text()).toContain("期初库存按 0 起算");
+  });
+
   it("marks a non-monitored folder's invoice list read-only", async () => {
     stubBackend((url) => (url.includes("/directories?") || url.endsWith("/directories")
       ? [200, { ok: true, revision: 3, company: COMPANY, directories: [{ ...DIRECTORIES[1], status: "present" }] }] : undefined));

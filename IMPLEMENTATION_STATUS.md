@@ -1,5 +1,10 @@
 # IMPLEMENTATION_STATUS
 
+## 2026-11-11 进销存（WS-07 第 4 步，工作分支 `codex/ws-07-company-registry`）
+
+- `GET /api/v1/companies/{id}/compare?a=cost_invoice_dir&b=issued_invoice_dir` 与“勾稽”标签的“成本发票 ⇄ 开具发票（进销存）”：按品目表标准名称 + 规格 + 单位归并两个目录上次的成本明细，进货额与开票参考同口径，逐月调用做账库存的 `cost_of_sales` 做月末一次加权；期初库存按 0 起算并标注；卖超、销项品目在进项中找不到、未计入的明细行照实列出，数量守恒由后端校验。只读，不刷新、不写任何投影。
+- 未完成：账套读回期初；往来核对；第 5—6 步。
+
 ## 2026-11-11 抵扣核对（WS-07 第 4 步，工作分支 `codex/ws-07-company-registry`）
 
 - 新增 `GET /api/v1/companies/{id}/compare?a=cost_invoice_dir&b=input_deduction_dir` 与 `/workspace/companies` 的“勾稽”标签：读进项抵扣目录里电子税务局导出的“用途确认信息”清单，按发票号码对照成本发票，列出当期/前期开票、清单有目录无、目录有清单无（专票）、未勾选、重复勾选与税额不一致；清单合计行、行数、重复与税额四类校验由后端计算。只读，不写文件；已勾选不等于已申报。

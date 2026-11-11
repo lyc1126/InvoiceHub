@@ -1,5 +1,13 @@
 # InvoiceHub 注释与设计原因地图
 
+## 2026-11-11 进销存（WS-07 第 4 步）
+
+- `company_inventory.py` 调用 `bank.vouchers.cost_of_sales`，不另写加权平均：页面上的销售成本必须与做账草稿的结转同一算法，两处结果才能互相核对。守护：`test_month_end_weighted_average_rolls_stock_forward_and_merges_names`。
+- 逐月从最早月份滚到最晚月份（包括没有发票的月份），`start/end` 只筛选显示：从范围首月重新按 0 起算会丢掉之前的结存。守护：`test_range_starts_from_the_rolled_forward_stock`。
+- `projections/costs.py::read_only_inputs`：比较的两个目录多半不是监控目录，`snapshot` 会刷新 schema、重写工作簿，读取就会改动用户目录。守护：`test_compare_api_reads_both_projections_without_writing`（前后文件 mtime 不变）。
+- `_qty`：`cost_of_sales` 的零值带两位小数，数量直接 `str` 会变成“5.00 吨”；数量要保留自己的精度（2.345 吨），不能按金额格式化。
+- `CompanyInventoryResult.vue` 的逐月明细放在品目下方整行展开：嵌在“说明”格里的子表在窄屏会被截断。
+
 ## 2026-11-11 抵扣核对（WS-07 第 4 步）
 
 - `company_deduction.py::parse_deduction_workbook`：当期没有勾选时，电子税务局只导出一格“发票清单”，文件里没有所属期。按文件夹名（“5月”）推断会把用户随手起的名字当成事实，所以只报告为“空清单、所属期未知”。守护：`test_empty_and_unrecognised_files_are_reported_not_guessed`。

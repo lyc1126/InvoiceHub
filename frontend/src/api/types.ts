@@ -281,10 +281,28 @@ export interface DeductionUnlisted {
   source_files: string[];
 }
 
+export interface InventoryMonth {
+  month: string;
+  open_qty: string; open_amount: string; in_qty: string; in_amount: string;
+  out_qty: string; cost: string; end_qty: string; end_amount: string;
+  unit_price: string | null;
+  note: string;
+}
+
+export interface InventoryItem {
+  key: string;
+  name: string; spec: string; unit: string;
+  open_qty: string; open_amount: string; in_qty: string; in_amount: string;
+  out_qty: string; cost: string; end_qty: string; end_amount: string;
+  oversold: boolean;
+  sold_never_bought: boolean;
+  months: InventoryMonth[];
+}
+
 export interface CompareResult {
   ok: boolean;
-  relation: "deduction";
-  state: "ok" | "no_lists" | "missing_dir" | "unreadable";
+  relation: "deduction" | "inventory";
+  state: "ok" | "no_lists" | "no_details" | "missing_dir" | "unreadable";
   message: string;
   basis_label?: string;
   periods?: {
@@ -301,4 +319,10 @@ export interface CompareResult {
   warnings?: { code: string; message: string }[];
   checks?: LedgerCheck[];
   checks_ok?: boolean;
+  // inventory
+  first_month?: string | null;
+  cost_label?: string;
+  items?: InventoryItem[];
+  excluded?: { direction: "input" | "output"; invoice_number: string; invoice_date: string; name: string; spec: string; unit: string; quantity: string; amount: string; source_file: string; reason: string }[];
+  totals?: { in_amount: string; cost: string; end_amount: string };
 }

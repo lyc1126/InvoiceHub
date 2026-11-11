@@ -96,6 +96,9 @@ button.block { width: 100%; }
 .ledger caption { text-align: left; font-weight: 600; padding: 6px 0; }
 .ledger + .ledger { margin-top: 12px; }
 .row--failed th, .row--failed td { color: var(--danger); }
+.row--detail > td { background: var(--panel, #faf8f3); padding: 4px 8px 10px; }
+.row--detail .grid { font-size: 12px; }
+button.link { border: 0; background: none; padding: 0 2px; color: inherit; cursor: pointer; text-decoration: underline; }
 @media (max-width: 640px) {
   .split { grid-template-columns: 1fr; }
   /* Narrow screens scroll the whole table sideways instead of squeezing cells into columns of single characters. */

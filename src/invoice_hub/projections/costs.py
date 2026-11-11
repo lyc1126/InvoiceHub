@@ -457,6 +457,19 @@ class CostProjectionService:
     def _item_catalog(self) -> dict[str, dict]:
         return item_catalog_from_status(_read_reference_status_payload(self.status_json))
 
+    def read_only_inputs(self) -> dict:
+        """Detail rows, 发票校验 rows, item catalog and tax profile of the last projection, nothing else.
+
+        For folders that are not the active watch_dir (WS-07 comparisons): unlike ``snapshot`` it
+        never refreshes the schema or rewrites the workbook, so reading cannot change the folder.
+        """
+        return {
+            "detail_rows": read_csv_rows(self.detail_csv),
+            "check_rows": self._read_workbook_sheet("发票校验", CHECK_HEADERS),
+            "item_catalog": self._item_catalog(),
+            "tax_profile": self._tax_profile(),
+        }
+
     def _tax_profile(self) -> ReferenceTaxProfile:
         return effective_tax_profile(
             reference_tax_profile_from_status(_read_reference_status_payload(self.status_json)), self.company_taxpayer()

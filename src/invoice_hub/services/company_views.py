@@ -31,6 +31,7 @@ from invoice_hub.projections.cost_analysis import COST_DETAIL_CSV_NAME
 from invoice_hub.projections.costs import CostProjectionService
 from invoice_hub.services.company_bank import BankFlowReader, build_bank_ledger
 from invoice_hub.services.company_deduction import DeductionListReader, build_deduction_check
+from invoice_hub.services.company_inventory import build_inventory_check
 from invoice_hub.services.company_ledger import build_invoice_ledger
 from invoice_hub.services.company_registry import CompanyRegistryError, CompanyRegistryService
 from invoice_hub.services.invoice_list import InvoiceListService
@@ -41,6 +42,7 @@ from invoice_hub.targets.companies import company_taxpayer_for
 # Folder pair -> comparison algorithm. Only pairs with a reconciliation relation are listed.
 COMPARE_RELATIONS = {
     frozenset(("cost_invoice_dir", "input_deduction_dir")): "deduction",
+    frozenset(("cost_invoice_dir", "issued_invoice_dir")): "inventory",
 }
 _MONTH_TEXT = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
 FRESHNESS_MAX_ENTRIES = 20_000
@@ -249,11 +251,7 @@ class CompanyViewService:
             repo=self.repo,
             db_path=self._db_path,
             active_profile=lambda: profile,
-            cost_service=lambda: CostProjectionService(
-                Path(profile.watch_dir), Path(profile.workspace_dir), profile.id,
-                reference_markup_rate=self.config.reference_markup_rate,
-                company_taxpayer=lambda: company_taxpayer_for(self.config, Path(profile.watch_dir)),
-            ),
+            cost_service=lambda: self._cost_service(profile),
         )
         payload = reader.list_invoices(filters)
         for item in payload["items"]:
@@ -309,29 +307,67 @@ class CompanyViewService:
             )
         payload = self._registry.get_company(company_id)
         company = payload["company"]
-        active_id = self.active_profile.id
-        cost_subdir, cost_profile = self._directory(company, "cost_invoice_dir")
-        list_subdir = next(item for item in company["subdirs"] if item["key"] == "input_deduction_dir")
-        sources = {
-            "cost_invoice_dir": self._directory_view(cost_subdir, cost_profile, active_id, check_freshness=True),
-            "input_deduction_dir": {**list_subdir},
-        }
-        cost_rows = self._list_payload(cost_profile, {})[0]["items"] if cost_subdir["status"] == "present" else []
         base = {"ok": True, "revision": payload["revision"], "company": company, "a": a, "b": b,
-                "start": start, "end": end, "sources": sources}
+                "start": start, "end": end, "relation": relation}
+        handler = self._compare_deduction if relation == "deduction" else self._compare_inventory
+        return handler(company, base, start=start, end=end)
+
+    def _cost_source(self, company: dict, key: str, active_id: str) -> tuple[dict, dict, TargetProfile]:
+        subdir, profile = self._directory(company, key)
+        return subdir, self._directory_view(subdir, profile, active_id, check_freshness=True), profile
+
+    @staticmethod
+    def _freshness_warnings(result: dict, views: dict[str, dict], labels: dict[str, str]) -> None:
+        for key, view in views.items():
+            state = view["freshness"]["state"]
+            if state in {"stale", "never_built", "unknown", "missing_dir"}:
+                result["warnings"].insert(0, {"code": f"source_{state}", "message": f"{labels[key]}：{view['freshness']['message']}"})
+
+    def _compare_deduction(self, company: dict, base: dict, *, start: str, end: str) -> dict:
+        active_id = self.active_profile.id
+        cost_subdir, cost_view, cost_profile = self._cost_source(company, "cost_invoice_dir", active_id)
+        list_subdir = next(item for item in company["subdirs"] if item["key"] == "input_deduction_dir")
+        sources = {"cost_invoice_dir": cost_view, "input_deduction_dir": {**list_subdir}}
+        base = {**base, "sources": sources}
+        cost_rows = self._list_payload(cost_profile, {})[0]["items"] if cost_subdir["status"] == "present" else []
         if list_subdir["status"] != "present":
-            return {**base, "relation": relation, "state": "missing_dir", "message": FRESHNESS_MESSAGES["missing_dir"]}
+            return {**base, "state": "missing_dir", "message": FRESHNESS_MESSAGES["missing_dir"]}
         read = self._deduction_reader.read(Path(list_subdir["path"]))
         sources["input_deduction_dir"].update(file_count=read.file_count, cached=read.cached)
         if read.data is None:
-            return {**base, "relation": relation, "state": "unreadable", "message": read.error}
+            return {**base, "state": "unreadable", "message": read.error}
         result = build_deduction_check(cost_rows, read.data, start=start, end=end)
-        state = sources["cost_invoice_dir"]["freshness"]["state"]
-        if state in {"stale", "never_built", "unknown", "missing_dir"}:
-            result["warnings"].insert(0, {"code": f"source_{state}",
-                                          "message": f"成本发票：{sources['cost_invoice_dir']['freshness']['message']}"})
+        self._freshness_warnings(result, {"cost_invoice_dir": cost_view}, {"cost_invoice_dir": "成本发票"})
         return {**base, "state": "ok" if read.data.lists else "no_lists",
                 "message": "" if read.data.lists else "进项抵扣目录里没有可识别的用途确认信息导出（.xlsx）。", **result}
+
+    def _compare_inventory(self, company: dict, base: dict, *, start: str, end: str) -> dict:
+        active_id = self.active_profile.id
+        cost_subdir, cost_view, cost_profile = self._cost_source(company, "cost_invoice_dir", active_id)
+        sale_subdir, sale_view, sale_profile = self._cost_source(company, "issued_invoice_dir", active_id)
+        base = {**base, "sources": {"cost_invoice_dir": cost_view, "issued_invoice_dir": sale_view}}
+        if cost_subdir["status"] != "present" or sale_subdir["status"] != "present":
+            return {**base, "state": "missing_dir", "message": "成本发票或开具发票目录不存在。"}
+        # Read-only: these folders may not be the watch_dir, so nothing may refresh their projection.
+        purchases = self._cost_service(cost_profile).read_only_inputs()
+        sales = self._cost_service(sale_profile).read_only_inputs()
+        # The item catalog and taxpayer type belong to the purchase side (the 成本发票 folder).
+        result = build_inventory_check(
+            purchases["detail_rows"], purchases["check_rows"], sales["detail_rows"],
+            item_catalog=purchases["item_catalog"], tax_profile=purchases["tax_profile"], start=start, end=end,
+        )
+        self._freshness_warnings(result, {"cost_invoice_dir": cost_view, "issued_invoice_dir": sale_view},
+                                 {"cost_invoice_dir": "成本发票", "issued_invoice_dir": "开具发票"})
+        if not purchases["detail_rows"] and not sales["detail_rows"]:
+            return {**base, "state": "no_details", "message": "两个目录都还没有成本明细（设为监控目录汇总一次后才有发票明细行）。", **result}
+        return {**base, "state": "ok", "message": "", **result}
+
+    def _cost_service(self, profile: TargetProfile) -> CostProjectionService:
+        return CostProjectionService(
+            Path(profile.watch_dir), Path(profile.workspace_dir), profile.id,
+            reference_markup_rate=self.config.reference_markup_rate,
+            company_taxpayer=lambda: company_taxpayer_for(self.config, Path(profile.watch_dir)),
+        )
 
     def _bank_ledger(self, company: dict, *, granularity: str, start: str, end: str) -> dict:
         # Bank figures sit beside the invoice ledger, not inside it: its checks_ok stays about
