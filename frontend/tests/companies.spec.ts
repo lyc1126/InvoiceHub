@@ -413,6 +413,70 @@ describe("companies module", () => {
     expect(calls.some((call) => call.url.includes("&tag=tag_aaaaaaaa"))).toBe(true);
   });
 
+  it("selects invoices on the monitored folder and uses the backend for totals, printing and deletion", async () => {
+    const rows = [1, 2].map((n) => ({ invoice_key: String(n), source_path: `/合成/甲/成本发票/${n}.pdf`, source_file: `${n}.pdf`, file_format: "PDF",
+      invoice_number: String(n).repeat(20), seller: "丙丁", buyer: "甲", amount: "1130.00", tags: [] }));
+    const directory = { ...DIRECTORIES[0]!, projection: { ...DIRECTORIES[0]!.projection, summary_exists: true } };
+    const metric = (value: number) => ({ value, valid_invoice_count: 2, conflict_invoice_count: 0, missing_invoice_count: 0 });
+    let confirmFails = true;
+    stubBackend((url, init) => {
+      const method = init.method ?? "GET";
+      if (url.includes("/invoices?")) return [200, { ok: true, count: 3, page: 1, page_size: 50, read_only: false, directory, items: rows, snapshot: { provisional: false } }];
+      if (url.endsWith("/selection-summary")) return [200, { ok: true, selection: { record_count: 2, invoice_count: 2, collapsed_record_count: 0 },
+        totals: { pretax_amount: metric(2000), tax_amount: metric(260), total_with_tax: metric(2260) }, cost_breakdown: {} }];
+      if (url.endsWith("/print-jobs")) return [200, { ok: true, print_url: "/invoices/print/j1", invoice_count: 2, page_count: 2 }];
+      const job = { ok: true, job_id: "t1", trashed_count: 0, state: "prepared", files: [{ name: "1.pdf", status: "pending" }, { name: "2.pdf", status: "pending" }] };
+      if (url.endsWith("/trash-jobs") && method === "POST") return [200, job];
+      if (url.endsWith("/trash-jobs/t1/confirm")) return confirmFails ? [503, { detail: "连接中断" }] : [200, job];
+      if (url.endsWith("/trash-jobs/t1")) return [200, { ...job, state: "completed", trashed_count: 2, files: job.files.map((file) => ({ ...file, status: "trashed" })) }];
+      return undefined;
+    });
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const wrapper = await mountCompanies();
+    await wrapper.findAll("button").find((button) => button.text() === "查看发票")!.trigger("click");
+    await flushPromises();
+    const list = wrapper.get('[aria-label="目录发票"]');
+    await list.get('input[aria-label="勾选本页"]').setValue(true);
+    vi.advanceTimersByTime(300);
+    await flushPromises();
+    const summaryCall = calls.find((call) => call.url.endsWith("/selection-summary"))!;
+    expect(summaryCall.body).toEqual({ items: rows.map((row) => ({ invoice_key: row.invoice_key, source_path: row.source_path })) });
+    const bar = wrapper.get('[aria-label="已勾选发票"]');
+    expect(bar.text()).toContain("已勾选 2 张");
+    expect(bar.text()).toContain("2,260.00");
+    expect(bar.text()).toContain("全选筛选结果（3）");
+
+    const popup = { location: { replace: vi.fn() }, close: vi.fn() };
+    vi.stubGlobal("open", vi.fn(() => popup));
+    await bar.findAll("button").find((button) => button.text() === "打印")!.trigger("click");
+    await flushPromises();
+    expect(popup.location.replace).toHaveBeenCalledWith("/invoices/print/j1");
+
+    await bar.findAll("button").find((button) => button.text() === "删除所选…")!.trigger("click");
+    await flushPromises();
+    const trash = wrapper.get('[role="alertdialog"][aria-label="删除所选文件"]');
+    expect(trash.text()).toContain("共 2 个源文件 · 待确认");
+    expect(calls.some((call) => call.url.endsWith("/confirm"))).toBe(false); // nothing moves before the explicit confirm
+    expect(calls.find((call) => call.url.endsWith("/trash-jobs"))!.body).toEqual({ target_id: "t1", items: (summaryCall.body as { items: unknown[] }).items });
+    await trash.findAll("button").find((button) => button.text() === "确认移入废纸篓")!.trigger("click");
+    await flushPromises();
+    // The confirm response was lost: the page reads the journal and never confirms twice.
+    expect(calls.filter((call) => call.url.endsWith("/confirm"))).toHaveLength(1);
+    expect(calls.some((call) => call.url.endsWith("/trash-jobs/t1") && call.method === "GET")).toBe(true);
+    expect(wrapper.find('[aria-label="已勾选发票"]').exists()).toBe(false); // completed: selection cleared, list reloaded
+    expect(wrapper.get('[aria-label="删除结果"]').text()).toContain("已移入废纸篓 2 / 2 个源文件");
+    vi.useRealTimers();
+  });
+
+  it("offers no selection on a non-monitored folder", async () => {
+    stubBackend((url) => (url.includes("/directories?") || url.endsWith("/directories")
+      ? [200, { ok: true, revision: 3, company: COMPANY, directories: [{ ...DIRECTORIES[1], status: "present" }] }] : undefined));
+    const wrapper = await mountCompanies();
+    await wrapper.get(".row-actions button").trigger("click");
+    await flushPromises();
+    expect(wrapper.find('[aria-label="目录发票"] input[type="checkbox"]').exists()).toBe(false);
+  });
+
   it("marks a non-monitored folder's invoice list read-only", async () => {
     stubBackend((url) => (url.includes("/directories?") || url.endsWith("/directories")
       ? [200, { ok: true, revision: 3, company: COMPANY, directories: [{ ...DIRECTORIES[1], status: "present" }] }] : undefined));

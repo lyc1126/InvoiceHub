@@ -138,6 +138,8 @@ export interface DirectoriesPayload {
 
 export interface InvoiceRow {
   invoice_key: string;
+  /** Present for the monitored folder's rows; selection actions send it back with invoice_key. */
+  source_path?: string;
   /** WS-06 tag ids in definition order; display data only. */
   tags?: string[];
   source_file: string;
@@ -161,6 +163,8 @@ export interface DirectoryInvoicesPayload {
   read_only: boolean;
   directory: CompanyDirectory;
   tags_error?: string;
+  /** A first, still-building result: rows may move, so nothing can be selected (classic homepage rule). */
+  snapshot?: { provisional?: boolean };
 }
 
 export interface LedgerTotals {

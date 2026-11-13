@@ -20,6 +20,12 @@
 - 红冲抵销先于收付款匹配：否则余额已经为 0，被冲的蓝字票仍显示“未付”，页面自相矛盾。守护：`test_red_letter_invoices_reduce_the_balance_and_unreadable_ones_are_listed`。
 - `party_balance` 与 `flow_accounting` 从原始发票、流水清单复算，而不是用往来单位行自己的数：同义反复的校验永远成立，发现不了漏算。守护：上述各用例的 `_ok`。
 
+## 2026-11-13 目录标签的勾选操作条（WS-01 第二阶段）
+
+- 勾选合计不在 Vue 里算：同票家族去重与三项金额的冲突 / 缺失规则只在后端 `selection-summary`，前端再写一份就是两套口径。守护：`companies.spec.ts` 的 “selects invoices on the monitored folder…”（断言请求体只含 `invoice_key + source_path`）。
+- 删除确认的响应丢失时只读执行日志：重新确认可能重复移动文件。删除结果放在列表而不是操作条里：完成后清空勾选会卸载操作条，部分完成的逐文件结果不能随之消失。守护：同上（确认只发一次、随后 GET 日志、结果面板仍在）。
+- `DirectorySelectionBar` 的删除计划 `trash` 必须在立即执行的 `watch` 之前声明：否则组件一挂载就抛错。
+
 ## 2026-11-11 比较明细与并排原始记录（WS-04）
 
 - 计算过程 `steps` 在后端用 `cost_of_sales` 实际用到的数值生成（销售成本写成“金额 × 数量 ÷ 可售数量”而不是“数量 × 舍入单价”）：前端拼式子会因舍入与真实结果差几分，等于另写一份算法。守护：`test_categories_point_at_their_invoices_and_explain_the_month`。
