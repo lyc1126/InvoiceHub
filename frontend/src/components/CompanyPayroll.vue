@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { companySourceKey } from "../stores/companies";
 import { computed, reactive, ref, watch } from "vue";
 import { ApiError, request } from "../api/client";
 import type { Company } from "../api/types";
@@ -40,15 +41,19 @@ const blank = (): Record<Field, string> => ({ count: "", wage: "", base: "", rat
 const cell = (value: string | number | null) => (value === null || value === "" ? "--" : typeof value === "number" ? String(value) : value);
 const amount = (value: string | null) => (value === null ? "--" : money(value));
 
+let loadGeneration = 0;
 async function load(): Promise<void> {
+  const mine = ++loadGeneration;
   loading.value = true;
   error.value = "";
   try {
-    payload.value = await request<PayrollPayload>(`${base.value}${reveal.value ? "?reveal=true" : ""}`, { timeoutMs: 60_000 });
+    const next = await request<PayrollPayload>(`${base.value}${reveal.value ? "?reveal=true" : ""}`, { timeoutMs: 60_000 });
+    if (mine !== loadGeneration) return;
+    payload.value = next;
   } catch (cause) {
-    error.value = errorText(cause);
+    if (mine === loadGeneration) error.value = errorText(cause);
   } finally {
-    loading.value = false;
+    if (mine === loadGeneration) loading.value = false;
   }
 }
 
@@ -96,9 +101,9 @@ function saveManual(): Promise<void> {
 }
 
 watch(reveal, () => void load());
-watch(() => props.company.id, () => {
+watch(() => companySourceKey(props.company, ["payroll_social_dir"]), (_value, previous) => {
   payload.value = null;
-  manual.value = null;
+  if (previous === undefined || JSON.parse(previous)[0] !== props.company.id) manual.value = null;
   void load();
 }, { immediate: true });
 </script>

@@ -50,7 +50,7 @@
 
 后续链路为 `独立 tax router → 规范化输入/TaxWorkspaceService → 来源快照 → Decimal 引擎 → 同源结果与解释`。归集不得改变 `watch_dir`、成本投影或 W8/W9 状态；缺资料逐项阻断，旧绑定/任务/规则的完成结果不能覆盖新场景。实施时同时更新 API、SSE 重连消费、前端文本、缓存版本与契约。
 
-补充原生目录选择草案：`POST /api/v1/tax/workspace/pick-directory → platform.pick_directory → owned Host RPC pick_tax_company_dir → 系统单目录选择窗口 → 待保存草稿 → detect → PUT workspace`。这是拟议第五类 picker 用途，当前下文四个既有 picker route 的实现状态不变；空请求、固定枚举、同源与 ownership 校验，选择成功仅返回 `selected_path/requires_save`，取消保留旧草稿，失败脱敏 503。草稿改变或页面关闭后丢弃旧请求返回，不因选择动作切换 `watch_dir` 或自动保存。
+补充原生目录选择草案：`POST /api/v1/tax/workspace/pick-directory → platform.pick_directory → owned Host RPC pick_tax_company_dir → 系统单目录选择窗口 → 待保存草稿 → detect → PUT workspace`。这是尚未实现的独立税务 picker 草案；WS-02 已另增公司资料夹选择用途，不能把税务草案当作已实现产品能力；空请求、固定枚举、同源与 ownership 校验，选择成功仅返回 `selected_path/requires_save`，取消保留旧草稿，失败脱敏 503。草稿改变或页面关闭后丢弃旧请求返回，不因选择动作切换 `watch_dir` 或自动保存。
 
 申报衔接草案：`GET /api/v1/tax/filing-calendar` 只读返回申报期限与顺延，必须带来源与核对日期，未核验期间标注而不是给出推算日期；`GET /api/v1/tax/runs/{run_id}/form-mapping` 把一次运行映射到适用表式与行次，绑定表式版本，表式变更后返回 `stale` 而不是旧行次。期限信息只作提醒，不构成已申报证据；缺表式样例时不输出行次。来源分级与签署要求见[政策来源与核验](../TAX_POLICY_SOURCES_AND_REVIEW.md)。
 
@@ -253,21 +253,22 @@ secret 已捕获到 app state 且 challenge 是合法 64 位小写 hex 时返回
 identity 检查确认 child 仍被拥有，才 arm 授权或创建 surface。未知监听者永远不会收到 secret
 或 WebView。
 
-四个既有 picker route 仍只把选择结果交回既有 `AppState` 草稿流程：
+五个单路径 picker route 只把选择结果交回相应服务的待保存 / 待登记草稿流程：
 
 | 路径 | Tauri host mode 的额外边界 |
 |---|---|
 | `POST /api/v1/settings/pick-watch-dir` | 必须精确 `Origin: http://127.0.0.1:8766` |
+| `POST /api/v1/companies/pick-directory` | 同一精确 origin；只接受空 body / `{}`，只返回待登记路径 |
 | `POST /api/v1/documents/pick-outbound-dir` | 必须精确 `Origin: http://127.0.0.1:8766` |
 | `POST /api/v1/ocr/pick-file` | 必须精确 `Origin: http://127.0.0.1:8766` |
 | `POST /api/v1/ocr/pick-folder` | 必须精确 `Origin: http://127.0.0.1:8766` |
 
 在非 Tauri mode，它们保留既有同源写入检查。Tauri host 只将 token 传给其直接启动的
-Python backend；backend 启动时捕获 token 并从 descendant 环境清除。该 Python client 的 picker 面只将四种固定 picker enum
+Python backend；backend 启动时捕获 token 并从 descendant 环境清除。该 Python client 的单路径 picker 面只将五种固定单路径 picker enum（另有临时识别多选 `pick_temporary_files`）
 发送到随机 loopback Host RPC listener，更新面独立地只允许 `update_check` / `update_install` 两个固定 enum；token 不会经过页面、
 Tauri command/event、API 响应或日志；Rust dialog 最多等待 120 秒，Python 以 125 秒预算保留响应余量。
 Host RPC 失败统一变为不含 token、URL 或 secret 的 `503 Native picker unavailable`；非
-Tauri 的 Tk 行为不变。授权先在 handshake 后 arm，backend child 退出后由 100 ms 有界
+Tauri 的既有 Tk 行为不变；公司选择新增 125 秒子进程总时限，失败与超时同样脱敏 503。授权先在 handshake 后 arm，backend child 退出后由 100 ms 有界
 Rust liveness watcher 撤销，watcher 不能重新授权已退出 child。握手完成后 host 才读取
 `GET /api/v1/preferences` 的严格 `{ok, preferences.startup_surface,
 allowed.desktop_available}` 形状并重新证明 ownership：desktop 创建空 IPC WebView，browser
@@ -412,6 +413,10 @@ python -m invoice_hub.bank.voucher_cli export --company <公司资料夹> [--dra
 |---|---|---|---|
 | `GET /api/v1/companies` | `list_companies` | 全部公司、六个标准子目录状态（`present/missing/not_directory/outside_root/unreadable/root_unavailable`）、当前纳税人类型、`monitored`/`monitored_subdir_key` 与 `monitored_company_id` | 只做 stat，不递归扫描；清单损坏返回 409 `COMPANY_REGISTRY_CORRUPT` |
 | `POST /api/v1/companies` | `create_company` | 登记公司：名称、资料夹根、可选子目录映射与纳税人身份；未给出的子目录按标准名 → 唯一命中提示词 → 标准名（待创建）推断，返回 `subdir_sources` | 根须是已存在文件夹，不得与已登记公司重复或嵌套；名称不区分大小写唯一；最多 200 家 |
+| `POST /api/v1/companies/pick-directory` | `companies.pick_directory` | 空 body / `{}`；`selected/path/requires_save`，取消不带旧路径 | 同源写校验；host mode 精确 origin，`pick_company_directory` 固定 enum；不写清单或设置，失败 / 超时脱敏 503 |
+| `POST /api/v1/companies/setup-jobs` | `companies.setup.plan` | `revision/name/parent_dir/folder_name/subdirs/taxpayer_periods`；返回 `job_id/plan_hash/root_path/items/state`，只写 runtime 计划 | 根必须不存在，父目录已存在；拒绝重叠、非法 Windows 名；计划 5 分钟有效 |
+| `POST /api/v1/companies/setup-jobs/{job_id}/confirm` | `companies.setup.confirm` | `confirm=true + plan_hash`；返回创建结果与完成时的 company | 先重验再持久化排他意图，mkdir 后登记；失败保留空目录，重复 / 未决请求只返回现有结果 |
+| `GET /api/v1/companies/setup-jobs/{job_id}` | `companies.setup.get` | 只读 `prepared/completed/failed/unknown`、已创建目录与诊断 | 崩溃 / 登记观察未确认不能回退为 prepared 或自动重放；损坏日志保留且 409 |
 | `GET /api/v1/companies/{company_id}` | `get_company` | 单家公司当前状态 | 不存在返回 404 `COMPANY_NOT_FOUND` |
 | `PATCH /api/v1/companies/{company_id}` | `update_company` | 改名称/根/纳税人身份（整体替换）/子目录映射（按键合并） | 值未变化时不写文件、不递增 revision |
 | `DELETE /api/v1/companies/{company_id}?revision=N` | `delete_company` | 只删清单条目，返回 `files_touched=0` | 不删除、移动或改写公司资料夹内任何文件 |

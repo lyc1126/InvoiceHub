@@ -303,6 +303,8 @@ Lifecycle lease 是 host 运行态授权快照，不是可持久化业务状态�
 - 前端列表状态：`date_sort` 与标签参数交给后端全量排序 / 筛选后分页；勾选保留首页身份，`snapshot.revision` 改变或监控身份改变时清除。列表与全选的请求代际防止迟到结果覆盖新状态；原票队列逐源文件保留，100 项名称窗口与 12 页缩略图只限制渲染，不截断队列。XML 正文在读取响应体后再次核对代际，关闭即取消读取。
 - 发票列表：非活动目录用绑定该 profile 的临时 `InvoiceListService` 调用只读的 `list_invoices`（不带 `page`，避免读取渐进缓存），再在外层分页；活动目录交给 `state.invoices`。
 
+WS-02 新建工作区（`company_setup.py`）沿用 schema v1 公司清单；独立的 `runtime/local_state/company-setups/<job_id>.json` 为执行记录，不是发票存储。计划绑定清单 revision、清洗后的输入、目标根与父目录设备 / inode 身份、六类相对路径；根不存在且不与已登记公司 / watch_dir 重叠。确认重算 plan_hash，5 分钟超时拒绝；持久化 `.started` 排他标记后逐步 fsync 意图 / 观察，再登记。`creating/registering` 或只有执行标记而无终态时只读呈现 unknown；已创建目录按相对路径与身份记录，父路径 / 链接变化停止；部分失败不回滚删除。目录映射是数据来源身份，前端读结果与选择须按稳定映射键失效，未保存人工草稿另行保留。
+
 公司发票账簿（WS-07 第 3 步的发票部分，`services/company_ledger.py::build_invoice_ledger`）：
 
 ```text

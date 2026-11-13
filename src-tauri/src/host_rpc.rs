@@ -40,6 +40,7 @@ const UPDATE_CANDIDATE_TTL: Duration = Duration::from_secs(300);
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HostRpcCommand {
     PickWatchDirectory,
+    PickCompanyDirectory,
     PickOutboundInvoiceDirectory,
     PickOcrDirectory,
     PickOcrFile,
@@ -53,6 +54,7 @@ impl HostRpcCommand {
     fn parse(value: &str) -> Option<Self> {
         match value {
             "pick_watch_dir" => Some(Self::PickWatchDirectory),
+            "pick_company_directory" => Some(Self::PickCompanyDirectory),
             "pick_outbound_invoice_dir" => Some(Self::PickOutboundInvoiceDirectory),
             "pick_ocr_directory" => Some(Self::PickOcrDirectory),
             "pick_ocr_file" => Some(Self::PickOcrFile),
@@ -156,6 +158,7 @@ impl HostRpcAuthorizer {
         matches!(
             command,
             "pick_watch_dir"
+                | "pick_company_directory"
                 | "pick_outbound_invoice_dir"
                 | "pick_ocr_directory"
                 | "pick_ocr_file"
@@ -879,6 +882,7 @@ fn handle_request(
     authorizer.authorize(&request.origin, &token, command_name(command))?;
     match command {
         HostRpcCommand::PickWatchDirectory
+        | HostRpcCommand::PickCompanyDirectory
         | HostRpcCommand::PickOutboundInvoiceDirectory
         | HostRpcCommand::PickOcrDirectory
         | HostRpcCommand::PickOcrFile => select_path(app_handle.clone(), command)
@@ -1033,6 +1037,7 @@ fn select_path(
 ) -> Result<Option<String>, HostRpcServerError> {
     let pick_file = match command {
         HostRpcCommand::PickWatchDirectory
+        | HostRpcCommand::PickCompanyDirectory
         | HostRpcCommand::PickOutboundInvoiceDirectory
         | HostRpcCommand::PickOcrDirectory => false,
         HostRpcCommand::PickOcrFile => true,
@@ -1051,7 +1056,13 @@ fn select_path(
     // tauri-plugin-dialog already marshals its asynchronous picker onto Tauri's
     // main thread. A second dispatch can be rejected before the plugin receives
     // the request, turning a usable native dialog into a redacted 503.
-    if pick_file {
+    if command == HostRpcCommand::PickCompanyDirectory {
+        app_handle
+            .dialog()
+            .file()
+            .set_title("选择公司资料夹或新建位置")
+            .pick_folder(respond);
+    } else if pick_file {
         app_handle.dialog().file().pick_file(respond);
     } else {
         app_handle.dialog().file().pick_folder(respond);
@@ -1231,6 +1242,7 @@ fn write_rejected_response(stream: &mut TcpStream) -> std::io::Result<()> {
 fn command_name(command: HostRpcCommand) -> &'static str {
     match command {
         HostRpcCommand::PickWatchDirectory => "pick_watch_dir",
+        HostRpcCommand::PickCompanyDirectory => "pick_company_directory",
         HostRpcCommand::PickOutboundInvoiceDirectory => "pick_outbound_invoice_dir",
         HostRpcCommand::PickOcrDirectory => "pick_ocr_directory",
         HostRpcCommand::PickOcrFile => "pick_ocr_file",
@@ -1633,5 +1645,22 @@ mod tests {
                 "tampered-signature",
             )
         );
+    }
+}
+
+#[cfg(test)]
+mod company_picker_tests {
+    use super::HostRpcCommand;
+
+    #[test]
+    fn company_picker_accepts_only_the_fixed_payload_without_paths() {
+        assert_eq!(
+            HostRpcCommand::from_payload(br#"{"command":"pick_company_directory"}"#),
+            Ok(HostRpcCommand::PickCompanyDirectory)
+        );
+        assert!(HostRpcCommand::from_payload(
+            br#"{"command":"pick_company_directory","path":"/untrusted"}"#
+        )
+        .is_err());
     }
 }

@@ -476,6 +476,7 @@
 | `src/invoice_hub/services/company_vouchers.py` | 凭证草稿审核（WS-05 第一阶段）：`list_drafts/read_draft/save_draft` 读写公司资料夹 `做账草稿/凭证草稿_*.xlsx` 的“凭证审核”表；读取用导出的 `read_review_xlsx`，校验用导出的 `validate`（只读 `凭证/科目表.json`、`辅助核算档案.json`）；保存带文件 SHA-256 revision，只改已有行的摘要、科目编码（同步科目名称）、借贷、供应商与审核列，以及所属期 / 记账日期（移月重编号、不能选未来月份），审核通过被拒时整批不写，原子替换；`_check_sheets` 只读返回草稿的核对表；`rebook_invoice` 写记入期调整并按记住的生成参数重新生成，`_source_documents` 给出发票凭证的同期 / 跨期；`draft_inputs/generate_draft` 按命令行同一入口生成草稿，覆盖前备份到 `做账草稿/历史/` 并按来源配对沿用审核（`_review_state/_identity/_carry_review`）；`export_draft` 在确认、制单人与 revision 复核后调用 `jierui.export`（与命令行同一输入与输出位置，进程内串行）。 | 由 `company_views.py::voucher_drafts/voucher_draft/save_voucher_draft` 调用；复用 `bank/jierui.py`、`bank/ledger.py`。守护测试 `tests/test_company_vouchers.py`。 |
 | `src/invoice_hub/services/invoice_tags.py` | 发票标签（WS-06）：`InvoiceTagStore` 读写本机标签定义（校验、revision、整体替换）与公司资料夹 `发票标签.json` 标记（按发票号码），删除标签时按公司清除标记，读取时忽略已删除的标签。 | 由 `company_views.py` 调用（定义路径取公司清单同目录）；只用于显示与筛选。 |
 | `src/invoice_hub/services/company_registry.py` | `CompanyRegistryService`：`runtime/local_state/companies.json` 的唯一写入者（RLock + revision CAS + 原子替换，损坏时保留原文件并拒写）；六类标准子目录与识别提示（前四类复用 `dossier.BUSINESS_DOSSIER_DIR_HINTS`）、纳税人身份生效期（`taxpayer_type_for`）、子目录补建 `plan_hash` 预览/确认与仅新建空目录。 | 上接 `api/routes/companies.py`；读活动 TargetProfile 只用于标记 `monitored`；`services/company_views.py` 从这里取公司与子目录，不把它当第二个 watch_dir；写入改变活动公司当月纳税人类型时回调 `state.costs.refresh_workbook_tax_profile`。守护测试 `tests/test_api_companies.py`。 |
+| `src/invoice_hub/services/company_setup.py` | WS-02 确认后新建公司根 / 六类空目录并登记；与注册服务共用锁和校验，runtime 计划 / 排他执行标记 / 意图 / 观察持久化，失败保留、未知只查不重放。 | `CompanyRegistryService.setup`；`POST /api/v1/companies/setup-jobs` 与 confirm / GET；`tests/test_company_setup.py`。 |
 | `src/invoice_hub/services/dossier.py` | `BusinessDossierService`：解析当前公司资料夹、一次有界扫描快捷入口/统计并限制打开路径（ENG-03 从 AppState 原样迁出；扫描上限常量也在此）。路由以 `state.dossier` 直接调用，做账经 `business_dossier_root()` 取公司目录。 | `/api/v1/business-dossier*` 和首页消费；不得改变 `watch_dir` 扫描语义；截断统计必须明确为下界。 |
 | `src/invoice_hub/services/document_rendering.py` | MuPDF 文档打开和安全分页 PNG 渲染的共享适配。 | preview/print 共用；缺依赖、加密、空文档、页尺寸和渲染失败保持结构化错误。 |
 | `src/invoice_hub/services/file_preview.py` | 短期源文件预览 job、闲置续租、页面/文本缓存、SVG/XML/图片安全边界。 | 保留已选源文件顺序；15 分钟闲置 TTL、页数、像素、作业数和缓存上限防止内存滥用。 |
@@ -603,6 +604,7 @@
 | `tests/test_company_vouchers.py` | 凭证草稿审核：按导出规则校验（借贷不平、科目可用、供应商档案）、写回同一单元格且导出读取器可见、其他工作表保留、不平凭证不能审核通过且整批不写、改过的已通过凭证需重新审核、过期 revision 拒绝、跨凭证行与越界文件名拒绝、改编码同步科目名称、非法请求体，以及 API 列表 / 读取 / 结构化拒绝原因。 | services/company_vouchers、company_views、bank/jierui。 |
 | `tests/test_company_voucher_generate.py` | 页面生成草稿与改记入期：与 `voucher_cli draft` 逐单元格一致、重新生成先备份并沿用未变凭证的审核与改过的摘要、内容变了列入重新审核、只接受列出的读回文件与合法月份、缺发票明细的生成失败提示；改记入期后凭证移到新月份并标跨期、命令行读同一调整、撤销与调到范围外、revision 冲突与损坏文件拒绝。 | services/company_vouchers、bank/vouchers、bank/voucher_cli。 |
 | `tests/test_api_companies.py` | 公司清单 API：空清单不建文件、子目录识别与歧义回退、revision CAS、根目录重复/嵌套、相对/绝对路径保存、子目录越界、纳税人生效期、补建预览/确认/过期、链接逃逸、损坏文件拒写、删除不碰文件、`monitored` 标记且不切换目录、跨来源拒绝。 | services/company_registry、api/routes/companies。 |
+| `tests/test_company_setup.py` | 公司 picker 只填草稿、固定私有能力、来源与空 body、取消 / 脱敏失败 / 超时；新建计划不写用户根，确认仅执行一次，非法路径、重复 / 嵌套、父身份变化、部分失败、崩溃与登记观察未知、相对路径登记。 | `company_registry.py`、`company_setup.py`、`api/routes/companies.py`。 |
 | `tests/test_api_bookkeeping.py` | 做账 API、错误模型和废弃接口 410。 | AppState、api、bookkeeping。 |
 | `tests/test_bookkeeping_decisions.py` | W9 会计决定与提案 revision。 | decisions、vouchers。 |
 | `tests/test_bookkeeping_export.py` | 批次 manifest、XLSX、签名和 finalize。 | import_file、batches、validator。 |
@@ -669,7 +671,7 @@
 | `frontend/src/api/client.ts` | 同源 `/api/v1` 请求封装：超时、JSON、`detail/message` 错误映射为 `ApiError`，结构化错误带 `code` 与逐项原因 `details`；`acceptPartial` 让带逐项结果的 `ok:false`（子目录补建部分失败）返回给调用方。 | 所有视图请求经此；与后端错误模型一致。 |
 | `frontend/src/api/types.ts` | 已消费 API 字段的类型子集。 | 后端字段变化时同步。 |
 | `frontend/src/stores/system.ts` | health/settings 只读快照；刷新失败保留上次结果并给出错误。 | Pinia 全局状态。 |
-| `frontend/src/stores/companies.ts` | 公司清单状态（WS-07）：读取、新建、修改、移除都带清单 revision，`COMPANY_REVISION_CONFLICT` 时重新读取再提示重试；子目录补建预览与按 `plan_hash` 确认。 | 消费 `/api/v1/companies*`。 |
+| `frontend/src/stores/companies.ts` | 公司清单状态（WS-07）：读取、新建、修改、移除都带清单 revision，`COMPANY_REVISION_CONFLICT` 时重新读取再提示重试；子目录补建预览与按 `plan_hash` 确认；新建 setup 计划 / 确认 / 查询；`companySourceKey` 只按根与相对映射生成稳定来源键。 | 消费 `/api/v1/companies*`。 |
 | `frontend/src/format.ts` | 纳税人类型、子目录状态与是否最新的中文标签；金额在十进制字符串上分组千分位，不经过浮点。 | 公司模块各组件共用。 |
 | `frontend/src/views/HomeView.vue` | 首页模块（WS-01）：工作区侧栏 + 顶部标签（公司、目录、项目、⇄ 比较、添加公司、发票标签）；每个打开的标签以 `v-show` 常驻（筛选、结果、滚动保留），关闭即丢弃；全部关闭显示起始页（版本、后台状态、当前监控目录）；首次进入自动打开监控中的公司一次；公司被删除时其标签自动关闭；窄屏侧栏改为抽屉。 | 路由 `/workspace/`；`stores/workspace.ts`。 |
 | `frontend/src/stores/workspace.ts` | 首页的标签、置顶、展开的公司、侧栏宽度与“选择以进行比较”的目录；标签 id 由类型 + 对象组成（同一对象只开一个）；`refresh` 计数让双击 `hi.` 只重建当前标签；置顶、展开与宽度存本机 `localStorage`（`invoicehub.workspace.v1`，仅界面偏好）；`clampSidebar` 限制 220—460px 且内容区至少 620px。 | `HomeView.vue`、`WorkspaceSidebar.vue`、`App.vue`。 |
@@ -680,7 +682,7 @@
 | `frontend/src/components/DirectoryInvoices.vue` | 目录发票列表（上次投影；非监控目录只读）：标签色点列，右键 / Shift+F10 打标签（只更新该行；在多行勾选中的行上作用于全部勾选的发票，打开时读取当前标记），按标签筛选与后端开票时间排序 / 分页，显示大类与业务样式及经典格式配色；监控目录且非临时结果时有勾选列（表头勾选本页，含部分选中），“全选筛选结果”按同一筛选分页读取全部记录；删除后保留逐文件结果面板；勾选预览使用 `SourcePreview.vue`，投影或监控身份变化时清除旧选择，迟到列表 / 全选不覆盖新状态。 | `/api/v1/companies/{id}/directories/{key}/invoices`、`invoice-tags`；`DirectorySelectionBar.vue`。 |
 | `frontend/src/components/DirectorySelectionBar.vue` | 勾选底部操作条：张数与价税合计、合计详情（三项金额、有效计入张数、冲突 / 缺失 / 折叠提示）均来自 `selection-summary`；“预览”把完整选择交给目录页的共用原票面板；打印（先开窗再填 `print-jobs` 的地址）、开具入库单（会话交接到单据页，最多 1000 条）、删除所选（`trash-jobs` 预备清单 → 条内确认 → 响应丢失只读执行日志），取消勾选与全选筛选结果。 | `/api/v1/invoices/selection-summary`、`print-jobs`、`trash-jobs*`。 |
 | `frontend/src/components/WatchSwitchConfirm.vue` | “设为监控目录”确认：说明只监控一个目录，确认后调用 `PUT /api/v1/settings` 并刷新系统快照与公司清单。 | `CompanyDirectories.vue`、`DirectoryPanel.vue`。 |
-| `frontend/src/components/CompanyCreateForm.vue` | 新建公司表单：名称、资料夹路径、可选纳税人身份（不填即未设置）。 | `stores/companies.ts::create`。 |
+| `frontend/src/components/CompanyCreateForm.vue` | 登记已有资料夹 / 从零新建向导：独立原生选择只填草稿；新建填写上级位置、根名称与六类相对目录，计划 / 显式确认 / 未知只 GET；纳税人不默认。 | `stores/companies.ts::create/planSetup/confirmSetup/getSetup`。 |
 | `frontend/src/components/CompanyDirectories.vue` | 公司的子目录表（状态、上次汇总、是否最新）、补建预览与确认、设为监控目录；“查看发票”打开该目录的标签。 | `/api/v1/companies/{id}/directories`、`subdirs/*`；`WatchSwitchConfirm.vue`。 |
 | `frontend/src/components/CompanyLedger.vue` | 公司发票账簿：粒度与期间筛选、票面口径说明、守恒校验（成立时收起、任一不成立时展开并标红）、提示、分期表与合计、未计入的发票。 | `/api/v1/companies/{id}/ledger`。 |
 | `frontend/src/components/CompanyBankLedger.vue` | 公司账簿的“银行流水”区：目录不可用 / 无对账单的说明、余额校验（成立时收起、不成立时展开标红）、对账单问题、按账户的分期表（缺月行标红、余额显示“—”）与来源计数。 | 由 `CompanyLedger.vue` 渲染 `ledger.bank`。 |
@@ -699,9 +701,10 @@
 | `frontend/src/components/CompanyVouchers.vue` | “凭证草稿”分区：选择审核表与月份、只看有问题的；每张凭证一张卡片，逐格编辑摘要 / 科目编码 / 借贷 / 供应商，输入时显示借贷合计（只作显示），审核下拉（待审核 / 通过 / 不导入）；每张凭证可改所属期与记账日期（改月时日期移到月末并提示重新编号）；草稿核对表折叠只读显示；发票凭证的原始单据与同期 / 跨期、“改记入期”；“生成草稿…”面板（起止年月、统一记月末、序时账读回与科目表快照，结果列出沿用 / 需重审 / 新增 / 消失）；“导出已审核…”面板列出各月通过张数、可填账套已用到的号、必填制单人，确认后导出并逐项显示结果（有未保存改动时禁用）；保存只提交改动行、审核状态与所属期 / 日期并带 revision，冲突时刷新提示，审核通过被拒时保留改动并在凭证旁列出后端原因。 | `/api/v1/companies/{id}/voucher-drafts*`。 |
 | `frontend/src/components/InvoiceTagsEditor.vue` | 发票标签管理：颜色、名称、意义的增删改，整表保存带 revision，删除时说明会移除已打标记，冲突时刷新。 | `stores/tags.ts`，`/api/v1/invoice-tags`；首页“发票标签”标签。 |
 | `frontend/src/stores/tags.ts` | 标签定义的 Pinia store：读取、整表保存（带 revision，冲突时重读）与按 id 查找。 | `InvoiceTagsEditor.vue`、`DirectoryInvoices.vue`。 |
-| `frontend/src/components/CompanySettings.vue` | 公司名称与纳税人身份生效期编辑、从清单移除（说明不删除任何文件）；只在切换公司时重置草稿；显示成本汇总表是否已按新身份重写。 | `stores/companies.ts::update/remove`。 |
+| `frontend/src/components/CompanySettings.vue` | 公司名称、六类相对目录映射与纳税人身份生效期编辑（不移动 / 改名文件）、从清单移除（说明不删除任何文件）；只在切换公司时重置草稿；显示成本汇总表是否已按新身份重写。 | `stores/companies.ts::update/remove`。 |
 | `frontend/src/styles.css` | 外框基础样式、模块列、工作区侧栏与标签、窄屏布局（900px 以下侧栏改抽屉，640px 以下模块列横排）。 | 仅作用于 `/workspace`。 |
 | `frontend/tests/directory-preview.spec.ts` | WS-01 目录排序与勾选原票、101 个文件的窗口 / 跳转、XML 纯文本与迟到正文、持续失效恢复、监控切换。 | Vitest + Vue Test Utils；相邻比较预览仍由 `companies.spec.ts` 覆盖。 |
+| `frontend/tests/company-setup.spec.ts` | WS-02 原生选择重复 / 取消 / 迟到、从零向导先计划后确认、确认失联只 GET、映射只保存改动引用、目录选择 / 旧路径 / 监控确认失效与未保存项目草稿保护。 | Vitest + Vue Test Utils；服务端文件系统边界由 `test_company_setup.py` 覆盖。 |
 | `frontend/tests/client.spec.ts` | 请求封装的成功、错误、`ok:false`、请求体与超时测试。 | Vitest + happy-dom。 |
 | `frontend/tests/companies.spec.ts` | 公司标签：侧栏列出公司并默认打开监控中的公司、新建带 revision 且不假定纳税人身份、版本冲突后重新读取、补建必须先预览并发送 `plan_hash`、预览过期要求重新预览、守恒校验失败标红且展开、非监控目录只读、金额分组。 | Vitest + Vue Test Utils，桩接 `fetch`。 |
 | `frontend/tests/app.spec.ts` | 外框与首页（WS-01）：无公司时的起始页与 health、旧路径重定向、未迁移模块链接经典页面、刷新失败保留快照；侧栏节点打开为标签且不重复、隐藏标签保持挂载、全部关闭后停在起始页、项目展开时才读取、Shift+F10 菜单置顶并写入本机偏好、同公司有勾稽关系才可比较（无关系与不同公司禁用并说明）并以预选关系打开 ⇄ 标签、双击 `hi.` 只重载当前标签、侧栏宽度限位。 | Vitest + Vue Test Utils，桩接 `fetch`。 |

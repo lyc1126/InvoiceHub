@@ -3,7 +3,7 @@ import { ref, watch } from "vue";
 import { ApiError, request } from "../api/client";
 import type { Company, CompanyDirectory, DirectoriesPayload, SubdirCreateResult, SubdirPlan } from "../api/types";
 import { FRESHNESS_LABELS, SUBDIR_STATUS_LABELS, errorText } from "../format";
-import { useCompaniesStore } from "../stores/companies";
+import { companySourceKey, useCompaniesStore } from "../stores/companies";
 import { useWorkspaceStore } from "../stores/workspace";
 import WatchSwitchConfirm from "./WatchSwitchConfirm.vue";
 
@@ -21,17 +21,20 @@ const switchTarget = ref<CompanyDirectory | null>(null);
 
 const base = () => `/api/v1/companies/${encodeURIComponent(props.company.id)}`;
 
+let loadGeneration = 0;
 async function loadDirectories(): Promise<void> {
+  const mine = ++loadGeneration;
   loading.value = true;
   error.value = "";
   try {
     // The freshness check is a bounded read-only comparison made only on this request;
     // nothing scans non-monitored folders in the background.
-    directories.value = (await request<DirectoriesPayload>(`${base()}/directories`)).directories;
+    const next = await request<DirectoriesPayload>(`${base()}/directories`);
+    if (mine === loadGeneration) directories.value = next.directories;
   } catch (cause) {
-    error.value = errorText(cause);
+    if (mine === loadGeneration) error.value = errorText(cause);
   } finally {
-    loading.value = false;
+    if (mine === loadGeneration) loading.value = false;
   }
 }
 
@@ -40,7 +43,9 @@ async function previewSubdirs(): Promise<void> {
   planResult.value = null;
   error.value = "";
   try {
-    plan.value = await companies.subdirPlan(props.company.id);
+    const sourceKey = companySourceKey(props.company);
+    const next = await companies.subdirPlan(props.company.id);
+    if (sourceKey === companySourceKey(props.company)) plan.value = next;
   } catch (cause) {
     error.value = errorText(cause);
   } finally {
@@ -75,11 +80,11 @@ function openDirectory(item: CompanyDirectory): void {
 }
 
 watch(
-  () => props.company.id,
+  () => `${companySourceKey(props.company)}/${props.company.monitored}/${props.company.monitored_subdir_key ?? ""}`,
   () => {
+    switchTarget.value = null;
     plan.value = null;
     planResult.value = null;
-    switchTarget.value = null;
     directories.value = [];
     void loadDirectories();
   },

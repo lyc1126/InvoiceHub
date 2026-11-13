@@ -1,5 +1,12 @@
 # InvoiceHub 注释与设计原因地图
 
+## 2026-11-13 公司选择、新建向导与映射（WS-02）
+
+- 公司 picker 是独立固定用途，返回只填草稿；复用监控用途会混淆“登记公司”与“切换业务来源”。host 拒绝路径等额外元数据，UI 不接收覆盖手工草稿的迟到结果。守护：`test_company_picker_is_a_draft_fixed_capability_with_origin_and_body_guards`、前端 picker 取消 / 重复 / 迟到用例与 Rust payload / ownership 契约。
+- 新建先持久化排他执行标记再 mkdir，每步记录意图与观察：断线或重启后“不知道成功”不能变成再次创建 / 登记。部分空目录保留，不做删除回滚；登记原子写成功而事件写失败时必须是 unknown。守护：`test_interrupted_claim_is_query_only_and_corrupt_job_is_preserved`、部分失败与登记事件失败用例。
+- setup 共用注册服务的 RLock 与 CAS；规划阶段拒绝与 watch_dir 重叠，因此持锁登记不会触发获取成本投影写锁的纳税人回调，保持原有锁顺序。
+- 映射改变会改变公司账簿的事实来源，缓存键不能只有公司 id；但普通对象刷新也不能反复加载。来源变化丢弃旧读请求、选择和未确认目录操作，未保存人工项目归属 / 工资手工值保留。守护：`company-setup.spec.ts` 的映射、选择失效与草稿用例，既有局部更新 / 页面缓存回归。
+
 ## 2026-11-13 目录列表与共用原票预览（WS-01 第三阶段）
 
 - 目录预览传完整选择、保留同票各格式，金额家族去重不能复用为预览去重；100 个文件名 / 12 页缩略图是渲染窗口，不是队列上限。守护：`directory-preview.spec.ts` 的多格式与 101 文件用例。

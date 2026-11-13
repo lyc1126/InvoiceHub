@@ -8,6 +8,7 @@ const props = defineProps<{ company: Company }>();
 const companies = useCompaniesStore();
 const name = ref("");
 const periods = ref<TaxpayerPeriod[]>([]);
+const subdirs = ref<Record<string, string>>({});
 const busy = ref(false);
 const error = ref("");
 const notice = ref("");
@@ -15,6 +16,7 @@ const confirmRemove = ref(false);
 
 function reset(): void {
   name.value = props.company.name;
+  subdirs.value = Object.fromEntries(props.company.subdirs.map((item) => [item.key, item.relative_path]));
   periods.value = props.company.taxpayer_periods.map((item) => ({ ...item }));
   error.value = "";
   confirmRemove.value = false;
@@ -32,7 +34,10 @@ async function save(): Promise<void> {
   error.value = "";
   notice.value = "";
   try {
-    const result = await companies.update(props.company.id, { name: name.value, taxpayer_periods: periods.value });
+    const changed = Object.fromEntries(props.company.subdirs.filter((item) => subdirs.value[item.key] !== item.relative_path)
+      .map((item) => [item.key, subdirs.value[item.key]!]));
+    const result = await companies.update(props.company.id, { name: name.value, taxpayer_periods: periods.value,
+      ...(Object.keys(changed).length ? { subdirs: changed } : {}) });
     await nextTick();
     reset(); // show the saved, backend-sorted values
     notice.value = ["已保存。", workbookNotice(result.cost_workbook)].join("");
@@ -68,6 +73,13 @@ watch(() => props.company.id, () => {
       <span>公司名称</span>
       <input v-model="name" required maxlength="80" autocomplete="off">
     </label>
+    <fieldset class="field">
+      <legend>资料目录映射</legend>
+      <p class="muted">填写公司资料夹内的相对路径。保存只改变资料类型指向，不移动或重命名文件；缺少的目录可在“目录”里另行预览补建。</p>
+      <label v-for="item in company.subdirs" :key="item.key" class="field-row company-subdir-field">
+        <span>{{ item.label }}</span><input v-model="subdirs[item.key]" :aria-label="`${item.label} 映射`" required autocomplete="off" :disabled="busy">
+      </label>
+    </fieldset>
     <fieldset class="field">
       <legend>纳税人身份</legend>
       <p class="muted">成本开票参考按本月生效的身份计算；未设置时不会默认按一般纳税人。</p>

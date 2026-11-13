@@ -63,7 +63,7 @@ def open_external_url(url: str) -> None:
     )
 
 
-def run_native_dialog(command_name: str, initial_path: Path, title: str) -> dict:
+def run_native_dialog(command_name: str, initial_path: Path, title: str, *, timeout_seconds: float | None = None) -> dict:
     mock_path = os.environ.get("INVOICE_HUB_DIALOG_MOCK_PATH")
     if mock_path is not None:
         return {"ok": True, "selected": bool(mock_path), "path": mock_path}
@@ -91,7 +91,7 @@ def run_native_dialog(command_name: str, initial_path: Path, title: str) -> dict
         env=env,
         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         check=False,
-        timeout=125 if command_name == "pick-temporary-files" else None,
+        timeout=timeout_seconds if timeout_seconds is not None else (125 if command_name == "pick-temporary-files" else None),
     )
     if result.returncode != 0:
         stderr_tail = "\n".join((result.stderr or "").splitlines()[-20:])
@@ -107,6 +107,7 @@ def pick_directory(
     title: str = "选择发票监控文件夹",
     *,
     host_command: host_rpc.HostRpcCommand | None = None,
+    dialog_timeout_seconds: float | None = None,
 ) -> dict:
     if host_rpc.is_configured():
         if host_command is None:
@@ -114,6 +115,8 @@ def pick_directory(
         payload = host_rpc.pick(host_command)
         if payload is not None:
             return payload
+    if dialog_timeout_seconds is not None:
+        return run_native_dialog("pick-directory", initial_dir, title, timeout_seconds=dialog_timeout_seconds)
     return run_native_dialog("pick-directory", initial_dir, title)
 
 

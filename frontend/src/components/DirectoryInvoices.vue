@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { companySourceKey } from "../stores/companies";
 import { computed, nextTick, onMounted, onBeforeUnmount, ref, watch } from "vue";
 import { ApiError, request } from "../api/client";
 import type { Company, DirectoryInvoicesPayload, InvoiceRow, InvoiceTagMarks, PreviewRef } from "../api/types";
@@ -285,9 +286,9 @@ onMounted(() => {
   if (!tagStore.definitions) void tagStore.load();
 });
 
-// A string key: a refreshed company list hands in a new object with the same id, which must not reload.
+// Source/monitor identity changes invalidate selection; a metadata-only object refresh does not.
 watch(
-  () => `${props.company.id}/${props.dirKey}/${props.company.monitored}/${props.company.monitored_subdir_key ?? ""}`,
+  () => `${companySourceKey(props.company, [props.dirKey])}/${props.company.monitored}/${props.company.monitored_subdir_key ?? ""}`,
   () => {
     invoices.value = null;
     marksRevision.value = null;

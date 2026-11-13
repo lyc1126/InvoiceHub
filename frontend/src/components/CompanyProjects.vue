@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { companySourceKey } from "../stores/companies";
 import { computed, reactive, ref, watch } from "vue";
 import { ApiError, request } from "../api/client";
 import type { Company, ProjectInvoice, ProjectSummary } from "../api/types";
@@ -14,6 +15,7 @@ const error = ref("");
 const notice = ref("");
 // Draft values keyed by invoice number; only changed rows are sent.
 const drafts = reactive<Record<string, string>>({});
+const sourcesStale = ref(false);
 const base = computed(() => `/api/v1/companies/${encodeURIComponent(props.company.id)}/projects`);
 const changed = computed(() => Object.entries(drafts).filter(([number, value]) => value.trim() !== (original.value[number] ?? "")));
 const original = computed<Record<string, string>>(() => {
@@ -29,24 +31,29 @@ const SOURCE: Record<ProjectInvoice["source"], string> = {
   none: "备注无项目",
 };
 
+let loadGeneration = 0;
 async function load(): Promise<void> {
+  const mine = ++loadGeneration;
   loading.value = true;
   error.value = "";
   const query = new URLSearchParams({ granularity: filters.granularity });
   if (filters.start) query.set("start", filters.start);
   if (filters.end) query.set("end", filters.end);
   try {
-    summary.value = await request<ProjectSummary>(`${base.value}?${query}`);
+    const next = await request<ProjectSummary>(`${base.value}?${query}`);
+    if (mine !== loadGeneration) return;
+    summary.value = next;
+    sourcesStale.value = false;
     for (const key of Object.keys(drafts)) delete drafts[key];
   } catch (cause) {
-    error.value = errorText(cause);
+    if (mine === loadGeneration) error.value = errorText(cause);
   } finally {
-    loading.value = false;
+    if (mine === loadGeneration) loading.value = false;
   }
 }
 
 async function save(): Promise<void> {
-  if (!summary.value || !changed.value.length) return;
+  if (!summary.value || !changed.value.length || sourcesStale.value) return;
   saving.value = true;
   error.value = "";
   notice.value = "";
@@ -72,8 +79,9 @@ async function save(): Promise<void> {
 }
 
 watch(
-  () => props.company.id,
-  () => {
+  () => companySourceKey(props.company, ["cost_invoice_dir", "issued_invoice_dir"]),
+  (_value, previous) => {
+    if (previous && JSON.parse(previous)[0] === props.company.id && changed.value.length) { sourcesStale.value = true; loadGeneration += 1; loading.value = false; return; }
     summary.value = null;
     notice.value = "";
     void load();
@@ -84,6 +92,7 @@ watch(
 
 <template>
   <section aria-label="项目">
+    <p v-if="sourcesStale" class="banner banner--note" role="status">目录映射已变化，未保存的项目归属已保留。<button type="button" :disabled="loading" @click="load">放弃未保存归属并重读</button></p>
     <form class="toolbar" @submit.prevent="load">
       <select v-model="filters.granularity" aria-label="汇总粒度">
         <option value="month">按月</option>
@@ -167,7 +176,7 @@ watch(
             </tr>
           </tbody>
         </table>
-        <button type="submit" class="primary" :disabled="saving || !changed.length" :aria-busy="saving">
+        <button type="submit" class="primary" :disabled="saving || !changed.length || sourcesStale" :aria-busy="saving">
           {{ saving ? "保存中…" : `保存（${changed.length}）` }}
         </button>
       </form>

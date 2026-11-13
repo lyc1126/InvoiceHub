@@ -39,6 +39,7 @@ class HostRpcError(RuntimeError):
 
 class HostRpcCommand(str, Enum):
     PICK_WATCH_DIRECTORY = "pick_watch_dir"
+    PICK_COMPANY_DIRECTORY = "pick_company_directory"
     PICK_OUTBOUND_INVOICE_DIRECTORY = "pick_outbound_invoice_dir"
     PICK_OCR_DIRECTORY = "pick_ocr_directory"
     PICK_OCR_FILE = "pick_ocr_file"

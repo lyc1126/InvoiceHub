@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { companySourceKey } from "../stores/companies";
 import { computed, ref, watch } from "vue";
 import { request } from "../api/client";
 import type { Company, SameNumberResult } from "../api/types";
@@ -18,22 +19,26 @@ const focus = ref<CompareFocus | null>(null);
 const labels = computed(() => ({ a: result.value?.sides.a.label ?? "", b: result.value?.sides.b.label ?? "" }));
 const counts = computed(() => result.value?.counts);
 
+let loadGeneration = 0;
 async function load(): Promise<void> {
+  const mine = ++loadGeneration;
   focus.value = null;
   loading.value = true;
   error.value = "";
   const query = new URLSearchParams({ a: props.dirKey, b: props.otherDirKey, b_company: props.otherCompany.id });
   try {
-    result.value = await request<SameNumberResult>(`/api/v1/companies/${encodeURIComponent(props.company.id)}/same-number?${query}`);
+    const next = await request<SameNumberResult>(`/api/v1/companies/${encodeURIComponent(props.company.id)}/same-number?${query}`);
+    if (mine !== loadGeneration) return;
+    result.value = next;
   } catch (cause) {
-    error.value = errorText(cause);
+    if (mine === loadGeneration) error.value = errorText(cause);
   } finally {
-    loading.value = false;
+    if (mine === loadGeneration) loading.value = false;
   }
 }
 
-// String key: refreshed company objects with the same ids must not reload the check.
-watch(() => `${props.company.id}/${props.dirKey}/${props.otherCompany.id}/${props.otherDirKey}`, () => void load(), { immediate: true });
+// Stable source keys ignore metadata refreshes but invalidate a comparison after a mapping changes.
+watch(() => `${companySourceKey(props.company, [props.dirKey])}/${companySourceKey(props.otherCompany, [props.otherDirKey])}`, () => { result.value = null; void load(); }, { immediate: true });
 </script>
 
 <template>

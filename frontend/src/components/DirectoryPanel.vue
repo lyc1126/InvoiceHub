@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { companySourceKey } from "../stores/companies";
 import { ref, watch } from "vue";
 import { request } from "../api/client";
 import type { Company, CompanyDirectory, DirectoriesPayload } from "../api/types";
@@ -14,14 +15,17 @@ const directory = ref<CompanyDirectory | null>(null);
 const error = ref("");
 const switching = ref(false);
 
+let loadGeneration = 0;
 async function load(): Promise<void> {
+  const mine = ++loadGeneration;
   error.value = "";
   try {
     const payload = await request<DirectoriesPayload>(`/api/v1/companies/${encodeURIComponent(props.company.id)}/directories`);
+    if (mine !== loadGeneration) return;
     directory.value = payload.directories.find((item) => item.key === props.dirKey) ?? null;
     if (!directory.value) error.value = "公司清单里没有这个子目录。";
   } catch (cause) {
-    error.value = errorText(cause);
+    if (mine === loadGeneration) error.value = errorText(cause);
   }
 }
 
@@ -30,8 +34,8 @@ async function switched(): Promise<void> {
   await load();
 }
 
-// A string key: a refreshed company list hands in a new object with the same id, which must not reload.
-watch(() => `${props.company.id}/${props.dirKey}/${props.company.monitored}/${props.company.monitored_subdir_key ?? ""}`, () => void load(), { immediate: true });
+// Source/monitor identity changes invalidate the directory; a metadata-only object refresh does not.
+watch(() => `${companySourceKey(props.company, [props.dirKey])}/${props.company.monitored}/${props.company.monitored_subdir_key ?? ""}`, () => { directory.value = null; switching.value = false; void load(); }, { immediate: true });
 </script>
 
 <template>

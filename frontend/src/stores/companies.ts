@@ -6,6 +6,8 @@ import type {
   CompanyDeletePayload,
   CompanyListPayload,
   CompanyPayload,
+  CompanySetupInput,
+  CompanySetupJob,
   SubdirCreateResult,
   SubdirPlan,
   TaxpayerPeriod,
@@ -15,6 +17,20 @@ export interface NewCompany {
   name: string;
   root_dir: string;
   taxpayer_periods: TaxpayerPeriod[];
+  subdirs?: Record<string, string>;
+}
+
+export interface CompanyPatch {
+  name?: string;
+  taxpayer_periods?: TaxpayerPeriod[];
+  subdirs?: Record<string, string>;
+}
+
+// A source identity, not an object identity: a metadata/status refresh keeps cached views,
+// while changing a directory mapping must invalidate the old results and selection.
+export function companySourceKey(company: Company, keys?: string[]): string {
+  return JSON.stringify([company.id, company.root_path, keys ?? null, (company.subdirs ?? []).filter((item) => !keys || keys.includes(item.key))
+    .map((item) => [item.key, item.relative_path]).sort((a, b) => a[0]!.localeCompare(b[0]!))]);
 }
 
 // Company registry (WS-07). Every write sends the registry revision this page last read; a
@@ -66,7 +82,7 @@ export const useCompaniesStore = defineStore("companies", () => {
     return result;
   }
 
-  async function update(id: string, patch: Partial<Pick<Company, "name" | "taxpayer_periods">>): Promise<CompanyPayload> {
+  async function update(id: string, patch: CompanyPatch): Promise<CompanyPayload> {
     const result = await write((revision) =>
       request<CompanyPayload>(`/api/v1/companies/${encodeURIComponent(id)}`, { method: "PATCH", body: { ...patch, revision } }),
     );
@@ -99,5 +115,25 @@ export const useCompaniesStore = defineStore("companies", () => {
     return result;
   }
 
-  return { list, companies, selected, selectedId, loading, error, load, create, update, remove, subdirPlan, createSubdirs };
+  function planSetup(input: CompanySetupInput): Promise<CompanySetupJob> {
+    return write((revision) => request<CompanySetupJob>("/api/v1/companies/setup-jobs", { method: "POST", body: { ...input, revision } }));
+  }
+
+  function getSetup(id: string): Promise<CompanySetupJob> {
+    return request<CompanySetupJob>(`/api/v1/companies/setup-jobs/${encodeURIComponent(id)}`);
+  }
+
+  function confirmSetup(job: CompanySetupJob): Promise<CompanySetupJob> {
+    return request<CompanySetupJob>(`/api/v1/companies/setup-jobs/${encodeURIComponent(job.job_id)}/confirm`, {
+      method: "POST", body: { confirm: true, plan_hash: job.plan_hash }, timeoutMs: 60_000,
+    });
+  }
+
+  async function acceptSetup(job: CompanySetupJob): Promise<void> {
+    if (job.state !== "completed" || !job.company) return;
+    selectedId.value = job.company.id;
+    await load();
+  }
+
+  return { planSetup, getSetup, confirmSetup, acceptSetup, list, companies, selected, selectedId, loading, error, load, create, update, remove, subdirPlan, createSubdirs };
 });

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { companySourceKey } from "../stores/companies";
 import { reactive, ref, watch } from "vue";
 import { request } from "../api/client";
 import type { Company, LedgerPayload, LedgerTotals } from "../api/types";
@@ -17,19 +18,23 @@ const REASONS: Record<string, string> = {
   amount_inconsistent: "金额对不上",
 };
 
+let loadGeneration = 0;
 async function load(): Promise<void> {
+  const mine = ++loadGeneration;
   loading.value = true;
   error.value = "";
   const query = new URLSearchParams({ granularity: filters.granularity });
   if (filters.start) query.set("start", filters.start);
   if (filters.end) query.set("end", filters.end);
   try {
-    ledger.value = await request<LedgerPayload>(`/api/v1/companies/${encodeURIComponent(props.company.id)}/ledger?${query}`);
+    const next = await request<LedgerPayload>(`/api/v1/companies/${encodeURIComponent(props.company.id)}/ledger?${query}`);
+    if (mine !== loadGeneration) return;
+    ledger.value = next;
   } catch (cause) {
     // Keep the previous result on screen; the banner says why it was not refreshed.
-    error.value = errorText(cause);
+    if (mine === loadGeneration) error.value = errorText(cause);
   } finally {
-    loading.value = false;
+    if (mine === loadGeneration) loading.value = false;
   }
 }
 
@@ -38,7 +43,7 @@ function cells(totals: LedgerTotals): string[] {
 }
 
 watch(
-  () => props.company.id,
+  () => companySourceKey(props.company),
   () => {
     ledger.value = null;
     void load();

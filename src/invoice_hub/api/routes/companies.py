@@ -7,14 +7,17 @@ the registry ``revision`` and subfolder creation needs the preview ``plan_hash``
 """
 from __future__ import annotations
 
+import json
 from collections.abc import Callable
 from typing import Literal
 
-from fastapi import APIRouter, Query, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
 
 from invoice_hub.api.common import (
+    _require_native_picker_origin,
+    _run_native_picker,
     _require_same_origin_write,
     _state,
 )
@@ -58,6 +61,35 @@ def router() -> APIRouter:
         _require_same_origin_write(request)
         payload = await _json_body(request)
         return await _call(lambda: _state(request).companies.create_company(payload))
+
+    @routes.post("/api/v1/companies/pick-directory")
+    async def pick_company_directory(request: Request):
+        _require_native_picker_origin(request)
+        raw = await request.body()
+        if raw.strip():
+            try:
+                valid = json.loads(raw) == {}
+            except (ValueError, UnicodeDecodeError):
+                valid = False
+            if not valid:
+                raise HTTPException(status_code=422, detail="公司选择器只接受空请求。")
+        return await _call(lambda: _run_native_picker(_state(request).companies.pick_directory))
+
+    @routes.post("/api/v1/companies/setup-jobs")
+    async def plan_company_setup(request: Request):
+        _require_same_origin_write(request)
+        payload = await _json_body(request)
+        return await _call(lambda: _state(request).companies.setup.plan(payload))
+
+    @routes.get("/api/v1/companies/setup-jobs/{job_id}")
+    async def get_company_setup(request: Request, job_id: str):
+        return await _call(lambda: _state(request).companies.setup.get(job_id))
+
+    @routes.post("/api/v1/companies/setup-jobs/{job_id}/confirm")
+    async def confirm_company_setup(request: Request, job_id: str):
+        _require_same_origin_write(request)
+        payload = await _json_body(request)
+        return await _call(lambda: _state(request).companies.setup.confirm(job_id, payload))
 
     @routes.get("/api/v1/companies/{company_id}")
     async def get_company(request: Request, company_id: str):

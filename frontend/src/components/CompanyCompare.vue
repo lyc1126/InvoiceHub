@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { companySourceKey } from "../stores/companies";
 import { computed, provide, reactive, ref, watch } from "vue";
 import { request } from "../api/client";
 import type { Company, CompareResult } from "../api/types";
@@ -35,7 +36,9 @@ const labels = computed(() => {
   return { a: name(relation.value.a), b: name(relation.value.b) };
 });
 
+let loadGeneration = 0;
 async function load(): Promise<void> {
+  const mine = ++loadGeneration;
   focus.value = null;
   loading.value = true;
   error.value = "";
@@ -43,11 +46,13 @@ async function load(): Promise<void> {
   if (filters.start) query.set("start", filters.start);
   if (filters.end) query.set("end", filters.end);
   try {
-    result.value = await request<CompareResult>(`/api/v1/companies/${encodeURIComponent(props.company.id)}/compare?${query}`);
+    const next = await request<CompareResult>(`/api/v1/companies/${encodeURIComponent(props.company.id)}/compare?${query}`);
+    if (mine !== loadGeneration) return;
+    result.value = next;
   } catch (cause) {
-    error.value = errorText(cause);
+    if (mine === loadGeneration) error.value = errorText(cause);
   } finally {
-    loading.value = false;
+    if (mine === loadGeneration) loading.value = false;
   }
 }
 
@@ -58,7 +63,7 @@ watch(
 );
 
 watch(
-  () => props.company.id,
+  () => companySourceKey(props.company),
   () => {
     result.value = null;
     void load();

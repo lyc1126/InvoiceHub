@@ -51,11 +51,34 @@ export interface Company {
 
 export interface CompanyListPayload {
   ok: boolean;
+  standard_subdirs?: { key: string; label: string }[];
   revision: number;
   companies: Company[];
   monitored_company_id: string | null;
   target_id: string;
   watch_dir: string;
+}
+
+export interface CompanySetupInput {
+  name: string;
+  parent_dir: string;
+  folder_name: string;
+  subdirs: Record<string, string>;
+  taxpayer_periods: TaxpayerPeriod[];
+}
+
+export interface CompanySetupJob {
+  ok: boolean;
+  job_id: string;
+  state: "prepared" | "unknown" | "completed" | "failed";
+  plan_hash: string;
+  root_path: string;
+  name: string;
+  items: { key: string; label: string; relative_path: string }[];
+  created: string[];
+  in_progress: string;
+  message: string;
+  company: Company | null;
 }
 
 export interface CostWorkbookRefresh {

@@ -4,7 +4,7 @@ import { request } from "../api/client";
 import type { Company, CompanySubdir, ProjectSummary } from "../api/types";
 import { errorText } from "../format";
 import { INVOICE_DIRS, SAME_NUMBER, relationFor } from "../relations";
-import { useCompaniesStore } from "../stores/companies";
+import { companySourceKey, useCompaniesStore } from "../stores/companies";
 import { useSystemStore } from "../stores/system";
 import { SIDEBAR_DEFAULT, clampSidebar, useWorkspaceStore } from "../stores/workspace";
 
@@ -39,7 +39,7 @@ interface SidebarNode {
 
 // Project names per company, read when the company is first expanded (the summary reads two
 // projections, so it is not fetched for collapsed companies).
-const projects = ref<Record<string, { names: string[]; error: string; loading: boolean }>>({});
+const projects = ref<Record<string, { names: string[]; error: string; loading: boolean; sourceKey: string }>>({});
 
 function companyNode(company: Company): SidebarNode {
   const present = company.subdirs.filter((item) => item.status === "present").length;
@@ -97,12 +97,14 @@ const watchLabel = computed(() => {
 
 async function loadProjects(company: Company): Promise<void> {
   if (company.root_status !== "present") return;
-  projects.value[company.id] = { names: projects.value[company.id]?.names ?? [], error: "", loading: true };
+  const sourceKey = companySourceKey(company, ["cost_invoice_dir", "issued_invoice_dir"]);
+  projects.value[company.id] = { names: [], error: "", loading: true, sourceKey };
   try {
     const summary = await request<ProjectSummary>(`/api/v1/companies/${encodeURIComponent(company.id)}/projects?granularity=year`);
-    projects.value[company.id] = { names: summary.projects.filter((row) => !row.unassigned).map((row) => row.project), error: "", loading: false };
+    if (projects.value[company.id]?.sourceKey !== sourceKey) return;
+    projects.value[company.id] = { sourceKey, names: summary.projects.filter((row) => !row.unassigned).map((row) => row.project), error: "", loading: false };
   } catch (cause) {
-    projects.value[company.id] = { names: [], error: errorText(cause), loading: false };
+    if (projects.value[company.id]?.sourceKey === sourceKey) projects.value[company.id] = { sourceKey, names: [], error: errorText(cause), loading: false };
   }
 }
 
@@ -116,6 +118,8 @@ watch(
   () => companies.companies,
   (list) => {
     for (const company of list) {
+      const cached = projects.value[company.id];
+      if (cached && cached.sourceKey !== companySourceKey(company, ["cost_invoice_dir", "issued_invoice_dir"])) delete projects.value[company.id];
       if (workspace.expanded.includes(company.id) && !projects.value[company.id]) void loadProjects(company);
     }
   },

@@ -55,8 +55,9 @@ function onCreated(sources: Record<string, string>): void {
   const id = companies.selectedId;
   workspace.close(tabId({ kind: "new-company" }));
   if (!id) return;
+  const created = Object.values(sources).filter((value) => value === "created").length;
   const detected = Object.values(sources).filter((value) => value === "detected" || value === "standard").length;
-  createdNotice.value[id] = `已登记。识别到 ${detected} 个已有子目录，其余可在“目录”里补建。`;
+  createdNotice.value[id] = created ? `已新建工作区并登记，六类空目录已创建；监控目录保持原样。` : `已登记。识别到 ${detected} 个已有子目录，其余可在“目录”里补建。`;
   workspace.open({ kind: "company", companyId: id });
 }
 

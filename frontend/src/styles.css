@@ -257,3 +257,12 @@ button.link { border: 0; background: none; padding: 0 2px; color: inherit; curso
 
 .directory-invoices-table { display: block; max-width: 100%; overflow-x: auto; position: relative; }
 .directory-invoices-table .invoice-party { min-width: 120px; }
+
+.company-subdir-field > span { min-width: 5em; }
+.company-subdir-field > input { flex: 1 1 180px; max-width: 100%; }
+.company-create .field input { max-width: 100%; }
+
+@media (max-width: 640px) {
+  .company-detail > .tabs { overflow-x: auto; }
+  .company-detail > .tabs > button { flex: 0 0 auto; white-space: nowrap; }
+}

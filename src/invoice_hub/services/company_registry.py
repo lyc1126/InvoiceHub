@@ -18,12 +18,14 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import subprocess
 import threading
 import uuid
 from pathlib import Path
 from typing import Callable
 
 from invoice_hub.domain.models import TargetProfile, utc_now_text
+from invoice_hub.platform import HostRpcCommand, host_rpc, pick_directory
 from invoice_hub.projections.cost_analysis import TAXPAYER_LABELS
 from invoice_hub.services.dossier import BUSINESS_DOSSIER_DIR_HINTS
 from invoice_hub.storage import SQLiteRepository, atomic_write_json
@@ -83,7 +85,10 @@ def clean_relative_subdir(raw: object, field: str) -> str:
         raise _invalid("子目录不能包含空段、“.” 或 “..”。", field)
     if any(ch in _WINDOWS_RESERVED_CHARS or ord(ch) < 32 for ch in text):
         raise _invalid("子目录名称包含 Windows 不允许的字符。", field)
-    return "/".join(part.strip() for part in parts)
+    cleaned = [part.strip() for part in parts]
+    if any(part.endswith(".") or re.fullmatch(r"CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9]", part.split(".")[0], re.I) for part in cleaned):
+        raise _invalid("子目录名称不能使用 Windows 保留名或以句点结尾。", field)
+    return "/".join(cleaned)
 
 
 def clean_taxpayer_periods(raw: object) -> list[dict[str, str]]:
@@ -160,6 +165,9 @@ class CompanyRegistryService:
         # The registry decides the cost reference's taxpayer type. When an edit changes it for
         # the active watch_dir, the cost workbook is rewritten so it matches the page again.
         self._on_active_taxpayer_change = on_active_taxpayer_change
+        # Setup is a registry companion sharing this RLock and its CAS, never a second watch_dir.
+        from invoice_hub.services.company_setup import CompanySetupService
+        self.setup = CompanySetupService(self)
 
     @property
     def config(self) -> AppConfig:
@@ -237,14 +245,14 @@ class CompanyRegistryService:
     def _resolve_root(self, stored: str) -> Path:
         return resolve_company_root(self.config.root_dir, stored)
 
-    def _clean_root(self, raw: object, registry: dict, company_id: str | None) -> str:
+    def _clean_root(self, raw: object, registry: dict, company_id: str | None, *, allow_missing: bool = False) -> str:
         text = str(raw or "").strip().strip('"').strip("'")
         if not text:
             raise _invalid("请选择公司资料夹。", "root_dir")
         root = self._resolve_root(text)
-        if not root.exists():
+        if not root.exists() and not allow_missing:
             raise _invalid(f"公司资料夹不存在：{root}", "root_dir")
-        if not root.is_dir():
+        if root.exists() and not root.is_dir():
             raise _invalid(f"公司资料夹不是文件夹：{root}", "root_dir")
         # Roots may not repeat or nest: later aggregation would count the same files twice.
         for other in registry["companies"]:
@@ -359,6 +367,23 @@ class CompanyRegistryService:
             "watch_dir": profile.watch_dir,
             "standard_subdirs": [{"key": key, "label": label} for key, (label, _hints) in STANDARD_SUBDIRS.items()],
         }
+
+    def pick_directory(self) -> dict:
+        # Company registration/new-folder location is a distinct host capability. Selecting it
+        # only returns a draft; registry, watch_dir, monitor and projections remain untouched.
+        try:
+            selected = pick_directory(self.config.root_dir, "选择公司资料夹或新建位置",
+                host_command=HostRpcCommand.PICK_COMPANY_DIRECTORY, dialog_timeout_seconds=125)
+            path = str(selected.get("path") or "").strip()
+            if not selected.get("selected") or not path:
+                return {"ok": True, "selected": False, "path": "", "requires_save": False}
+            root = Path(path).expanduser().resolve()
+            if not root.is_dir():
+                raise CompanyRegistryError("COMPANY_INVALID", "所选文件夹已不可用，请重新选择。", field="root_dir")
+            return {"ok": True, "selected": True, "path": str(root), "requires_save": True}
+        except (OSError, RuntimeError, ValueError, subprocess.TimeoutExpired):
+            # Tk/OS stderr and private host details do not belong in a public API response.
+            raise host_rpc.HostRpcError("Native picker unavailable") from None
 
     def get_company(self, company_id: str) -> dict:
         with self._lock:

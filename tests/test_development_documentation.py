@@ -514,7 +514,7 @@ def test_host_rpc_docs_describe_the_direct_backend_token_handoff() -> None:
         text = path.read_text(encoding="utf-8")
         assert "直接启动的 Python backend" in text
         assert "descendant 环境清除" in text
-        assert "四种固定 picker enum" in text
+        assert "五种固定单路径 picker enum" in text
         assert "`update_check` / `update_install` 两个固定 enum" in text
 
 

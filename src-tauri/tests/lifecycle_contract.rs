@@ -139,6 +139,25 @@ fn host_rpc_rejects_wrong_token_origin_command_and_revoked_ownership() {
 }
 
 #[test]
+fn company_picker_requires_current_ownership_and_exact_origin() {
+    let ownership = Arc::new(AtomicBool::new(true));
+    let authorizer = HostRpcAuthorizer::from_test_token([7; 32], Arc::clone(&ownership));
+    assert_eq!(
+        authorizer.authorize("http://127.0.0.1:8766", &[7; 32], "pick_company_directory"),
+        Ok(())
+    );
+    assert_eq!(
+        authorizer.authorize("http://127.0.0.1:8799", &[7; 32], "pick_company_directory"),
+        Err(HostRpcAuthorizationError::OriginRejected)
+    );
+    ownership.store(false, std::sync::atomic::Ordering::Release);
+    assert_eq!(
+        authorizer.authorize("http://127.0.0.1:8766", &[7; 32], "pick_company_directory"),
+        Err(HostRpcAuthorizationError::OwnershipRejected)
+    );
+}
+
+#[test]
 fn strict_openapi_requires_the_expected_http_methods() {
     let valid = json!({
         "paths": {
