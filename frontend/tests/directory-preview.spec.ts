@@ -1,0 +1,149 @@
+import { flushPromises, mount } from "@vue/test-utils";
+import { createPinia } from "pinia";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import DirectoryInvoices from "../src/components/DirectoryInvoices.vue";
+import SourcePreview from "../src/components/SourcePreview.vue";
+import type { Company } from "../src/api/types";
+
+const company = { id: "co_1", monitored: true, monitored_subdir_key: "cost_invoice_dir" } as Company;
+const rows = ["PDF", "XML"].map((format, index) => ({
+  invoice_key: String(index), source_path: `/合成/甲/${index}.${format.toLowerCase()}`, source_file: `${index}.${format.toLowerCase()}`,
+  file_format: format, invoice_type: index ? "增值税普通发票" : "增值税专用发票", business_type: "建筑服务",
+  invoice_number: "1".repeat(20), invoice_date: index ? "2026-07-01" : "2026-06-01", seller: "乙", buyer: "甲", amount: "113.00", tags: [],
+}));
+const identity = { target_id: "t1", items: rows.map(({ invoice_key, source_path }) => ({ invoice_key, source_path })) };
+const payload = (order = rows) => ({ ok: true, count: order.length, page: 1, read_only: false,
+  directory: { label: "成本发票", target_id: "t1", projection: { summary_exists: true } }, items: order, snapshot: { provisional: false, revision: "r1" } });
+const pageFile = (number: number) => ({ file_number: number, name: `${number}.pdf`, preview_type: "pages", page_count: 2,
+  reason: "", page_url_template: `/preview/${number}/{page_number}`, text_url: "" });
+const textFile = (number: number) => ({ ...pageFile(number), name: `${number}.xml`, preview_type: "text", page_count: 0, text_url: `/text/${number}` });
+const job = (files: ReturnType<typeof pageFile>[]) => ({ job_id: "j1", files, idle_timeout_seconds: 900, keep_alive_url: "/keep-alive" });
+const response = (body: unknown) => new Response(JSON.stringify(body), { status: 200 });
+
+afterEach(() => {
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
+  document.body.innerHTML = "";
+});
+
+describe("directory invoice list and shared source preview", () => {
+  it("sorts through the backend, preserves selection, and previews every selected format", async () => {
+    const calls: { url: string; body: unknown }[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init: RequestInit = {}) => {
+      calls.push({ url, body: init.body ? JSON.parse(String(init.body)) : undefined });
+      if (url.includes("/invoices?")) return response(payload(url.includes("date_sort=desc") ? [...rows].reverse() : rows));
+      if (url.endsWith("/preview-jobs")) return response(job([pageFile(1), textFile(2)]));
+      if (url === "/api/v1/invoice-tags") return response({ revision: 0, tags: [] });
+      return response({});
+    }));
+    const wrapper = mount(DirectoryInvoices, { props: { company, dirKey: "cost_invoice_dir" }, global: { plugins: [createPinia()] } });
+    await flushPromises();
+    expect(wrapper.get(".invoice-type--special").text()).toBe("增值税专用发票");
+    expect(wrapper.get(".invoice-type--ordinary").text()).toBe("增值税普通发票");
+    expect(wrapper.find(".format-badge--pdf").exists()).toBe(true);
+    expect(wrapper.find(".format-badge--xml").exists()).toBe(true);
+    expect(wrapper.text()).toContain("业务：建筑服务");
+    await wrapper.get('[aria-label="勾选本页"]').setValue(true);
+    await wrapper.get('[aria-label="按开票时间正序排序"]').trigger("click");
+    await flushPromises();
+    expect(calls.some(({ url }) => url.endsWith("date_sort=asc"))).toBe(true);
+    expect(wrapper.get('th[aria-sort="ascending"]').text()).toContain("开票时间");
+    await wrapper.get('[aria-label="按开票时间倒序排序"]').trigger("click");
+    await flushPromises();
+    expect(wrapper.findAll("tbody tr")[0]!.text()).toContain("2026-07-01");
+    expect((wrapper.get('[aria-label="勾选本页"]').element as HTMLInputElement).checked).toBe(true);
+    await wrapper.get('[aria-label="已勾选发票"]').findAll("button").find((button) => button.text() === "预览")!.trigger("click");
+    await flushPromises();
+    expect(calls.find(({ url }) => url.endsWith("/preview-jobs"))!.body).toEqual(identity);
+    expect(wrapper.get('[role="dialog"]').text()).toContain("2 个源文件");
+    await wrapper.get('[aria-label="关闭原票"]').trigger("click");
+    expect(wrapper.find('[role="dialog"]').exists()).toBe(false);
+    wrapper.unmount();
+  });
+
+  it("keeps the complete queue beyond 100 names and renders XML as text", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    const files = Array.from({ length: 101 }, (_, index) => index === 100 ? textFile(101) : pageFile(index + 1));
+    const fetcher = vi.fn(async (url: string) => url === "/text/101"
+      ? new Response('<script>alert("synthetic")</script>') : response(job(files)));
+    vi.stubGlobal("fetch", fetcher);
+    const wrapper = mount(SourcePreview, { props: { label: "已勾选发票", preview: identity } });
+    await flushPromises();
+    expect(wrapper.findAll('[aria-label="源文件列表"] button')).toHaveLength(100);
+    await wrapper.get('[aria-label="源文件序号"]').setValue(101);
+    await wrapper.get("form").trigger("submit");
+    await flushPromises();
+    expect(wrapper.findAll('[aria-label="源文件列表"] button')).toHaveLength(1);
+    expect(wrapper.text()).toContain("第 101 / 101 个源文件");
+    expect(wrapper.get("pre").text()).toContain('<script>alert("synthetic")</script>');
+    expect(wrapper.find("script").exists()).toBe(false);
+    // Focus can fall to body after the last-page button is disabled; Escape still closes.
+    vi.spyOn(wrapper.element, "getClientRects").mockReturnValue({ length: 1 } as DOMRectList);
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+    expect(wrapper.emitted("close")).toHaveLength(1);
+    wrapper.unmount();
+    const count = fetcher.mock.calls.length;
+    vi.advanceTimersByTime(240_000);
+    await flushPromises();
+    expect(fetcher.mock.calls).toHaveLength(count); // unmount stops the job heartbeat
+  });
+
+  it("discards a slow previous XML body after selecting another file", async () => {
+    let finishOld!: (text: string) => void;
+    const oldBody = new Promise<string>((resolve) => { finishOld = resolve; });
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      if (url === "/text/1") return { ok: true, status: 200, text: () => oldBody };
+      if (url === "/text/2") return new Response("new synthetic XML");
+      return response(job([textFile(1), textFile(2)]));
+    }));
+    const wrapper = mount(SourcePreview, { props: { label: "原文", preview: identity } });
+    await flushPromises();
+    await wrapper.get('[aria-label="源文件列表"]').findAll("button")[1]!.trigger("click");
+    await flushPromises();
+    expect(wrapper.get("pre").text()).toBe("new synthetic XML");
+    finishOld("old synthetic XML");
+    await flushPromises();
+    expect(wrapper.get("pre").text()).toBe("new synthetic XML");
+    wrapper.unmount();
+  });
+
+  it("bounds immediate XML recovery when even the rebuilt job has expired", async () => {
+    let creates = 0;
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      if (url === "/text/1") return new Response("expired", { status: 410 });
+      creates += 1;
+      return response(job([textFile(1)]));
+    }));
+    const wrapper = mount(SourcePreview, { props: { label: "原文", preview: identity } });
+    await flushPromises();
+    expect(creates).toBe(2);
+    expect(wrapper.get('[role="alert"]').text()).toContain("原文预览已失效");
+    wrapper.unmount();
+  });
+
+  it("rejects late sorted responses and drops actions when this folder stops being monitored", async () => {
+    let finishAsc!: (response: Response) => void;
+    const pending = new Promise<Response>((resolve) => { finishAsc = resolve; });
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      if (url.includes("date_sort=asc")) return pending;
+      if (url.includes("/invoices?")) return response(payload([...rows].reverse()));
+      return response({ revision: 0, tags: [] });
+    }));
+    const wrapper = mount(DirectoryInvoices, { props: { company, dirKey: "cost_invoice_dir" }, global: { plugins: [createPinia()] } });
+    await flushPromises();
+    await wrapper.get('[aria-label="勾选本页"]').setValue(true);
+    await wrapper.get('[aria-label="按开票时间正序排序"]').trigger("click");
+    await wrapper.get('[aria-label="按开票时间倒序排序"]').trigger("click");
+    await flushPromises();
+    finishAsc(response(payload(rows)));
+    await flushPromises();
+    expect(wrapper.findAll("tbody tr")[0]!.text()).toContain("2026-07-01");
+    // A monitor change refreshes this tab without treating a mere company-object refresh as a change.
+    vi.stubGlobal("fetch", vi.fn(async () => response({ ...payload(), read_only: true })));
+    await wrapper.setProps({ company: { ...company, monitored: false, monitored_subdir_key: null } });
+    await flushPromises();
+    expect(wrapper.find('[aria-label="已勾选发票"]').exists()).toBe(false);
+    expect(wrapper.find('[aria-label="勾选本页"]').exists()).toBe(false);
+    wrapper.unmount();
+  });
+});

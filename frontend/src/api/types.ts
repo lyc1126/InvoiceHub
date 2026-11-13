@@ -145,6 +145,8 @@ export interface InvoiceRow {
   source_file: string;
   file_format: string;
   invoice_type: string;
+  business_type?: string;
+  classification_issue?: string;
   invoice_number: string;
   invoice_date: string;
   seller: string;
@@ -164,7 +166,7 @@ export interface DirectoryInvoicesPayload {
   directory: CompanyDirectory;
   tags_error?: string;
   /** A first, still-building result: rows may move, so nothing can be selected (classic homepage rule). */
-  snapshot?: { provisional?: boolean };
+  snapshot?: { provisional?: boolean; revision?: string };
 }
 
 export interface LedgerTotals {

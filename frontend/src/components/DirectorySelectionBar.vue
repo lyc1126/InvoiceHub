@@ -25,7 +25,7 @@ interface Summary {
 
 const props = defineProps<{ items: SelectedInvoice[]; targetId: string; total: number; selectingAll: boolean }>();
 // `changed` hands the finished job up: the list reloads and keeps showing every file's result.
-const emit = defineEmits<{ clear: []; selectAll: []; changed: [job: TrashJob] }>();
+const emit = defineEmits<{ clear: []; selectAll: []; changed: [job: TrashJob]; preview: [] }>();
 
 const summary = ref<Summary | null>(null);
 const summaryError = ref("");
@@ -188,6 +188,7 @@ onBeforeUnmount(() => clearTimeout(summaryTimer));
       <button type="button" class="link" :aria-expanded="details" :disabled="!summary" @click="details = !details">合计详情</button>
       <span class="selection-bar__actions">
         <button v-if="items.length < total" type="button" :disabled="selectingAll" :aria-busy="selectingAll" @click="emit('selectAll')">全选筛选结果（{{ total }}）</button>
+        <button type="button" :disabled="busy || !targetId" @click="emit('preview')">预览</button>
         <button type="button" :disabled="busy" @click="print">打印</button>
         <button type="button" :disabled="busy || !targetId" @click="inbound">开具入库单</button>
         <button type="button" class="danger" :disabled="busy" @click="prepareTrash">删除所选…</button>
@@ -196,7 +197,6 @@ onBeforeUnmount(() => clearTimeout(summaryTimer));
     </div>
     <p v-if="summaryError" class="banner banner--error" role="alert">合计未能计算：{{ summaryError }}</p>
     <p v-if="notice" class="banner" :class="notice.tone === 'ok' ? 'banner--ok' : 'banner--error'" role="status">{{ notice.text }}</p>
-    <p class="muted selection-bar__note">预览源文件请在经典首页进行。</p>
     <div v-if="details && summary" class="selection-bar__details" aria-label="合计详情">
       <dl>
         <template v-for="[key, label] in METRICS" :key="key">

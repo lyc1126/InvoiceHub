@@ -31,7 +31,7 @@ async function switched(): Promise<void> {
 }
 
 // A string key: a refreshed company list hands in a new object with the same id, which must not reload.
-watch(() => `${props.company.id}/${props.dirKey}`, () => void load(), { immediate: true });
+watch(() => `${props.company.id}/${props.dirKey}/${props.company.monitored}/${props.company.monitored_subdir_key ?? ""}`, () => void load(), { immediate: true });
 </script>
 
 <template>

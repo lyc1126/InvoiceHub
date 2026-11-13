@@ -240,3 +240,20 @@ button.link { border: 0; background: none; padding: 0 2px; color: inherit; curso
 .payroll th, .payroll td { white-space: nowrap; }
 .payroll th.payroll__group { text-align: center; border-bottom: 1px solid var(--line); }
 .payroll__input { width: 88px; padding: 3px 6px; font-size: 13px; }
+
+/* Match the classic invoice list's format/type colors; text remains selectable. */
+.format-badge, .invoice-type { display: inline-flex; align-items: center; padding: 3px 9px; border: 1px solid var(--line); border-radius: 999px; font-size: 12px; white-space: nowrap; }
+.format-badge { min-width: 46px; justify-content: center; font-weight: 700; }
+.format-badge--pdf { color: #1d4ed8; background: #eff6ff; border-color: #bfdbfe; }
+.format-badge--ofd { color: #047857; background: #ecfdf5; border-color: #a7f3d0; }
+.format-badge--xml { color: #7e22ce; background: #faf5ff; border-color: #e9d5ff; }
+.format-badge--unknown { color: #475569; background: #f8fafc; border-color: #cbd5e1; }
+.invoice-type--special { color: #1e3a8a; background: #dbeafe; border-color: #93c5fd; }
+.invoice-type--ordinary { color: #6b21a8; background: #f3e8ff; border-color: #d8b4fe; }
+.invoice-classification__business { display: block; margin-top: 3px; font-size: 12px; }
+.source-preview__files { display: flex; flex-wrap: wrap; gap: 6px; max-height: 160px; overflow-y: auto; }
+.source-preview__files button { max-width: 100%; overflow-wrap: anywhere; font-size: 12px; }
+.source-preview__jump input { width: 6em; }
+
+.directory-invoices-table { display: block; max-width: 100%; overflow-x: auto; position: relative; }
+.directory-invoices-table .invoice-party { min-width: 120px; }

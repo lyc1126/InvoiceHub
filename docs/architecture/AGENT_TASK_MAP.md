@@ -247,7 +247,7 @@ flowchart TD
 | 首要入口 | `frontend/src/router.ts`、`App.vue`（模块列与 `hi.` 刷新）、`views/HomeView.vue`（标签）、`components/WorkspaceSidebar.vue`、`stores/workspace.ts`（标签、置顶、宽度、比较选择）、`relations.ts`、`api/client.ts`、`stores/`；后端 `api/app.py::workspace_shell` |
 | 必须联动 | 后端 API 与 `frontend/src/api/types.ts`、提交构建 `web/static/app/`、THIRD_PARTY_NOTICES（新运行时依赖）、FILE_MAP 15.1 |
 | 产物与消费者 | 浏览器/Tauri WebView 中的 `/workspace/*`；发布包随 `web/` 携带构建产物 |
-| 最低自动化 | `cd frontend && pnpm run typecheck && pnpm test && pnpm run build`；`tests/test_workspace_frontend.py` |
+| 最低自动化 | `cd frontend && pnpm run typecheck && pnpm test && pnpm run build`；`tests/test_workspace_frontend.py`；目录勾选预览 / 日期排序同时覆盖 `frontend/tests/directory-preview.spec.ts` 与比较预览相邻回归 |
 | 真实验收 | localhost 上 `/workspace` 深链接、桌面/390px（侧栏抽屉）、控制台、标签切换保留状态、侧栏拖动限位与持久化、右键比较；系统原生能力仍需真实应用窗口 |
 | 高风险提醒 | 不手改 `web/static/app`；不把业务口径写进前端；依赖只用精确版本；`/workspace` 不进 OpenAPI |
 

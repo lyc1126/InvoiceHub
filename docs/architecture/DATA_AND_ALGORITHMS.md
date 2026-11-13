@@ -300,6 +300,7 @@ Lifecycle lease 是 host 运行态授权快照，不是可持久化业务状态�
 
 - 每个子目录的投影身份就是它作为 `watch_dir` 时的 `target_profile_for(config, 子目录)`，因此曾经监控过该目录留下的 `runtime/targets/<id>/workspace/发票汇总.csv` 与目录内 `成本发票明细.csv` 会被找到。`target_profile_for` 是纯函数，读取不建任何目录。
 - 是否过期：读 `state/processed_files.json`（坏文件不修复、不备份，直接判 `unknown`），再以 `os.scandir` 不跟随目录链接、递归列出 PDF/OFD/XML（跳过 `~$`，与 `supported_invoice_files` 同口径），按 `mtime_ns + size` 比对，路径键与 monitor 一致。新增或改动任一 → `stale`；列表完整且无差异 → `fresh`；超过 20,000 个目录项或 2 秒即停止，此时删除数不计、无差异也只能判 `unknown`；没有汇总 CSV → `never_built`。活动目录直接报 `monitored`，不比对。
+- 前端列表状态：`date_sort` 与标签参数交给后端全量排序 / 筛选后分页；勾选保留首页身份，`snapshot.revision` 改变或监控身份改变时清除。列表与全选的请求代际防止迟到结果覆盖新状态；原票队列逐源文件保留，100 项名称窗口与 12 页缩略图只限制渲染，不截断队列。XML 正文在读取响应体后再次核对代际，关闭即取消读取。
 - 发票列表：非活动目录用绑定该 profile 的临时 `InvoiceListService` 调用只读的 `list_invoices`（不带 `page`，避免读取渐进缓存），再在外层分页；活动目录交给 `state.invoices`。
 
 公司发票账簿（WS-07 第 3 步的发票部分，`services/company_ledger.py::build_invoice_ledger`）：

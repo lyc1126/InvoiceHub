@@ -677,8 +677,8 @@
 | `frontend/src/relations.ts` | 同一公司可勾稽的四组目录（抵扣、进销存、应付、应收）与 `relationFor`，以及可做同号检查的发票目录 `INVOICE_DIRS` 与 `SAME_NUMBER`；只用于提供后端接受的组合，不做任何计算。 | `CompanyCompare.vue`、`WorkspaceSidebar.vue`。 |
 | `frontend/src/components/CompanyPanel.vue` | 公司标签：名称、纳税人身份与资料夹路径，目录 / 发票账簿 / 项目 / 勾稽 / 凭证草稿 / 工资社保 / 设置七个分区；`v-show` 保留各分区状态，账簿、项目、勾稽、凭证草稿与工资社保首次打开才加载。 | 由 `HomeView.vue` 渲染。 |
 | `frontend/src/components/DirectoryPanel.vue` | 目录标签：子目录状态、是否最新、上次汇总、重新检查与“设为监控目录”，下方为该目录发票列表。 | `/api/v1/companies/{id}/directories`；`DirectoryInvoices.vue`。 |
-| `frontend/src/components/DirectoryInvoices.vue` | 目录发票列表（上次投影；非监控目录只读）：标签色点列，右键 / Shift+F10 打标签（只更新该行；在多行勾选中的行上作用于全部勾选的发票，打开时读取当前标记），按标签筛选与分页；监控目录且非临时结果时有勾选列（表头勾选本页，含部分选中），“全选筛选结果”按同一筛选分页读取全部记录；删除后保留逐文件结果面板。 | `/api/v1/companies/{id}/directories/{key}/invoices`、`invoice-tags`；`DirectorySelectionBar.vue`。 |
-| `frontend/src/components/DirectorySelectionBar.vue` | 勾选底部操作条：张数与价税合计、合计详情（三项金额、有效计入张数、冲突 / 缺失 / 折叠提示）均来自 `selection-summary`；打印（先开窗再填 `print-jobs` 的地址）、开具入库单（会话交接到单据页，最多 1000 条）、删除所选（`trash-jobs` 预备清单 → 条内确认 → 响应丢失只读执行日志），取消勾选与全选筛选结果。 | `/api/v1/invoices/selection-summary`、`print-jobs`、`trash-jobs*`。 |
+| `frontend/src/components/DirectoryInvoices.vue` | 目录发票列表（上次投影；非监控目录只读）：标签色点列，右键 / Shift+F10 打标签（只更新该行；在多行勾选中的行上作用于全部勾选的发票，打开时读取当前标记），按标签筛选与后端开票时间排序 / 分页，显示大类与业务样式及经典格式配色；监控目录且非临时结果时有勾选列（表头勾选本页，含部分选中），“全选筛选结果”按同一筛选分页读取全部记录；删除后保留逐文件结果面板；勾选预览使用 `SourcePreview.vue`，投影或监控身份变化时清除旧选择，迟到列表 / 全选不覆盖新状态。 | `/api/v1/companies/{id}/directories/{key}/invoices`、`invoice-tags`；`DirectorySelectionBar.vue`。 |
+| `frontend/src/components/DirectorySelectionBar.vue` | 勾选底部操作条：张数与价税合计、合计详情（三项金额、有效计入张数、冲突 / 缺失 / 折叠提示）均来自 `selection-summary`；“预览”把完整选择交给目录页的共用原票面板；打印（先开窗再填 `print-jobs` 的地址）、开具入库单（会话交接到单据页，最多 1000 条）、删除所选（`trash-jobs` 预备清单 → 条内确认 → 响应丢失只读执行日志），取消勾选与全选筛选结果。 | `/api/v1/invoices/selection-summary`、`print-jobs`、`trash-jobs*`。 |
 | `frontend/src/components/WatchSwitchConfirm.vue` | “设为监控目录”确认：说明只监控一个目录，确认后调用 `PUT /api/v1/settings` 并刷新系统快照与公司清单。 | `CompanyDirectories.vue`、`DirectoryPanel.vue`。 |
 | `frontend/src/components/CompanyCreateForm.vue` | 新建公司表单：名称、资料夹路径、可选纳税人身份（不填即未设置）。 | `stores/companies.ts::create`。 |
 | `frontend/src/components/CompanyDirectories.vue` | 公司的子目录表（状态、上次汇总、是否最新）、补建预览与确认、设为监控目录；“查看发票”打开该目录的标签。 | `/api/v1/companies/{id}/directories`、`subdirs/*`；`WatchSwitchConfirm.vue`。 |
@@ -691,7 +691,7 @@
 | `frontend/src/components/CompanyPayroll.vue` | 公司标签“工资社保”分区：电子税务局两行表头版面、后端核对结果、按月确认 / 取消确认、手工录入一个月、人员明细默认脱敏可临时显示原值、未识别文件提示。 | `/api/v1/companies/{id}/payroll`；由 `CompanyPanel.vue` 渲染。 |
 | `frontend/src/components/PeriodFolderCheck.vue` | 进项抵扣 / 银行流水目录标签的“属期文件夹核对”：可能放错与未归属文件、逐行选目标（建议 / 新建）、计划 → 确认 → 逐文件结果，确认响应丢失只读日志。 | `/api/v1/companies/{id}/period-folders*`；由 `DirectoryPanel.vue` 渲染。 |
 | `frontend/src/components/CompareSources.vue` | 两个目录的原始记录并排（`records.a/b`）；有聚焦类目时两边只留其 `record_ids`，可“显示全部”；后端带 `preview` 的记录（监控目录）有“原票”，打开 `SourcePreview.vue`。 | 由 `CompanyCompare.vue` 渲染。 |
-| `frontend/src/components/SourcePreview.vue` | 比较记录的原票面板（WS-04）：用后端附带的 `preview` 创建 `preview-jobs`，缩略图条（最多 12 页）+ 大图、上一页 / 下一页，XML 显示受限纯文本；打开期间续租，`404/410` 重建并保留文件与页码，图片出错只重建一次。 | `/api/v1/invoices/preview-jobs*`；由 `CompareSources.vue` 打开。 |
+| `frontend/src/components/SourcePreview.vue` | 目录勾选与比较记录共用原票面板：创建 `preview-jobs`，名称每组最多 100 项且能按序号访问完整队列，当前文件缩略图每组最多 12 页、大图与翻页；XML 显示纯文本、可取消读取且丢弃迟到正文；打开期间续租，`404/410` 重建并保留文件与页码，图片 / XML 持续失败的立即恢复有界。 | `/api/v1/invoices/preview-jobs*`；由 `DirectoryInvoices.vue` 或 `CompareSources.vue` 打开。 |
 | `frontend/src/components/CompanyDeductionResult.vue` | 抵扣核对结果：各所属期表、清单有目录无、已勾选并对上（税额不一致标红）、目录有清单无、重复勾选与未识别文件。 | 由 `CompanyCompare.vue` 渲染。 |
 | `frontend/src/components/CompanyInventoryResult.vue` | 进销存结果：品类表（明细科目编码，期初/购入/销售/成本/期末，卖超与“进项和期初中没有”标红），品类前的 ▸ 在同一列下展开规格行（只有购入、销售与净增，期初与成本显示 —），“逐月”在品类下展开整行明细（加权单价与说明），合计、未计入期初的账套明细与未计入的明细行。 | 由 `CompanyCompare.vue` 渲染。 |
 | `frontend/src/components/CompanySettlementResult.vue` | 往来核对结果：往来单位余额表（“明细”整行展开未对上发票与未逐笔对应流水）、逐笔对应、红字发票、户名不唯一、非发票流水（折叠）与未识别发票。 | 由 `CompanyCompare.vue` 渲染。 |
@@ -701,6 +701,7 @@
 | `frontend/src/stores/tags.ts` | 标签定义的 Pinia store：读取、整表保存（带 revision，冲突时重读）与按 id 查找。 | `InvoiceTagsEditor.vue`、`DirectoryInvoices.vue`。 |
 | `frontend/src/components/CompanySettings.vue` | 公司名称与纳税人身份生效期编辑、从清单移除（说明不删除任何文件）；只在切换公司时重置草稿；显示成本汇总表是否已按新身份重写。 | `stores/companies.ts::update/remove`。 |
 | `frontend/src/styles.css` | 外框基础样式、模块列、工作区侧栏与标签、窄屏布局（900px 以下侧栏改抽屉，640px 以下模块列横排）。 | 仅作用于 `/workspace`。 |
+| `frontend/tests/directory-preview.spec.ts` | WS-01 目录排序与勾选原票、101 个文件的窗口 / 跳转、XML 纯文本与迟到正文、持续失效恢复、监控切换。 | Vitest + Vue Test Utils；相邻比较预览仍由 `companies.spec.ts` 覆盖。 |
 | `frontend/tests/client.spec.ts` | 请求封装的成功、错误、`ok:false`、请求体与超时测试。 | Vitest + happy-dom。 |
 | `frontend/tests/companies.spec.ts` | 公司标签：侧栏列出公司并默认打开监控中的公司、新建带 revision 且不假定纳税人身份、版本冲突后重新读取、补建必须先预览并发送 `plan_hash`、预览过期要求重新预览、守恒校验失败标红且展开、非监控目录只读、金额分组。 | Vitest + Vue Test Utils，桩接 `fetch`。 |
 | `frontend/tests/app.spec.ts` | 外框与首页（WS-01）：无公司时的起始页与 health、旧路径重定向、未迁移模块链接经典页面、刷新失败保留快照；侧栏节点打开为标签且不重复、隐藏标签保持挂载、全部关闭后停在起始页、项目展开时才读取、Shift+F10 菜单置顶并写入本机偏好、同公司有勾稽关系才可比较（无关系与不同公司禁用并说明）并以预选关系打开 ⇄ 标签、双击 `hi.` 只重载当前标签、侧栏宽度限位。 | Vitest + Vue Test Utils，桩接 `fetch`。 |

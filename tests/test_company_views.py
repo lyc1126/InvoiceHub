@@ -166,6 +166,29 @@ def test_active_directory_hands_over_to_the_live_invoice_list(app, client, compa
     assert stripped == {**homepage, **{key: payload[key] for key in company_keys}}
 
 
+@pytest.mark.parametrize("active", [False, True])
+def test_directory_date_sort_runs_before_pagination(app, client, company_root, active):
+    company_id = _company(client, company_root)
+    folder = company_root / "成本发票"
+    for name, number, day in (("early.xml", "10000000000000000003", "2026-05-01"),
+                              ("late.xml", "10000000000000000004", "2026-07-01")):
+        path = _invoice(folder, name, number)
+        path.write_text(path.read_text().replace("<IssueDate>2026-06-30</IssueDate>", f"<IssueDate>{day}</IssueDate>"))
+    if active:
+        app.state.invoice_hub.update_settings({"watch_dir": str(folder)})
+    _sync(app, folder)
+    before = _tree(company_root)
+    url = f"/api/v1/companies/{company_id}/directories/cost_invoice_dir/invoices"
+    ascending = client.get(url, params={"date_sort": "asc", "page": 1, "page_size": 1}).json()
+    descending = client.get(url, params={"date_sort": "desc", "page": 1, "page_size": 1}).json()
+    assert ascending["items"][0]["invoice_number"] == "10000000000000000003"
+    assert descending["items"][0]["invoice_number"] == "10000000000000000004"
+    assert ascending["count"] == descending["count"] == 4
+    assert ascending["read_only"] is not active
+    assert client.get(url, params={"date_sort": "invalid"}).status_code == 422
+    assert _tree(company_root) == before
+
+
 # ---- taxpayer type: the company registry wins (2026-11-10) -----------------------------------
 
 

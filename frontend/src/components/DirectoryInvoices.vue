@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onMounted, onBeforeUnmount, ref, watch } from "vue";
 import { ApiError, request } from "../api/client";
-import type { Company, DirectoryInvoicesPayload, InvoiceRow, InvoiceTagMarks } from "../api/types";
+import type { Company, DirectoryInvoicesPayload, InvoiceRow, InvoiceTagMarks, PreviewRef } from "../api/types";
 import { errorText, money } from "../format";
 import { useTagsStore } from "../stores/tags";
+import SourcePreview from "./SourcePreview.vue";
 import DirectorySelectionBar, { type SelectedInvoice, type TrashJob } from "./DirectorySelectionBar.vue";
 
 // One company folder's invoice list (last projection; read-only unless it is the monitored
@@ -25,6 +26,13 @@ const invoices = ref<DirectoryInvoicesPayload | null>(null);
 const invoicesPage = ref(1);
 const invoicesLoading = ref(false);
 const PAGE_SIZE = 50;
+const dateSort = ref<"" | "asc" | "desc">("");
+const previewing = ref<PreviewRef | null>(null);
+let listGeneration = 0;
+let selectionGeneration = 0;
+const dateSortLabel = computed(() => dateSort.value === "asc" ? "按开票时间倒序排序" : "按开票时间正序排序");
+const formatLabel = (row: InvoiceRow) => ["PDF", "OFD", "XML"].includes(row.file_format?.toUpperCase()) ? row.file_format.toUpperCase() : "未知";
+const formatTone = (row: InvoiceRow) => formatLabel(row) === "未知" ? "unknown" : formatLabel(row).toLowerCase();
 // Selection (WS-01 stage 2) only on the monitored folder's settled list: the actions behind it
 // work on the current watch_dir, and a provisional first result has no stable row identity.
 // The invoice number rides along for batch tagging only; the selection bar and every backend
@@ -56,17 +64,45 @@ function togglePage(): void {
   selected.value = next;
 }
 
+function clearSelection(): void {
+  selectionGeneration += 1;
+  selectingAll.value = false;
+  selected.value = new Map();
+  previewing.value = null;
+}
+
+function previewSelected(): void {
+  if (!selectable.value || invoicesLoading.value || !selectedItems.value.length) return;
+  // Preserve every selected source format, not the family-de-duplicated amount count.
+  // preview-jobs alone validates these homepage identities against the active watch_dir.
+  previewing.value = { target_id: invoices.value!.directory.target_id, items: selectedItems.value.map((item) => ({ ...item })) };
+}
+
+const queryFilters = () => `${tagFilter.value ? `&tag=${encodeURIComponent(tagFilter.value)}` : ""}${dateSort.value ? `&date_sort=${dateSort.value}` : ""}`;
+
+function toggleDateSort(): void {
+  dateSort.value = dateSort.value === "asc" ? "desc" : "asc";
+  void loadInvoices(1);
+}
+
 async function selectAll(): Promise<void> {
   // The whole filtered result, not just this page: read every page with the same filters.
+  if (!selectable.value || invoicesLoading.value) return;
+  const mine = ++selectionGeneration;
   selectingAll.value = true;
   error.value = "";
   try {
-    const tag = tagFilter.value ? `&tag=${encodeURIComponent(tagFilter.value)}` : "";
+    const filters = queryFilters();
+    const revision = invoices.value?.snapshot?.revision;
     const next = new Map(selected.value);
     for (let page = 1; ; page += 1) {
       const payload = await request<DirectoryInvoicesPayload>(
-        `${base()}/directories/${encodeURIComponent(props.dirKey)}/invoices?page=${page}&page_size=200${tag}`,
+        `${base()}/directories/${encodeURIComponent(props.dirKey)}/invoices?page=${page}&page_size=200${filters}`,
       );
+      if (mine !== selectionGeneration) return;
+      if (payload.read_only || payload.snapshot?.provisional || payload.snapshot?.revision !== revision) {
+        throw new Error("目录或汇总已变化，请刷新后重新勾选。");
+      }
       for (const row of payload.items) {
         if (row.source_path) next.set(row.invoice_key, entry(row));
       }
@@ -74,9 +110,9 @@ async function selectAll(): Promise<void> {
     }
     selected.value = next;
   } catch (cause) {
-    error.value = errorText(cause);
+    if (mine === selectionGeneration) error.value = errorText(cause);
   } finally {
-    selectingAll.value = false;
+    if (mine === selectionGeneration) selectingAll.value = false;
   }
 }
 
@@ -87,25 +123,33 @@ const TRASH_LABELS: Record<string, string> = { pending: "未处理", moving: "�
 
 async function afterChange(job: TrashJob): Promise<void> {
   lastTrash.value = job;
-  selected.value = new Map();
+  clearSelection();
   await loadInvoices(invoicesPage.value);
 }
 
 const base = () => `/api/v1/companies/${encodeURIComponent(props.company.id)}`;
 
 async function loadInvoices(page = 1): Promise<void> {
-  invoicesPage.value = page;
+  const mine = ++listGeneration;
+  selectionGeneration += 1;
+  selectingAll.value = false;
   invoicesLoading.value = true;
   error.value = "";
   try {
-    const tag = tagFilter.value ? `&tag=${encodeURIComponent(tagFilter.value)}` : "";
-    invoices.value = await request<DirectoryInvoicesPayload>(
-      `${base()}/directories/${encodeURIComponent(props.dirKey)}/invoices?page=${page}&page_size=${PAGE_SIZE}${tag}`,
+    const payload = await request<DirectoryInvoicesPayload>(
+      `${base()}/directories/${encodeURIComponent(props.dirKey)}/invoices?page=${page}&page_size=${PAGE_SIZE}${queryFilters()}`,
     );
+    if (mine !== listGeneration) return;
+    // Pagination/sorting keep stable identities; a new projection or a monitor switch does not.
+    // Dropping its selection also closes preview so old source paths cannot survive the change.
+    if (payload.read_only || payload.snapshot?.provisional ||
+        (invoices.value && invoices.value.snapshot?.revision !== payload.snapshot?.revision)) clearSelection();
+    invoices.value = payload;
+    invoicesPage.value = payload.page ?? page;
   } catch (cause) {
-    error.value = errorText(cause);
+    if (mine === listGeneration) error.value = errorText(cause);
   } finally {
-    invoicesLoading.value = false;
+    if (mine === listGeneration) invoicesLoading.value = false;
   }
 }
 
@@ -243,16 +287,19 @@ onMounted(() => {
 
 // A string key: a refreshed company list hands in a new object with the same id, which must not reload.
 watch(
-  () => `${props.company.id}/${props.dirKey}`,
+  () => `${props.company.id}/${props.dirKey}/${props.company.monitored}/${props.company.monitored_subdir_key ?? ""}`,
   () => {
     invoices.value = null;
     marksRevision.value = null;
     tagMenu.value = null;
-    selected.value = new Map();
+    clearSelection();
     void loadInvoices();
   },
   { immediate: true },
 );
+// A preview is a snapshot of this exact selection; changing it releases its heartbeat.
+watch(() => JSON.stringify(selectedItems.value), () => { previewing.value = null; });
+onBeforeUnmount(() => { listGeneration += 1; selectionGeneration += 1; });
 </script>
 
 <template>
@@ -273,16 +320,18 @@ watch(
         </select>
         <span class="muted">右键一行（或 Shift+F10）打标签{{ selectable ? "；在已勾选的行上右键，给全部勾选的发票打标签" : "" }}</span>
       </div>
-      <table v-if="invoices.directory.projection.summary_exists" class="grid" :aria-busy="invoicesLoading">
+      <table v-if="invoices.directory.projection.summary_exists" class="grid directory-invoices-table" :aria-busy="invoicesLoading">
         <thead>
-          <tr><th class="tag-cell"><span class="sr-only">标签</span></th><th>销售方</th><th>购买方</th><th>格式</th><th>发票号码</th><th>发票类型</th><th>税率</th><th class="num">开票金额</th><th>开票时间</th><th>状态</th>
+          <tr><th class="tag-cell"><span class="sr-only">标签</span></th><th>销售方</th><th>购买方</th><th>格式</th><th>发票号码</th><th>发票分类与业务</th><th>税率</th><th class="num">开票金额</th><th :aria-sort="dateSort === 'asc' ? 'ascending' : dateSort === 'desc' ? 'descending' : 'none'">
+              <button type="button" class="link" :aria-label="dateSortLabel" @click="toggleDateSort">开票时间 {{ dateSort === 'asc' ? '↑' : dateSort === 'desc' ? '↓' : '↕' }}</button>
+            </th><th>状态</th>
             <th v-if="selectable" class="select-cell">
               <input
                 type="checkbox"
                 aria-label="勾选本页"
                 :checked="pageState.all"
                 :indeterminate.prop="pageState.some"
-                :disabled="!pageRows.length"
+                :disabled="!pageRows.length || invoicesLoading || selectingAll"
                 @change="togglePage"
               >
             </th>
@@ -300,11 +349,14 @@ watch(
             <td class="tag-cell">
               <span v-for="id in row.tags ?? []" :key="id" class="tag-dot" :style="{ background: tagStore.byId.get(id)?.color }" :title="tagTitle(id)" />
             </td>
-            <td>{{ row.seller }}</td>
-            <td>{{ row.buyer }}</td>
-            <td class="nowrap">{{ row.file_format }}</td>
+            <td class="invoice-party">{{ row.seller }}</td>
+            <td class="invoice-party">{{ row.buyer }}</td>
+            <td class="nowrap"><span class="format-badge" :class="`format-badge--${formatTone(row)}`">{{ formatLabel(row) }}</span></td>
             <td class="nowrap">{{ row.invoice_number }}</td>
-            <td>{{ row.invoice_type }}</td>
+            <td class="invoice-classification" :title="row.classification_issue || ''">
+              <span class="invoice-type" :class="{ 'invoice-type--special': row.invoice_type === '增值税专用发票', 'invoice-type--ordinary': row.invoice_type === '增值税普通发票' }">{{ row.invoice_type || '—' }}</span>
+              <span class="muted invoice-classification__business">业务：{{ row.business_type || '—' }}</span>
+            </td>
             <td class="nowrap">{{ row.tax_rate }}</td>
             <td class="num">{{ money(row.amount) }}</td>
             <td class="nowrap">{{ row.invoice_date }}</td>
@@ -314,7 +366,7 @@ watch(
                 type="checkbox"
                 :aria-label="`勾选 ${row.invoice_number || row.source_file}`"
                 :checked="selected.has(row.invoice_key)"
-                :disabled="!row.source_path"
+                :disabled="!row.source_path || invoicesLoading || selectingAll"
                 @change="toggleRow(row)"
               >
             </td>
@@ -385,11 +437,13 @@ watch(
         :items="selectedItems"
         :target-id="invoices.directory.target_id"
         :total="invoices.count"
-        :selecting-all="selectingAll"
-        @clear="selected = new Map()"
+        :selecting-all="selectingAll || invoicesLoading"
+        @clear="clearSelection"
+        @preview="previewSelected"
         @select-all="selectAll"
         @changed="afterChange"
       />
+      <SourcePreview v-if="previewing && selectable" label="已勾选发票" :preview="previewing" @close="previewing = null" />
     </section>
   </div>
 </template>
