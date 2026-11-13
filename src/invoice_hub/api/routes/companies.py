@@ -158,6 +158,26 @@ def router() -> APIRouter:
         payload = await _json_body(request)
         return await _call(lambda: _state(request).company_views.save_project_assignments(company_id, payload))
 
+    @routes.get("/api/v1/companies/{company_id}/period-folders")
+    async def company_period_folders(request: Request, company_id: str, key: str = Query(..., min_length=1)):
+        return await _call(lambda: _state(request).company_views.period_folders(company_id, key))
+
+    @routes.post("/api/v1/companies/{company_id}/period-folders/moves")
+    async def prepare_company_source_move(request: Request, company_id: str):
+        _require_same_origin_write(request)
+        payload = await _json_body(request)
+        return await _call(lambda: _state(request).company_views.prepare_source_move(company_id, payload))
+
+    @routes.post("/api/v1/companies/{company_id}/period-folders/moves/{job_id}/confirm")
+    async def confirm_company_source_move(request: Request, company_id: str, job_id: str):
+        _require_same_origin_write(request)
+        payload = await _json_body(request)
+        return await _call(lambda: _state(request).company_views.confirm_source_move(company_id, job_id, payload))
+
+    @routes.get("/api/v1/companies/{company_id}/period-folders/moves/{job_id}")
+    async def company_source_move(request: Request, company_id: str, job_id: str):
+        return await _call(lambda: _state(request).company_views.source_move(company_id, job_id))
+
     @routes.get("/api/v1/companies/{company_id}/voucher-drafts")
     async def company_voucher_drafts(request: Request, company_id: str):
         return await _call(lambda: _state(request).company_views.voucher_drafts(company_id))

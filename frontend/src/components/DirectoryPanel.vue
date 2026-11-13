@@ -4,6 +4,7 @@ import { request } from "../api/client";
 import type { Company, CompanyDirectory, DirectoriesPayload } from "../api/types";
 import { FRESHNESS_LABELS, SUBDIR_STATUS_LABELS, errorText } from "../format";
 import DirectoryInvoices from "./DirectoryInvoices.vue";
+import PeriodFolderCheck from "./PeriodFolderCheck.vue";
 import WatchSwitchConfirm from "./WatchSwitchConfirm.vue";
 
 // A directory tab: one company folder with its freshness and invoice list. Only the folder
@@ -52,6 +53,8 @@ watch(() => `${props.company.id}/${props.dirKey}`, () => void load(), { immediat
       <button v-if="directory.status === 'present' && !directory.active" type="button" @click="switching = true">设为监控目录</button>
     </div>
     <WatchSwitchConfirm v-if="switching && directory" :path="directory.path" @done="switched" @cancel="switching = false" />
+    <!-- Folders kept by period (进项抵扣 / 银行流水): content period vs. folder, confirmed moves (WS-05). -->
+    <PeriodFolderCheck v-if="directory?.status === 'present' && (dirKey === 'input_deduction_dir' || dirKey === 'bank_flow_dir')" :company="company" :dir-key="dirKey" />
     <DirectoryInvoices v-if="directory?.status === 'present'" :company="company" :dir-key="dirKey" />
     <p v-else-if="directory" class="muted">这个子目录{{ SUBDIR_STATUS_LABELS[directory.status] }}，没有可显示的发票。</p>
   </section>

@@ -5,6 +5,7 @@ import { createMemoryHistory } from "vue-router";
 import App from "../src/App.vue";
 import { money } from "../src/format";
 import { createAppRouter } from "../src/router";
+import PeriodFolderCheck from "../src/components/PeriodFolderCheck.vue";
 
 const SUBDIRS = [
   { key: "cost_invoice_dir", label: "成本发票", relative_path: "成本发票", path: "/合成/甲/成本发票", status: "present" },
@@ -779,6 +780,40 @@ describe("companies module", () => {
     expect(card().attributes("aria-label")).toBe("2026-08 第 001 号凭证");
     expect(card().get(".voucher__source .tag").text()).toBe("跨期");
     expect(card().get(".voucher__source").text()).toContain("人工调整记入期（次月到票）");
+  });
+
+  it("checks period folders by content and moves a misfiled file only after the confirm", async () => {
+    const check = { folders: [{ name: "5月", period: "5 月" }, { name: "6月", period: "6 月" }], mismatched: 1, items: [
+      { file: "6月/用途确认信息 (1).xlsx", name: "用途确认信息 (1).xlsx", folder: "6月", folder_period: "6 月", content_period: "2026-07", status: "mismatch", target: "2026-07", target_exists: false },
+      { file: "5月/用途确认信息.xlsx", name: "用途确认信息.xlsx", folder: "5月", folder_period: "5 月", content_period: "2026-05", status: "ok", target: "", target_exists: false },
+    ] };
+    const plan = { job_id: "a".repeat(32), state: "prepared", moved_count: 0, files: [{ file: "6月/用途确认信息 (1).xlsx", target: "2026-07", new_folder: true, status: "pending", message: "" }] };
+    stubBackend((url) => {
+      if (url.includes("/period-folders?")) return [200, { ok: true, ...check }];
+      if (url.endsWith("/period-folders/moves")) return [200, { ok: true, ...plan }];
+      if (url.endsWith("/confirm")) return [503, { detail: "连接中断" }];
+      if (url.includes("/period-folders/moves/")) return [200, { ok: true, ...plan, state: "completed", moved_count: 1, files: [{ ...plan.files[0], status: "moved" }] }];
+      return undefined;
+    });
+    setActivePinia(createPinia());
+    const wrapper = mount(PeriodFolderCheck, { props: { company: COMPANY, dirKey: "input_deduction_dir" }, attachTo: document.body });
+    await flushPromises();
+    expect(wrapper.text()).toContain("1 个文件可能放错了属期文件夹");
+    expect(wrapper.findAll('[aria-label="属期文件"] tbody tr')).toHaveLength(1); // only what needs attention by default
+    const select = wrapper.get('select[aria-label="6月/用途确认信息 (1).xlsx 移到"]');
+    expect(select.text()).toContain("2026-07（建议）（新建）");
+    await select.setValue("2026-07");
+    await wrapper.findAll("button").find((button) => button.text().startsWith("移动所选…"))!.trigger("click");
+    await flushPromises();
+    expect(calls.find((call) => call.url.endsWith("/moves"))!.body).toEqual({ key: "input_deduction_dir", items: [{ file: "6月/用途确认信息 (1).xlsx", target: "2026-07" }] });
+    expect(calls.some((call) => call.url.endsWith("/confirm"))).toBe(false); // nothing moves before the confirm
+    expect(wrapper.get('[aria-label="确认移动文件"]').text()).toContain("6月/用途确认信息 (1).xlsx → 2026-07/");
+    await wrapper.get('[aria-label="确认移动文件"]').findAll("button").find((button) => button.text() === "确认移动")!.trigger("click");
+    await flushPromises();
+    // The confirm response was lost: the journal is read, the confirm is never sent twice.
+    expect(calls.filter((call) => call.url.endsWith("/confirm"))).toHaveLength(1);
+    expect(wrapper.get('[aria-label="移动结果"]').text()).toContain("已移动 1 / 1 个文件");
+    wrapper.unmount();
   });
 
   it("marks a non-monitored folder's invoice list read-only", async () => {

@@ -20,6 +20,13 @@
 - 红冲抵销先于收付款匹配：否则余额已经为 0，被冲的蓝字票仍显示“未付”，页面自相矛盾。守护：`test_red_letter_invoices_reduce_the_balance_and_unreadable_ones_are_listed`。
 - `party_balance` 与 `flow_accounting` 从原始发票、流水清单复算，而不是用往来单位行自己的数：同义反复的校验永远成立，发现不了漏算。守护：上述各用例的 `_ok`。
 
+## 2026-11-13 属期文件夹核对与移动文件（WS-05 第二阶段）
+
+- 文件夹名只作提示：期间仍只按内容判定（“5月”文件夹里的空导出不按文件夹名推断所属期的规则不变），否则改名或放错一个文件夹就会改变抵扣与对账结果。守护：`test_check_compares_the_content_period_with_the_folder`（空导出为 unknown）。
+- 移动照删除流程：先计划、确认时复核签名，逐文件 fsync 意图后再改名，响应丢失只读日志；移动不能像删除一样从回收站撤回，同名不覆盖、新文件夹只能是 `YYYY-MM`。守护：`test_a_confirmed_move_creates_the_period_folder_and_never_overwrites`、`test_a_file_changed_after_the_plan_is_not_moved`。
+- 对账单逐个文件解析：对账单只记录文件名，两个属期文件夹里可能有同名文件，按名字找回会移错文件。
+- 与监控目录重叠时拒绝：监控目录内的文件移动会被看作删除 + 新增，手改字段按路径保存，需要走监控自己的流程。
+
 ## 2026-11-13 改记入期（WS-05 第二阶段）
 
 - 调整只存在公司资料夹的 `记入期调整.json` 并由 `build_drafts` 应用，而不是改审核表单元格：增值税、库存加权、待认证转出与月度核对都按 `book_month` 计算，只改单元格会让这些结果与凭证不一致；命令行读同一份文件，两边结果相同。守护：`test_rebooking_an_invoice_moves_its_voucher_and_the_cli_follows`。

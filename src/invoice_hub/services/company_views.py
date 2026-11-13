@@ -43,6 +43,7 @@ from invoice_hub.services.company_registry import CompanyRegistryError, CompanyR
 from invoice_hub.services.file_preview import MAX_PREVIEW_SELECTION_RECORDS
 from invoice_hub.services.invoice_selection import selection_family_key
 from invoice_hub.services.invoice_list import InvoiceListService
+from invoice_hub.services.source_move import SourceMoveService, period_folder_check
 from invoice_hub.storage import SQLiteRepository
 from invoice_hub.targets import AppConfig, target_profile_for
 from invoice_hub.targets.companies import company_taxpayer_for
@@ -184,6 +185,8 @@ class CompanyViewService:
         self._projects = ProjectAssignmentStore()
         # Tag definitions live beside the company registry; marks live in each company folder.
         self._tags = InvoiceTagStore(Path(registry.registry_path).parent / TAG_DEFINITIONS_NAME)
+        # Move plans and journals of misfiled source files (WS-05): runtime state, never business data.
+        self._moves = SourceMoveService(Path(registry.registry_path).parent / "source-moves")
 
     @property
     def config(self) -> AppConfig:
@@ -556,6 +559,38 @@ class CompanyViewService:
         if not isinstance(body, dict):
             raise company_vouchers.VoucherDraftError("VOUCHER_DRAFT_INVALID", "请求格式不对。")
         return {"ok": True, **company_vouchers.save_draft(self._company_root(company), name, body)}
+
+    # ---- period folders (WS-05 stage 2): content period vs. folder name, and confirmed moves.
+    def _present_subdir(self, company_id: str, key: str) -> tuple[dict, Path]:
+        company = self._registry.get_company(company_id)["company"]
+        subdir, _profile = self._directory(company, key)
+        if subdir["status"] != "present":
+            raise CompanyRegistryError("COMPANY_DIRECTORY_MISSING", "这个子目录不存在或不可用。", status_code=409)
+        return company, Path(subdir["path"])
+
+    def period_folders(self, company_id: str, key: str) -> dict:
+        _company, root = self._present_subdir(company_id, key)
+        return {"ok": True, **period_folder_check(root, key)}
+
+    def prepare_source_move(self, company_id: str, body: object) -> dict:
+        if not isinstance(body, dict):
+            raise CompanyRegistryError("SOURCE_MOVE_INVALID", "请求格式不对。")
+        key = str(body.get("key") or "")
+        _company, root = self._present_subdir(company_id, key)
+        job = self._moves.prepare(company_id=company_id, key=key, root=root, items=body.get("items"),
+                                  guard=Path(self.active_profile.watch_dir))
+        return {"ok": True, **self._moves.public(job)}
+
+    def confirm_source_move(self, company_id: str, job_id: str, body: object) -> dict:
+        confirmed = body.get("confirmed") if isinstance(body, dict) else None
+        job = self._moves.commit(job_id, company_id=company_id, confirmed=confirmed)
+        return {"ok": True, **self._moves.public(job)}
+
+    def source_move(self, company_id: str, job_id: str) -> dict:
+        job = self._moves.get(job_id)
+        if job["company_id"] != company_id:
+            raise CompanyRegistryError("SOURCE_MOVE_INVALID", "移动记录不属于这家公司。", status_code=404)
+        return {"ok": True, **self._moves.public(job)}
 
     def rebook_voucher_invoice(self, company_id: str, name: str, body: object) -> dict:
         # Corrects where an invoice is booked (generated data, 做账草稿/记入期调整.json), then regenerates; no source file moves.
