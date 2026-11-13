@@ -21,6 +21,11 @@ interface DraftPayload {
   sheets?: DraftSheet[]; current_month?: string;
 }
 interface Moved { from: { month: string; number: string }; to: { month: string; number: string } }
+interface DraftInputs { booked: string[]; ledgers: string[]; tax_file: boolean; current_month: string }
+interface Carried { kept: string[]; review_again: string[]; new: string[]; gone: string[]; summaries_kept: number }
+interface GenerateResult {
+  name: string; tax_file_created: boolean; vouchers: number; low_confidence: number; missing_accounts: number; backup: string; carried: Carried | null;
+}
 interface ExportResult {
   files: string[]; exported: number; skipped: number; blocked_months: string[]; duplicates: string[]; learned: number;
   errors: { voucher: string; errors: string[] }[]; warnings: { voucher: string; warnings: string[] }[];
@@ -30,6 +35,12 @@ type Editable = "summary" | "code" | "debit" | "credit" | "supplier";
 const props = defineProps<{ company: Company }>();
 const base = computed(() => `/api/v1/companies/${encodeURIComponent(props.company.id)}/voucher-drafts`);
 const files = ref<{ name: string }[] | null>(null);
+// Generate (stage 2): voucher_cli draft from the page, with only the read-backs the backend listed.
+const inputs = ref<DraftInputs | null>(null);
+const generateOpen = ref(false);
+const generating = ref(false);
+const generateResult = ref<GenerateResult | null>(null);
+const plan = reactive({ from: "", to: "", monthEnd: true, booked: [] as string[], ledger: "" });
 const selectedFile = ref("");
 const draft = ref<DraftPayload | null>(null);
 const loading = ref(false);
@@ -131,7 +142,9 @@ function setPeriod(voucher: DraftVoucher, field: "month" | "date", value: string
 async function loadFiles(): Promise<void> {
   error.value = "";
   try {
-    files.value = (await request<{ drafts: { name: string }[] }>(base.value)).drafts;
+    const listing = await request<{ drafts: { name: string }[]; inputs: DraftInputs }>(base.value);
+    files.value = listing.drafts;
+    inputs.value = listing.inputs;
     if (!files.value.some((item) => item.name === selectedFile.value)) selectedFile.value = files.value.at(-1)?.name ?? "";
   } catch (cause) {
     error.value = errorText(cause);
@@ -203,6 +216,41 @@ async function save(): Promise<void> {
   }
 }
 
+function openGenerate(): void {
+  generateOpen.value = !generateOpen.value;
+  generateResult.value = null;
+  if (!generateOpen.value || !inputs.value) return;
+  // Defaults: the open table's range, every 序时账 read-back, the newest 科目表 snapshot.
+  const match = /^凭证草稿_(\d{4}-\d{2})_(\d{4}-\d{2})\.xlsx$/.exec(selectedFile.value);
+  plan.from = match?.[1] ?? inputs.value.current_month;
+  plan.to = match?.[2] ?? inputs.value.current_month;
+  plan.booked = [...inputs.value.booked];
+  plan.ledger = inputs.value.ledgers.at(-1) ?? "";
+}
+
+const replaces = computed(() => files.value?.some((item) => item.name === `凭证草稿_${plan.from}_${plan.to}.xlsx`) ?? false);
+
+async function runGenerate(): Promise<void> {
+  generating.value = true;
+  error.value = "";
+  try {
+    const result = await request<GenerateResult>(base.value, {
+      method: "POST", timeoutMs: 180_000,
+      body: { from: plan.from, to: plan.to, month_end: plan.monthEnd, booked: plan.booked, ledger: plan.ledger || null, confirm: true },
+    });
+    generateResult.value = result;
+    generateOpen.value = false;
+    await loadFiles();
+    // Same name as before: the watcher would not fire, so read it explicitly.
+    if (selectedFile.value === result.name) await loadDraft();
+    else selectedFile.value = result.name;
+  } catch (cause) {
+    error.value = errorText(cause);
+  } finally {
+    generating.value = false;
+  }
+}
+
 async function runExport(): Promise<void> {
   if (!draft.value) return;
   exporting.value = true;
@@ -254,6 +302,7 @@ watch(
       <button type="button" class="primary" :disabled="saving || !dirtyCount" :aria-busy="saving" @click="save">
         {{ saving ? "保存中…" : `保存（${dirtyCount} 张）` }}
       </button>
+      <button type="button" :disabled="!inputs || generating || dirtyCount > 0" :title="dirtyCount ? '先保存改动再生成' : ''" @click="openGenerate">生成草稿…</button>
       <button
         type="button"
         :disabled="!draft || !draft.approved || dirtyCount > 0 || exporting"
@@ -261,6 +310,56 @@ watch(
         @click="exportOpen = !exportOpen; exportResult = null"
       >导出已审核…</button>
     </div>
+    <section v-if="generateOpen && inputs" class="panel" role="group" aria-label="生成凭证草稿">
+      <p>
+        按银行流水、发票明细、申报数据.json 与读回的账套生成参考凭证（与命令行 voucher_cli draft 相同），写到 做账草稿/。
+        <template v-if="replaces">已有同期审核表：先备份到 做账草稿/历史/，内容没变的凭证沿用审核与改过的摘要，变了的列出来重新审核。</template>
+      </p>
+      <p v-if="!inputs.tax_file" class="banner banner--note">还没有 申报数据.json：生成时会按流水写一份模板，请按申报表补填后再生成一次。</p>
+      <div class="toolbar">
+        <label class="nowrap">从 <input v-model="plan.from" type="month" :max="inputs.current_month" aria-label="起始月份"></label>
+        <label class="nowrap">到 <input v-model="plan.to" type="month" :max="inputs.current_month" aria-label="结束月份"></label>
+        <label class="nowrap"><input v-model="plan.monthEnd" type="checkbox"> 凭证统一记在月末（收付款摘要前写实际日期）</label>
+      </div>
+      <fieldset v-if="inputs.booked.length" class="voucher__readback">
+        <legend>已入账月份的序时账读回（做账草稿/账套读回/）</legend>
+        <label v-for="item in inputs.booked" :key="item" class="nowrap"><input v-model="plan.booked" type="checkbox" :value="item"> {{ item }}</label>
+      </fieldset>
+      <label v-if="inputs.ledgers.length" class="nowrap">科目表
+        <select v-model="plan.ledger" aria-label="科目表">
+          <option value="">凭证/科目表.json</option>
+          <option v-for="item in inputs.ledgers" :key="item" :value="item">账套读回/{{ item }}</option>
+        </select>
+      </label>
+      <div class="toolbar">
+        <button type="button" class="primary" :disabled="generating || !plan.from || !plan.to || plan.from > plan.to" :aria-busy="generating" @click="runGenerate">
+          {{ generating ? "生成中…" : replaces ? "备份并重新生成" : "生成" }}
+        </button>
+        <button type="button" @click="generateOpen = false">取消</button>
+      </div>
+    </section>
+    <section v-if="generateResult" class="panel" role="status" aria-label="生成结果">
+      <p>
+        已生成 {{ generateResult.name }}：{{ generateResult.vouchers }} 张凭证（低置信度 {{ generateResult.low_confidence }} 张），待补科目 {{ generateResult.missing_accounts }} 项。
+        <template v-if="generateResult.backup">旧表已备份到 做账草稿/{{ generateResult.backup }}。</template>
+      </p>
+      <p v-if="generateResult.tax_file_created" class="banner banner--note">已写出 申报数据.json 模板：请按申报表补填已申报 / 未申报与税额后重新生成。</p>
+      <template v-if="generateResult.carried">
+        <p>沿用审核 {{ generateResult.carried.kept.length }} 张、沿用改过的摘要 {{ generateResult.carried.summaries_kept }} 行。</p>
+        <details v-if="generateResult.carried.review_again.length" open>
+          <summary class="check--failed">内容变了、需要重新审核 {{ generateResult.carried.review_again.length }} 张</summary>
+          <ul class="warnings warnings--compact"><li v-for="item in generateResult.carried.review_again" :key="item">{{ item }}</li></ul>
+        </details>
+        <details v-if="generateResult.carried.new.length">
+          <summary>新增 {{ generateResult.carried.new.length }} 张</summary>
+          <ul class="warnings warnings--compact"><li v-for="item in generateResult.carried.new" :key="item">{{ item }}</li></ul>
+        </details>
+        <details v-if="generateResult.carried.gone.length">
+          <summary>旧表有、新表没有 {{ generateResult.carried.gone.length }} 张</summary>
+          <ul class="warnings warnings--compact"><li v-for="item in generateResult.carried.gone" :key="item">{{ item }}</li></ul>
+        </details>
+      </template>
+    </section>
     <section v-if="exportOpen && draft" class="panel" role="group" aria-label="导出已审核凭证">
       <p>
         将审核为“通过”的 {{ draft.approved }} 张凭证导出为账套导入文件，写到公司资料夹 做账草稿/，由会计人员在账套中手工导入（不连接账套）。
@@ -303,7 +402,7 @@ watch(
     <p v-if="error" class="banner banner--error" role="alert">{{ error }}</p>
     <p v-if="notice" class="banner banner--ok" role="status">{{ notice }}</p>
     <p v-if="files && !files.length" class="muted">
-      公司资料夹 做账草稿/ 里还没有凭证审核表。先用 <code>python -m invoice_hub.bank.voucher_cli draft</code> 生成，再在这里审核和修改。
+      公司资料夹 做账草稿/ 里还没有凭证审核表。点“生成草稿…”生成，再在这里审核和修改。
     </p>
     <template v-if="draft">
       <p class="banner banner--note">

@@ -21,18 +21,26 @@ Rules kept here, not in the page:
   approved vouchers, a month with any failing voucher is not written at all, numbers restart per
   month (or after ``after``), and a voucher exported before is skipped. It runs only on an explicit
   confirm for the exact file revision the user reviewed, and writes only into 做账草稿/.
+- Generating (stage 2) is ``voucher_cli draft`` itself (``prepare`` + ``write_review_xlsx`` + the CLI's
+  notes). Regenerating over an existing workbook first copies it to 做账草稿/历史/ and carries the review
+  over: vouchers are paired by their source (invoice number; bank row with amount; month-end kind by
+  month and accounts); only an unchanged signature keeps the approval, edited summaries are kept
+  either way, and everything that needs a new review is listed.
 """
 
 from __future__ import annotations
 
 import hashlib
 import re
+import shutil
 import threading
+from collections import defaultdict
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
+from invoice_hub.bank import jierui
 from invoice_hub.bank.jierui import APPROVE, REJECT, REVIEW_COLUMNS, REVIEW_SHEET, _atomic, export, read_review_xlsx, validate
 from invoice_hub.bank.ledger import Ledger, load_aux_values
 from invoice_hub.bank.models import money
@@ -48,7 +56,9 @@ CHECK_SHEETS = ("月度核对", "银行对账", "库存核对", "待补科目")
 CHECK_SHEET_MAX_ROWS = 2000
 _MONTH = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
 MAX_PREPARER = 20
-# One export at a time per process: it reads and rewrites the export log and habits in 做账草稿/.
+READBACK_DIR = "账套读回"
+HISTORY_DIR = "历史"
+# One export or generation at a time per process: both rewrite files in 做账草稿/.
 _EXPORT_LOCK = threading.Lock()
 
 
@@ -95,6 +105,23 @@ def _revision(path: Path) -> str:
 
 def _text(value: object) -> str:
     return "" if value is None else str(value)
+
+
+def _readback_files(root: Path, pattern: str) -> list[str]:
+    folder = root / DRAFT_DIR / READBACK_DIR
+    if not folder.is_dir():
+        return []
+    return sorted(path.name for path in folder.glob(pattern) if path.is_file() and not path.is_symlink())
+
+
+def draft_inputs(root: Path) -> dict:
+    """What the generate panel offers: the books read-backs the user may pick, and the month limit."""
+    return {
+        "booked": _readback_files(root, "序时账_*.txt"),
+        "ledgers": _readback_files(root, "科目表_*.json"),
+        "tax_file": (root / DRAFT_DIR / "申报数据.json").is_file(),
+        "current_month": date.today().strftime("%Y-%m"),
+    }
 
 
 def list_drafts(root: Path) -> list[dict]:
@@ -370,4 +397,133 @@ def export_draft(root: Path, name: str, body: dict) -> dict:
         "blocked_months": sorted({label.split(" ")[0] for label in result.errors}),
         "warnings": [{"voucher": label, "warnings": warnings} for label, warnings in result.warnings.items()],
         "duplicates": result.duplicates, "learned": result.learned,
+    }
+
+
+def _review_state(path: Path) -> list[dict]:
+    """Per voucher of a review workbook: key, source, approval, line summaries and content signature."""
+    from openpyxl import load_workbook
+
+    vouchers = read_review_xlsx(path)
+    ws = load_workbook(path, data_only=True)[REVIEW_SHEET]
+    header = [_text(cell.value).strip() for cell in ws[1]]
+    source_col = header.index("来源") + 1 if "来源" in header else None
+    out = []
+    for voucher in vouchers:
+        source = _text(ws.cell(row=voucher.first_row, column=source_col).value).strip() if source_col else ""
+        out.append({"voucher": voucher, "month": voucher.month, "number": voucher.number, "source": source,
+                    "approval": voucher.approval, "summaries": [line["summary"] for line in voucher.lines],
+                    "signature": jierui._signature(voucher)})
+    return out
+
+
+def _identity(item: dict) -> tuple:
+    """Pairs a voucher across regenerations by what it was made from, never by its number."""
+    source, voucher = item["source"], item["voucher"]
+    if source.startswith(("销项发票 ", "进项发票 ")):
+        return ("invoice", source)
+    debit = sum((line["debit"] or Decimal(0) for line in voucher.lines), Decimal(0))
+    if source.startswith("银行流水 "):
+        # row ids are positions in the statement set; the amount guards against a renumbered row.
+        return ("bank", source, str(money(debit)))
+    return ("other", source, item["month"], tuple(sorted({line["code"] for line in voucher.lines})))
+
+
+def _carry_review(old: list[dict], path: Path) -> dict:
+    new = _review_state(path)
+    pool: dict[tuple, list[dict]] = defaultdict(list)
+    for item in old:
+        pool[_identity(item)].append(item)
+    label = lambda item: f"{item['month']} 第 {item['number']} 号 {item['summaries'][0] if item['summaries'] else ''}".strip()
+    kept, review_again, fresh, approvals, summaries = [], [], [], {}, {}
+    for item in new:
+        candidates = pool.get(_identity(item))
+        if not candidates:
+            fresh.append(label(item))
+            continue
+        before = candidates.pop(0)
+        voucher = item["voucher"]
+        if len(before["summaries"]) == len(voucher.lines):
+            for line, summary in zip(voucher.lines, before["summaries"]):
+                if summary and summary != line["summary"]:
+                    summaries[line["row"]] = summary
+        # Listed with the summary the user will recognise: the carried one when there is one.
+        shown = {**item, "summaries": [summaries.get(voucher.first_row, item["summaries"][0] if item["summaries"] else "")]}
+        if before["signature"] == item["signature"]:
+            if before["approval"]:
+                approvals[voucher.first_row] = before["approval"]
+                kept.append(label(shown))
+        elif before["approval"]:
+            review_again.append(label(shown))
+    gone = [label(item) for items in pool.values() for item in items]
+    if approvals or summaries:
+        def write(tmp: Path) -> None:
+            from openpyxl import load_workbook
+
+            wb = load_workbook(path)
+            ws = wb[REVIEW_SHEET]
+            header = [_text(cell.value).strip() for cell in ws[1]]
+            for row, approval in approvals.items():
+                ws.cell(row=row, column=header.index("审核") + 1).value = approval
+            for row, summary in summaries.items():
+                ws.cell(row=row, column=header.index("摘要") + 1).value = summary
+            wb.save(tmp)
+
+        _atomic(path, write)
+    return {"kept": kept, "review_again": review_again, "new": fresh, "gone": gone, "summaries_kept": len(summaries)}
+
+
+def generate_draft(root: Path, body: dict) -> dict:
+    """`{from, to, month_end?: true, booked?: [序时账_*.txt], ledger?: 科目表_*.json, confirm: true}` -> the CLI's draft."""
+    from invoice_hub.bank.vouchers import CompanyPaths, prepare
+    from invoice_hub.bank.voucher_cli import NOTES
+
+    if body.get("confirm") is not True:
+        raise VoucherDraftError("VOUCHER_DRAFT_INVALID", "生成需要确认。")
+    month_from, month_to = str(body.get("from") or ""), str(body.get("to") or "")
+    this_month = date.today().strftime("%Y-%m")
+    if not _MONTH.match(month_from) or not _MONTH.match(month_to) or month_from > month_to:
+        raise VoucherDraftError("VOUCHER_DRAFT_INVALID", "请选择起止年月（起不能晚于止）。")
+    if month_to > this_month:
+        raise VoucherDraftError("VOUCHER_DRAFT_INVALID", f"不能生成未来月份（{month_to}）。")
+    inputs = draft_inputs(root)
+    booked = body.get("booked") or []
+    ledger = body.get("ledger") or None
+    # Only read-backs listed in 做账草稿/账套读回/: the page never names an arbitrary file.
+    if not isinstance(booked, list) or any(name not in inputs["booked"] for name in booked):
+        raise VoucherDraftError("VOUCHER_DRAFT_INVALID", "只能选择 做账草稿/账套读回/ 下的 序时账_*.txt。")
+    if ledger is not None and ledger not in inputs["ledgers"]:
+        raise VoucherDraftError("VOUCHER_DRAFT_INVALID", "只能选择 做账草稿/账套读回/ 下的 科目表_*.json。")
+    out_dir = root / DRAFT_DIR
+    readback = out_dir / READBACK_DIR
+    name = f"凭证草稿_{month_from}_{month_to}.xlsx"
+    path = out_dir / name
+    with _EXPORT_LOCK:
+        try:
+            paths = CompanyPaths.discover(root)
+            if ledger:
+                # A read-back snapshot only replaces where accounts come from; 凭证/科目表.json is not touched.
+                paths.ledger = readback / ledger
+            _data, _analysis, result, _tax_path, created = prepare(
+                paths, out_dir, month_from, month_to, jierui.load_habits(out_dir),
+                [readback / item for item in booked], bool(body.get("month_end", True)),
+            )
+        except (ValueError, KeyError, InvalidOperation) as exc:
+            raise VoucherDraftError("VOUCHER_DRAFT_GENERATE_FAILED", f"生成失败：{exc}") from exc
+        old, backup = None, None
+        if path.is_file() and not path.is_symlink():
+            try:
+                old = _review_state(path)
+            except (ValueError, KeyError) as exc:
+                raise VoucherDraftError("VOUCHER_DRAFT_UNREADABLE", f"现有的 {name} 无法读取，未覆盖：{exc}") from exc
+            (out_dir / HISTORY_DIR).mkdir(exist_ok=True)
+            backup = f"{path.stem}_{datetime.now():%Y%m%d_%H%M%S}.xlsx"
+            shutil.copy2(path, out_dir / HISTORY_DIR / backup)
+        jierui.write_review_xlsx(path, result, NOTES)
+        carried = _carry_review(old, path) if old is not None else None
+    return {
+        "name": name, "tax_file_created": created, "vouchers": len(result.vouchers),
+        "low_confidence": sum(1 for voucher in result.vouchers if voucher.confidence == "低"),
+        "missing_accounts": len(result.missing), "backup": f"{HISTORY_DIR}/{backup}" if backup else "",
+        "carried": carried,
     }

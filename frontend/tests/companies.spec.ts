@@ -701,6 +701,43 @@ describe("companies module", () => {
     expect(result.text()).toContain("2026-06 整月未导出");
   });
 
+  it("generates a draft from the page with the listed read-backs and shows what needs a new review", async () => {
+    const NAME = "凭证草稿_2026-07_2026-09.xlsx";
+    const inputs = { booked: ["序时账_2026-06.txt"], ledgers: ["科目表_2026-10-01.json", "科目表_2026-10-20.json"], tax_file: true, current_month: "2026-11" };
+    let generated = false;
+    stubBackend((url, init) => {
+      const method = init.method ?? "GET";
+      if (url.endsWith("/voucher-drafts") && method === "POST") {
+        generated = true;
+        return [200, { ok: true, name: NAME, tax_file_created: false, vouchers: 12, low_confidence: 1, missing_accounts: 0, backup: "历史/凭证草稿_2026-07_2026-09_20261113_101010.xlsx",
+          carried: { kept: ["2026-07 第 001 号 购钢材-林函"], review_again: ["2026-08 第 003 号 销售钢材-银洲"], new: [], gone: [], summaries_kept: 2 } }];
+      }
+      if (url.endsWith("/voucher-drafts")) return [200, { ok: true, drafts: generated ? [{ name: NAME }] : [], inputs }];
+      if (url.includes("/voucher-drafts/")) return [200, { ok: true, name: NAME, revision: "r1", books_error: "", vouchers: [], approved: 0, blocked: 0, sheets: [], current_month: "2026-11" }];
+      return undefined;
+    });
+    const wrapper = await mountCompanies();
+    await wrapper.get("#company-tab-vouchers").trigger("click");
+    await flushPromises();
+    expect(wrapper.text()).toContain("点“生成草稿…”生成");
+    await wrapper.findAll("button").find((button) => button.text() === "生成草稿…")!.trigger("click");
+    const panel = wrapper.get('[aria-label="生成凭证草稿"]');
+    expect(panel.get('input[aria-label="结束月份"]').attributes("max")).toBe("2026-11");
+    expect((panel.get('select[aria-label="科目表"]').element as HTMLSelectElement).value).toBe("科目表_2026-10-20.json"); // newest snapshot
+    await panel.get('input[aria-label="起始月份"]').setValue("2026-07");
+    await panel.get('input[aria-label="结束月份"]').setValue("2026-09");
+    await panel.findAll("button").find((button) => button.text() === "生成")!.trigger("click");
+    await flushPromises();
+    expect(calls.find((call) => call.method === "POST" && call.url.endsWith("/voucher-drafts"))!.body).toEqual({
+      from: "2026-07", to: "2026-09", month_end: true, booked: ["序时账_2026-06.txt"], ledger: "科目表_2026-10-20.json", confirm: true,
+    });
+    const result = wrapper.get('[aria-label="生成结果"]');
+    expect(result.text()).toContain("旧表已备份到 做账草稿/历史/");
+    expect(result.text()).toContain("沿用审核 1 张、沿用改过的摘要 2 行");
+    expect(result.text()).toContain("需要重新审核 1 张");
+    expect(calls.some((call) => call.url.endsWith(`/voucher-drafts/${encodeURIComponent(NAME)}`))).toBe(true); // the new table is opened
+  });
+
   it("marks a non-monitored folder's invoice list read-only", async () => {
     stubBackend((url) => (url.includes("/directories?") || url.endsWith("/directories")
       ? [200, { ok: true, revision: 3, company: COMPANY, directories: [{ ...DIRECTORIES[1], status: "present" }] }] : undefined));

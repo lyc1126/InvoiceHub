@@ -20,6 +20,12 @@
 - 红冲抵销先于收付款匹配：否则余额已经为 0，被冲的蓝字票仍显示“未付”，页面自相矛盾。守护：`test_red_letter_invoices_reduce_the_balance_and_unreadable_ones_are_listed`。
 - `party_balance` 与 `flow_accounting` 从原始发票、流水清单复算，而不是用往来单位行自己的数：同义反复的校验永远成立，发现不了漏算。守护：上述各用例的 `_ok`。
 
+## 2026-11-13 页面生成草稿与沿用审核（WS-05 第二阶段）
+
+- 页面生成直接走 `prepare` + `write_review_xlsx` + 命令行说明页：两套入口只要有一处不同，页面审核过的表就不是命令行会导出的表。守护：`test_the_page_writes_the_same_workbook_as_the_cli`。
+- 沿用审核按来源配对、按导出签名判定：凭证号会因前面增删凭证而变，按号配对会把审核挂到别的凭证上；签名与重复导出判定同一口径，签名不变才说明导出内容没变。银行流水的 row_id 是对账单序号，必须带借方合计复核。守护：`test_regenerating_backs_up_and_carries_unchanged_reviews`。
+- 覆盖前先完整备份、现有表读不了就不覆盖：审核表是用户人工审核的成果，重新生成不能静默丢掉。
+
 ## 2026-11-13 凭证草稿页面导出（WS-05 第二阶段）
 
 - 页面导出直接调用 `jierui.export`，不另写：整月拦截、按月重新编号、已导出跳过与科目习惯学习都在那里，复制一份就会与命令行漂移。守护：`test_export_writes_the_approved_vouchers_like_the_cli_and_skips_a_repeat`（用导出写出的文件核对凭证号与制单人、第二次跳过、通过但不合格时整月不写）。

@@ -536,7 +536,15 @@ class CompanyViewService:
     # ---- voucher draft review (WS-05 stage 1): the CLI's review workbook in 做账草稿/, edited in place.
     def voucher_drafts(self, company_id: str) -> dict:
         company = self._registry.get_company(company_id)["company"]
-        return {"ok": True, "drafts": company_vouchers.list_drafts(self._company_root(company))}
+        root = self._company_root(company)
+        return {"ok": True, "drafts": company_vouchers.list_drafts(root), "inputs": company_vouchers.draft_inputs(root)}
+
+    def generate_voucher_draft(self, company_id: str, body: object) -> dict:
+        # Only on the user's confirm: writes 做账草稿/ the way `voucher_cli draft` does, backing up an existing table.
+        company = self._registry.get_company(company_id)["company"]
+        if not isinstance(body, dict):
+            raise company_vouchers.VoucherDraftError("VOUCHER_DRAFT_INVALID", "请求格式不对。")
+        return {"ok": True, **company_vouchers.generate_draft(self._company_root(company), body)}
 
     def voucher_draft(self, company_id: str, name: str) -> dict:
         company = self._registry.get_company(company_id)["company"]

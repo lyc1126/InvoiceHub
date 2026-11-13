@@ -162,6 +162,12 @@ def router() -> APIRouter:
     async def company_voucher_drafts(request: Request, company_id: str):
         return await _call(lambda: _state(request).company_views.voucher_drafts(company_id))
 
+    @routes.post("/api/v1/companies/{company_id}/voucher-drafts")
+    async def generate_company_voucher_draft(request: Request, company_id: str):
+        _require_same_origin_write(request)
+        payload = await _json_body(request)
+        return await _call(lambda: _state(request).company_views.generate_voucher_draft(company_id, payload))
+
     @routes.get("/api/v1/companies/{company_id}/voucher-drafts/{name}")
     async def company_voucher_draft(request: Request, company_id: str, name: str):
         return await _call(lambda: _state(request).company_views.voucher_draft(company_id, name))
