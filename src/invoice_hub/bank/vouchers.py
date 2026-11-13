@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import csv
 import json
+import re
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import date, timedelta
@@ -460,6 +461,22 @@ def tax_template(data: WorkpaperInput, analysis: Analysis, months: list[str]) ->
     }
 
 
+PERIOD_OVERRIDES_FILE = "记入期调整.json"
+
+
+def load_period_overrides(out_dir: Path) -> dict[str, dict]:
+    """做账草稿/记入期调整.json：发票号 → {month, reason}；页面与命令行生成都读它。损坏时报错，不当作没有调整。"""
+    path = out_dir / PERIOD_OVERRIDES_FILE
+    if not path.exists():
+        return {}
+    data = json.loads(path.read_text(encoding="utf-8"))
+    invoices = data.get("invoices") if isinstance(data, dict) else None
+    if not isinstance(invoices, dict) or not all(isinstance(item, dict) and re.fullmatch(r"\d{4}-\d{2}", str(item.get("month") or ""))
+                                                   for item in invoices.values()):
+        raise ValueError(f"{PERIOD_OVERRIDES_FILE} 格式不对，请修正或删除后再生成")
+    return invoices
+
+
 def load_tax_file(path: Path) -> dict:
     data = json.loads(path.read_text(encoding="utf-8"))
     for key in ("月度增值税", "季度税费", "已抵扣进项发票"):
@@ -616,6 +633,7 @@ def build_drafts(
     booked: list[BookedLine] | None = None,
     sources: SourceIndex | None = None,
     month_end_dates: bool = False,
+    period_overrides: dict[str, dict] | None = None,
 ) -> DraftResult:
     own = {s.account_name for s in data.statements}
     months = _months(month_from, month_to)
@@ -642,10 +660,19 @@ def build_drafts(
 
     book_month: dict[str, str] = {}
     candidates = []
+    # 人工调整记入期（做账草稿/记入期调整.json）优先：用户已核对过该票该记哪个月，不再按读回判断是否已入账；
+    # 调到范围外的票不进本草稿。抵扣月份仍按开票月与申报数据判断（_input_policy），记入早于可抵扣月份时自然挂待认证。
+    overrides = period_overrides or {}
     for inv in invoices:
         month = f"{inv.issue_date:%Y-%m}"
         kind = "out" if inv.seller in own else "in" if inv.buyer in own else ""
         if not kind:
+            continue
+        override = (overrides.get(inv.number) or {}).get("month")
+        if override:
+            if month_from <= override <= month_to:
+                book_month[inv.number] = override
+                candidates.append(inv)
             continue
         if month_from <= month <= month_to:
             if month in read_months and already_booked(inv, kind):
@@ -665,6 +692,10 @@ def build_drafts(
 
     def carry_note(inv: Invoice) -> list[str]:
         month = f"{inv.issue_date:%Y-%m}"
+        override = overrides.get(inv.number)
+        if override and override.get("month"):
+            reason = f"（{override['reason']}）" if override.get("reason") else ""
+            return [f"人工调整记入期：{_m(month)}开票，记入{_m(book_month[inv.number])}{reason}"]
         if book_month[inv.number] != month:
             return [f"{_m(month)}发票账套未入账且{_m(month)}已结账，补记在{_m(book_month[inv.number])}；如需记入{_m(month)}须先反结账"]
         if month in booked_months:
@@ -800,8 +831,10 @@ def build_drafts(
                 code = ledger.find(f"{P_INVENTORY}/{goods_family(item['item'])}")
                 if code and item["qty"] is not None:
                     by_invoice[code] += sign * item["qty"]
-                    if sign > 0 and book_month.get(inv.number) == month_from:
-                        carried[code] += item["qty"]
+                    # 范围前开票、却记入本草稿某月的票（补记到首月或人工调整记入期），其数量在当月购销里计算，
+                    # 不能再算进期初应有数量，否则重复。
+                    if book_month.get(inv.number):
+                        carried[code] += sign * item["qty"]
         opening_fix = {code: by_invoice[code] - stock.get(code, [None, None, ZERO])[2] - carried[code]
                        for code in by_invoice}
         opening_fix = {code: qty for code, qty in opening_fix.items() if abs(qty) > Decimal("0.01")}
@@ -1127,10 +1160,12 @@ def prepare(paths: CompanyPaths, out_dir: Path, month_from: str, month_to: str, 
         tax_path.write_text(json.dumps(tax_template(data, analysis, _months(month_from, month_to)), ensure_ascii=False, indent=2), encoding="utf-8")
         created = True
     tax_data = load_tax_file(tax_path)
+    period_overrides = load_period_overrides(out_dir)
     result = build_drafts(
         data=data, analysis=analysis, invoices=load_invoices(paths.invoice_csv), tax_data=tax_data,
         ledger=Ledger.load(paths.ledger), aux=load_aux_values(paths.aux), rules=load_mapping_rules(paths.rules),
         habits=habits, month_from=month_from, month_to=month_to,
         booked=load_booked(booked_paths or []), sources=SourceIndex(data, paths.company), month_end_dates=month_end_dates,
+        period_overrides=period_overrides,
     )
     return data, analysis, result, tax_path, created

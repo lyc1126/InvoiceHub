@@ -11,14 +11,19 @@ interface DraftLine {
   row: number; summary: string; code: string; name: string; debit: string | null; credit: string | null;
   supplier: string; qty: string | null; unit: string; todo: string; confidence: string; basis: string;
 }
+interface SourceDocument {
+  kind: string; number: string; issue_date: string; book_month: string; cross: boolean; movable: boolean;
+  override: { month: string; reason: string } | null;
+}
 interface DraftVoucher {
   month: string; number: string; date: string; approval: string; debit_total: string; credit_total: string;
-  errors: string[]; warnings: string[]; lines: DraftLine[];
+  errors: string[]; warnings: string[]; lines: DraftLine[]; source_documents?: SourceDocument[];
 }
 interface DraftSheet { name: string; columns: (string | number)[]; rows: (string | number)[][]; truncated: boolean }
 interface DraftPayload {
   name: string; revision: string; books_error: string; vouchers: DraftVoucher[]; approved: number; blocked: number;
   sheets?: DraftSheet[]; current_month?: string;
+  periods_revision?: number | null; periods_error?: string; cross_period_hint?: string;
 }
 interface Moved { from: { month: string; number: string }; to: { month: string; number: string } }
 interface DraftInputs { booked: string[]; ledgers: string[]; tax_file: boolean; current_month: string }
@@ -67,6 +72,10 @@ const approvedByMonth = computed(() => {
   for (const voucher of draft.value?.vouchers ?? []) if (voucher.approval === "通过") counts[voucher.month] = (counts[voucher.month] ?? 0) + 1;
   return Object.entries(counts).sort(([a], [b]) => a.localeCompare(b));
 });
+// 改记入期 (stage 2a): corrects generated data only; the invoice file stays where it is.
+const REBOOK_REASONS = ["次月到票", "补记漏记", "月末暂估", "开票日期有误", "其他"];
+const rebooking = ref<{ key: string; number: string; issueMonth: string; month: string; reason: string; override: boolean } | null>(null);
+const rebookBusy = ref(false);
 const numberFormat = new Intl.NumberFormat("zh-CN", { maximumFractionDigits: 3 });
 const cellText = (value: string | number) => (typeof value === "number" ? numberFormat.format(value) : value);
 
@@ -251,6 +260,42 @@ async function runGenerate(): Promise<void> {
   }
 }
 
+function startRebook(voucher: DraftVoucher, doc: SourceDocument): void {
+  rebooking.value = { key: keyOf(voucher), number: doc.number, issueMonth: doc.issue_date.slice(0, 7), month: voucher.month,
+    reason: doc.override?.reason || REBOOK_REASONS[0]!, override: !!doc.override };
+}
+
+async function runRebook(back = false): Promise<void> {
+  if (!draft.value || !rebooking.value) return;
+  rebookBusy.value = true;
+  error.value = "";
+  notice.value = "";
+  const target = back ? "" : rebooking.value.month;
+  try {
+    const result = await request<{ out_of_range: boolean; generation_remembered: boolean; generated: GenerateResult }>(
+      `${base.value}/${encodeURIComponent(draft.value.name)}/rebook`,
+      { method: "POST", timeoutMs: 180_000,
+        body: { revision: draft.value.periods_revision ?? 0, number: rebooking.value.number, month: target, reason: back ? "" : rebooking.value.reason } },
+    );
+    const where = target || rebooking.value.issueMonth;
+    notice.value = `发票 …${rebooking.value.number.slice(-8)} 已${back ? "恢复为开票月" : "改记入"} ${where}，草稿已重新生成。`
+      + (result.out_of_range ? `${where} 不在本表范围内，生成该月草稿后会出现在那里。` : "")
+      + (result.generation_remembered ? "" : "（本表不是在页面生成的，已按文件名的起止月、统一记月末与全部读回重新生成。）");
+    generateResult.value = result.generated;
+    rebooking.value = null;
+    await loadDraft();
+  } catch (cause) {
+    if (cause instanceof ApiError && cause.code === "VOUCHER_PERIODS_CONFLICT") {
+      await loadDraft();
+      error.value = "记入期调整已在别处修改，已刷新，请重新操作。";
+    } else {
+      error.value = errorText(cause);
+    }
+  } finally {
+    rebookBusy.value = false;
+  }
+}
+
 async function runExport(): Promise<void> {
   if (!draft.value) return;
   exporting.value = true;
@@ -410,6 +455,7 @@ watch(
         改动过的凭证（含所属期、记账日期）要重新审核；借贷不平、科目不可用或记账日期不在所属期内时不能审核通过。保存只写这份审核表，导出只写 做账草稿/，都不写 凭证/、不连接账套。
       </p>
       <p v-if="draft.books_error" class="banner banner--error" role="alert">{{ draft.books_error }}</p>
+      <p v-if="draft.periods_error" class="banner banner--error" role="alert">{{ draft.periods_error }}</p>
       <details v-for="sheet in draft.sheets ?? []" :key="sheet.name" class="checks">
         <summary><strong>{{ sheet.name }}</strong> <span class="muted">{{ sheet.rows.length }} 行{{ sheet.truncated ? "（只显示前 2000 行）" : "" }} · 由生成命令写入，只读</span></summary>
         <table class="grid" :aria-label="sheet.name">
@@ -463,6 +509,23 @@ watch(
             <option value="不导入">不导入</option>
           </select>
         </header>
+        <p v-for="doc in voucher.source_documents ?? []" :key="doc.kind + doc.number" class="voucher__source">
+          原始单据：{{ doc.kind }}<template v-if="doc.number"> …{{ doc.number.slice(-8) }}</template><template v-if="doc.issue_date"> · 开票 {{ doc.issue_date }}</template>
+          <span class="tag" :class="{ 'tag--danger': doc.cross }" :title="doc.cross ? draft.cross_period_hint : '单据日期与记入期在同一个月'">{{ doc.cross ? "跨期" : "同期" }}</span>
+          <span v-if="doc.override" class="muted">人工调整记入期{{ doc.override.reason ? `（${doc.override.reason}）` : "" }}</span>
+          <button v-if="doc.movable && doc.number" type="button" class="link" :disabled="!!dirtyCount" :title="dirtyCount ? '先保存改动' : ''" @click="startRebook(voucher, doc)">改记入期</button>
+          <span v-else-if="!doc.movable" class="muted">按对账单入账日记账，不能单独改记入期</span>
+        </p>
+        <div v-if="rebooking?.key === keyOf(voucher)" class="toolbar" role="group" :aria-label="`改记入期 ${voucher.month} 第 ${voucher.number} 号凭证`">
+          <label class="nowrap">记入期 <input v-model="rebooking.month" type="month" :max="draft.current_month" aria-label="记入期"></label>
+          <label class="nowrap">原因
+            <select v-model="rebooking.reason" aria-label="改记入期原因"><option v-for="item in REBOOK_REASONS" :key="item" :value="item">{{ item }}</option></select>
+          </label>
+          <button type="button" class="primary" :disabled="rebookBusy || !rebooking.month" :aria-busy="rebookBusy" @click="runRebook()">{{ rebookBusy ? "重新生成中…" : "保存并重新生成" }}</button>
+          <button v-if="rebooking.override" type="button" :disabled="rebookBusy" @click="runRebook(true)">恢复为开票月</button>
+          <button type="button" :disabled="rebookBusy" @click="rebooking = null">取消</button>
+          <span class="muted">只改凭证的记入期，不移动发票文件；改动过的凭证需要重新审核。</span>
+        </div>
         <p v-if="periods[keyOf(voucher)] && periods[keyOf(voucher)]!.month !== voucher.month" class="muted voucher__stale">
           保存后移到 {{ periods[keyOf(voucher)]!.month }}，并接在该月已有凭证号之后重新编号；需要重新审核。
         </p>

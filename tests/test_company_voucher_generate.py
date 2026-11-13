@@ -103,3 +103,55 @@ def test_generation_only_accepts_listed_readbacks_and_valid_months(tmp_path: Pat
     with pytest.raises(VoucherDraftError) as failed:
         generate_draft(company, BODY)
     assert failed.value.code == "VOUCHER_DRAFT_GENERATE_FAILED" and "成本发票明细" in failed.value.message
+
+
+def _purchase_voucher(company: Path) -> dict | None:
+    from invoice_hub.services.company_vouchers import read_draft
+
+    payload = read_draft(company, NAME)
+    return next((voucher for voucher in payload["vouchers"]
+                 if voucher["source_documents"] and voucher["source_documents"][0]["number"] == PURCHASE["发票号码"]), None)
+
+
+def test_rebooking_an_invoice_moves_its_voucher_and_the_cli_follows(tmp_path: Path):
+    from invoice_hub.services.company_vouchers import read_draft, rebook_invoice
+
+    company = _company(tmp_path / "page", invoices=[PURCHASE, SALE])
+    generate_draft(company, BODY)
+    before = _purchase_voucher(company)
+    assert before["month"] == "2026-07" and before["source_documents"][0]["cross"] is False
+
+    result = rebook_invoice(company, NAME, {"revision": 0, "number": PURCHASE["发票号码"], "month": "2026-08", "reason": "次月到票"})
+    assert result["periods_revision"] == 1 and result["generation_remembered"] and not result["out_of_range"]
+    after = _purchase_voucher(company)
+    document = after["source_documents"][0]
+    assert after["month"] == "2026-08" and document["cross"] and document["override"] == {"month": "2026-08", "reason": "次月到票"}
+    assert document["issue_date"] == "2026-07-10"
+    # The command line reads the same 记入期调整.json.
+    cli = _company(tmp_path / "cli", invoices=[PURCHASE, SALE])
+    (cli / "做账草稿").mkdir()
+    (cli / "做账草稿" / "记入期调整.json").write_bytes((company / "做账草稿" / "记入期调整.json").read_bytes())
+    assert voucher_main(["draft", "--company", str(cli), "--from", "2026-07", "--to", "2026-08"]) == 0
+    assert _purchase_voucher(cli)["month"] == "2026-08"
+
+    # Back to the issue month clears the adjustment; before the range the voucher leaves this draft.
+    rebook_invoice(company, NAME, {"revision": 1, "number": PURCHASE["发票号码"], "month": "", "reason": ""})
+    assert _purchase_voucher(company)["month"] == "2026-07" and _purchase_voucher(company)["source_documents"][0]["override"] is None
+    out = rebook_invoice(company, NAME, {"revision": 2, "number": PURCHASE["发票号码"], "month": "2026-06", "reason": "补记漏记"})
+    assert out["out_of_range"] and _purchase_voucher(company) is None
+
+    for body, code in (({"revision": 0}, "VOUCHER_PERIODS_CONFLICT"), ({"revision": 3, "month": "2999-01"}, "VOUCHER_DRAFT_INVALID"),
+                       ({"revision": 3, "number": "1" * 20}, "VOUCHER_DRAFT_INVALID")):
+        with pytest.raises(VoucherDraftError) as refused:
+            rebook_invoice(company, NAME, {"number": PURCHASE["发票号码"], "month": "2026-08", **body})
+        assert refused.value.code == code
+
+    # A damaged adjustment file is never treated as empty.
+    (company / "做账草稿" / "记入期调整.json").write_text("{", encoding="utf-8")
+    assert read_draft(company, NAME)["periods_error"]
+    with pytest.raises(VoucherDraftError) as unreadable:
+        rebook_invoice(company, NAME, {"revision": 3, "number": PURCHASE["发票号码"], "month": "2026-08"})
+    assert unreadable.value.code == "VOUCHER_PERIODS_UNREADABLE"
+    with pytest.raises(VoucherDraftError) as failed:
+        generate_draft(company, BODY)
+    assert failed.value.code == "VOUCHER_DRAFT_GENERATE_FAILED"

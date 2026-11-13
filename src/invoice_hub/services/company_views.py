@@ -557,6 +557,13 @@ class CompanyViewService:
             raise company_vouchers.VoucherDraftError("VOUCHER_DRAFT_INVALID", "请求格式不对。")
         return {"ok": True, **company_vouchers.save_draft(self._company_root(company), name, body)}
 
+    def rebook_voucher_invoice(self, company_id: str, name: str, body: object) -> dict:
+        # Corrects where an invoice is booked (generated data, 做账草稿/记入期调整.json), then regenerates; no source file moves.
+        company = self._registry.get_company(company_id)["company"]
+        if not isinstance(body, dict):
+            raise company_vouchers.VoucherDraftError("VOUCHER_DRAFT_INVALID", "请求格式不对。")
+        return {"ok": True, **company_vouchers.rebook_invoice(self._company_root(company), name, body)}
+
     def export_voucher_draft(self, company_id: str, name: str, body: object) -> dict:
         # Only on the user's confirm; files go to the company folder's 做账草稿/, for manual import into the books.
         company = self._registry.get_company(company_id)["company"]

@@ -738,6 +738,49 @@ describe("companies module", () => {
     expect(calls.some((call) => call.url.endsWith(`/voucher-drafts/${encodeURIComponent(NAME)}`))).toBe(true); // the new table is opened
   });
 
+  it("rebooks an invoice to another period, regenerates and shows it as cross-period", async () => {
+    const NAME = "凭证草稿_2026-07_2026-08.xlsx";
+    const number = "1".repeat(12) + "87654321";
+    const line = (row: number) => ({ row, summary: "购钢材", code: "1405", name: "", debit: row === 2 ? "10.00" : null, credit: row === 3 ? "10.00" : null,
+      supplier: "", qty: null, unit: "", todo: "", confidence: "高", basis: "" });
+    const doc = (month: string, override: { month: string; reason: string } | null) =>
+      ({ kind: "进项发票", number, issue_date: "2026-07-10", book_month: month, cross: month !== "2026-07", movable: true, override });
+    const voucher = (month: string, override: { month: string; reason: string } | null) =>
+      ({ month, number: "001", date: `${month}-30`, approval: "", debit_total: "10.00", credit_total: "10.00", errors: [], warnings: [], lines: [line(2), line(3)], source_documents: [doc(month, override)] });
+    const bank = { ...voucher("2026-07", null), number: "002", source_documents: [{ kind: "银行流水", number: "", issue_date: "", book_month: "2026-07", cross: false, movable: false, override: null }] };
+    let moved = false;
+    const payload = () => ({ ok: true, name: NAME, revision: "r1", books_error: "", approved: 0, blocked: 0, sheets: [], current_month: "2026-11",
+      periods_revision: moved ? 5 : 4, cross_period_hint: "跨期常见原因：次月到票",
+      vouchers: [moved ? voucher("2026-08", { month: "2026-08", reason: "次月到票" }) : voucher("2026-07", null), bank] });
+    stubBackend((url, init) => {
+      if (url.endsWith("/rebook")) {
+        moved = true;
+        return [200, { ok: true, periods_revision: 5, generation_remembered: true, out_of_range: false,
+          generated: { name: NAME, tax_file_created: false, vouchers: 2, low_confidence: 0, missing_accounts: 0, backup: "历史/x.xlsx", carried: { kept: [], review_again: [], new: [], gone: [], summaries_kept: 0 } } }];
+      }
+      if (url.endsWith("/voucher-drafts")) return [200, { ok: true, drafts: [{ name: NAME }], inputs: { booked: [], ledgers: [], tax_file: true, current_month: "2026-11" } }];
+      if (url.includes("/voucher-drafts/") && (init.method ?? "GET") === "GET") return [200, payload()];
+      return undefined;
+    });
+    const wrapper = await mountCompanies();
+    await wrapper.get("#company-tab-vouchers").trigger("click");
+    await flushPromises();
+    const card = () => wrapper.get('[aria-label="2026-07 第 001 号凭证"], [aria-label="2026-08 第 001 号凭证"]');
+    expect(card().get(".voucher__source").text()).toContain("开票 2026-07-10");
+    expect(card().get(".voucher__source .tag").text()).toBe("同期");
+    expect(wrapper.get('[aria-label="2026-07 第 002 号凭证"] .voucher__source').text()).toContain("不能单独改记入期");
+    await card().findAll("button").find((button) => button.text() === "改记入期")!.trigger("click");
+    const group = wrapper.get('[aria-label="改记入期 2026-07 第 001 号凭证"]');
+    await group.get('input[aria-label="记入期"]').setValue("2026-08");
+    await group.findAll("button").find((button) => button.text() === "保存并重新生成")!.trigger("click");
+    await flushPromises();
+    expect(calls.find((call) => call.url.endsWith("/rebook"))!.body).toEqual({ revision: 4, number, month: "2026-08", reason: "次月到票" });
+    expect(wrapper.text()).toContain("已改记入 2026-08，草稿已重新生成");
+    expect(card().attributes("aria-label")).toBe("2026-08 第 001 号凭证");
+    expect(card().get(".voucher__source .tag").text()).toBe("跨期");
+    expect(card().get(".voucher__source").text()).toContain("人工调整记入期（次月到票）");
+  });
+
   it("marks a non-monitored folder's invoice list read-only", async () => {
     stubBackend((url) => (url.includes("/directories?") || url.endsWith("/directories")
       ? [200, { ok: true, revision: 3, company: COMPANY, directories: [{ ...DIRECTORIES[1], status: "present" }] }] : undefined));

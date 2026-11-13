@@ -51,7 +51,9 @@ DRAFT_NAME = re.compile(r"^凭证草稿_[^/\\]+\.xlsx$")
 APPROVALS = {"", APPROVE, REJECT}
 EDITABLE = ("summary", "code", "debit", "credit", "supplier")
 COLUMN_OF = {"summary": "摘要", "code": "科目编码", "debit": "借方金额", "credit": "贷方金额", "supplier": "供应商"}
-DISPLAY = ("科目名称", "待处理", "置信度", "依据")
+DISPLAY = ("科目名称", "待处理", "置信度", "依据", "来源")
+GENERATION_FILE = "草稿生成参数.json"
+CROSS_PERIOD_HINT = "跨期常见原因：次月到票、补记漏记、月末暂估；需要时可改记入期。"
 CHECK_SHEETS = ("月度核对", "银行对账", "库存核对", "待补科目")
 CHECK_SHEET_MAX_ROWS = 2000
 _MONTH = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
@@ -176,6 +178,52 @@ def _check_sheets(path: Path) -> list[dict]:
     return out
 
 
+def _invoice_dates(root: Path) -> dict[str, date]:
+    from invoice_hub.bank.vouchers import load_invoices
+
+    csv_path = root / "成本发票明细.csv"
+    try:
+        return {invoice.number: invoice.issue_date for invoice in load_invoices(csv_path)} if csv_path.is_file() else {}
+    except (ValueError, KeyError, InvalidOperation):
+        return {}
+
+
+def _source_documents(source: str, month: str, dates: dict[str, date], overrides: dict[str, dict]) -> list[dict]:
+    """The original document behind an invoice voucher, with 同期 / 跨期 against the voucher's month."""
+    for kind in ("进项发票", "销项发票"):
+        if source.startswith(f"{kind} "):
+            number = source.removeprefix(f"{kind} ").strip()
+            issued = dates.get(number)
+            issue_month = issued.strftime("%Y-%m") if issued else ""
+            override = overrides.get(number)
+            return [{"kind": kind, "number": number, "issue_date": issued.isoformat() if issued else "",
+                     "book_month": month, "cross": bool(issue_month) and issue_month != month,
+                     "override": {"month": override.get("month", ""), "reason": override.get("reason", "")} if override else None,
+                     "movable": True}]
+    if source.startswith("银行流水"):
+        # Posted on the statement's booking date; its row ids are positions, so no per-row period override.
+        return [{"kind": "银行流水", "number": "", "issue_date": "", "book_month": month, "cross": False, "override": None, "movable": False}]
+    return []
+
+
+def _overrides_state(root: Path) -> dict:
+    from invoice_hub.bank.vouchers import PERIOD_OVERRIDES_FILE
+
+    path = root / DRAFT_DIR / PERIOD_OVERRIDES_FILE
+    if not path.exists():
+        return {"version": 1, "revision": 0, "invoices": {}}
+    try:
+        import json
+
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(data, dict) or not isinstance(data.get("invoices"), dict) or not isinstance(data.get("revision"), int):
+            raise ValueError("结构不对")
+        return data
+    except (OSError, ValueError) as exc:
+        # Never treated as empty: a rewrite would silently drop the user's adjustments.
+        raise VoucherDraftError("VOUCHER_PERIODS_UNREADABLE", f"{PERIOD_OVERRIDES_FILE} 无法读取，未改动：{exc}", status_code=409) from exc
+
+
 def read_draft(root: Path, name: str) -> dict:
     path = _draft_path(root, name)
     revision = _revision(path)
@@ -186,6 +234,11 @@ def read_draft(root: Path, name: str) -> dict:
     except (ValueError, KeyError) as exc:
         raise VoucherDraftError("VOUCHER_DRAFT_UNREADABLE", f"{name} 无法读取：{exc}") from exc
     books = _books(root)
+    dates = _invoice_dates(root)
+    try:
+        periods = _overrides_state(root)
+    except VoucherDraftError as exc:
+        periods = {"revision": None, "invoices": {}, "error": exc.message}
     items = []
     for voucher in vouchers:
         errors, warnings = validate(voucher, books.ledger, books.aux) if books.ledger else ([books.error], [])
@@ -195,6 +248,7 @@ def read_draft(root: Path, name: str) -> dict:
             "month": voucher.month, "number": voucher.number, "date": voucher.voucher_date.isoformat(),
             "approval": voucher.approval, "debit_total": str(debit), "credit_total": str(credit),
             "errors": errors, "warnings": warnings,
+            "source_documents": _source_documents(display.get(voucher.first_row, {}).get("来源", ""), voucher.month, dates, periods["invoices"]),
             "lines": [{
                 "row": line["row"], "summary": line["summary"], "code": line["code"],
                 # The current chart names an edited code; the sheet's own name is the fallback.
@@ -211,6 +265,7 @@ def read_draft(root: Path, name: str) -> dict:
         })
     return {"name": name, "revision": revision, "books_error": books.error, "vouchers": items, "sheets": sheets,
             "current_month": date.today().strftime("%Y-%m"),
+            "periods_revision": periods["revision"], "periods_error": periods.get("error", ""), "cross_period_hint": CROSS_PERIOD_HINT,
             "approved": sum(1 for item in items if item["approval"] == APPROVE),
             "blocked": sum(1 for item in items if item["errors"])}
 
@@ -473,6 +528,70 @@ def _carry_review(old: list[dict], path: Path) -> dict:
     return {"kept": kept, "review_again": review_again, "new": fresh, "gone": gone, "summaries_kept": len(summaries)}
 
 
+def _save_generation(out_dir: Path, name: str, params: dict) -> None:
+    import json
+
+    path = out_dir / GENERATION_FILE
+    try:
+        saved = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+    except (OSError, ValueError):
+        saved = {}
+    saved = saved if isinstance(saved, dict) else {}
+    saved[name] = params
+    _atomic(path, lambda tmp: tmp.write_text(json.dumps(saved, ensure_ascii=False, indent=2), encoding="utf-8"))
+
+
+def _generation_for(root: Path, name: str) -> tuple[dict, bool]:
+    """(parameters, remembered): a table made on the command line falls back to its name's range and the defaults."""
+    import json
+
+    path = root / DRAFT_DIR / GENERATION_FILE
+    try:
+        saved = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+    except (OSError, ValueError):
+        saved = {}
+    if isinstance(saved, dict) and isinstance(saved.get(name), dict):
+        return saved[name], True
+    match = re.match(r"^凭证草稿_(\d{4}-\d{2})_(\d{4}-\d{2})\.xlsx$", name)
+    if not match:
+        raise VoucherDraftError("VOUCHER_DRAFT_INVALID", "无法从文件名确定这份审核表的起止月份。")
+    inputs = draft_inputs(root)
+    return {"from": match.group(1), "to": match.group(2), "month_end": True, "booked": inputs["booked"],
+            "ledger": inputs["ledgers"][-1] if inputs["ledgers"] else None}, False
+
+
+def rebook_invoice(root: Path, name: str, body: dict) -> dict:
+    """`{revision, number, month ('' = back to the issue month), reason}`: correct where an invoice is booked, then regenerate."""
+    import json
+    from invoice_hub.bank.vouchers import PERIOD_OVERRIDES_FILE
+
+    _draft_path(root, name)
+    number = _text(body.get("number")).strip()
+    month = _text(body.get("month")).strip()
+    reason = _text(body.get("reason")).strip()[:40]
+    if number not in _invoice_dates(root):
+        raise VoucherDraftError("VOUCHER_DRAFT_INVALID", f"成本发票明细里没有发票 {number}。")
+    if month and (not _MONTH.match(month) or month > date.today().strftime("%Y-%m")):
+        raise VoucherDraftError("VOUCHER_DRAFT_INVALID", "记入期须为不晚于本月的 YYYY-MM。")
+    params, remembered = _generation_for(root, name)
+    with _EXPORT_LOCK:
+        state = _overrides_state(root)
+        if body.get("revision") != state["revision"]:
+            raise VoucherDraftError("VOUCHER_PERIODS_CONFLICT", "记入期调整已在别处修改，已刷新，请重新操作。", status_code=409)
+        issue_month = _invoice_dates(root)[number].strftime("%Y-%m")
+        if month and month != issue_month:
+            state["invoices"][number] = {"month": month, "reason": reason, "updated_at": datetime.now().isoformat(timespec="seconds")}
+        else:
+            state["invoices"].pop(number, None)  # back to the issue month: no adjustment left
+        state["revision"] += 1
+        (root / DRAFT_DIR).mkdir(exist_ok=True)
+        _atomic(root / DRAFT_DIR / PERIOD_OVERRIDES_FILE,
+                lambda tmp: tmp.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8"))
+    generated = generate_draft(root, {**params, "confirm": True})
+    return {"periods_revision": state["revision"], "generation_remembered": remembered,
+            "out_of_range": bool(month) and not params["from"] <= month <= params["to"], "generated": generated}
+
+
 def generate_draft(root: Path, body: dict) -> dict:
     """`{from, to, month_end?: true, booked?: [序时账_*.txt], ledger?: 科目表_*.json, confirm: true}` -> the CLI's draft."""
     from invoice_hub.bank.vouchers import CompanyPaths, prepare
@@ -521,6 +640,9 @@ def generate_draft(root: Path, body: dict) -> dict:
             shutil.copy2(path, out_dir / HISTORY_DIR / backup)
         jierui.write_review_xlsx(path, result, NOTES)
         carried = _carry_review(old, path) if old is not None else None
+        # Remembered so that 改记入期 regenerates this table the way the user generated it.
+        _save_generation(out_dir, name, {"from": month_from, "to": month_to, "month_end": bool(body.get("month_end", True)),
+                                         "booked": list(booked), "ledger": ledger})
     return {
         "name": name, "tax_file_created": created, "vouchers": len(result.vouchers),
         "low_confidence": sum(1 for voucher in result.vouchers if voucher.confidence == "低"),

@@ -233,3 +233,4 @@ button.link { border: 0; background: none; padding: 0 2px; color: inherit; curso
 .source-preview__page { display: block; width: 100%; height: auto; border: 1px solid var(--line); border-radius: 6px; background: #fff; }
 .source-preview__text { max-height: 60vh; overflow: auto; padding: 8px; border: 1px solid var(--line); border-radius: 6px; font-size: 12px; white-space: pre-wrap; word-break: break-all; }
 .voucher__readback { display: flex; flex-wrap: wrap; gap: 4px 14px; margin: 6px 0; padding: 6px 10px; border: 1px solid var(--line); border-radius: 8px; }
+.voucher__source { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; margin: 2px 0 6px; font-size: 13px; }
