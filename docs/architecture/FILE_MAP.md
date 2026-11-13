@@ -681,7 +681,8 @@
 | `frontend/src/compareFocus.ts` | 比较明细的注入键与类型（WS-04）：结果组件把点到的类目（标签、`record_ids`、`steps`）交给比较页。 | `CompanyCompare.vue` provide；各结果组件 inject。 |
 | `frontend/src/components/CompareDrawer.vue` | 类目明细抽屉：来源条数与后端计算过程，打开时焦点到关闭按钮，Esc 关闭。 | 由 `CompanyCompare.vue` 渲染。 |
 | `frontend/src/components/CompanySameNumber.vue` | 同号检查标签：说明口径、校验、提示、同号发票表（疑似重复 / 双方同一张票，金额或销售方不同标红）；点号码打开明细抽屉并收窄并排原始记录。 | `/api/v1/companies/{id}/same-number`；`CompareSources.vue`、`CompareDrawer.vue`；由 `HomeView.vue` 渲染。 |
-| `frontend/src/components/CompareSources.vue` | 两个目录的原始记录并排（`records.a/b`）；有聚焦类目时两边只留其 `record_ids`，可“显示全部”。 | 由 `CompanyCompare.vue` 渲染。 |
+| `frontend/src/components/CompareSources.vue` | 两个目录的原始记录并排（`records.a/b`）；有聚焦类目时两边只留其 `record_ids`，可“显示全部”；后端带 `preview` 的记录（监控目录）有“原票”，打开 `SourcePreview.vue`。 | 由 `CompanyCompare.vue` 渲染。 |
+| `frontend/src/components/SourcePreview.vue` | 比较记录的原票面板（WS-04）：用后端附带的 `preview` 创建 `preview-jobs`，缩略图条（最多 12 页）+ 大图、上一页 / 下一页，XML 显示受限纯文本；打开期间续租，`404/410` 重建并保留文件与页码，图片出错只重建一次。 | `/api/v1/invoices/preview-jobs*`；由 `CompareSources.vue` 打开。 |
 | `frontend/src/components/CompanyDeductionResult.vue` | 抵扣核对结果：各所属期表、清单有目录无、已勾选并对上（税额不一致标红）、目录有清单无、重复勾选与未识别文件。 | 由 `CompanyCompare.vue` 渲染。 |
 | `frontend/src/components/CompanyInventoryResult.vue` | 进销存结果：品类表（明细科目编码，期初/购入/销售/成本/期末，卖超与“进项和期初中没有”标红），品类前的 ▸ 在同一列下展开规格行（只有购入、销售与净增，期初与成本显示 —），“逐月”在品类下展开整行明细（加权单价与说明），合计、未计入期初的账套明细与未计入的明细行。 | 由 `CompanyCompare.vue` 渲染。 |
 | `frontend/src/components/CompanySettlementResult.vue` | 往来核对结果：往来单位余额表（“明细”整行展开未对上发票与未逐笔对应流水）、逐笔对应、红字发票、户名不唯一、非发票流水（折叠）与未识别发票。 | 由 `CompanyCompare.vue` 渲染。 |

@@ -363,8 +363,15 @@ export interface SettlementParty {
 }
 
 /** One row of a side-by-side source list (WS-04): an invoice, a statement row or a list row. */
+// Monitored folder only (WS-04): the homepage identities preview-jobs re-validates.
+export interface PreviewRef {
+  target_id: string;
+  items: { invoice_key: string; source_path: string }[];
+}
+
 export interface CompareRecord {
   id: string;
+  preview?: PreviewRef;
   invoice_number: string;
   invoice_date: string;
   counterpart: string;

@@ -316,6 +316,55 @@ describe("companies module", () => {
     expect(wrapper.find('[role="dialog"]').exists()).toBe(false);
   });
 
+  it("opens a monitored record's original invoice through the preview pipeline and rebuilds an expired job", async () => {
+    const preview = { target_id: "t1", items: [{ invoice_key: "3", source_path: "/合成/甲/成本发票/a.pdf" }] };
+    const record = (id: string, number: string, extra = {}) => ({ id, invoice_number: number, invoice_date: "2026-06-03", counterpart: "丙丁建材", amount: "1.00", source_file: `${number}.pdf`, ...extra });
+    const inventory = {
+      ok: true, relation: "inventory", state: "ok", message: "", basis_label: "", first_month: "2026-06", cost_label: "", excluded: [],
+      totals: { open_amount: "0.00", in_amount: "0.00", cost: "0.00", end_amount: "0.00" },
+      opening: { source: "zero", month: "2026-06", read_months: [], files: [], items: [], unassigned: [], error: "" },
+      items: [], records: { a: [record("input:1", "11", { preview })], b: [record("output:9", "99")] }, warnings: [], checks: [], checks_ok: true,
+    };
+    const job = (id: string) => ({ ok: true, job_id: id, keep_alive_url: `/api/v1/invoices/preview-jobs/${id}/keep-alive`, idle_timeout_seconds: 900,
+      files: [{ file_number: 1, name: "a.pdf", preview_type: "pages", page_count: 2, reason: "", page_url_template: `/api/v1/invoices/preview-jobs/${id}/files/1/pages/{page_number}`, text_url: "" }] });
+    let jobs = 0;
+    stubBackend((url) => {
+      if (url.includes("b=issued_invoice_dir")) return [200, inventory];
+      if (url === "/api/v1/invoices/preview-jobs") return [200, job(`j${++jobs}`)];
+      if (url.endsWith("/keep-alive")) return [410, { detail: "预览已过期" }];
+      return undefined;
+    });
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    const wrapper = await mountCompanies();
+    await wrapper.get("#company-tab-compare").trigger("click");
+    await flushPromises();
+    await wrapper.get('select[aria-label="比较关系"]').setValue("inventory");
+    await flushPromises();
+    const sources = wrapper.get('[aria-label="原始记录并排"]');
+    expect(sources.get('table[aria-label="开具发票 原始记录"]').text()).not.toContain("原票"); // not marked: never previewed
+    await sources.get('button[aria-label="原票 11"]').trigger("click");
+    await flushPromises();
+    expect(calls.find((call) => call.url === "/api/v1/invoices/preview-jobs")!.body).toEqual(preview);
+    const panel = () => wrapper.get('[role="dialog"][aria-label="11 原票"]');
+    const page = () => panel().get("img.source-preview__page").attributes("src");
+    expect(page()).toBe("/api/v1/invoices/preview-jobs/j1/files/1/pages/1");
+    expect(panel().findAll('[aria-label="缩略图"] button')).toHaveLength(2);
+    await panel().get('[aria-label="缩略图"] button[aria-label="第 2 页"]').trigger("click");
+    expect(page()).toBe("/api/v1/invoices/preview-jobs/j1/files/1/pages/2");
+    // The job expired: keep-alive gets 410, a new job is made and the same page stays open.
+    vi.advanceTimersByTime(120_000);
+    await flushPromises();
+    expect(calls.filter((call) => call.url === "/api/v1/invoices/preview-jobs")).toHaveLength(2);
+    expect(page()).toBe("/api/v1/invoices/preview-jobs/j2/files/1/pages/2");
+    await panel().trigger("keydown", { key: "Escape" });
+    expect(wrapper.find('[role="dialog"][aria-label="11 原票"]').exists()).toBe(false);
+    const keepAlives = calls.filter((call) => call.url.endsWith("/keep-alive")).length;
+    vi.advanceTimersByTime(600_000);
+    await flushPromises();
+    expect(calls.filter((call) => call.url.endsWith("/keep-alive")).length).toBe(keepAlives); // closed: no more keep-alive
+    vi.useRealTimers();
+  });
+
   it("shows settlement balances and keeps unallocated payments apart from invoices", async () => {
     const flow = { row_id: "S1-001", date: "2026-06-05", month: "2026-06", counterparty: "丙丁建材有限公司", details: "材料款", amount: "11300.00", file: "s.pdf", name_match: "exact" };
     const settlement = {

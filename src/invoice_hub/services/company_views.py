@@ -20,6 +20,7 @@ import os
 import re
 import threading
 import time
+from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
 from typing import Callable
@@ -39,6 +40,8 @@ from invoice_hub.services import company_vouchers
 from invoice_hub.services.invoice_tags import TAG_DEFINITIONS_NAME, InvoiceTagStore
 from invoice_hub.services.company_ledger import build_invoice_ledger
 from invoice_hub.services.company_registry import CompanyRegistryError, CompanyRegistryService
+from invoice_hub.services.file_preview import MAX_PREVIEW_SELECTION_RECORDS
+from invoice_hub.services.invoice_selection import selection_family_key
 from invoice_hub.services.invoice_list import InvoiceListService
 from invoice_hub.storage import SQLiteRepository
 from invoice_hub.targets import AppConfig, target_profile_for
@@ -50,6 +53,13 @@ COMPARE_RELATIONS = {
     frozenset(("cost_invoice_dir", "issued_invoice_dir")): "inventory",
     frozenset(("cost_invoice_dir", "bank_flow_dir")): "settlement_payable",
     frozenset(("issued_invoice_dir", "bank_flow_dir")): "settlement_receivable",
+}
+# Folder behind each side of a comparison's `records` (same order as frontend/src/relations.ts).
+RECORD_SIDES = {
+    "deduction": ("cost_invoice_dir", "input_deduction_dir"),
+    "inventory": ("cost_invoice_dir", "issued_invoice_dir"),
+    "settlement_payable": ("cost_invoice_dir", "bank_flow_dir"),
+    "settlement_receivable": ("issued_invoice_dir", "bank_flow_dir"),
 }
 _MONTH_TEXT = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
 FRESHNESS_MAX_ENTRIES = 20_000
@@ -340,9 +350,34 @@ class CompanyViewService:
         base = {"ok": True, "revision": payload["revision"], "company": company, "a": a, "b": b,
                 "start": start, "end": end, "relation": relation}
         if relation.startswith("settlement_"):
-            return self._compare_settlement(company, base, side=relation.removeprefix("settlement_"), start=start, end=end)
-        handler = self._compare_deduction if relation == "deduction" else self._compare_inventory
-        return handler(company, base, start=start, end=end)
+            result = self._compare_settlement(company, base, side=relation.removeprefix("settlement_"), start=start, end=end)
+        else:
+            handler = self._compare_deduction if relation == "deduction" else self._compare_inventory
+            result = handler(company, base, start=start, end=end)
+        for side, key in zip(("a", "b"), RECORD_SIDES[relation]):
+            self._attach_previews((result.get("records") or {}).get(side), company, key, (result.get("sources") or {}).get(key))
+        return result
+
+    def _attach_previews(self, records: list[dict] | None, company: dict, key: str, view: dict | None) -> None:
+        """Give the monitored folder's invoice records the identities the preview pipeline needs (WS-04).
+
+        Only the active folder: preview-jobs re-validates `invoice_key + source_path` against the current
+        watch_dir list, so identities of any other folder would be stale positions of another projection.
+        A provisional list has no stable identity yet and gets none.
+        """
+        if not records or key not in INVOICE_DIR_KEYS or not view or not view.get("active"):
+            return
+        payload = self._list_payload(self._directory(company, key)[1], {})[0]
+        if (payload.get("snapshot") or {}).get("provisional"):
+            return
+        families: dict[str, list[dict]] = defaultdict(list)
+        for item in payload["items"]:
+            if item.get("source_path") and item.get("invoice_key"):
+                families[selection_family_key(item)].append({"invoice_key": item["invoice_key"], "source_path": item["source_path"]})
+        for record in records:
+            items = families.get(f"number:{record.get('invoice_number') or ''}")
+            if record.get("invoice_number") and items:
+                record["preview"] = {"target_id": view["target_id"], "items": items[:MAX_PREVIEW_SELECTION_RECORDS]}
 
     def same_number(self, company_id: str, a: str, b: str, *, b_company_id: str = "") -> dict:
         """Invoice numbers on both of two invoice folders without a relation, possibly of two companies (WS-04).
@@ -375,6 +410,8 @@ class CompanyViewService:
         if missing:
             return {**base, "state": "missing_dir", "message": f"{'、'.join(missing)} 目录不存在。"}
         result = build_same_number_check(rows["a"], rows["b"], a_key=a, b_key=b, same_company=same_company, labels=labels)
+        for side in ("a", "b"):
+            self._attach_previews(result["records"][side], companies[side], keys[side], sides[side]["source"])
         self._freshness_warnings(result, {side: sides[side]["source"] for side in ("a", "b")}, labels)
         types = {side: companies[side].get("current_taxpayer_type") for side in ("a", "b")}
         if not same_company and types["a"] != types["b"]:

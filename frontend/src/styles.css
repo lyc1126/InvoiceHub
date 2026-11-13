@@ -101,8 +101,10 @@ button.block { width: 100%; }
 button.link.chevron { text-decoration: none; }
 button.link { border: 0; background: none; padding: 0 2px; color: inherit; cursor: pointer; text-decoration: underline; }
 @media (max-width: 640px) {
-  /* Narrow screens scroll the whole table sideways instead of squeezing cells into columns of single characters. */
-  .grid { display: block; overflow-x: auto; }
+  /* Narrow screens scroll the whole table sideways instead of squeezing cells into columns of single characters.
+     position: relative keeps absolutely positioned cells (.sr-only headers) inside that scroll box; without it
+     they escape to the page and widen it. */
+  .grid { display: block; overflow-x: auto; position: relative; }
   .grid th, .grid td { white-space: nowrap; }
 }
 
@@ -221,3 +223,12 @@ button.link { border: 0; background: none; padding: 0 2px; color: inherit; curso
 .voucher__lines .voucher__code { min-width: 72px; }
 .voucher__lines .voucher__amount { text-align: right; min-width: 90px; font-variant-numeric: tabular-nums; }
 .voucher__stale { margin: 2px 0; font-size: 12px; }
+
+/* WS-04: original invoice of a compare record (preview pipeline, monitored folder only) */
+.source-preview { z-index: 31; width: min(640px, calc(100vw - 32px)); }
+.source-preview__thumbs { display: flex; gap: 6px; overflow-x: auto; padding: 4px 0 8px; }
+.source-preview__thumbs button { flex: 0 0 auto; padding: 2px; border: 1px solid var(--line); border-radius: 6px; background: #fff; cursor: pointer; }
+.source-preview__thumbs button.is-active { border-color: var(--ink, #111); }
+.source-preview__thumbs img { display: block; width: 72px; height: auto; }
+.source-preview__page { display: block; width: 100%; height: auto; border: 1px solid var(--line); border-radius: 6px; background: #fff; }
+.source-preview__text { max-height: 60vh; overflow: auto; padding: 8px; border: 1px solid var(--line); border-radius: 6px; font-size: 12px; white-space: pre-wrap; word-break: break-all; }

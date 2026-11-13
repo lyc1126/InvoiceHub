@@ -20,6 +20,12 @@
 - 红冲抵销先于收付款匹配：否则余额已经为 0，被冲的蓝字票仍显示“未付”，页面自相矛盾。守护：`test_red_letter_invoices_reduce_the_balance_and_unreadable_ones_are_listed`。
 - `party_balance` 与 `flow_accounting` 从原始发票、流水清单复算，而不是用往来单位行自己的数：同义反复的校验永远成立，发现不了漏算。守护：上述各用例的 `_ok`。
 
+## 2026-11-13 比较记录的原票（WS-04）
+
+- `preview` 只附给监控目录、非临时列表的记录，且身份取自该目录当前的首页列表：`preview-jobs` 按当前 watch_dir 重新校验 `invoice_key + source_path`，其它目录的身份是另一份投影的位置，接上去要么被拒、要么指错文件。守护：`test_only_the_monitored_folders_records_open_the_original_invoice`（用附带的身份真实创建预览作业）。
+- 图片出错只重建一次：页面渲染失败（不是过期）时无限重建会反复占用渲染与内存上限。守护：`companies.spec.ts` 的 “opens a monitored record's original invoice…”（410 后重建并保留第 2 页、关闭后不再续租）。
+- 窄屏 `.grid` 设 `position: relative`：表头里绝对定位的 `.sr-only` 以初始包含块定位，会逃出表格的横向滚动把整页撑宽 60px（浏览器验收发现，勾稽与同号检查标签都受影响）。
+
 ## 2026-11-13 同号检查（WS-04）
 
 - 同号不一律判为重复：两家公司一方开具、一方取得的是同一笔交易的两端，标为“双方同一张票”；其余同号才是“疑似重复”，且只给人工核对，不下结论。守护：`test_issued_on_one_side_and_received_on_the_other_is_one_transaction_across_companies`。

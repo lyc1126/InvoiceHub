@@ -87,3 +87,27 @@ def test_same_number_api_across_folders_and_companies_without_writing(app, clien
         refused = client.get(f"/api/v1/companies/{jia_id}/same-number?{query}")
         assert refused.status_code == 422 and refused.json()["error"]["code"] == "COMPANY_COMPARE_INVALID"
     assert {root: _tree(root) for root in (jia, yi)} == before  # read-only
+    # Neither folder is monitored: no record may carry preview identities.
+    assert not any("preview" in record for side in ("a", "b") for record in same["records"][side])
+
+
+def test_only_the_monitored_folders_records_open_the_original_invoice(app, client, tmp_path):  # noqa: F811
+    one = "1" * 20
+    jia = tmp_path / "客户" / "甲公司"
+    cost = _folder(jia, "成本发票", {"a.xml": (one, "丙丁建材", "甲公司")})
+    expense = _folder(jia, "费用报销", {"r.xml": (one, "丙丁建材", "甲公司")})
+    _sync(app, expense)
+    app.state.invoice_hub.update_settings({"watch_dir": str(cost)})
+    _sync(app, cost)
+    jia_id = _company(client, jia)
+    result = client.get(f"/api/v1/companies/{jia_id}/same-number?a=cost_invoice_dir&b=expense_reimbursement_dir").json()
+    record = result["records"]["a"][0]
+    assert record["preview"]["target_id"] == result["sides"]["a"]["source"]["target_id"]
+    assert [Path(item["source_path"]).name for item in record["preview"]["items"]] == ["a.xml"]
+    assert "preview" not in result["records"]["b"][0]  # read-only folder: never previewed
+    # The identities are the ones the preview pipeline accepts for the current watch_dir.
+    job = client.post("/api/v1/invoices/preview-jobs", json=record["preview"])
+    assert job.status_code == 200 and job.json()["file_count"] == 1
+    # The relation compare attaches them the same way (成本发票 is side a of 进销存).
+    compare = client.get(f"/api/v1/companies/{jia_id}/compare?a=cost_invoice_dir&b=issued_invoice_dir").json()
+    assert all("preview" not in record for record in compare.get("records", {}).get("b", []))
