@@ -27,6 +27,20 @@ const directories = (company: { monitored: boolean }) => SUBDIRS.map((item) => (
 }));
 
 let calls: string[] = [];
+const family = (counterpart: string, total: string) => ({ number: "1".repeat(20), invoice_date: "2026-06-01", seller: "丙丁", buyer: "甲公司", counterpart, total, amount_issue: "", formats: ["PDF"], source_files: ["a.pdf"] });
+const SAME_NUMBER_RESULT = {
+  ok: true, relation: "same_number", state: "ok", message: "", basis_label: "只按发票号码检查。",
+  sides: { a: { company_id: "co_1", company_name: "甲公司", key: "cost_invoice_dir", label: "甲公司 · 成本发票", source: { status: "present" } },
+    b: { company_id: "co_2", company_name: "乙公司", key: "issued_invoice_dir", label: "乙公司 · 开具发票", source: { status: "present" } } },
+  matches: [{ number: "1".repeat(20), kind: "duplicate", amount_differs: true, party_differs: false, a: family("丙丁", "1130.00"), b: family("甲公司", "1000.00"),
+    record_ids: { a: ["number:1"], b: ["number:1"] }, steps: ["两边价税合计不同：1130.00 ≠ 1000.00"] }],
+  counts: { a_invoices: 2, b_invoices: 1, a_unnumbered: 0, b_unnumbered: 0, matched: 1, duplicate: 1, pair: 0, amount_differs: 1 },
+  records: { a: [{ id: "number:1", invoice_number: "1".repeat(20), invoice_date: "2026-06-01", counterpart: "丙丁", amount: "1130.00", source_file: "a.pdf" },
+    { id: "number:2", invoice_number: "2".repeat(20), invoice_date: "2026-06-02", counterpart: "戊己", amount: "50.00", source_file: "b.pdf" }],
+  b: [{ id: "number:1", invoice_number: "1".repeat(20), invoice_date: "2026-06-01", counterpart: "甲公司", amount: "1000.00", source_file: "s.pdf" }] },
+  checks: [{ code: "a_families", ok: true, message: "ok" }], checks_ok: true, warnings: [],
+};
+
 function stubBackend({ fail = false, companies = [COMPANY, OTHER] } = {}) {
   calls = [];
   vi.stubGlobal(
@@ -40,6 +54,7 @@ function stubBackend({ fail = false, companies = [COMPANY, OTHER] } = {}) {
       else if (url.includes("/directories") && !url.includes("/invoices")) body = { ok: true, revision: 1, company: COMPANY, directories: directories(url.includes("co_2") ? OTHER : COMPANY) };
       else if (url.includes("/invoices")) body = { ok: true, count: 0, page: 1, page_size: 50, read_only: true, directory: directories(COMPANY)[1], items: [] };
       else if (url.includes("/projects")) body = { ok: true, basis_label: "", assignments_revision: 0, projects: [{ project: "滨江一期", unassigned: false, input: {}, output: {}, face_difference_pretax: "0.00", periods: [] }], project_names: [], unassigned_invoices: [], manual_invoices: [], warnings: [], checks: [], checks_ok: true };
+      else if (url.includes("/same-number")) body = SAME_NUMBER_RESULT;
       else if (url.includes("/compare")) body = { ok: true, relation: "inventory", state: "no_details", message: "两个目录都还没有成本明细。", warnings: [], checks: [], checks_ok: true };
       else if (url === "/api/v1/invoice-tags") body = { ok: true, revision: 1, tags: [] };
       return new Response(JSON.stringify(body), { status: 200 });
@@ -170,9 +185,16 @@ describe("workspace home", () => {
     expect(compare.attributes("disabled")).toBeDefined();
     expect(wrapper.get(".ws-menu__note").text()).toBe("这两类资料之间没有勾稽关系");
     await wrapper.get('.ws-sidebar [role="menu"]').trigger("keydown", { key: "Escape" });
+    // Another company's invoice folder only gets the same-number check; its other folders are refused.
     const otherIssued = wrapper.findAll(".ws-children .ws-node").filter((item) => item.attributes("aria-label") === "开具发票")[1]!;
     await otherIssued.trigger("contextmenu");
-    expect(wrapper.get(".ws-menu__note").text()).toBe("不同公司的资料不做关联");
+    compare = wrapper.findAll('.ws-sidebar [role="menu"] button').find((item) => item.text() === "与已选项进行比较")!;
+    expect(compare.attributes("disabled")).toBeUndefined();
+    expect(compare.attributes("title")).toBe("同号发票检查（不做勾稽关联）");
+    await wrapper.get('.ws-sidebar [role="menu"]').trigger("keydown", { key: "Escape" });
+    const otherPayroll = wrapper.findAll(".ws-children .ws-node").filter((item) => item.attributes("aria-label") === "工资社保")[1]!;
+    await otherPayroll.trigger("contextmenu");
+    expect(wrapper.get(".ws-menu__note").text()).toBe("不同公司之间只能对发票目录做同号检查");
     await wrapper.get('.ws-sidebar [role="menu"]').trigger("keydown", { key: "Escape" });
     // Same company, related pair: the row offers ⇄ directly and opens a compare tab with that relation.
     const issued = wrapper.findAll(".ws-children .ws-row").find((item) => item.find('.ws-node[aria-label="开具发票"]').exists())!;
@@ -181,6 +203,29 @@ describe("workspace home", () => {
     expect(tabTitles(wrapper)).toContain("甲公司 · 成本发票 ⇄ 开具发票");
     expect(calls.some((url) => url.includes("/compare?a=cost_invoice_dir&b=issued_invoice_dir"))).toBe(true);
     expect(wrapper.find(".ws-compare-hint").exists()).toBe(false);
+  });
+
+  it("opens a same-number check for invoice folders of two companies and explains a shared number", async () => {
+    stubBackend();
+    const { wrapper } = await mountApp();
+    await wrapper.get('.ws-toggle[aria-label="展开 甲公司"]').trigger("click");
+    await wrapper.get('.ws-toggle[aria-label^="展开 乙公司"]').trigger("click");
+    await flushPromises();
+    const cost = wrapper.findAll(".ws-children .ws-node").find((item) => item.attributes("aria-label") === "成本发票（监控中）")!;
+    await cost.trigger("contextmenu");
+    await wrapper.findAll('.ws-sidebar [role="menu"] button').find((item) => item.text() === "选择以进行比较")!.trigger("click");
+    const otherIssuedRow = wrapper.findAll(".ws-children .ws-row").filter((item) => item.find('.ws-node[aria-label="开具发票"]').exists())[1]!;
+    await otherIssuedRow.get(".ws-compare").trigger("click");
+    await flushPromises();
+    expect(tabTitles(wrapper)).toContain("甲公司 · 成本发票 ⇄ 乙公司有一个很长很长的名字 · 开具发票");
+    expect(calls.some((url) => url.includes("/companies/co_1/same-number?a=cost_invoice_dir&b=issued_invoice_dir&b_company=co_2"))).toBe(true);
+    const check = wrapper.get('[aria-label="同号检查"]');
+    expect(check.text()).toContain("疑似重复 1 张");
+    expect(check.get('[aria-label="同号发票"] tbody tr').classes()).toContain("row--failed");
+    expect(check.get('[aria-label="甲公司 · 成本发票 原始记录"]').findAll("tbody tr")).toHaveLength(2);
+    await check.get('[aria-label="同号发票"] button').trigger("click");
+    expect(check.get('[role="dialog"]').text()).toContain("1130.00 ≠ 1000.00");
+    expect(check.get('[aria-label="甲公司 · 成本发票 原始记录"]').findAll("tbody tr")).toHaveLength(1); // narrowed to the number
   });
 
   it("refreshes only the active tab on a double click of hi.", async () => {

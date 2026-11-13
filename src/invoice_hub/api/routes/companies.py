@@ -130,6 +130,16 @@ def router() -> APIRouter:
     ):
         return await _call(lambda: _state(request).company_views.compare(company_id, a, b, start=start, end=end))
 
+    @routes.get("/api/v1/companies/{company_id}/same-number")
+    async def company_same_number(
+        request: Request,
+        company_id: str,
+        a: str = Query(..., min_length=1),
+        b: str = Query(..., min_length=1),
+        b_company: str = Query(""),
+    ):
+        return await _call(lambda: _state(request).company_views.same_number(company_id, a, b, b_company_id=b_company))
+
     @routes.get("/api/v1/companies/{company_id}/projects")
     async def company_projects(
         request: Request,

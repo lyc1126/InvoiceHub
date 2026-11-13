@@ -33,6 +33,7 @@ from invoice_hub.services.company_bank import BankFlowReader, build_bank_ledger
 from invoice_hub.services.company_deduction import DeductionListReader, build_deduction_check
 from invoice_hub.services.company_inventory import build_inventory_check, read_book_inputs
 from invoice_hub.services.company_projects import ProjectAssignmentStore, build_project_summary
+from invoice_hub.services.company_same_number import INVOICE_DIR_KEYS, build_same_number_check
 from invoice_hub.services.company_settlement import build_settlement_check
 from invoice_hub.services import company_vouchers
 from invoice_hub.services.invoice_tags import TAG_DEFINITIONS_NAME, InvoiceTagStore
@@ -342,6 +343,46 @@ class CompanyViewService:
             return self._compare_settlement(company, base, side=relation.removeprefix("settlement_"), start=start, end=end)
         handler = self._compare_deduction if relation == "deduction" else self._compare_inventory
         return handler(company, base, start=start, end=end)
+
+    def same_number(self, company_id: str, a: str, b: str, *, b_company_id: str = "") -> dict:
+        """Invoice numbers on both of two invoice folders without a relation, possibly of two companies (WS-04).
+
+        Pairs that do have a reconciliation relation belong to ``compare`` and are refused here, so a
+        related pair is never reduced to a bare number match.
+        """
+        b_company_id = b_company_id or company_id
+        for field, key in (("a", a), ("b", b)):
+            if key not in INVOICE_DIR_KEYS:
+                raise CompanyRegistryError("COMPANY_COMPARE_INVALID", "同号检查只用于发票目录（成本发票、开具发票、费用报销）。",
+                                           status_code=422, field=field)
+        same_company = b_company_id == company_id
+        if same_company and a == b:
+            raise CompanyRegistryError("COMPANY_COMPARE_INVALID", "请选择两个不同的目录。", status_code=422, field="b")
+        if same_company and frozenset((a, b)) in COMPARE_RELATIONS:
+            raise CompanyRegistryError("COMPANY_COMPARE_UNSUPPORTED", "这两类资料有勾稽关系，请用“勾稽”核对。", status_code=422, field="b")
+        companies = {"a": self._registry.get_company(company_id)["company"], "b": self._registry.get_company(b_company_id)["company"]}
+        keys = {"a": a, "b": b}
+        active_id = self.active_profile.id
+        sides, rows, labels = {}, {}, {}
+        for side in ("a", "b"):
+            subdir, view, profile = self._cost_source(companies[side], keys[side], active_id)
+            labels[side] = f"{companies[side]['name']} · {subdir['label']}"
+            sides[side] = {"company_id": companies[side]["id"], "company_name": companies[side]["name"], "key": keys[side],
+                           "label": labels[side], "source": view}
+            rows[side] = self._list_payload(profile, {})[0]["items"] if subdir["status"] == "present" else []
+        base = {"ok": True, "relation": "same_number", "sides": sides}
+        missing = [labels[side] for side in ("a", "b") if sides[side]["source"]["status"] != "present"]
+        if missing:
+            return {**base, "state": "missing_dir", "message": f"{'、'.join(missing)} 目录不存在。"}
+        result = build_same_number_check(rows["a"], rows["b"], a_key=a, b_key=b, same_company=same_company, labels=labels)
+        self._freshness_warnings(result, {side: sides[side]["source"] for side in ("a", "b")}, labels)
+        types = {side: companies[side].get("current_taxpayer_type") for side in ("a", "b")}
+        if not same_company and types["a"] != types["b"]:
+            result["warnings"].append({"code": "taxpayer_differs",
+                                       "message": "两家公司的纳税人身份不同（或有一方未设置），税额不可直接比较。"})
+        if not rows["a"] and not rows["b"]:
+            return {**base, "state": "no_details", "message": "两个目录都还没有汇总过（设为监控目录汇总一次后才有发票）。", **result}
+        return {**base, "state": "ok", "message": "", **result}
 
     def _cost_source(self, company: dict, key: str, active_id: str) -> tuple[dict, dict, TargetProfile]:
         subdir, profile = self._directory(company, key)

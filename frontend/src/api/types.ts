@@ -373,6 +373,25 @@ export interface CompareRecord {
   details?: string;
 }
 
+// WS-04 same-number check: two invoice folders without a relation, possibly of two companies.
+export interface SameNumberFamily {
+  number: string; invoice_date: string; seller: string; buyer: string; counterpart: string;
+  total: string | null; amount_issue: "" | "conflict" | "unrecognized"; formats: string[]; source_files: string[];
+}
+export interface SameNumberMatch {
+  number: string; kind: "duplicate" | "pair"; amount_differs: boolean; party_differs: boolean;
+  a: SameNumberFamily; b: SameNumberFamily; record_ids: RecordIds; steps: string[];
+}
+export interface SameNumberSide { company_id: string; company_name: string; key: string; label: string; source: { status: string } }
+export interface SameNumberResult {
+  ok: boolean; relation: "same_number"; state: "ok" | "no_details" | "missing_dir"; message: string;
+  sides: { a: SameNumberSide; b: SameNumberSide };
+  basis_label?: string; matches?: SameNumberMatch[];
+  counts?: { a_invoices: number; b_invoices: number; a_unnumbered: number; b_unnumbered: number; matched: number; duplicate: number; pair: number; amount_differs: number };
+  records?: { a: CompareRecord[]; b: CompareRecord[] };
+  checks?: LedgerCheck[]; checks_ok?: boolean; warnings?: { code: string; message: string }[];
+}
+
 export interface CompareResult {
   ok: boolean;
   relation: "deduction" | "inventory" | "settlement";

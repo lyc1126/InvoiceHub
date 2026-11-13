@@ -15,6 +15,9 @@ export interface WorkspaceTab {
   dirKey?: string;
   project?: string;
   relation?: string;
+  // Same-number check (WS-04): the second folder, possibly of another company.
+  otherCompanyId?: string;
+  otherDirKey?: string;
   // Bumped by a double click on "hi.": the tab's view is rebuilt and reloads, other tabs keep theirs.
   refresh: number;
 }
@@ -51,7 +54,9 @@ function stringList(value: unknown): string[] {
 }
 
 export function tabId(tab: Omit<WorkspaceTab, "id" | "refresh">): string {
-  return [tab.kind, tab.companyId ?? "", tab.dirKey ?? "", tab.project ?? "", tab.relation ?? ""].join(":");
+  const parts = [tab.kind, tab.companyId ?? "", tab.dirKey ?? "", tab.project ?? "", tab.relation ?? ""];
+  if (tab.otherCompanyId || tab.otherDirKey) parts.push(tab.otherCompanyId ?? "", tab.otherDirKey ?? "");
+  return parts.join(":");
 }
 
 /** Width the sidebar may take in a window of `viewport` px next to a rail of `rail` px. */
@@ -112,7 +117,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
   }
 
   function closeCompany(companyId: string): void {
-    for (const tab of tabs.value.filter((item) => item.companyId === companyId)) close(tab.id);
+    for (const tab of tabs.value.filter((item) => item.companyId === companyId || item.otherCompanyId === companyId)) close(tab.id);
     pins.value = pins.value.filter((pin) => pin.split(":")[1] !== companyId);
     if (compareBase.value?.companyId === companyId) compareBase.value = null;
   }

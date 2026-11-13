@@ -20,6 +20,13 @@
 - 红冲抵销先于收付款匹配：否则余额已经为 0，被冲的蓝字票仍显示“未付”，页面自相矛盾。守护：`test_red_letter_invoices_reduce_the_balance_and_unreadable_ones_are_listed`。
 - `party_balance` 与 `flow_accounting` 从原始发票、流水清单复算，而不是用往来单位行自己的数：同义反复的校验永远成立，发现不了漏算。守护：上述各用例的 `_ok`。
 
+## 2026-11-13 同号检查（WS-04）
+
+- 同号不一律判为重复：两家公司一方开具、一方取得的是同一笔交易的两端，标为“双方同一张票”；其余同号才是“疑似重复”，且只给人工核对，不下结论。守护：`test_issued_on_one_side_and_received_on_the_other_is_one_transaction_across_companies`。
+- 有勾稽关系的同一公司组合拒绝做同号检查：否则一组本应做进销存 / 往来核对的目录会被降格为号码比对，掩盖勾稽差异。守护：`test_same_number_api_across_folders_and_companies_without_writing`。
+- 每边按 `selection_family_key` 合并：与发票账簿、首页勾选同一口径，同一张票的 PDF / OFD / XML 不会自己和自己“同号”。守护：`test_formats_of_one_invoice_count_once_and_shared_numbers_are_listed`。
+- `tabId` 只在有第二个对象时追加字段：已有标签 id 保持不变。
+
 ## 2026-11-13 多行批量打标签（WS-06）
 
 - 批量菜单打开时从 `GET .../invoice-tags` 读当前标记，而不是用列表行的 `tags`：勾选可能跨页（全选筛选结果），未加载页的标记页面不知道；保存仍是“整张号码的完整标签列表 + revision”，冲突时重新读取，让用户按现状再点一次。守护：`companies.spec.ts` 的 “tags every selected invoice…”。

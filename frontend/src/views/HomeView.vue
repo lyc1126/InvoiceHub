@@ -4,10 +4,11 @@ import CompanyCompare from "../components/CompanyCompare.vue";
 import CompanyCreateForm from "../components/CompanyCreateForm.vue";
 import CompanyPanel from "../components/CompanyPanel.vue";
 import CompanyProjects from "../components/CompanyProjects.vue";
+import CompanySameNumber from "../components/CompanySameNumber.vue";
 import DirectoryPanel from "../components/DirectoryPanel.vue";
 import InvoiceTagsEditor from "../components/InvoiceTagsEditor.vue";
 import WorkspaceSidebar from "../components/WorkspaceSidebar.vue";
-import { RELATIONS } from "../relations";
+import { RELATIONS, SAME_NUMBER } from "../relations";
 import { useCompaniesStore } from "../stores/companies";
 import { useSystemStore } from "../stores/system";
 import { type WorkspaceTab, tabId, useWorkspaceStore } from "../stores/workspace";
@@ -22,6 +23,8 @@ const sidebarOpen = ref(false);
 const createdNotice = ref<Record<string, string>>({});
 
 const companyOf = (tab: WorkspaceTab) => companies.companies.find((item) => item.id === tab.companyId) ?? null;
+const otherCompanyOf = (tab: WorkspaceTab) => companies.companies.find((item) => item.id === tab.otherCompanyId) ?? null;
+const dirLabel = (company: { subdirs: { key: string; label: string }[] }, key?: string) => company.subdirs.find((item) => item.key === key)?.label ?? key ?? "";
 
 function title(tab: WorkspaceTab): string {
   const company = companyOf(tab);
@@ -30,6 +33,12 @@ function title(tab: WorkspaceTab): string {
   if (!company) return "（已删除）";
   if (tab.kind === "directory") return `${company.name} · ${company.subdirs.find((item) => item.key === tab.dirKey)?.label ?? tab.dirKey}`;
   if (tab.kind === "project") return `${company.name} · ${tab.project}`;
+  if (tab.kind === "compare" && tab.relation === SAME_NUMBER) {
+    const other = otherCompanyOf(tab);
+    if (!other) return "（已删除）";
+    const right = other.id === company.id ? dirLabel(other, tab.otherDirKey) : `${other.name} · ${dirLabel(other, tab.otherDirKey)}`;
+    return `${company.name} · ${dirLabel(company, tab.dirKey)} ⇄ ${right}`;
+  }
   if (tab.kind === "compare") {
     const relation = RELATIONS.find((item) => item.id === tab.relation);
     return `${company.name} · ${relation ? relation.label.split("（")[0] : "勾稽"}`;
@@ -71,7 +80,7 @@ watch(
   (list) => {
     if (!list) return;
     for (const tab of [...workspace.tabs]) {
-      if (tab.companyId && !companyOf(tab)) workspace.close(tab.id);
+      if ((tab.companyId && !companyOf(tab)) || (tab.otherCompanyId && !otherCompanyOf(tab))) workspace.close(tab.id);
     }
     // First visit: open the monitored company once (closing every tab later leaves the start page).
     if (!workspace.seeded) {
@@ -138,6 +147,11 @@ onMounted(() => {
               <section v-else-if="tab.kind === 'project'" :aria-label="title(tab)">
                 <header class="detail-header"><h2>{{ title(tab) }}</h2><p class="muted">项目取自发票备注的“项目名称”，没有的可在下方人工指定。</p></header>
                 <CompanyProjects :company="companyOf(tab)!" :focus="tab.project" />
+              </section>
+              <section v-else-if="tab.kind === 'compare' && tab.relation === SAME_NUMBER" :aria-label="title(tab)">
+                <header class="detail-header"><h2>⇄ 同号检查：{{ title(tab) }}</h2><p class="muted">两个没有勾稽关系的发票目录只比对发票号码；只读，不改任何文件。</p></header>
+                <CompanySameNumber v-if="otherCompanyOf(tab)" :company="companyOf(tab)!" :dir-key="tab.dirKey!" :other-company="otherCompanyOf(tab)!" :other-dir-key="tab.otherDirKey!" />
+                <p v-else class="muted">另一家公司已删除。</p>
               </section>
               <section v-else-if="tab.kind === 'compare'" :aria-label="title(tab)">
                 <header class="detail-header"><h2>⇄ {{ title(tab) }}</h2><p class="muted">同一公司的两类资料按勾稽关系核对；只读，不改任何文件。</p></header>

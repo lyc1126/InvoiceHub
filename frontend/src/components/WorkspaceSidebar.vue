@@ -3,7 +3,7 @@ import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
 import { request } from "../api/client";
 import type { Company, CompanySubdir, ProjectSummary } from "../api/types";
 import { errorText } from "../format";
-import { relationFor } from "../relations";
+import { INVOICE_DIRS, SAME_NUMBER, relationFor } from "../relations";
 import { useCompaniesStore } from "../stores/companies";
 import { useSystemStore } from "../stores/system";
 import { SIDEBAR_DEFAULT, clampSidebar, useWorkspaceStore } from "../stores/workspace";
@@ -130,14 +130,20 @@ function open(node: SidebarNode): void {
   emit("opened");
 }
 
-// ---- comparison: pick one folder, then compare another folder of the same company with it.
+// ---- comparison: pick one folder, then compare another folder with it. A related pair of one
+// company is reconciled; two invoice folders otherwise (also across companies) only get the
+// same-number check; anything else is refused with the reason.
 function compareState(node: SidebarNode): { ok: boolean; reason: string; relation?: string } {
   const base = workspace.compareBase;
   if (!base || node.kind !== "directory") return { ok: false, reason: "" };
-  if (base.companyId !== node.company.id) return { ok: false, reason: "不同公司的资料不做关联" };
-  if (base.dirKey === node.dirKey) return { ok: false, reason: "这是已选的目录" };
-  const relation = relationFor(base.dirKey, node.dirKey ?? "");
-  return relation ? { ok: true, reason: relation.label, relation: relation.id } : { ok: false, reason: "这两类资料之间没有勾稽关系" };
+  const sameCompany = base.companyId === node.company.id;
+  if (sameCompany && base.dirKey === node.dirKey) return { ok: false, reason: "这是已选的目录" };
+  const relation = sameCompany ? relationFor(base.dirKey, node.dirKey ?? "") : null;
+  if (relation) return { ok: true, reason: relation.label, relation: relation.id };
+  if (INVOICE_DIRS.includes(base.dirKey) && INVOICE_DIRS.includes(node.dirKey ?? "")) {
+    return { ok: true, reason: "同号发票检查（不做勾稽关联）", relation: SAME_NUMBER };
+  }
+  return { ok: false, reason: sameCompany ? "这两类资料之间没有勾稽关系" : "不同公司之间只能对发票目录做同号检查" };
 }
 
 function pickForCompare(node: SidebarNode): void {
@@ -147,8 +153,14 @@ function pickForCompare(node: SidebarNode): void {
 
 function compareWith(node: SidebarNode): void {
   const state = compareState(node);
-  if (!state.ok) return;
-  workspace.open({ kind: "compare", companyId: node.company.id, relation: state.relation });
+  const base = workspace.compareBase;
+  if (!state.ok || !base) return;
+  if (state.relation === SAME_NUMBER) {
+    workspace.open({ kind: "compare", companyId: base.companyId, dirKey: base.dirKey, relation: SAME_NUMBER,
+      otherCompanyId: node.company.id, otherDirKey: node.dirKey });
+  } else {
+    workspace.open({ kind: "compare", companyId: node.company.id, relation: state.relation });
+  }
   workspace.compareBase = null;
   closeMenu(false);
   emit("opened");
@@ -273,7 +285,7 @@ onBeforeUnmount(() => {
     </div>
     <button type="button" class="ws-add" @click="workspace.open({ kind: 'new-company' }); emit('opened')">＋ 添加公司资料夹</button>
     <p v-if="workspace.compareBase" class="ws-compare-hint" role="status">
-      已选择 {{ nodesById.get(`dir:${workspace.compareBase.companyId}:${workspace.compareBase.dirKey}`)?.label ?? "目录" }} 进行比较：在同一公司的另一个目录上选“与已选项进行比较”。
+      已选择 {{ nodesById.get(`dir:${workspace.compareBase.companyId}:${workspace.compareBase.dirKey}`)?.label ?? "目录" }} 进行比较：在另一个目录上选“与已选项进行比较”：同一公司有勾稽关系的做核对，发票目录之间做同号检查。
       <button type="button" class="link" @click="workspace.compareBase = null">取消</button>
     </p>
 
