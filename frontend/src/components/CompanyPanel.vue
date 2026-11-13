@@ -4,17 +4,19 @@ import type { Company } from "../api/types";
 import CompanyCompare from "./CompanyCompare.vue";
 import CompanyDirectories from "./CompanyDirectories.vue";
 import CompanyLedger from "./CompanyLedger.vue";
+import CompanyPayroll from "./CompanyPayroll.vue";
 import CompanyProjects from "./CompanyProjects.vue";
 import CompanySettings from "./CompanySettings.vue";
 import CompanyVouchers from "./CompanyVouchers.vue";
 
-type Tab = "directories" | "ledger" | "projects" | "compare" | "vouchers" | "settings";
+type Tab = "directories" | "ledger" | "projects" | "compare" | "vouchers" | "payroll" | "settings";
 const TABS: { id: Tab; label: string }[] = [
   { id: "directories", label: "目录" },
   { id: "ledger", label: "发票账簿" },
   { id: "projects", label: "项目" },
   { id: "compare", label: "勾稽" },
   { id: "vouchers", label: "凭证草稿" },
+  { id: "payroll", label: "工资社保" },
   { id: "settings", label: "设置" },
 ];
 
@@ -65,6 +67,9 @@ watch(
     </div>
     <div v-if="opened.has('vouchers')" v-show="tab === 'vouchers'" id="company-panel-vouchers" role="tabpanel" aria-labelledby="company-tab-vouchers">
       <CompanyVouchers :company="company" />
+    </div>
+    <div v-if="opened.has('payroll')" v-show="tab === 'payroll'" id="company-panel-payroll" role="tabpanel" aria-labelledby="company-tab-payroll">
+      <CompanyPayroll :company="company" />
     </div>
     <div v-show="tab === 'settings'" id="company-panel-settings" role="tabpanel" aria-labelledby="company-tab-settings">
       <CompanySettings :company="company" />

@@ -158,6 +158,16 @@ def router() -> APIRouter:
         payload = await _json_body(request)
         return await _call(lambda: _state(request).company_views.save_project_assignments(company_id, payload))
 
+    @routes.get("/api/v1/companies/{company_id}/payroll")
+    async def company_payroll(request: Request, company_id: str, reveal: bool = Query(False)):
+        return await _call(lambda: _state(request).company_views.payroll(company_id, reveal=reveal))
+
+    @routes.put("/api/v1/companies/{company_id}/payroll")
+    async def save_company_payroll(request: Request, company_id: str):
+        _require_same_origin_write(request)
+        payload = await _json_body(request)
+        return await _call(lambda: _state(request).company_views.save_payroll(company_id, payload))
+
     @routes.get("/api/v1/companies/{company_id}/period-folders")
     async def company_period_folders(request: Request, company_id: str, key: str = Query(..., min_length=1)):
         return await _call(lambda: _state(request).company_views.period_folders(company_id, key))

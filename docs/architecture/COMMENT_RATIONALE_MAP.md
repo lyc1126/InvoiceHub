@@ -20,6 +20,14 @@
 - 红冲抵销先于收付款匹配：否则余额已经为 0，被冲的蓝字票仍显示“未付”，页面自相矛盾。守护：`test_red_letter_invoices_reduce_the_balance_and_unreadable_ones_are_listed`。
 - `party_balance` 与 `flow_accounting` 从原始发票、流水清单复算，而不是用往来单位行自己的数：同义反复的校验永远成立，发现不了漏算。守护：上述各用例的 `_ok`。
 
+## 2026-11-13 工资社保页面（WS-05 第三阶段）
+
+- 只在用户确认后写 `申报数据.json`，且写入的单位 / 个人部分由后端从所确认的险种行求和：草稿计提只读这两个数，页面传来的合计不被信任。守护：`test_confirming_writes_the_month_into_the_tax_file_and_keeps_its_other_keys`、`test_a_confirmed_month_is_accrued_by_the_generated_draft`。
+- 整文件按 SHA-256 revision 重写并保留其他键：`申报数据.json` 同时存月度增值税、季度税费、已抵扣进项发票，由人工维护，社保确认不能冲掉它们；文件损坏时拒绝而不是当作空文件。守护：`test_confirming_needs_a_readable_tax_file`。
+- PDF 按 token 流识别、每行恰好 11 个数值：文字层可能整行一行或一格一行，按行切会漏读；数值个数不对就跳过，不猜列。守护：`test_reads_the_same_table_from_a_text_pdf` 两种排版。
+- 图片不识别：发布包没有 OCR（AGENTS.md 不做本地 OCR 打包版），用户 2026-11-13 决定本轮不支持图片。
+- 姓名、证件号默认脱敏返回：页面、截图和诊断默认不出现完整个人信息，只有显式请求时返回原值。
+
 ## 2026-11-13 属期文件夹核对与移动文件（WS-05 第二阶段）
 
 - 文件夹名只作提示：期间仍只按内容判定（“5月”文件夹里的空导出不按文件夹名推断所属期的规则不变），否则改名或放错一个文件夹就会改变抵扣与对账结果。守护：`test_check_compares_the_content_period_with_the_folder`（空导出为 unknown）。

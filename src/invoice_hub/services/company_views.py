@@ -33,6 +33,7 @@ from invoice_hub.projections.costs import CostProjectionService
 from invoice_hub.services.company_bank import BankFlowReader, build_bank_ledger
 from invoice_hub.services.company_deduction import DeductionListReader, build_deduction_check
 from invoice_hub.services.company_inventory import build_inventory_check, read_book_inputs
+from invoice_hub.services.company_payroll import read_payroll, save_confirmed as save_payroll_months
 from invoice_hub.services.company_projects import ProjectAssignmentStore, build_project_summary
 from invoice_hub.services.company_same_number import INVOICE_DIR_KEYS, build_same_number_check
 from invoice_hub.services.company_settlement import build_settlement_check
@@ -559,6 +560,21 @@ class CompanyViewService:
         if not isinstance(body, dict):
             raise company_vouchers.VoucherDraftError("VOUCHER_DRAFT_INVALID", "请求格式不对。")
         return {"ok": True, **company_vouchers.save_draft(self._company_root(company), name, body)}
+
+    # ---- 工资社保 (WS-05 stage 3): read-only parsing; 申报数据.json is written only on the user's confirm.
+    def payroll(self, company_id: str, *, reveal: bool = False) -> dict:
+        company = self._registry.get_company(company_id)["company"]
+        root = self._company_root(company)
+        subdir = next((item for item in company["subdirs"] if item["key"] == "payroll_social_dir"), None)
+        folder = Path(subdir["path"]) if subdir and subdir["status"] == "present" else None
+        return {"ok": True, "folder": subdir["relative_path"] if subdir else "", "folder_present": folder is not None,
+                **read_payroll(root, folder, reveal=reveal)}
+
+    def save_payroll(self, company_id: str, body: object) -> dict:
+        company = self._registry.get_company(company_id)["company"]
+        if not isinstance(body, dict):
+            raise CompanyRegistryError("PAYROLL_INVALID", "请求格式不对。")
+        return {"ok": True, **save_payroll_months(self._company_root(company), body)}
 
     # ---- period folders (WS-05 stage 2): content period vs. folder name, and confirmed moves.
     def _present_subdir(self, company_id: str, key: str) -> tuple[dict, Path]:

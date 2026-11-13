@@ -6,6 +6,7 @@ import App from "../src/App.vue";
 import { money } from "../src/format";
 import { createAppRouter } from "../src/router";
 import PeriodFolderCheck from "../src/components/PeriodFolderCheck.vue";
+import type { Company } from "../src/api/types";
 
 const SUBDIRS = [
   { key: "cost_invoice_dir", label: "成本发票", relative_path: "成本发票", path: "/合成/甲/成本发票", status: "present" },
@@ -796,7 +797,7 @@ describe("companies module", () => {
       return undefined;
     });
     setActivePinia(createPinia());
-    const wrapper = mount(PeriodFolderCheck, { props: { company: COMPANY, dirKey: "input_deduction_dir" }, attachTo: document.body });
+    const wrapper = mount(PeriodFolderCheck, { props: { company: COMPANY as Company, dirKey: "input_deduction_dir" }, attachTo: document.body });
     await flushPromises();
     expect(wrapper.text()).toContain("1 个文件可能放错了属期文件夹");
     expect(wrapper.findAll('[aria-label="属期文件"] tbody tr')).toHaveLength(1); // only what needs attention by default
@@ -814,6 +815,43 @@ describe("companies module", () => {
     expect(calls.filter((call) => call.url.endsWith("/confirm"))).toHaveLength(1);
     expect(wrapper.get('[aria-label="移动结果"]').text()).toContain("已移动 1 / 1 个文件");
     wrapper.unmount();
+  });
+
+  it("shows the bureau's social insurance table, masks people and confirms a month into the tax file", async () => {
+    const side = (due: string | null) => ({ count: due ? 1 : null, wage: due ? "4952.00" : null, base: due ? "4952.00" : null, rate: due ? "16%" : null, due });
+    const month = { month: "2026-08", source: "8月社保.xlsx", unit_total: "792.32", personal_total: "396.16", total: "1188.48", checks_ok: false, rows: [
+      { insurance: "城镇职工基本养老保险", total: "1200.00", unit: side("792.32"), personal: side("396.16"),
+        checks: [{ code: "total", ok: false, message: "城镇职工基本养老保险：单位 792.32 + 个人 396.16 = 合计 1200.00" }] },
+    ] };
+    let reveal = false;
+    const payroll = () => ({ ok: true, folder: "工资社保", folder_present: true, tax_file: true, tax_revision: "t1", people_masked: !reveal,
+      files: [{ file: "9月社保缴纳.png", kind: "image", status: "skipped", message: "图片需要 OCR，本版本暂不识别" }],
+      months: [month], confirmed: {}, people: [{ name: reveal ? "张小三" : "张*三", id_number: reveal ? "320681199001011234" : "320***********1234", base: "4952.00", month: "2026-08" }] });
+    stubBackend((url, init) => {
+      if (url.includes("/payroll") && (init.method ?? "GET") === "PUT") return [200, { ok: true, saved: ["2026-08"], tax_revision: "t2" }];
+      if (url.includes("/payroll")) {
+        reveal = url.includes("reveal=true");
+        return [200, payroll()];
+      }
+      return undefined;
+    });
+    const wrapper = await mountCompanies();
+    await wrapper.get("#company-tab-payroll").trigger("click");
+    await flushPromises();
+    const table = wrapper.get('[aria-label="2026-08 社保费应缴明细"]');
+    expect(table.findAll("thead tr")[0]!.text()).toContain("单位部分");
+    expect(table.get("tbody tr").classes()).toContain("row--failed");
+    expect(table.text()).toContain("核对不成立");
+    expect(wrapper.text()).toContain("9月社保缴纳.png：图片需要 OCR");
+    expect(wrapper.get('[aria-label="人员明细"]').text()).toContain("张*三");
+    await wrapper.get('[aria-label="工资社保"] input[type="checkbox"]').setValue(true);
+    await flushPromises();
+    expect(calls.some((call) => call.url.endsWith("/payroll?reveal=true"))).toBe(true);
+    expect(wrapper.get('[aria-label="人员明细"]').text()).toContain("张小三");
+    await wrapper.get('[aria-label="2026-08 社保费应缴明细"]').findAll("button").find((button) => button.text() === "确认写入申报数据")!.trigger("click");
+    await flushPromises();
+    expect(calls.find((call) => call.method === "PUT")!.body).toEqual({ revision: "t1", months: { "2026-08": { rows: month.rows, source: "8月社保.xlsx" } } });
+    expect(wrapper.text()).toContain("已确认 2026-08 社保：单位 792.32、个人 396.16");
   });
 
   it("marks a non-monitored folder's invoice list read-only", async () => {
