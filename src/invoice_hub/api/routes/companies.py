@@ -25,6 +25,8 @@ def _error_response(exc: CompanyRegistryError) -> JSONResponse:
     error = {"code": exc.code, "message": exc.message}
     if exc.field:
         error["field"] = exc.field
+    if getattr(exc, "details", None):
+        error["details"] = exc.details
     return JSONResponse(status_code=exc.status_code, content={"ok": False, "detail": exc.message, "error": error})
 
 
@@ -145,6 +147,20 @@ def router() -> APIRouter:
         _require_same_origin_write(request)
         payload = await _json_body(request)
         return await _call(lambda: _state(request).company_views.save_project_assignments(company_id, payload))
+
+    @routes.get("/api/v1/companies/{company_id}/voucher-drafts")
+    async def company_voucher_drafts(request: Request, company_id: str):
+        return await _call(lambda: _state(request).company_views.voucher_drafts(company_id))
+
+    @routes.get("/api/v1/companies/{company_id}/voucher-drafts/{name}")
+    async def company_voucher_draft(request: Request, company_id: str, name: str):
+        return await _call(lambda: _state(request).company_views.voucher_draft(company_id, name))
+
+    @routes.put("/api/v1/companies/{company_id}/voucher-drafts/{name}")
+    async def save_company_voucher_draft(request: Request, company_id: str, name: str):
+        _require_same_origin_write(request)
+        payload = await _json_body(request)
+        return await _call(lambda: _state(request).company_views.save_voucher_draft(company_id, name, payload))
 
     @routes.get("/api/v1/invoice-tags")
     async def invoice_tags(request: Request):

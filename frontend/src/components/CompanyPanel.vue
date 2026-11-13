@@ -6,13 +6,15 @@ import CompanyDirectories from "./CompanyDirectories.vue";
 import CompanyLedger from "./CompanyLedger.vue";
 import CompanyProjects from "./CompanyProjects.vue";
 import CompanySettings from "./CompanySettings.vue";
+import CompanyVouchers from "./CompanyVouchers.vue";
 
-type Tab = "directories" | "ledger" | "projects" | "compare" | "settings";
+type Tab = "directories" | "ledger" | "projects" | "compare" | "vouchers" | "settings";
 const TABS: { id: Tab; label: string }[] = [
   { id: "directories", label: "目录" },
   { id: "ledger", label: "发票账簿" },
   { id: "projects", label: "项目" },
   { id: "compare", label: "勾稽" },
+  { id: "vouchers", label: "凭证草稿" },
   { id: "settings", label: "设置" },
 ];
 
@@ -60,6 +62,9 @@ watch(
     </div>
     <div v-if="opened.has('compare')" v-show="tab === 'compare'" id="company-panel-compare" role="tabpanel" aria-labelledby="company-tab-compare">
       <CompanyCompare :company="company" />
+    </div>
+    <div v-if="opened.has('vouchers')" v-show="tab === 'vouchers'" id="company-panel-vouchers" role="tabpanel" aria-labelledby="company-tab-vouchers">
+      <CompanyVouchers :company="company" />
     </div>
     <div v-show="tab === 'settings'" id="company-panel-settings" role="tabpanel" aria-labelledby="company-tab-settings">
       <CompanySettings :company="company" />

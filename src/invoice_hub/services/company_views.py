@@ -34,6 +34,7 @@ from invoice_hub.services.company_deduction import DeductionListReader, build_de
 from invoice_hub.services.company_inventory import build_inventory_check, read_book_inputs
 from invoice_hub.services.company_projects import ProjectAssignmentStore, build_project_summary
 from invoice_hub.services.company_settlement import build_settlement_check
+from invoice_hub.services import company_vouchers
 from invoice_hub.services.invoice_tags import TAG_DEFINITIONS_NAME, InvoiceTagStore
 from invoice_hub.services.company_ledger import build_invoice_ledger
 from invoice_hub.services.company_registry import CompanyRegistryError, CompanyRegistryService
@@ -453,6 +454,22 @@ class CompanyViewService:
         company = self._registry.get_company(company_id)["company"]
         saved = self._projects.update(self._company_root(company), body)
         return {"ok": True, "assignments_revision": saved["revision"], "count": len(saved["invoices"])}
+
+    # ---- voucher draft review (WS-05 stage 1): the CLI's review workbook in 做账草稿/, edited in place.
+    def voucher_drafts(self, company_id: str) -> dict:
+        company = self._registry.get_company(company_id)["company"]
+        return {"ok": True, "drafts": company_vouchers.list_drafts(self._company_root(company))}
+
+    def voucher_draft(self, company_id: str, name: str) -> dict:
+        company = self._registry.get_company(company_id)["company"]
+        return {"ok": True, **company_vouchers.read_draft(self._company_root(company), name)}
+
+    def save_voucher_draft(self, company_id: str, name: str, body: object) -> dict:
+        # Written only on the user's explicit save, into the workbook the export command reads.
+        company = self._registry.get_company(company_id)["company"]
+        if not isinstance(body, dict):
+            raise company_vouchers.VoucherDraftError("VOUCHER_DRAFT_INVALID", "请求格式不对。")
+        return {"ok": True, **company_vouchers.save_draft(self._company_root(company), name, body)}
 
     def invoice_tags(self) -> dict:
         return {"ok": True, **self._tags.definitions()}

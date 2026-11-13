@@ -477,6 +477,46 @@ describe("companies module", () => {
     expect(wrapper.find('[aria-label="目录发票"] input[type="checkbox"]').exists()).toBe(false);
   });
 
+  it("edits a voucher draft, shows the live balance and keeps refused approvals on the page", async () => {
+    const NAME = "凭证草稿_2026-06_2026-06.xlsx";
+    const line = (row: number, code: string, debit: string | null, credit: string | null) =>
+      ({ row, summary: "付丙丁材料款", code, name: code === "2202" ? "应付账款" : "银行存款", debit, credit, supplier: "", qty: null, unit: "", todo: "", confidence: "高", basis: "" });
+    const voucher = { month: "2026-06", number: "002", date: "2026-06-30", approval: "", debit_total: "900.00", credit_total: "800.00",
+      errors: ["借贷不平衡：借 900.00 贷 800.00"], warnings: [], lines: [line(4, "2202", "900.00", null), line(5, "1002", null, "800.00")] };
+    const payload = { ok: true, name: NAME, revision: "r1", books_error: "", vouchers: [voucher], approved: 0, blocked: 1 };
+    let refuse = true;
+    stubBackend((url, init) => {
+      if (url.endsWith("/voucher-drafts")) return [200, { ok: true, drafts: [{ name: NAME }] }];
+      if (url.includes("/voucher-drafts/") && (init.method ?? "GET") === "GET") return [200, payload];
+      if (url.includes("/voucher-drafts/") && refuse) return [422, { ok: false, detail: "x", error: { code: "VOUCHER_DRAFT_NOT_APPROVABLE", message: "x",
+        details: [{ month: "2026-06", number: "002", errors: ["科目 9999 不存在、未启用或不是末级"] }] } }];
+      if (url.includes("/voucher-drafts/")) return [200, { ...payload, revision: "r2", vouchers: [{ ...voucher, approval: "通过", errors: [], credit_total: "900.00" }], approved: 1, blocked: 0, saved_rows: 1, saved_approvals: 1 }];
+      return undefined;
+    });
+    const wrapper = await mountCompanies();
+    await wrapper.get("#company-tab-vouchers").trigger("click");
+    await flushPromises();
+    const card = () => wrapper.get('[aria-label="2026-06 第 002 号凭证"]');
+    expect(card().text()).toContain("借 900.00 · 贷 800.00 · 不平");
+    expect(card().text()).toContain("借贷不平衡");
+    await card().get('input[aria-label="第 5 行贷方"]').setValue("900");
+    expect(card().get(".voucher__totals").text()).toBe("借 900.00 · 贷 900.00");
+    expect(card().text()).toContain("保存后重新校验");
+    await card().get("select").setValue("通过");
+    await wrapper.findAll("button").find((button) => button.text().startsWith("保存（1 张）"))!.trigger("click");
+    await flushPromises();
+    const put = calls.find((call) => call.method === "PUT")!;
+    expect(put.body).toEqual({ revision: "r1", vouchers: [{ month: "2026-06", number: "002", approval: "通过", lines: [{ row: 5, credit: "900" }] }] });
+    // Refused: nothing saved, the edit and the backend's reason stay visible.
+    expect(card().text()).toContain("科目 9999 不存在");
+    expect((card().get('input[aria-label="第 5 行贷方"]').element as HTMLInputElement).value).toBe("900");
+    refuse = false;
+    await wrapper.findAll("button").find((button) => button.text().startsWith("保存（1 张）"))!.trigger("click");
+    await flushPromises();
+    expect(wrapper.text()).toContain("已保存：改动 1 行、审核状态 1 张");
+    expect((card().get("select").element as HTMLSelectElement).value).toBe("通过");
+  });
+
   it("marks a non-monitored folder's invoice list read-only", async () => {
     stubBackend((url) => (url.includes("/directories?") || url.endsWith("/directories")
       ? [200, { ok: true, revision: 3, company: COMPANY, directories: [{ ...DIRECTORIES[1], status: "present" }] }] : undefined));

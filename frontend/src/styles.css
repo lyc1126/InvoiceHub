@@ -211,3 +211,13 @@ button.link { border: 0; background: none; padding: 0 2px; color: inherit; curso
 .selection-bar__details dd { margin: 0; font-variant-numeric: tabular-nums; }
 .selection-bar__trash { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line); }
 .selection-bar__files { max-height: 180px; overflow-y: auto; margin: 4px 0; padding-left: 18px; font-size: 13px; }
+
+/* WS-05 stage 1: voucher drafts */
+.voucher { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; margin: 10px 0; background: #fff; }
+.voucher--failed { border-color: var(--danger); }
+.voucher__head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; margin-bottom: 6px; }
+.voucher__head select { margin-left: auto; }
+.voucher__lines input { width: 100%; min-width: 80px; padding: 3px 6px; font-size: 13px; }
+.voucher__lines .voucher__code { min-width: 72px; }
+.voucher__lines .voucher__amount { text-align: right; min-width: 90px; font-variant-numeric: tabular-nums; }
+.voucher__stale { margin: 2px 0; font-size: 12px; }

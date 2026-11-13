@@ -8,6 +8,8 @@ export class ApiError extends Error {
     message: string,
     readonly status: number,
     readonly code = "",
+    // Structured per-item reasons ({error: {details}}), e.g. vouchers that cannot be approved.
+    readonly details: unknown[] = [],
   ) {
     super(message);
     this.name = "ApiError";
@@ -40,10 +42,10 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
     });
     const payload: unknown = await response.json().catch(() => null);
     if (!response.ok) {
-      throw new ApiError(errorMessage(payload) ?? `请求失败（HTTP ${response.status}）`, response.status, errorCode(payload));
+      throw new ApiError(errorMessage(payload) ?? `请求失败（HTTP ${response.status}）`, response.status, errorCode(payload), errorDetails(payload));
     }
     if (isRecord(payload) && payload.ok === false && !options.acceptPartial) {
-      throw new ApiError(errorMessage(payload) ?? "请求未完成", response.status, errorCode(payload));
+      throw new ApiError(errorMessage(payload) ?? "请求未完成", response.status, errorCode(payload), errorDetails(payload));
     }
     return payload as T;
   } catch (error) {
@@ -71,4 +73,8 @@ function errorMessage(payload: unknown): string | undefined {
 function errorCode(payload: unknown): string {
   if (!isRecord(payload) || !isRecord(payload.error)) return "";
   return typeof payload.error.code === "string" ? payload.error.code : "";
+}
+
+function errorDetails(payload: unknown): unknown[] {
+  return isRecord(payload) && isRecord(payload.error) && Array.isArray(payload.error.details) ? payload.error.details : [];
 }

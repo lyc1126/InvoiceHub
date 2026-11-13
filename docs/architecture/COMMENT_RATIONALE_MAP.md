@@ -20,6 +20,13 @@
 - 红冲抵销先于收付款匹配：否则余额已经为 0，被冲的蓝字票仍显示“未付”，页面自相矛盾。守护：`test_red_letter_invoices_reduce_the_balance_and_unreadable_ones_are_listed`。
 - `party_balance` 与 `flow_accounting` 从原始发票、流水清单复算，而不是用往来单位行自己的数：同义反复的校验永远成立，发现不了漏算。守护：上述各用例的 `_ok`。
 
+## 2026-11-13 凭证草稿审核（WS-05 第一阶段）
+
+- 页面直接改命令行生成的审核表，而不是另存一份：`voucher_cli export` 只读这份工作簿，另存会出现两份草稿、导出拿不到页面的修改。守护：`test_edits_write_back_into_the_same_cells_and_unbalanced_vouchers_cannot_be_approved`（用导出自己的 `read_review_xlsx` 读回，并断言其他工作表仍在）。
+- 审核通过只在后端用导出的 `jierui.validate` 判定，任一不过整批不写：页面的实时借贷合计只是显示，另写一份校验会与导出口径漂移；部分保存会让页面与文件不一致。守护：同上与 `test_voucher_draft_api_lists_reads_and_reports_blockers`（`error.details` 逐张原因）。
+- 改过的已通过凭证清空审核：否则改了分录仍带旧“通过”被导出。保存带文件 SHA-256：命令行重新生成或别处改过后，旧页面不能覆盖。守护：`test_editing_an_approved_voucher_needs_a_new_review_and_stale_saves_are_refused`。
+- 改科目编码时同步或清空表内科目名称：打开工作簿的人看到的名称不能与编码不符。金额以 Decimal 写回，与生成命令一致。守护：`test_an_edited_code_refreshes_the_sheet_name_and_malformed_saves_are_refused`。
+
 ## 2026-11-13 目录标签的勾选操作条（WS-01 第二阶段）
 
 - 勾选合计不在 Vue 里算：同票家族去重与三项金额的冲突 / 缺失规则只在后端 `selection-summary`，前端再写一份就是两套口径。守护：`companies.spec.ts` 的 “selects invoices on the monitored folder…”（断言请求体只含 `invoice_key + source_path`）。

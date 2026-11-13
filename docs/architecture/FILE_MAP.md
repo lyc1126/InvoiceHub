@@ -469,6 +469,7 @@
 | `src/invoice_hub/services/company_inventory.py` | 进销存（WS-07 第 4 步）：`build_inventory_check` 按品类（`goods_family` 标准名称 + 单位，与账套库存商品明细一致）汇总两个目录的明细行，规格只作下拉细分；进货额按开票参考口径（不含税 + 不可抵扣税金），逐月调用 `bank.vouchers.cost_of_sales` 做月末一次加权；`read_book_inputs` 只读公司资料夹 `做账草稿/账套读回/序时账_*.txt` 与 `凭证/科目表.json`，期初经 `stock_opening` 取得，读回不足时按 0 起算并说明。 | 由 `company_views.py::_compare_inventory` 调用；复用 `bank/vouchers.py`（`load_booked`、`stock_opening`、`goods_family`）、`bank/ledger.py` 与 `projections/cost_analysis.py`。 |
 | `src/invoice_hub/services/company_settlement.py` | 往来核对（WS-07 第 4 步）：`build_settlement_check` 应付/应收两向，户名唯一归属（含截断前缀）、本公司账户识别，红冲抵销 → 一对一同额 → 唯一 2—3 张组合的确定性匹配，未逐笔对应流水、非发票流水、户名不唯一，按往来单位的期初/本期/期末与守恒校验。 | 由 `company_views.py::compare` 调用；对账单来自 `BankFlowReader`；发票规则复用 `company_ledger`。 |
 | `src/invoice_hub/services/company_projects.py` | 公司项目汇总（WS-03）：`remark_projects` 从成本明细读备注项目名称，`ProjectAssignmentStore` 读写公司资料夹根目录 `项目归属.json`（revision、锁、损坏拒绝覆盖），`build_project_summary` 按项目归集并与发票账簿交叉校验。 | 由 `company_views.py::company_projects/save_project_assignments` 调用；复用 `company_ledger`。 |
+| `src/invoice_hub/services/company_vouchers.py` | 凭证草稿审核（WS-05 第一阶段）：`list_drafts/read_draft/save_draft` 读写公司资料夹 `做账草稿/凭证草稿_*.xlsx` 的“凭证审核”表；读取用导出的 `read_review_xlsx`，校验用导出的 `validate`（只读 `凭证/科目表.json`、`辅助核算档案.json`）；保存带文件 SHA-256 revision，只改已有行的摘要、科目编码（同步科目名称）、借贷、供应商与审核列，审核通过被拒时整批不写，原子替换。 | 由 `company_views.py::voucher_drafts/voucher_draft/save_voucher_draft` 调用；复用 `bank/jierui.py`、`bank/ledger.py`。守护测试 `tests/test_company_vouchers.py`。 |
 | `src/invoice_hub/services/invoice_tags.py` | 发票标签（WS-06）：`InvoiceTagStore` 读写本机标签定义（校验、revision、整体替换）与公司资料夹 `发票标签.json` 标记（按发票号码），删除标签时按公司清除标记，读取时忽略已删除的标签。 | 由 `company_views.py` 调用（定义路径取公司清单同目录）；只用于显示与筛选。 |
 | `src/invoice_hub/services/company_registry.py` | `CompanyRegistryService`：`runtime/local_state/companies.json` 的唯一写入者（RLock + revision CAS + 原子替换，损坏时保留原文件并拒写）；六类标准子目录与识别提示（前四类复用 `dossier.BUSINESS_DOSSIER_DIR_HINTS`）、纳税人身份生效期（`taxpayer_type_for`）、子目录补建 `plan_hash` 预览/确认与仅新建空目录。 | 上接 `api/routes/companies.py`；读活动 TargetProfile 只用于标记 `monitored`；`services/company_views.py` 从这里取公司与子目录，不把它当第二个 watch_dir；写入改变活动公司当月纳税人类型时回调 `state.costs.refresh_workbook_tax_profile`。守护测试 `tests/test_api_companies.py`。 |
 | `src/invoice_hub/services/dossier.py` | `BusinessDossierService`：解析当前公司资料夹、一次有界扫描快捷入口/统计并限制打开路径（ENG-03 从 AppState 原样迁出；扫描上限常量也在此）。路由以 `state.dossier` 直接调用，做账经 `business_dossier_root()` 取公司目录。 | `/api/v1/business-dossier*` 和首页消费；不得改变 `watch_dir` 扫描语义；截断统计必须明确为下界。 |
@@ -591,6 +592,7 @@
 | `tests/test_company_projects.py` | 项目汇总：备注识别与人工优先、备注冲突列未归属、期间与粒度、未识别金额排除，以及 API（读取不写文件、保存写入公司资料夹、重新汇总后保留、版本冲突、清除、非法请求、损坏文件拒绝覆盖、跨源写拒绝）。 | services/company_projects、company_views。 |
 | `tests/test_invoice_tags.py` | 发票标签：定义校验与版本、改名保留 id、打标记与定义顺序、目录列表附带标签且其余字段不变、按标签筛选、重新汇总后保留、删除标签清除各公司标记、损坏文件不覆盖且列表照常、跨源写拒绝。 | services/invoice_tags、company_views。 |
 | `tests/test_company_views.py` | 按公司只读目录与纳税人类型优先级：投影/过期判断（新增、改动、删除、坏记录）、读取不建目录不改文件、只读列表与分页、活动目录交接、`company_taxpayer_for` 按月份、清单类型计价与保存拒绝、清单变化重写工作簿、所有 `CostProjectionService`/`MonitorSynchronizer` 构造都传入查找。 | services/company_views、targets/companies、projections/costs、services/company_registry。 |
+| `tests/test_company_vouchers.py` | 凭证草稿审核：按导出规则校验（借贷不平、科目可用、供应商档案）、写回同一单元格且导出读取器可见、其他工作表保留、不平凭证不能审核通过且整批不写、改过的已通过凭证需重新审核、过期 revision 拒绝、跨凭证行与越界文件名拒绝、改编码同步科目名称、非法请求体，以及 API 列表 / 读取 / 结构化拒绝原因。 | services/company_vouchers、company_views、bank/jierui。 |
 | `tests/test_api_companies.py` | 公司清单 API：空清单不建文件、子目录识别与歧义回退、revision CAS、根目录重复/嵌套、相对/绝对路径保存、子目录越界、纳税人生效期、补建预览/确认/过期、链接逃逸、损坏文件拒写、删除不碰文件、`monitored` 标记且不切换目录、跨来源拒绝。 | services/company_registry、api/routes/companies。 |
 | `tests/test_api_bookkeeping.py` | 做账 API、错误模型和废弃接口 410。 | AppState、api、bookkeeping。 |
 | `tests/test_bookkeeping_decisions.py` | W9 会计决定与提案 revision。 | decisions、vouchers。 |
@@ -655,7 +657,7 @@
 | `frontend/src/main.ts` | 创建 Vue 应用并挂载 Pinia 与路由。 | 全局插件入口。 |
 | `frontend/src/App.vue` | 工作区外框（WS-01）：最左模块列（首页为 Vue 工作区；成本分析、单据、做账、OCR、一致性、设置在迁移前链接经典页面；左下“更新”进设置、“经典界面”回首页）、错误横幅与 `KeepAlive` 包裹的路由视图；双击 `hi.` 只刷新当前首页标签并重读公司清单。 | 模块切换保留各视图实例（页面缓存）；`stores/workspace.ts::refreshActive`。 |
 | `frontend/src/router.ts` | 客户端路由与 `/workspace/` history 基址：`/` 为首页（HomeView），旧的 `/companies`、`/directory` 与未知路径重定向到首页。 | 新模块在此登记；深链接由 FastAPI 回落到同一外壳。 |
-| `frontend/src/api/client.ts` | 同源 `/api/v1` 请求封装：超时、JSON、`detail/message` 错误映射为 `ApiError`，结构化错误带 `code`；`acceptPartial` 让带逐项结果的 `ok:false`（子目录补建部分失败）返回给调用方。 | 所有视图请求经此；与后端错误模型一致。 |
+| `frontend/src/api/client.ts` | 同源 `/api/v1` 请求封装：超时、JSON、`detail/message` 错误映射为 `ApiError`，结构化错误带 `code` 与逐项原因 `details`；`acceptPartial` 让带逐项结果的 `ok:false`（子目录补建部分失败）返回给调用方。 | 所有视图请求经此；与后端错误模型一致。 |
 | `frontend/src/api/types.ts` | 已消费 API 字段的类型子集。 | 后端字段变化时同步。 |
 | `frontend/src/stores/system.ts` | health/settings 只读快照；刷新失败保留上次结果并给出错误。 | Pinia 全局状态。 |
 | `frontend/src/stores/companies.ts` | 公司清单状态（WS-07）：读取、新建、修改、移除都带清单 revision，`COMPANY_REVISION_CONFLICT` 时重新读取再提示重试；子目录补建预览与按 `plan_hash` 确认。 | 消费 `/api/v1/companies*`。 |
@@ -664,7 +666,7 @@
 | `frontend/src/stores/workspace.ts` | 首页的标签、置顶、展开的公司、侧栏宽度与“选择以进行比较”的目录；标签 id 由类型 + 对象组成（同一对象只开一个）；`refresh` 计数让双击 `hi.` 只重建当前标签；置顶、展开与宽度存本机 `localStorage`（`invoicehub.workspace.v1`，仅界面偏好）；`clampSidebar` 限制 220—460px 且内容区至少 620px。 | `HomeView.vue`、`WorkspaceSidebar.vue`、`App.vue`。 |
 | `frontend/src/components/WorkspaceSidebar.vue` | 工作区侧栏：`InvoiceHub ⌄` 菜单（刷新公司清单、发票标签、返回经典界面）、添加公司资料夹、置顶区、公司 › 项目 / 六类目录树（项目在展开时才读取；监控中目录带绿点；缺失目录灰显）、右键 / 行尾 ⋯ / Shift+F10 菜单（打开、置顶、选择以进行比较、与已选项进行比较，无勾稽关系或不同公司时禁用并说明）、已选时可比较的行直接显示“⇄ 比较”、悬停名片（全名与路径）、可拖动调宽的分隔条（键盘左右键、Home/双击复位、到限位提示）与底部监控状态。 | `relations.ts`；`/api/v1/companies/{id}/projects`。 |
 | `frontend/src/relations.ts` | 同一公司可勾稽的四组目录（抵扣、进销存、应付、应收）与 `relationFor`；只用于提供后端接受的组合，不做任何计算。 | `CompanyCompare.vue`、`WorkspaceSidebar.vue`。 |
-| `frontend/src/components/CompanyPanel.vue` | 公司标签：名称、纳税人身份与资料夹路径，目录 / 发票账簿 / 项目 / 勾稽 / 设置五个分区；`v-show` 保留各分区状态，账簿、项目与勾稽首次打开才加载。 | 由 `HomeView.vue` 渲染。 |
+| `frontend/src/components/CompanyPanel.vue` | 公司标签：名称、纳税人身份与资料夹路径，目录 / 发票账簿 / 项目 / 勾稽 / 凭证草稿 / 设置六个分区；`v-show` 保留各分区状态，账簿、项目、勾稽与凭证草稿首次打开才加载。 | 由 `HomeView.vue` 渲染。 |
 | `frontend/src/components/DirectoryPanel.vue` | 目录标签：子目录状态、是否最新、上次汇总、重新检查与“设为监控目录”，下方为该目录发票列表。 | `/api/v1/companies/{id}/directories`；`DirectoryInvoices.vue`。 |
 | `frontend/src/components/DirectoryInvoices.vue` | 目录发票列表（上次投影；非监控目录只读）：标签色点列，右键 / Shift+F10 打标签（只更新该行），按标签筛选与分页；监控目录且非临时结果时有勾选列（表头勾选本页，含部分选中），“全选筛选结果”按同一筛选分页读取全部记录；删除后保留逐文件结果面板。 | `/api/v1/companies/{id}/directories/{key}/invoices`、`invoice-tags`；`DirectorySelectionBar.vue`。 |
 | `frontend/src/components/DirectorySelectionBar.vue` | 勾选底部操作条：张数与价税合计、合计详情（三项金额、有效计入张数、冲突 / 缺失 / 折叠提示）均来自 `selection-summary`；打印（先开窗再填 `print-jobs` 的地址）、开具入库单（会话交接到单据页，最多 1000 条）、删除所选（`trash-jobs` 预备清单 → 条内确认 → 响应丢失只读执行日志），取消勾选与全选筛选结果。 | `/api/v1/invoices/selection-summary`、`print-jobs`、`trash-jobs*`。 |
@@ -681,6 +683,7 @@
 | `frontend/src/components/CompanyInventoryResult.vue` | 进销存结果：品类表（明细科目编码，期初/购入/销售/成本/期末，卖超与“进项和期初中没有”标红），品类前的 ▸ 在同一列下展开规格行（只有购入、销售与净增，期初与成本显示 —），“逐月”在品类下展开整行明细（加权单价与说明），合计、未计入期初的账套明细与未计入的明细行。 | 由 `CompanyCompare.vue` 渲染。 |
 | `frontend/src/components/CompanySettlementResult.vue` | 往来核对结果：往来单位余额表（“明细”整行展开未对上发票与未逐笔对应流水）、逐笔对应、红字发票、户名不唯一、非发票流水（折叠）与未识别发票。 | 由 `CompanyCompare.vue` 渲染。 |
 | `frontend/src/components/CompanyProjects.vue` | “项目”分区（项目标签以 `focus` 标出该项目并列出各期）：粒度与期间、与账簿一致的校验、项目汇总表（未归属单列），未归属与已人工指定发票的项目输入（已有项目名候选），只提交改动并带 revision，冲突时刷新提示。 | `/api/v1/companies/{id}/projects*`。 |
+| `frontend/src/components/CompanyVouchers.vue` | “凭证草稿”分区：选择审核表与月份、只看有问题的；每张凭证一张卡片，逐格编辑摘要 / 科目编码 / 借贷 / 供应商，输入时显示借贷合计（只作显示），审核下拉（待审核 / 通过 / 不导入）；保存只提交改动行与审核状态并带 revision，冲突时刷新提示，审核通过被拒时保留改动并在凭证旁列出后端原因。 | `/api/v1/companies/{id}/voucher-drafts*`。 |
 | `frontend/src/components/InvoiceTagsEditor.vue` | 发票标签管理：颜色、名称、意义的增删改，整表保存带 revision，删除时说明会移除已打标记，冲突时刷新。 | `stores/tags.ts`，`/api/v1/invoice-tags`；首页“发票标签”标签。 |
 | `frontend/src/stores/tags.ts` | 标签定义的 Pinia store：读取、整表保存（带 revision，冲突时重读）与按 id 查找。 | `InvoiceTagsEditor.vue`、`DirectoryInvoices.vue`。 |
 | `frontend/src/components/CompanySettings.vue` | 公司名称与纳税人身份生效期编辑、从清单移除（说明不删除任何文件）；只在切换公司时重置草稿；显示成本汇总表是否已按新身份重写。 | `stores/companies.ts::update/remove`。 |
