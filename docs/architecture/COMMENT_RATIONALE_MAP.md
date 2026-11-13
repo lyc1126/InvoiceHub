@@ -20,6 +20,11 @@
 - 红冲抵销先于收付款匹配：否则余额已经为 0，被冲的蓝字票仍显示“未付”，页面自相矛盾。守护：`test_red_letter_invoices_reduce_the_balance_and_unreadable_ones_are_listed`。
 - `party_balance` 与 `flow_accounting` 从原始发票、流水清单复算，而不是用往来单位行自己的数：同义反复的校验永远成立，发现不了漏算。守护：上述各用例的 `_ok`。
 
+## 2026-11-13 多行批量打标签（WS-06）
+
+- 批量菜单打开时从 `GET .../invoice-tags` 读当前标记，而不是用列表行的 `tags`：勾选可能跨页（全选筛选结果），未加载页的标记页面不知道；保存仍是“整张号码的完整标签列表 + revision”，冲突时重新读取，让用户按现状再点一次。守护：`companies.spec.ts` 的 “tags every selected invoice…”。
+- 勾选里额外保存发票号码只供批量打标签，传给选择条前剥掉：`selection-summary`、`print-jobs`、`trash-jobs` 的请求体保持 `invoice_key + source_path`。守护：同上（断言合计请求体）。
+
 ## 2026-11-13 凭证草稿审核（WS-05 第一阶段）
 
 - 页面直接改命令行生成的审核表，而不是另存一份：`voucher_cli export` 只读这份工作簿，另存会出现两份草稿、导出拿不到页面的修改。守护：`test_edits_write_back_into_the_same_cells_and_unbalanced_vouchers_cannot_be_approved`（用导出自己的 `read_review_xlsx` 读回，并断言其他工作表仍在）。

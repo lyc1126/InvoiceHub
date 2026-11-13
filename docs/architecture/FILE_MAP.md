@@ -668,7 +668,7 @@
 | `frontend/src/relations.ts` | 同一公司可勾稽的四组目录（抵扣、进销存、应付、应收）与 `relationFor`；只用于提供后端接受的组合，不做任何计算。 | `CompanyCompare.vue`、`WorkspaceSidebar.vue`。 |
 | `frontend/src/components/CompanyPanel.vue` | 公司标签：名称、纳税人身份与资料夹路径，目录 / 发票账簿 / 项目 / 勾稽 / 凭证草稿 / 设置六个分区；`v-show` 保留各分区状态，账簿、项目、勾稽与凭证草稿首次打开才加载。 | 由 `HomeView.vue` 渲染。 |
 | `frontend/src/components/DirectoryPanel.vue` | 目录标签：子目录状态、是否最新、上次汇总、重新检查与“设为监控目录”，下方为该目录发票列表。 | `/api/v1/companies/{id}/directories`；`DirectoryInvoices.vue`。 |
-| `frontend/src/components/DirectoryInvoices.vue` | 目录发票列表（上次投影；非监控目录只读）：标签色点列，右键 / Shift+F10 打标签（只更新该行），按标签筛选与分页；监控目录且非临时结果时有勾选列（表头勾选本页，含部分选中），“全选筛选结果”按同一筛选分页读取全部记录；删除后保留逐文件结果面板。 | `/api/v1/companies/{id}/directories/{key}/invoices`、`invoice-tags`；`DirectorySelectionBar.vue`。 |
+| `frontend/src/components/DirectoryInvoices.vue` | 目录发票列表（上次投影；非监控目录只读）：标签色点列，右键 / Shift+F10 打标签（只更新该行；在多行勾选中的行上作用于全部勾选的发票，打开时读取当前标记），按标签筛选与分页；监控目录且非临时结果时有勾选列（表头勾选本页，含部分选中），“全选筛选结果”按同一筛选分页读取全部记录；删除后保留逐文件结果面板。 | `/api/v1/companies/{id}/directories/{key}/invoices`、`invoice-tags`；`DirectorySelectionBar.vue`。 |
 | `frontend/src/components/DirectorySelectionBar.vue` | 勾选底部操作条：张数与价税合计、合计详情（三项金额、有效计入张数、冲突 / 缺失 / 折叠提示）均来自 `selection-summary`；打印（先开窗再填 `print-jobs` 的地址）、开具入库单（会话交接到单据页，最多 1000 条）、删除所选（`trash-jobs` 预备清单 → 条内确认 → 响应丢失只读执行日志），取消勾选与全选筛选结果。 | `/api/v1/invoices/selection-summary`、`print-jobs`、`trash-jobs*`。 |
 | `frontend/src/components/WatchSwitchConfirm.vue` | “设为监控目录”确认：说明只监控一个目录，确认后调用 `PUT /api/v1/settings` 并刷新系统快照与公司清单。 | `CompanyDirectories.vue`、`DirectoryPanel.vue`。 |
 | `frontend/src/components/CompanyCreateForm.vue` | 新建公司表单：名称、资料夹路径、可选纳税人身份（不填即未设置）。 | `stores/companies.ts::create`。 |

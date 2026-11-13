@@ -468,6 +468,73 @@ describe("companies module", () => {
     vi.useRealTimers();
   });
 
+  it("tags every selected invoice from a selected row's menu, adding where missing and removing from all", async () => {
+    const A = "tag_aaaaaaaa";
+    const tags = [{ id: A, name: "待核实", color: "#e5484d", meaning: "" }, { id: "tag_bbbbbbbb", name: "未付款", color: "#3e63dd", meaning: "" }];
+    const one = "1".repeat(20);
+    const two = "2".repeat(20);
+    const row = (key: string, number: string, format: string) => ({ invoice_key: key, source_path: `/合成/甲/成本发票/${key}.${format}`, source_file: `${key}.${format}`,
+      file_format: format.toUpperCase(), invoice_number: number, seller: "丙丁", buyer: "甲", amount: "1130.00", tags: number === one ? [A] : [] });
+    // Two formats of one invoice share a number; one row has no number at all.
+    const rows = [row("1", one, "pdf"), row("2", one, "xml"), row("3", two, "pdf"), row("4", "", "pdf")];
+    const directory = { ...DIRECTORIES[0]!, projection: { ...DIRECTORIES[0]!.projection, summary_exists: true } };
+    const metric = { value: 0, valid_invoice_count: 0, conflict_invoice_count: 0, missing_invoice_count: 0 };
+    let marks: Record<string, string[]> = { [one]: [A] };
+    let revision = 7;
+    stubBackend((url, init) => {
+      const method = init.method ?? "GET";
+      if (url === "/api/v1/invoice-tags") return [200, { ok: true, revision: 3, tags }];
+      if (url.endsWith("/invoice-tags") && method === "GET") return [200, { ok: true, revision, invoices: marks }];
+      if (url.endsWith("/invoice-tags")) {
+        const changes = (JSON.parse(String(init.body)) as { changes: Record<string, string[]> }).changes;
+        marks = { ...marks, ...changes };
+        revision += 1;
+        return [200, { ok: true, revision, invoices: Object.fromEntries(Object.entries(marks).filter(([, ids]) => ids.length)) }];
+      }
+      if (url.includes("/invoices?")) return [200, { ok: true, count: 4, page: 1, page_size: 50, read_only: false, directory, items: rows, snapshot: { provisional: false } }];
+      if (url.endsWith("/selection-summary")) return [200, { ok: true, selection: { record_count: 4, invoice_count: 3, collapsed_record_count: 1 },
+        totals: { pretax_amount: metric, tax_amount: metric, total_with_tax: metric }, cost_breakdown: {} }];
+      return undefined;
+    });
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const wrapper = await mountCompanies();
+    await wrapper.findAll("button").find((button) => button.text() === "查看发票")!.trigger("click");
+    await flushPromises();
+    const list = wrapper.get('[aria-label="目录发票"]');
+    await list.get('input[aria-label="勾选本页"]').setValue(true);
+    vi.advanceTimersByTime(300);
+    await flushPromises();
+    // Batch tagging adds nothing to what the selection actions send.
+    expect(calls.find((call) => call.url.endsWith("/selection-summary"))!.body).toEqual({ items: rows.map((item) => ({ invoice_key: item.invoice_key, source_path: item.source_path })) });
+
+    await list.findAll("tbody tr")[2]!.trigger("keydown", { key: "F10", shiftKey: true });
+    await flushPromises();
+    const menu = () => wrapper.get('[role="menu"][aria-label="已勾选 4 张发票的标签"]');
+    expect(menu().text()).toContain("2 个发票号码");
+    expect(menu().text()).toContain("其中 1 张没有发票号码");
+    const box = () => menu().findAll('[role="menuitemcheckbox"]')[0]!.get("input");
+    expect(menu().get('[role="menuitemcheckbox"]').attributes("aria-checked")).toBe("mixed");
+    expect((box().element as HTMLInputElement).indeterminate).toBe(true);
+
+    await box().setValue(true);
+    await flushPromises();
+    const puts = () => calls.filter((call) => call.method === "PUT");
+    expect(puts()[0]!.body).toEqual({ revision: 7, changes: { [two]: [A] } }); // only where it was missing
+    expect(menu().get('[role="menuitemcheckbox"]').attributes("aria-checked")).toBe("true");
+    expect(list.findAll("tbody tr")[2]!.find(".tag-dot").exists()).toBe(true); // dots updated in place
+
+    await box().setValue(false);
+    await flushPromises();
+    expect(puts()[1]!.body).toEqual({ revision: 8, changes: { [one]: [], [two]: [] } }); // all had it: removed from all
+    expect(list.findAll("tbody .tag-dot")).toHaveLength(0);
+    expect(calls.filter((call) => call.url.includes("/invoices?")).length).toBe(1); // no reload
+    // A row outside the selection still tags only itself.
+    await list.get('input[aria-label="勾选 ' + two + '"]').setValue(false);
+    await list.findAll("tbody tr")[2]!.trigger("keydown", { key: "F10", shiftKey: true });
+    expect(wrapper.get('[role="menu"]').attributes("aria-label")).toBe(`${two} 的标签`);
+    vi.useRealTimers();
+  });
+
   it("offers no selection on a non-monitored folder", async () => {
     stubBackend((url) => (url.includes("/directories?") || url.endsWith("/directories")
       ? [200, { ok: true, revision: 3, company: COMPANY, directories: [{ ...DIRECTORIES[1], status: "present" }] }] : undefined));
