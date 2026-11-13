@@ -120,6 +120,46 @@ def test_an_edited_code_refreshes_the_sheet_name_and_malformed_saves_are_refused
         assert invalid.value.code == "VOUCHER_DRAFT_INVALID"
 
 
+def test_moving_a_voucher_to_another_month_renumbers_it_and_dates_outside_block_approval(tmp_path: Path):
+    root = _company_folder(tmp_path / "甲公司")
+    path = root / "做账草稿" / NAME
+    revision = read_draft(root, NAME)["revision"]
+    # Move 002 to May, fix its credit and approve it in the same save.
+    saved = save_draft(root, NAME, {"revision": revision, "vouchers": [{
+        "month": "2026-06", "number": "002", "move_month": "2026-05", "date": "2026-05-31", "approval": APPROVE,
+        "lines": [{"row": 5, "credit": "900"}],
+    }]})
+    assert saved["moved"] == [{"from": {"month": "2026-06", "number": "002"}, "to": {"month": "2026-05", "number": "001"}}]
+    by_key = {(voucher.month, voucher.number): voucher for voucher in read_review_xlsx(path)}
+    assert set(by_key) == {("2026-06", "001"), ("2026-05", "001")}
+    assert by_key[("2026-05", "001")].approval == APPROVE and str(by_key[("2026-05", "001")].voucher_date) == "2026-05-31"
+    # Back to June: 001 is taken there, so it becomes 002 and loses its approval (moved, not re-approved).
+    back = save_draft(root, NAME, {"revision": saved["revision"], "vouchers": [{"month": "2026-05", "number": "001", "move_month": "2026-06", "date": "2026-06-30"}]})
+    assert back["moved"][0]["to"] == {"month": "2026-06", "number": "002"}
+    assert _voucher(back, "002")["approval"] == ""
+    # A date outside the period is saved but cannot be approved; a date change alone keeps the number.
+    outside = save_draft(root, NAME, {"revision": back["revision"], "vouchers": [{"month": "2026-06", "number": "002", "date": "2026-07-02"}]})
+    assert outside["moved"][0]["to"] == {"month": "2026-06", "number": "002"}
+    assert any("不在 2026-06" in error for error in _voucher(outside, "002")["errors"])
+    with pytest.raises(VoucherDraftError) as refused:
+        save_draft(root, NAME, {"revision": outside["revision"], "vouchers": [{"month": "2026-06", "number": "002", "approval": APPROVE}]})
+    assert refused.value.code == "VOUCHER_DRAFT_NOT_APPROVABLE"
+    for bad in ({"move_month": "2999-01"}, {"move_month": "2026-13"}, {"date": "06/30"}):
+        with pytest.raises(VoucherDraftError) as invalid:
+            save_draft(root, NAME, {"revision": outside["revision"], "vouchers": [{"month": "2026-06", "number": "002", **bad}]})
+        assert invalid.value.code == "VOUCHER_DRAFT_INVALID"
+
+
+def test_the_drafts_check_sheets_are_returned_read_only(tmp_path: Path):
+    root = _company_folder(tmp_path / "甲公司")
+    wb = load_workbook(root / "做账草稿" / NAME)
+    wb["银行对账"].append(["2026-06", 1130.5])
+    wb.save(root / "做账草稿" / NAME)
+    payload = read_draft(root, NAME)
+    assert [sheet["name"] for sheet in payload["sheets"]] == ["银行对账"]
+    assert payload["sheets"][0] == {"name": "银行对账", "columns": ["月份", "金额"], "rows": [["2026-06", 1130.5]], "truncated": False}
+
+
 @pytest.fixture
 def client(tmp_path, monkeypatch):
     monkeypatch.setattr("invoice_hub.services.background_sync.BackgroundSyncService.run_background_diagnostics", lambda *args, **kwargs: None)

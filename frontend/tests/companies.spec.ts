@@ -633,6 +633,36 @@ describe("companies module", () => {
     expect((card().get("select").element as HTMLSelectElement).value).toBe("通过");
   });
 
+  it("moves a voucher to another period with its month-end date and shows the draft's check sheets", async () => {
+    const NAME = "凭证草稿_2026-06_2026-06.xlsx";
+    const line = (row: number, code: string) => ({ row, summary: "付款", code, name: "", debit: row === 2 ? "10.00" : null, credit: row === 3 ? "10.00" : null,
+      supplier: "", qty: null, unit: "", todo: "", confidence: "高", basis: "" });
+    const voucher = { month: "2026-06", number: "002", date: "2026-06-30", approval: "通过", debit_total: "10.00", credit_total: "10.00", errors: [], warnings: [], lines: [line(2, "2202"), line(3, "1002")] };
+    const sheets = [{ name: "库存核对", columns: ["月份", "品名", "期末数量"], rows: [["2026-06", "螺纹钢", 7.5]], truncated: false }];
+    const payload = { ok: true, name: NAME, revision: "r1", books_error: "", vouchers: [voucher], approved: 1, blocked: 0, sheets, current_month: "2026-11" };
+    stubBackend((url, init) => {
+      if (url.endsWith("/voucher-drafts")) return [200, { ok: true, drafts: [{ name: NAME }] }];
+      if (url.includes("/voucher-drafts/") && (init.method ?? "GET") === "GET") return [200, payload];
+      if (url.includes("/voucher-drafts/")) return [200, { ...payload, revision: "r2", vouchers: [{ ...voucher, month: "2026-05", number: "001", date: "2026-05-31", approval: "" }],
+        saved_rows: 0, saved_approvals: 0, moved: [{ from: { month: "2026-06", number: "002" }, to: { month: "2026-05", number: "001" } }] }];
+      return undefined;
+    });
+    const wrapper = await mountCompanies();
+    await wrapper.get("#company-tab-vouchers").trigger("click");
+    await flushPromises();
+    expect(wrapper.get('table[aria-label="库存核对"]').text()).toContain("7.5");
+    const card = wrapper.get('[aria-label="2026-06 第 002 号凭证"]');
+    expect(card.get('input[aria-label="2026-06 第 002 号凭证所属期"]').attributes("max")).toBe("2026-11");
+    await card.get('input[aria-label="2026-06 第 002 号凭证所属期"]').setValue("2026-05");
+    await card.get('input[aria-label="2026-06 第 002 号凭证所属期"]').trigger("change");
+    expect((card.get('input[aria-label="2026-06 第 002 号凭证记账日期"]').element as HTMLInputElement).value).toBe("2026-05-31");
+    expect(card.text()).toContain("保存后移到 2026-05");
+    await wrapper.findAll("button").find((button) => button.text().startsWith("保存（1 张）"))!.trigger("click");
+    await flushPromises();
+    expect(calls.find((call) => call.method === "PUT")!.body).toEqual({ revision: "r1", vouchers: [{ month: "2026-06", number: "002", move_month: "2026-05", date: "2026-05-31", lines: [] }] });
+    expect(wrapper.text()).toContain("移动后重新编号：2026-06 第 002 号 → 2026-05 第 001 号");
+  });
+
   it("marks a non-monitored folder's invoice list read-only", async () => {
     stubBackend((url) => (url.includes("/directories?") || url.endsWith("/directories")
       ? [200, { ok: true, revision: 3, company: COMPANY, directories: [{ ...DIRECTORIES[1], status: "present" }] }] : undefined));

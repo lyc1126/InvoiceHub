@@ -15,7 +15,12 @@ interface DraftVoucher {
   month: string; number: string; date: string; approval: string; debit_total: string; credit_total: string;
   errors: string[]; warnings: string[]; lines: DraftLine[];
 }
-interface DraftPayload { name: string; revision: string; books_error: string; vouchers: DraftVoucher[]; approved: number; blocked: number }
+interface DraftSheet { name: string; columns: (string | number)[]; rows: (string | number)[][]; truncated: boolean }
+interface DraftPayload {
+  name: string; revision: string; books_error: string; vouchers: DraftVoucher[]; approved: number; blocked: number;
+  sheets?: DraftSheet[]; current_month?: string;
+}
+interface Moved { from: { month: string; number: string }; to: { month: string; number: string } }
 type Editable = "summary" | "code" | "debit" | "credit" | "supplier";
 
 const props = defineProps<{ company: Company }>();
@@ -33,6 +38,10 @@ const onlyProblems = ref(false);
 // Unsaved edits: row → field → text, and voucher key → approval.
 const edits = reactive<Record<number, Partial<Record<Editable, string>>>>({});
 const approvals = reactive<Record<string, string>>({});
+// 所属期 / 记账日期 (stage 2), by voucher key. The backend renumbers a voucher moved to another month.
+const periods = reactive<Record<string, { month: string; date: string }>>({});
+const numberFormat = new Intl.NumberFormat("zh-CN", { maximumFractionDigits: 3 });
+const cellText = (value: string | number) => (typeof value === "number" ? numberFormat.format(value) : value);
 
 const keyOf = (voucher: DraftVoucher) => `${voucher.month}#${voucher.number}`;
 const months = computed(() => [...new Set((draft.value?.vouchers ?? []).map((item) => item.month))]);
@@ -40,7 +49,7 @@ const shown = computed(() =>
   (draft.value?.vouchers ?? []).filter((item) => (!month.value || item.month === month.value) && (!onlyProblems.value || item.errors.length || refused.value[keyOf(item)])),
 );
 const dirtyCount = computed(() => {
-  const keys = new Set(Object.keys(approvals));
+  const keys = new Set([...Object.keys(approvals), ...Object.keys(periods)]);
   for (const voucher of draft.value?.vouchers ?? []) if (voucher.lines.some((line) => edits[line.row])) keys.add(keyOf(voucher));
   return keys.size;
 });
@@ -82,6 +91,25 @@ function approvalOf(voucher: DraftVoucher): string {
 function resetEdits(): void {
   for (const key of Object.keys(edits)) delete edits[Number(key)];
   for (const key of Object.keys(approvals)) delete approvals[key];
+  for (const key of Object.keys(periods)) delete periods[key];
+}
+
+function periodOf(voucher: DraftVoucher): { month: string; date: string } {
+  return periods[keyOf(voucher)] ?? { month: voucher.month, date: voucher.date };
+}
+
+function lastDay(month: string): string {
+  const [year, number] = month.split("-").map(Number);
+  return `${month}-${String(new Date(year!, number!, 0).getDate()).padStart(2, "0")}`;
+}
+
+function setPeriod(voucher: DraftVoucher, field: "month" | "date", value: string): void {
+  if (!value) return;
+  const next = { ...periodOf(voucher), [field]: value };
+  // A new month moves the date to its last day (the draft's month-end convention) unless it already fits.
+  if (field === "month" && !next.date.startsWith(`${value}-`)) next.date = lastDay(value);
+  if (next.month === voucher.month && next.date === voucher.date) delete periods[keyOf(voucher)];
+  else periods[keyOf(voucher)] = next;
 }
 
 async function loadFiles(): Promise<void> {
@@ -122,18 +150,27 @@ async function save(): Promise<void> {
     .map((voucher) => {
       const lines = voucher.lines.filter((line) => edits[line.row]).map((line) => ({ row: line.row, ...edits[line.row] }));
       const approval = approvals[keyOf(voucher)];
-      return lines.length || approval !== undefined ? { month: voucher.month, number: voucher.number, ...(approval !== undefined ? { approval } : {}), lines } : null;
+      const period = periods[keyOf(voucher)];
+      if (!lines.length && approval === undefined && !period) return null;
+      return {
+        month: voucher.month, number: voucher.number, ...(approval !== undefined ? { approval } : {}),
+        ...(period ? { move_month: period.month, date: period.date } : {}), lines,
+      };
     })
     .filter((item) => item !== null);
   try {
-    const saved = await request<DraftPayload & { saved_rows: number; saved_approvals: number }>(
+    const saved = await request<DraftPayload & { saved_rows: number; saved_approvals: number; moved: Moved[] }>(
       `${base.value}/${encodeURIComponent(draft.value.name)}`,
       { method: "PUT", body: { revision: draft.value.revision, vouchers: changes } },
     );
     draft.value = saved;
     resetEdits();
     refused.value = {};
-    notice.value = `已保存：改动 ${saved.saved_rows} 行、审核状态 ${saved.saved_approvals} 张。导出仍用 voucher_cli export 读取这份审核表。`;
+    const movedAll = saved.moved ?? [];
+    const moved = movedAll.filter((item) => item.from.month !== item.to.month || item.from.number !== item.to.number)
+      .map((item) => `${item.from.month} 第 ${item.from.number} 号 → ${item.to.month} 第 ${item.to.number} 号`);
+    notice.value = `已保存：改动 ${saved.saved_rows} 行、审核状态 ${saved.saved_approvals} 张${movedAll.length ? `、所属期 / 日期 ${movedAll.length} 张` : ""}。`
+      + (moved.length ? `移动后重新编号：${moved.join("；")}。` : "");
   } catch (cause) {
     if (cause instanceof ApiError && cause.code === "VOUCHER_DRAFT_CONFLICT") {
       await loadDraft();
@@ -187,9 +224,20 @@ watch(
     <template v-if="draft">
       <p class="banner banner--note">
         参考凭证需人工审核。共 {{ draft.vouchers.length }} 张，已通过 {{ draft.approved }} 张，有问题 {{ draft.blocked }} 张。
-        改动过的凭证要重新审核；借贷不平或科目不可用时不能审核通过。保存只写这份审核表，不写 凭证/、不连接账套。
+        改动过的凭证（含所属期、记账日期）要重新审核；借贷不平、科目不可用或记账日期不在所属期内时不能审核通过。保存只写这份审核表，不写 凭证/、不连接账套。
       </p>
       <p v-if="draft.books_error" class="banner banner--error" role="alert">{{ draft.books_error }}</p>
+      <details v-for="sheet in draft.sheets ?? []" :key="sheet.name" class="checks">
+        <summary><strong>{{ sheet.name }}</strong> <span class="muted">{{ sheet.rows.length }} 行{{ sheet.truncated ? "（只显示前 2000 行）" : "" }} · 由生成命令写入，只读</span></summary>
+        <table class="grid" :aria-label="sheet.name">
+          <thead><tr><th v-for="(column, index) in sheet.columns" :key="index">{{ column }}</th></tr></thead>
+          <tbody>
+            <tr v-for="(row, index) in sheet.rows" :key="index">
+              <td v-for="(value, column) in row" :key="column" :class="{ num: typeof value === 'number' }">{{ cellText(value) }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </details>
 
       <article
         v-for="voucher in shown"
@@ -200,7 +248,25 @@ watch(
       >
         <header class="voucher__head">
           <strong>{{ voucher.month }} · 记-{{ voucher.number }}</strong>
-          <span class="muted">{{ voucher.date }}</span>
+          <label class="nowrap">所属期
+            <input
+              type="month"
+              :value="periodOf(voucher).month"
+              :max="draft.current_month"
+              :aria-label="`${voucher.month} 第 ${voucher.number} 号凭证所属期`"
+              @change="setPeriod(voucher, 'month', ($event.target as HTMLInputElement).value)"
+            >
+          </label>
+          <label class="nowrap">记账日期
+            <input
+              type="date"
+              :value="periodOf(voucher).date"
+              :min="`${periodOf(voucher).month}-01`"
+              :max="lastDay(periodOf(voucher).month)"
+              :aria-label="`${voucher.month} 第 ${voucher.number} 号凭证记账日期`"
+              @change="setPeriod(voucher, 'date', ($event.target as HTMLInputElement).value)"
+            >
+          </label>
           <span class="voucher__totals" :class="totals(voucher).balanced ? 'muted' : 'check--failed'">
             借 {{ totals(voucher).debit }} · 贷 {{ totals(voucher).credit }}{{ totals(voucher).readable ? (totals(voucher).balanced ? "" : " · 不平") : " · 金额无法识别" }}
           </span>
@@ -214,6 +280,9 @@ watch(
             <option value="不导入">不导入</option>
           </select>
         </header>
+        <p v-if="periods[keyOf(voucher)] && periods[keyOf(voucher)]!.month !== voucher.month" class="muted voucher__stale">
+          保存后移到 {{ periods[keyOf(voucher)]!.month }}，并接在该月已有凭证号之后重新编号；需要重新审核。
+        </p>
         <p v-if="!refused[keyOf(voucher)] && voucher.errors.length && voucher.lines.some((line) => edits[line.row])" class="muted voucher__stale">
           下面是上次保存时的校验结果，保存后重新校验。
         </p>

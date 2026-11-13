@@ -20,6 +20,11 @@
 - 红冲抵销先于收付款匹配：否则余额已经为 0，被冲的蓝字票仍显示“未付”，页面自相矛盾。守护：`test_red_letter_invoices_reduce_the_balance_and_unreadable_ones_are_listed`。
 - `party_balance` 与 `flow_accounting` 从原始发票、流水清单复算，而不是用往来单位行自己的数：同义反复的校验永远成立，发现不了漏算。守护：上述各用例的 `_ok`。
 
+## 2026-11-13 凭证草稿的所属期与记账日期（WS-05 第二阶段）
+
+- 移到另一个月的凭证必须重新编号：`read_review_xlsx` 与导出都按“月份 + 凭证号”分组，沿用原号会和目标月的同号凭证合成一张、借贷与审核都会错。号码取目标月已占用号（不含本次移出的）与本次已分配号的最大值 + 1。守护：`test_moving_a_voucher_to_another_month_renumbers_it_and_dates_outside_block_approval`。
+- 记账日期不在所属期内仍可保存、但不能审核通过：用户可能分两步改（先改日期再改月份），只在审核时由 `validate` 拦截，与导出口径一致。守护：同上。
+
 ## 2026-11-13 比较记录的原票（WS-04）
 
 - `preview` 只附给监控目录、非临时列表的记录，且身份取自该目录当前的首页列表：`preview-jobs` 按当前 watch_dir 重新校验 `invoice_key + source_path`，其它目录的身份是另一份投影的位置，接上去要么被拒、要么指错文件。守护：`test_only_the_monitored_folders_records_open_the_original_invoice`（用附带的身份真实创建预览作业）。

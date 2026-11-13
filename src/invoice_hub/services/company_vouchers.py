@@ -13,6 +13,10 @@ Rules kept here, not in the page:
   (``通过``) is refused while the voucher has validation errors (unbalanced, unusable account, …).
 - Only existing rows of the sheet are edited; rows are never added, removed or moved, other sheets
   and columns are untouched. Nothing under ``凭证/`` is written and no ledger is contacted.
+- A voucher moved to another month (stage 2) takes the next free number there: the export groups
+  rows by month + number, so keeping its old number could silently merge it into another voucher.
+  Future months are refused; a date outside the month is saved but blocks approval (``validate``).
+- The draft's check sheets (银行对账 / 月度核对 / 库存核对 / 待补科目) are returned read-only.
 """
 
 from __future__ import annotations
@@ -20,6 +24,7 @@ from __future__ import annotations
 import hashlib
 import re
 from dataclasses import dataclass
+from datetime import date
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
@@ -34,6 +39,9 @@ APPROVALS = {"", APPROVE, REJECT}
 EDITABLE = ("summary", "code", "debit", "credit", "supplier")
 COLUMN_OF = {"summary": "摘要", "code": "科目编码", "debit": "借方金额", "credit": "贷方金额", "supplier": "供应商"}
 DISPLAY = ("科目名称", "待处理", "置信度", "依据")
+CHECK_SHEETS = ("月度核对", "银行对账", "库存核对", "待补科目")
+CHECK_SHEET_MAX_ROWS = 2000
+_MONTH = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
 
 
 class VoucherDraftError(CompanyRegistryError):
@@ -106,12 +114,40 @@ def _display_columns(path: Path) -> dict[int, dict[str, str]]:
     return out
 
 
+def _cell(value: object) -> object:
+    if isinstance(value, date):
+        return value.isoformat()[:10]
+    if isinstance(value, Decimal):
+        return float(value)
+    return "" if value is None else value if isinstance(value, (int, float)) else str(value)
+
+
+def _check_sheets(path: Path) -> list[dict]:
+    """The draft command's own check sheets, as written; the page only shows them."""
+    from openpyxl import load_workbook
+
+    wb = load_workbook(path, data_only=True, read_only=True)
+    out = []
+    for title in CHECK_SHEETS:
+        if title not in wb.sheetnames:
+            continue
+        rows = [[_cell(value) for value in row] for row in wb[title].iter_rows(values_only=True)]
+        rows = [row for row in rows if any(value != "" for value in row)]
+        if rows:
+            body = rows[1:]
+            out.append({"name": title, "columns": rows[0], "rows": body[:CHECK_SHEET_MAX_ROWS],
+                        "truncated": len(body) > CHECK_SHEET_MAX_ROWS})
+    wb.close()
+    return out
+
+
 def read_draft(root: Path, name: str) -> dict:
     path = _draft_path(root, name)
     revision = _revision(path)
     try:
         vouchers = read_review_xlsx(path)
         display = _display_columns(path)
+        sheets = _check_sheets(path)
     except (ValueError, KeyError) as exc:
         raise VoucherDraftError("VOUCHER_DRAFT_UNREADABLE", f"{name} 无法读取：{exc}") from exc
     books = _books(root)
@@ -138,7 +174,8 @@ def read_draft(root: Path, name: str) -> dict:
                 "basis": display.get(line["row"], {}).get("依据", ""),
             } for line in voucher.lines],
         })
-    return {"name": name, "revision": revision, "books_error": books.error, "vouchers": items,
+    return {"name": name, "revision": revision, "books_error": books.error, "vouchers": items, "sheets": sheets,
+            "current_month": date.today().strftime("%Y-%m"),
             "approved": sum(1 for item in items if item["approval"] == APPROVE),
             "blocked": sum(1 for item in items if item["errors"])}
 
@@ -157,7 +194,7 @@ def _amount(value: object, where: str) -> Decimal | None:
 
 
 def save_draft(root: Path, name: str, body: dict) -> dict:
-    """Apply `{revision, vouchers: [{month, number, approval?, lines?: [{row, summary?, code?, debit?, credit?, supplier?}]}]}`."""
+    """Apply `{revision, vouchers: [{month, number, approval?, move_month?, date?, lines?: [{row, summary?, code?, debit?, credit?, supplier?}]}]}`."""
     path = _draft_path(root, name)
     if body.get("revision") != _revision(path):
         raise VoucherDraftError("VOUCHER_DRAFT_CONFLICT", "审核表已在别处修改（或刚重新生成），已刷新，请重新编辑。", status_code=409)
@@ -170,6 +207,8 @@ def save_draft(root: Path, name: str, body: dict) -> dict:
         raise VoucherDraftError("VOUCHER_DRAFT_UNREADABLE", f"{name} 无法读取：{exc}") from exc
     edits: dict[int, dict[str, object]] = {}
     approvals: dict[tuple[str, str], str] = {}
+    moves: dict[tuple[str, str], dict] = {}
+    this_month = date.today().strftime("%Y-%m")
     for change in changes:
         key = (str(change.get("month") or ""), str(change.get("number") or "").zfill(3))
         voucher = current.get(key)
@@ -193,6 +232,20 @@ def save_draft(root: Path, name: str, body: dict) -> dict:
                     rows[row][field] = value
                     edits.setdefault(row, {})[field] = value
                     touched = True
+        # 所属期 / 记账日期 (stage 2): the number is assigned below, once every move of this save is known.
+        move_month, new_date = change.get("move_month"), change.get("date")
+        if move_month is not None and (not isinstance(move_month, str) or not _MONTH.match(move_month)):
+            raise VoucherDraftError("VOUCHER_DRAFT_INVALID", "所属期须为 YYYY-MM。")
+        if move_month and move_month > this_month:
+            raise VoucherDraftError("VOUCHER_DRAFT_INVALID", f"所属期不能选未来月份（{move_month}）。")
+        if new_date is not None:
+            try:
+                new_date = date.fromisoformat(str(new_date))
+            except ValueError as exc:
+                raise VoucherDraftError("VOUCHER_DRAFT_INVALID", f"记账日期无法识别：{new_date}") from exc
+        if (move_month and move_month != voucher.month) or (new_date and new_date != voucher.voucher_date):
+            moves[key] = {"month": move_month or voucher.month, "date": new_date or voucher.voucher_date}
+            touched = True
         approval = change.get("approval")
         if approval is not None and approval not in APPROVALS:
             raise VoucherDraftError("VOUCHER_DRAFT_INVALID", f"审核只能是“{APPROVE}”“{REJECT}”或空。")
@@ -203,6 +256,22 @@ def save_draft(root: Path, name: str, body: dict) -> dict:
             approvals[key] = approval
             voucher.approval = approval
 
+    # A moved voucher takes the next free number of its new month (numbers of vouchers already there,
+    # and of earlier moves in this save, are taken), so no two vouchers ever share month + number.
+    taken: dict[str, set[int]] = {}
+    for (month, number) in current:
+        if (month, number) not in moves and number.isdigit():
+            taken.setdefault(month, set()).add(int(number))
+    for key, move in moves.items():
+        voucher = current[key]
+        if move["month"] == key[0] and key[1].isdigit() and int(key[1]) not in taken.get(key[0], set()):
+            move["number"] = key[1]  # only the date changed
+        else:
+            used = taken.setdefault(move["month"], set())
+            move["number"] = f"{max(used, default=0) + 1:03d}"
+        taken.setdefault(move["month"], set()).add(int(move["number"]))
+        voucher.month, voucher.number, voucher.voucher_date = move["month"], move["number"], move["date"]
+
     books = _books(root)
     refused = []
     for key, approval in approvals.items():
@@ -211,6 +280,7 @@ def save_draft(root: Path, name: str, body: dict) -> dict:
         voucher = current[key]
         errors = validate(voucher, books.ledger, books.aux)[0] if books.ledger else [books.error]
         if errors:
+            # Reported under the key the page knows (before any move in this save).
             refused.append({"month": key[0], "number": key[1], "errors": errors})
     if refused:
         raise VoucherDraftError("VOUCHER_DRAFT_NOT_APPROVABLE", "有凭证未通过校验，不能审核通过；未保存任何改动。",
@@ -231,6 +301,11 @@ def save_draft(root: Path, name: str, body: dict) -> dict:
                 # Keep the sheet's own name in step with an edited code; an unknown code leaves it blank, never stale.
                 code, ledger = str(fields["code"]), books.ledger
                 ws.cell(row=row, column=column["科目名称"]).value = ledger.full_name(code) if ledger and code in ledger.by_code else None
+        for key, move in moves.items():
+            for line in current[key].lines:
+                ws.cell(row=line["row"], column=column["月份"]).value = move["month"]
+                ws.cell(row=line["row"], column=column["凭证号"]).value = move["number"]
+                ws.cell(row=line["row"], column=column["日期"]).value = move["date"]
         for key, approval in approvals.items():
             ws.cell(row=current[key].first_row, column=column["审核"]).value = approval or None
             # The approval sits on a voucher's first row; clear any copy on its other rows.
@@ -238,6 +313,8 @@ def save_draft(root: Path, name: str, body: dict) -> dict:
                 ws.cell(row=line["row"], column=column["审核"]).value = None
         wb.save(tmp)
 
-    if edits or approvals:
+    if edits or approvals or moves:
         _atomic(path, write)
-    return {**read_draft(root, name), "saved_rows": len(edits), "saved_approvals": len(approvals)}
+    moved = [{"from": {"month": key[0], "number": key[1]}, "to": {"month": move["month"], "number": move["number"]}}
+             for key, move in moves.items()]
+    return {**read_draft(root, name), "saved_rows": len(edits), "saved_approvals": len(approvals), "moved": moved}
