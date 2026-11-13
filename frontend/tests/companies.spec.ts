@@ -663,6 +663,44 @@ describe("companies module", () => {
     expect(wrapper.text()).toContain("移动后重新编号：2026-06 第 002 号 → 2026-05 第 001 号");
   });
 
+  it("exports the approved vouchers only after a confirm with the preparer and reports blocked months", async () => {
+    const NAME = "凭证草稿_2026-06_2026-06.xlsx";
+    const line = (row: number) => ({ row, summary: "付款", code: "1002", name: "", debit: row === 2 ? "10.00" : null, credit: row === 3 ? "10.00" : null,
+      supplier: "", qty: null, unit: "", todo: "", confidence: "高", basis: "" });
+    const voucher = (month: string, number: string) => ({ month, number, date: `${month}-30`, approval: "通过", debit_total: "10.00", credit_total: "10.00", errors: [], warnings: [], lines: [line(2), line(3)] });
+    const payload = { ok: true, name: NAME, revision: "r1", books_error: "", vouchers: [voucher("2026-05", "001"), voucher("2026-06", "001")], approved: 2, blocked: 0, sheets: [], current_month: "2026-11" };
+    stubBackend((url, init) => {
+      if (url.endsWith("/voucher-drafts")) return [200, { ok: true, drafts: [{ name: NAME }] }];
+      if (url.endsWith("/export")) return [200, { ok: true, name: NAME, files: ["捷锐导入_2026-05_20261113_101010.xlsx"], exported: 1, skipped: 1, learned: 0,
+        errors: [{ voucher: "2026-06 第001号", errors: ["第 3 行 科目 1002 不存在、未启用或不是末级"] }], blocked_months: ["2026-06"], warnings: [], duplicates: [] }];
+      if (url.includes("/voucher-drafts/") && (init.method ?? "GET") === "GET") return [200, payload];
+      return undefined;
+    });
+    const wrapper = await mountCompanies();
+    await wrapper.get("#company-tab-vouchers").trigger("click");
+    await flushPromises();
+    const exportButton = () => wrapper.findAll("button").find((button) => button.text() === "导出已审核…")!;
+    // Unsaved edits: export would not include them, so it waits for a save.
+    await wrapper.get('input[aria-label="第 2 行摘要"]').setValue("改过");
+    expect(exportButton().attributes("disabled")).toBeDefined();
+    await wrapper.get('input[aria-label="第 2 行摘要"]').setValue("付款");
+    await wrapper.findAll("button").find((button) => button.text() === "重新读取")!.trigger("click");
+    await flushPromises();
+    await exportButton().trigger("click");
+    const panel = wrapper.get('[aria-label="导出已审核凭证"]');
+    const confirm = () => panel.findAll("button").find((button) => button.text() === "确认导出")!;
+    expect(confirm().attributes("disabled")).toBeDefined(); // 制单人 is required
+    expect(calls.some((call) => call.url.endsWith("/export"))).toBe(false);
+    await panel.get('input[aria-label="2026-06 账套已用到的凭证号"]').setValue("5");
+    await panel.get('input[aria-label="制单人"]').setValue("张三");
+    await confirm().trigger("click");
+    await flushPromises();
+    expect(calls.find((call) => call.url.endsWith("/export"))!.body).toEqual({ revision: "r1", preparer: "张三", after: { "2026-06": 5 }, confirm: true });
+    const result = wrapper.get('[aria-label="导出结果"]');
+    expect(result.text()).toContain("做账草稿/捷锐导入_2026-05_20261113_101010.xlsx");
+    expect(result.text()).toContain("2026-06 整月未导出");
+  });
+
   it("marks a non-monitored folder's invoice list read-only", async () => {
     stubBackend((url) => (url.includes("/directories?") || url.endsWith("/directories")
       ? [200, { ok: true, revision: 3, company: COMPANY, directories: [{ ...DIRECTORIES[1], status: "present" }] }] : undefined));

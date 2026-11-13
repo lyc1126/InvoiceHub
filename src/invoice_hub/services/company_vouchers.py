@@ -17,18 +17,23 @@ Rules kept here, not in the page:
   rows by month + number, so keeping its old number could silently merge it into another voucher.
   Future months are refused; a date outside the month is saved but blocks approval (``validate``).
 - The draft's check sheets (银行对账 / 月度核对 / 库存核对 / 待补科目) are returned read-only.
+- Export (stage 2) is ``jierui.export`` itself, with the inputs ``voucher_cli export`` resolves: only
+  approved vouchers, a month with any failing voucher is not written at all, numbers restart per
+  month (or after ``after``), and a voucher exported before is skipped. It runs only on an explicit
+  confirm for the exact file revision the user reviewed, and writes only into 做账草稿/.
 """
 
 from __future__ import annotations
 
 import hashlib
 import re
+import threading
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
-from invoice_hub.bank.jierui import APPROVE, REJECT, REVIEW_COLUMNS, REVIEW_SHEET, _atomic, read_review_xlsx, validate
+from invoice_hub.bank.jierui import APPROVE, REJECT, REVIEW_COLUMNS, REVIEW_SHEET, _atomic, export, read_review_xlsx, validate
 from invoice_hub.bank.ledger import Ledger, load_aux_values
 from invoice_hub.bank.models import money
 from invoice_hub.services.company_registry import CompanyRegistryError
@@ -42,6 +47,9 @@ DISPLAY = ("科目名称", "待处理", "置信度", "依据")
 CHECK_SHEETS = ("月度核对", "银行对账", "库存核对", "待补科目")
 CHECK_SHEET_MAX_ROWS = 2000
 _MONTH = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
+MAX_PREPARER = 20
+# One export at a time per process: it reads and rewrites the export log and habits in 做账草稿/.
+_EXPORT_LOCK = threading.Lock()
 
 
 class VoucherDraftError(CompanyRegistryError):
@@ -318,3 +326,48 @@ def save_draft(root: Path, name: str, body: dict) -> dict:
     moved = [{"from": {"month": key[0], "number": key[1]}, "to": {"month": move["month"], "number": move["number"]}}
              for key, move in moves.items()]
     return {**read_draft(root, name), "saved_rows": len(edits), "saved_approvals": len(approvals), "moved": moved}
+
+
+def export_draft(root: Path, name: str, body: dict) -> dict:
+    """Write the import files for the approved vouchers, as ``voucher_cli export`` does.
+
+    `{revision, preparer, after?: {YYYY-MM: last used number}, confirm: true}`.
+    """
+    path = _draft_path(root, name)
+    if body.get("confirm") is not True:
+        raise VoucherDraftError("VOUCHER_DRAFT_INVALID", "导出需要确认。")
+    preparer = _text(body.get("preparer")).strip()
+    if not preparer or len(preparer) > MAX_PREPARER:
+        # 捷锐 refuses a whole voucher without 制单人 (measured 2026-10-21), so it is required here too.
+        raise VoucherDraftError("VOUCHER_DRAFT_INVALID", f"请填写制单人（1—{MAX_PREPARER} 字），须与账套里的制单人一致。")
+    after_raw = body.get("after") or {}
+    if not isinstance(after_raw, dict):
+        raise VoucherDraftError("VOUCHER_DRAFT_INVALID", "请求格式不对。")
+    after = {}
+    for month, number in after_raw.items():
+        if not _MONTH.match(str(month)) or not isinstance(number, int) or isinstance(number, bool) or not 0 <= number <= 999:
+            raise VoucherDraftError("VOUCHER_DRAFT_INVALID", f"账套已用到的凭证号须为 0—999 的整数（{month}）。")
+        if number:
+            after[str(month)] = number
+    books = _books(root)
+    if books.ledger is None:
+        raise VoucherDraftError("VOUCHER_DRAFT_BOOKS_UNAVAILABLE", books.error, status_code=409)
+    with _EXPORT_LOCK:
+        # Checked inside the lock: the file exported is the one the user reviewed.
+        if body.get("revision") != _revision(path):
+            raise VoucherDraftError("VOUCHER_DRAFT_CONFLICT", "审核表已在别处修改（或刚重新生成），已刷新，请重新核对后再导出。", status_code=409)
+        try:
+            result = export(path, root / DRAFT_DIR, books.ledger, books.aux, template=root / "凭证" / "导入" / "模板原件.xlsx",
+                            preparer=preparer, after=after)
+        except (ValueError, KeyError) as exc:
+            raise VoucherDraftError("VOUCHER_DRAFT_UNREADABLE", f"{name} 无法导出：{exc}") from exc
+    return {
+        "name": name,
+        # File names only: the files stay in the company folder's 做账草稿/.
+        "files": [file.name for file in result.files],
+        "exported": result.exported, "skipped": result.skipped,
+        "errors": [{"voucher": label, "errors": errors} for label, errors in result.errors.items()],
+        "blocked_months": sorted({label.split(" ")[0] for label in result.errors}),
+        "warnings": [{"voucher": label, "warnings": warnings} for label, warnings in result.warnings.items()],
+        "duplicates": result.duplicates, "learned": result.learned,
+    }

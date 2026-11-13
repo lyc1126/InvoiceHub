@@ -160,6 +160,40 @@ def test_the_drafts_check_sheets_are_returned_read_only(tmp_path: Path):
     assert payload["sheets"][0] == {"name": "银行对账", "columns": ["月份", "金额"], "rows": [["2026-06", 1130.5]], "truncated": False}
 
 
+def test_export_writes_the_approved_vouchers_like_the_cli_and_skips_a_repeat(tmp_path: Path):
+    from invoice_hub.services.company_vouchers import export_draft
+
+    root = _company_folder(tmp_path / "甲公司")
+    revision = read_draft(root, NAME)["revision"]
+    for bad in ({"confirm": False, "preparer": "张三"}, {"confirm": True, "preparer": ""}, {"confirm": True, "preparer": "张三", "after": {"2026-06": -1}}):
+        with pytest.raises(VoucherDraftError) as invalid:
+            export_draft(root, NAME, {"revision": revision, **bad})
+        assert invalid.value.code == "VOUCHER_DRAFT_INVALID"
+    with pytest.raises(VoucherDraftError) as stale:
+        export_draft(root, NAME, {"revision": "old", "confirm": True, "preparer": "张三"})
+    assert stale.value.status_code == 409
+    assert not list((root / "做账草稿").glob("捷锐导入_*.xlsx"))  # nothing written by refused requests
+
+    # Only the approved 001 goes out (002 is not approved), numbered after the books' last 005.
+    result = export_draft(root, NAME, {"revision": revision, "confirm": True, "preparer": "张三", "after": {"2026-06": 5}})
+    assert (result["exported"], result["skipped"], result["errors"], result["blocked_months"]) == (1, 1, [], [])
+    [name] = result["files"]
+    ws = load_workbook(root / "做账草稿" / name).worksheets[0]
+    header = [cell.value for cell in ws[1]]
+    rows = [dict(zip(header, row)) for row in ws.iter_rows(min_row=2, values_only=True)]
+    assert {row["凭证号"] for row in rows} == {"006"} and {row["制单人"] for row in rows} == {"张三"}
+    # A second export skips the voucher already exported.
+    again = export_draft(root, NAME, {"revision": revision, "confirm": True, "preparer": "张三"})
+    assert again["exported"] == 0 and len(again["duplicates"]) == 1 and again["files"] == []
+
+    # An approved voucher that fails the check blocks its whole month (approval written outside the page).
+    wb = load_workbook(root / "做账草稿" / NAME)
+    wb[REVIEW_SHEET].cell(row=4, column=REVIEW_COLUMNS.index("审核") + 1).value = APPROVE
+    wb.save(root / "做账草稿" / NAME)
+    blocked = export_draft(root, NAME, {"revision": read_draft(root, NAME)["revision"], "confirm": True, "preparer": "张三"})
+    assert blocked["blocked_months"] == ["2026-06"] and blocked["files"] == []
+
+
 @pytest.fixture
 def client(tmp_path, monkeypatch):
     monkeypatch.setattr("invoice_hub.services.background_sync.BackgroundSyncService.run_background_diagnostics", lambda *args, **kwargs: None)

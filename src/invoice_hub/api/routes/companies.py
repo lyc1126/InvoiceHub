@@ -172,6 +172,12 @@ def router() -> APIRouter:
         payload = await _json_body(request)
         return await _call(lambda: _state(request).company_views.save_voucher_draft(company_id, name, payload))
 
+    @routes.post("/api/v1/companies/{company_id}/voucher-drafts/{name}/export")
+    async def export_company_voucher_draft(request: Request, company_id: str, name: str):
+        _require_same_origin_write(request)
+        payload = await _json_body(request)
+        return await _call(lambda: _state(request).company_views.export_voucher_draft(company_id, name, payload))
+
     @routes.get("/api/v1/invoice-tags")
     async def invoice_tags(request: Request):
         return await _call(_state(request).company_views.invoice_tags)

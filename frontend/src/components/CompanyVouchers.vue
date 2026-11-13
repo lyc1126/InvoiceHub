@@ -21,6 +21,10 @@ interface DraftPayload {
   sheets?: DraftSheet[]; current_month?: string;
 }
 interface Moved { from: { month: string; number: string }; to: { month: string; number: string } }
+interface ExportResult {
+  files: string[]; exported: number; skipped: number; blocked_months: string[]; duplicates: string[]; learned: number;
+  errors: { voucher: string; errors: string[] }[]; warnings: { voucher: string; warnings: string[] }[];
+}
 type Editable = "summary" | "code" | "debit" | "credit" | "supplier";
 
 const props = defineProps<{ company: Company }>();
@@ -40,6 +44,18 @@ const edits = reactive<Record<number, Partial<Record<Editable, string>>>>({});
 const approvals = reactive<Record<string, string>>({});
 // 所属期 / 记账日期 (stage 2), by voucher key. The backend renumbers a voucher moved to another month.
 const periods = reactive<Record<string, { month: string; date: string }>>({});
+// Export (stage 2): the same jierui.export the CLI runs, on an explicit confirm, for the saved file.
+const exportOpen = ref(false);
+const exporting = ref(false);
+const preparer = ref("");
+// v-model on a number input yields a number once typed, "" when cleared.
+const afterNumbers = reactive<Record<string, string | number>>({});
+const exportResult = ref<ExportResult | null>(null);
+const approvedByMonth = computed(() => {
+  const counts: Record<string, number> = {};
+  for (const voucher of draft.value?.vouchers ?? []) if (voucher.approval === "通过") counts[voucher.month] = (counts[voucher.month] ?? 0) + 1;
+  return Object.entries(counts).sort(([a], [b]) => a.localeCompare(b));
+});
 const numberFormat = new Intl.NumberFormat("zh-CN", { maximumFractionDigits: 3 });
 const cellText = (value: string | number) => (typeof value === "number" ? numberFormat.format(value) : value);
 
@@ -187,6 +203,29 @@ async function save(): Promise<void> {
   }
 }
 
+async function runExport(): Promise<void> {
+  if (!draft.value) return;
+  exporting.value = true;
+  error.value = "";
+  exportResult.value = null;
+  const after = Object.fromEntries(Object.entries(afterNumbers).filter(([, value]) => String(value ?? "").trim() !== "").map(([month, value]) => [month, Number(value)]));
+  try {
+    exportResult.value = await request<ExportResult>(`${base.value}/${encodeURIComponent(draft.value.name)}/export`, {
+      method: "POST", body: { revision: draft.value.revision, preparer: preparer.value, after, confirm: true }, timeoutMs: 60_000,
+    });
+    exportOpen.value = false;
+  } catch (cause) {
+    if (cause instanceof ApiError && cause.code === "VOUCHER_DRAFT_CONFLICT") {
+      await loadDraft();
+      error.value = "审核表已在别处修改（或重新生成），已刷新，请重新核对后再导出。";
+    } else {
+      error.value = errorText(cause);
+    }
+  } finally {
+    exporting.value = false;
+  }
+}
+
 watch(selectedFile, () => void loadDraft());
 watch(
   () => props.company.id,
@@ -215,7 +254,52 @@ watch(
       <button type="button" class="primary" :disabled="saving || !dirtyCount" :aria-busy="saving" @click="save">
         {{ saving ? "保存中…" : `保存（${dirtyCount} 张）` }}
       </button>
+      <button
+        type="button"
+        :disabled="!draft || !draft.approved || dirtyCount > 0 || exporting"
+        :title="dirtyCount ? '先保存改动再导出' : !draft?.approved ? '还没有审核通过的凭证' : ''"
+        @click="exportOpen = !exportOpen; exportResult = null"
+      >导出已审核…</button>
     </div>
+    <section v-if="exportOpen && draft" class="panel" role="group" aria-label="导出已审核凭证">
+      <p>
+        将审核为“通过”的 {{ draft.approved }} 张凭证导出为账套导入文件，写到公司资料夹 做账草稿/，由会计人员在账套中手工导入（不连接账套）。
+        某月有凭证校验不通过时该月整月不导出；已导出过的凭证会跳过，不会重复导出。
+      </p>
+      <table class="grid">
+        <thead><tr><th>月份</th><th class="num">通过</th><th>账套该月已用到的凭证号（没有可空）</th></tr></thead>
+        <tbody>
+          <tr v-for="[month, count] in approvedByMonth" :key="month">
+            <td>{{ month }}</td>
+            <td class="num">{{ count }}</td>
+            <td><input v-model="afterNumbers[month]" type="number" min="0" max="999" inputmode="numeric" :aria-label="`${month} 账套已用到的凭证号`"></td>
+          </tr>
+        </tbody>
+      </table>
+      <div class="toolbar">
+        <label class="nowrap">制单人 <input v-model="preparer" maxlength="20" aria-label="制单人" placeholder="与账套里的制单人一致"></label>
+        <button type="button" class="primary" :disabled="exporting || !preparer.trim()" :aria-busy="exporting" @click="runExport">{{ exporting ? "导出中…" : "确认导出" }}</button>
+        <button type="button" @click="exportOpen = false">取消</button>
+      </div>
+    </section>
+    <section v-if="exportResult" class="panel" role="status" aria-label="导出结果">
+      <p :class="{ 'check--failed': exportResult.blocked_months.length }">
+        已导出 {{ exportResult.exported }} 张，未导出 {{ exportResult.skipped }} 张<template v-if="exportResult.learned">；记住科目习惯 {{ exportResult.learned }} 条</template>。
+      </p>
+      <ul v-if="exportResult.files.length" class="warnings warnings--compact">
+        <li v-for="file in exportResult.files" :key="file">做账草稿/{{ file }}</li>
+      </ul>
+      <p v-for="month in exportResult.blocked_months" :key="month" class="check--failed">{{ month }} 整月未导出：该月有凭证未通过校验，修正后整月一起导出，避免只导入半个月。</p>
+      <ul v-if="exportResult.errors.length" class="warnings warnings--compact">
+        <li v-for="item in exportResult.errors" :key="item.voucher" class="check--failed">{{ item.voucher }}：{{ item.errors.join("；") }}</li>
+      </ul>
+      <ul v-if="exportResult.duplicates.length" class="warnings warnings--compact">
+        <li v-for="item in exportResult.duplicates" :key="item">已导出过，跳过：{{ item }}</li>
+      </ul>
+      <ul v-if="exportResult.warnings.length" class="warnings warnings--compact">
+        <li v-for="item in exportResult.warnings" :key="item.voucher">提醒 {{ item.voucher }}：{{ item.warnings.join("；") }}</li>
+      </ul>
+    </section>
     <p v-if="error" class="banner banner--error" role="alert">{{ error }}</p>
     <p v-if="notice" class="banner banner--ok" role="status">{{ notice }}</p>
     <p v-if="files && !files.length" class="muted">
@@ -224,7 +308,7 @@ watch(
     <template v-if="draft">
       <p class="banner banner--note">
         参考凭证需人工审核。共 {{ draft.vouchers.length }} 张，已通过 {{ draft.approved }} 张，有问题 {{ draft.blocked }} 张。
-        改动过的凭证（含所属期、记账日期）要重新审核；借贷不平、科目不可用或记账日期不在所属期内时不能审核通过。保存只写这份审核表，不写 凭证/、不连接账套。
+        改动过的凭证（含所属期、记账日期）要重新审核；借贷不平、科目不可用或记账日期不在所属期内时不能审核通过。保存只写这份审核表，导出只写 做账草稿/，都不写 凭证/、不连接账套。
       </p>
       <p v-if="draft.books_error" class="banner banner--error" role="alert">{{ draft.books_error }}</p>
       <details v-for="sheet in draft.sheets ?? []" :key="sheet.name" class="checks">

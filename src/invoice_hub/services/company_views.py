@@ -549,6 +549,13 @@ class CompanyViewService:
             raise company_vouchers.VoucherDraftError("VOUCHER_DRAFT_INVALID", "请求格式不对。")
         return {"ok": True, **company_vouchers.save_draft(self._company_root(company), name, body)}
 
+    def export_voucher_draft(self, company_id: str, name: str, body: object) -> dict:
+        # Only on the user's confirm; files go to the company folder's 做账草稿/, for manual import into the books.
+        company = self._registry.get_company(company_id)["company"]
+        if not isinstance(body, dict):
+            raise company_vouchers.VoucherDraftError("VOUCHER_DRAFT_INVALID", "请求格式不对。")
+        return {"ok": True, **company_vouchers.export_draft(self._company_root(company), name, body)}
+
     def invoice_tags(self) -> dict:
         return {"ok": True, **self._tags.definitions()}
 

@@ -20,6 +20,13 @@
 - 红冲抵销先于收付款匹配：否则余额已经为 0，被冲的蓝字票仍显示“未付”，页面自相矛盾。守护：`test_red_letter_invoices_reduce_the_balance_and_unreadable_ones_are_listed`。
 - `party_balance` 与 `flow_accounting` 从原始发票、流水清单复算，而不是用往来单位行自己的数：同义反复的校验永远成立，发现不了漏算。守护：上述各用例的 `_ok`。
 
+## 2026-11-13 凭证草稿页面导出（WS-05 第二阶段）
+
+- 页面导出直接调用 `jierui.export`，不另写：整月拦截、按月重新编号、已导出跳过与科目习惯学习都在那里，复制一份就会与命令行漂移。守护：`test_export_writes_the_approved_vouchers_like_the_cli_and_skips_a_repeat`（用导出写出的文件核对凭证号与制单人、第二次跳过、通过但不合格时整月不写）。
+- revision 在导出锁内复核：导出写的是用户审核过的那一版，另一处保存或重新生成后必须先刷新。不开放“允许再次导出”：响应丢失后再点只会跳过已导出的，不会重复导入。
+- 导出按钮在有未保存改动时禁用：导出读文件，页面上未保存的修改不会进入导入文件。
+- 账套“已用到的号”输入框 `v-model` 在 number 输入上给出数字，不能当字符串 `trim()`（前端测试发现）。
+
 ## 2026-11-13 凭证草稿的所属期与记账日期（WS-05 第二阶段）
 
 - 移到另一个月的凭证必须重新编号：`read_review_xlsx` 与导出都按“月份 + 凭证号”分组，沿用原号会和目标月的同号凭证合成一张、借贷与审核都会错。号码取目标月已占用号（不含本次移出的）与本次已分配号的最大值 + 1。守护：`test_moving_a_voucher_to_another_month_renumbers_it_and_dates_outside_block_approval`。
