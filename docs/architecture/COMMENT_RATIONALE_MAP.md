@@ -20,6 +20,13 @@
 - 红冲抵销先于收付款匹配：否则余额已经为 0，被冲的蓝字票仍显示“未付”，页面自相矛盾。守护：`test_red_letter_invoices_reduce_the_balance_and_unreadable_ones_are_listed`。
 - `party_balance` 与 `flow_accounting` 从原始发票、流水清单复算，而不是用往来单位行自己的数：同义反复的校验永远成立，发现不了漏算。守护：上述各用例的 `_ok`。
 
+## 2026-11-13 通用凭证导出配置（BK-01）
+
+- 只替换写文件一步，业务判断仍只在 `jierui.export`：整月拦截、重编号、重复跳过若在每个格式里各写一份，会出现某个格式漏拦的情况。已导出签名不分格式：同一凭证换格式再导一次会被跳过，避免同一凭证进两个账套。守护：`test_an_exported_voucher_is_skipped_in_any_other_format`。
+- 捷锐黄金测试对比引入导出配置之前的导出代码的输出（冻结为 `tests/fixtures/jierui_export_golden.json`）：唯一实测过能导入的格式不能因重构改变任何一个单元格。守护：`test_jierui_output_is_unchanged_from_before_the_profiles`。
+- 其他软件只标“实验”：各家导入模板是私有格式，只有用友 T3/U8 有公开字段规范，柠檬云表头来自第三方仓库；未实际导入前不能当作可用。按编码引入的格式没有编码时留空，不用名称顶替（会被当作错误编码导入）。
+- 校验提示改为“请确认账套里已建档”：同一提醒现在服务所有格式。
+
 ## 2026-11-13 工资社保页面（WS-05 第三阶段）
 
 - 只在用户确认后写 `申报数据.json`，且写入的单位 / 个人部分由后端从所确认的险种行求和：草稿计提只读这两个数，页面传来的合计不被信任。守护：`test_confirming_writes_the_month_into_the_tax_file_and_keeps_its_other_keys`、`test_a_confirmed_month_is_accrued_by_the_generated_draft`。

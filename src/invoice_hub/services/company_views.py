@@ -541,7 +541,8 @@ class CompanyViewService:
     def voucher_drafts(self, company_id: str) -> dict:
         company = self._registry.get_company(company_id)["company"]
         root = self._company_root(company)
-        return {"ok": True, "drafts": company_vouchers.list_drafts(root), "inputs": company_vouchers.draft_inputs(root)}
+        return {"ok": True, "drafts": company_vouchers.list_drafts(root), "inputs": company_vouchers.draft_inputs(root),
+                **company_vouchers.export_formats(root)}
 
     def generate_voucher_draft(self, company_id: str, body: object) -> dict:
         # Only on the user's confirm: writes 做账草稿/ the way `voucher_cli draft` does, backing up an existing table.

@@ -672,7 +672,11 @@ describe("companies module", () => {
     const voucher = (month: string, number: string) => ({ month, number, date: `${month}-30`, approval: "通过", debit_total: "10.00", credit_total: "10.00", errors: [], warnings: [], lines: [line(2), line(3)] });
     const payload = { ok: true, name: NAME, revision: "r1", books_error: "", vouchers: [voucher("2026-05", "001"), voucher("2026-06", "001")], approved: 2, blocked: 0, sheets: [], current_month: "2026-11" };
     stubBackend((url, init) => {
-      if (url.endsWith("/voucher-drafts")) return [200, { ok: true, drafts: [{ name: NAME }] }];
+      if (url.endsWith("/voucher-drafts")) return [200, { ok: true, drafts: [{ name: NAME }], template_folder: "做账草稿/导出模板", formats: [
+        { key: "jierui", label: "捷锐云记账", status: "verified", note: "", file_suffix: ".xlsx" },
+        { key: "ningmeng", label: "柠檬云", status: "experimental", note: "表头来自第三方模板", file_suffix: ".xlsx" },
+        { key: "template:缺列.xlsx", label: "缺列", status: "custom", note: "", file_suffix: ".xlsx", usable: false, missing: ["凭证号"] },
+      ] }];
       if (url.endsWith("/export")) return [200, { ok: true, name: NAME, files: ["捷锐导入_2026-05_20261113_101010.xlsx"], exported: 1, skipped: 1, learned: 0,
         errors: [{ voucher: "2026-06 第001号", errors: ["第 3 行 科目 1002 不存在、未启用或不是末级"] }], blocked_months: ["2026-06"], warnings: [], duplicates: [] }];
       if (url.includes("/voucher-drafts/") && (init.method ?? "GET") === "GET") return [200, payload];
@@ -693,11 +697,18 @@ describe("companies module", () => {
     const confirm = () => panel.findAll("button").find((button) => button.text() === "确认导出")!;
     expect(confirm().attributes("disabled")).toBeDefined(); // 制单人 is required
     expect(calls.some((call) => call.url.endsWith("/export"))).toBe(false);
+    const format = panel.get('select[aria-label="导出格式"]');
+    expect(format.findAll("option").map((option) => option.text())).toEqual(["捷锐云记账（已实测）", "柠檬云（实验，未经实际导入验证）", "缺列（自定义模板） - 缺列不可用"]);
+    expect(format.findAll("option")[2]!.attributes("disabled")).toBeDefined();
+    await format.setValue("ningmeng");
+    expect(panel.get('[role="note"]').text()).toContain("实验格式，未经实际导入验证");
+    await format.setValue("jierui");
+    expect(panel.find('[role="note"]').exists()).toBe(false);
     await panel.get('input[aria-label="2026-06 账套已用到的凭证号"]').setValue("5");
     await panel.get('input[aria-label="制单人"]').setValue("张三");
     await confirm().trigger("click");
     await flushPromises();
-    expect(calls.find((call) => call.url.endsWith("/export"))!.body).toEqual({ revision: "r1", preparer: "张三", after: { "2026-06": 5 }, confirm: true });
+    expect(calls.find((call) => call.url.endsWith("/export"))!.body).toEqual({ revision: "r1", preparer: "张三", after: { "2026-06": 5 }, format: "jierui", confirm: true });
     const result = wrapper.get('[aria-label="导出结果"]');
     expect(result.text()).toContain("做账草稿/捷锐导入_2026-05_20261113_101010.xlsx");
     expect(result.text()).toContain("2026-06 整月未导出");

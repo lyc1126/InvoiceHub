@@ -410,10 +410,54 @@ def save_draft(root: Path, name: str, body: dict) -> dict:
     return {**read_draft(root, name), "saved_rows": len(edits), "saved_approvals": len(approvals), "moved": moved}
 
 
+EXPORT_TEMPLATE_DIR = "导出模板"
+
+
+def export_formats(root: Path) -> dict:
+    """Built-in profiles plus the user's own blank templates in 做账草稿/导出模板/ (header mapping reported)."""
+    from invoice_hub.bank import export_profiles
+
+    formats = [export_profiles.public(profile) for profile in export_profiles.PROFILES.values()]
+    folder = root / DRAFT_DIR / EXPORT_TEMPLATE_DIR
+    for path in sorted(folder.glob("*.xlsx")) if folder.is_dir() else []:
+        if path.is_symlink() or path.name.startswith(("~$", ".")):
+            continue
+        try:
+            _profile, report = export_profiles.profile_from_template(path)
+        except Exception as exc:  # one broken template must not hide the others
+            formats.append({"key": f"template:{path.name}", "label": path.stem, "status": "custom", "note": f"无法读取：{exc}",
+                            "file_suffix": ".xlsx", "sources": [], "usable": False})
+            continue
+        formats.append({"key": f"template:{path.name}", "label": path.stem, "status": "custom", "file_suffix": ".xlsx", "sources": [],
+                        "note": "按上传的模板表头自动对列；对不上的列留空，请先导入一张核对。", "usable": not report["missing"], **report})
+    return {"formats": formats, "template_folder": f"{DRAFT_DIR}/{EXPORT_TEMPLATE_DIR}"}
+
+
+def _export_profile(root: Path, key: object):
+    from invoice_hub.bank import export_profiles
+
+    key = _text(key) or "jierui"
+    if key == "jierui":
+        return None  # the default path keeps 凭证/导入/模板原件.xlsx's column order
+    if key in export_profiles.PROFILES:
+        return export_profiles.PROFILES[key]
+    if key.startswith("template:"):
+        name = key.removeprefix("template:")
+        folder = root / DRAFT_DIR / EXPORT_TEMPLATE_DIR
+        path = folder / name
+        if "/" in name or "\\" in name or not path.is_file() or path.is_symlink() or path.parent != folder:
+            raise VoucherDraftError("VOUCHER_DRAFT_INVALID", f"找不到导出模板 {name}。")
+        profile, report = export_profiles.profile_from_template(path)
+        if report["missing"]:
+            raise VoucherDraftError("VOUCHER_DRAFT_INVALID", f"模板 {name} 缺少必需的列：{'、'.join(report['missing'])}。")
+        return profile
+    raise VoucherDraftError("VOUCHER_DRAFT_INVALID", f"未知的导出格式：{key}")
+
+
 def export_draft(root: Path, name: str, body: dict) -> dict:
     """Write the import files for the approved vouchers, as ``voucher_cli export`` does.
 
-    `{revision, preparer, after?: {YYYY-MM: last used number}, confirm: true}`.
+    `{revision, preparer, after?: {YYYY-MM: last used number}, format?: jierui|ningmeng|yonyou_t3|template:<file>, confirm: true}`.
     """
     path = _draft_path(root, name)
     if body.get("confirm") is not True:
@@ -440,7 +484,7 @@ def export_draft(root: Path, name: str, body: dict) -> dict:
             raise VoucherDraftError("VOUCHER_DRAFT_CONFLICT", "审核表已在别处修改（或刚重新生成），已刷新，请重新核对后再导出。", status_code=409)
         try:
             result = export(path, root / DRAFT_DIR, books.ledger, books.aux, template=root / "凭证" / "导入" / "模板原件.xlsx",
-                            preparer=preparer, after=after)
+                            preparer=preparer, after=after, profile=_export_profile(root, body.get("format")))
         except (ValueError, KeyError) as exc:
             raise VoucherDraftError("VOUCHER_DRAFT_UNREADABLE", f"{name} 无法导出：{exc}") from exc
     return {

@@ -26,6 +26,10 @@ interface DraftPayload {
   periods_revision?: number | null; periods_error?: string; cross_period_hint?: string;
 }
 interface Moved { from: { month: string; number: string }; to: { month: string; number: string } }
+interface ExportFormat {
+  key: string; label: string; status: "verified" | "experimental" | "custom"; note: string; file_suffix: string;
+  usable?: boolean; unmatched?: string[]; missing?: string[];
+}
 interface DraftInputs { booked: string[]; ledgers: string[]; tax_file: boolean; current_month: string }
 interface Carried { kept: string[]; review_again: string[]; new: string[]; gone: string[]; summaries_kept: number }
 interface GenerateResult {
@@ -42,6 +46,11 @@ const base = computed(() => `/api/v1/companies/${encodeURIComponent(props.compan
 const files = ref<{ name: string }[] | null>(null);
 // Generate (stage 2): voucher_cli draft from the page, with only the read-backs the backend listed.
 const inputs = ref<DraftInputs | null>(null);
+// Export formats (BK-01): built-in profiles plus the user's templates in 做账草稿/导出模板/.
+const formats = ref<ExportFormat[]>([]);
+const templateFolder = ref("");
+const exportFormat = ref("jierui");
+const chosenFormat = computed(() => formats.value.find((item) => item.key === exportFormat.value) ?? null);
 const generateOpen = ref(false);
 const generating = ref(false);
 const generateResult = ref<GenerateResult | null>(null);
@@ -151,9 +160,12 @@ function setPeriod(voucher: DraftVoucher, field: "month" | "date", value: string
 async function loadFiles(): Promise<void> {
   error.value = "";
   try {
-    const listing = await request<{ drafts: { name: string }[]; inputs: DraftInputs }>(base.value);
+    const listing = await request<{ drafts: { name: string }[]; inputs: DraftInputs; formats?: ExportFormat[]; template_folder?: string }>(base.value);
     files.value = listing.drafts;
     inputs.value = listing.inputs;
+    formats.value = listing.formats ?? [];
+    templateFolder.value = listing.template_folder ?? "";
+    if (!formats.value.some((item) => item.key === exportFormat.value)) exportFormat.value = "jierui";
     if (!files.value.some((item) => item.name === selectedFile.value)) selectedFile.value = files.value.at(-1)?.name ?? "";
   } catch (cause) {
     error.value = errorText(cause);
@@ -304,7 +316,7 @@ async function runExport(): Promise<void> {
   const after = Object.fromEntries(Object.entries(afterNumbers).filter(([, value]) => String(value ?? "").trim() !== "").map(([month, value]) => [month, Number(value)]));
   try {
     exportResult.value = await request<ExportResult>(`${base.value}/${encodeURIComponent(draft.value.name)}/export`, {
-      method: "POST", body: { revision: draft.value.revision, preparer: preparer.value, after, confirm: true }, timeoutMs: 60_000,
+      method: "POST", body: { revision: draft.value.revision, preparer: preparer.value, after, format: exportFormat.value, confirm: true }, timeoutMs: 60_000,
     });
     exportOpen.value = false;
   } catch (cause) {
@@ -407,7 +419,7 @@ watch(
     </section>
     <section v-if="exportOpen && draft" class="panel" role="group" aria-label="导出已审核凭证">
       <p>
-        将审核为“通过”的 {{ draft.approved }} 张凭证导出为账套导入文件，写到公司资料夹 做账草稿/，由会计人员在账套中手工导入（不连接账套）。
+        将审核为“通过”的 {{ draft.approved }} 张凭证导出为{{ chosenFormat?.label ?? "账套" }}导入文件，写到公司资料夹 做账草稿/，由会计人员在账套中手工导入（不连接账套）。
         某月有凭证校验不通过时该月整月不导出；已导出过的凭证会跳过，不会重复导出。
       </p>
       <table class="grid">
@@ -420,6 +432,21 @@ watch(
           </tr>
         </tbody>
       </table>
+      <div v-if="formats.length" class="toolbar">
+        <label class="nowrap">导出格式
+          <select v-model="exportFormat" aria-label="导出格式">
+            <option v-for="item in formats" :key="item.key" :value="item.key" :disabled="item.usable === false">
+              {{ item.label }}{{ item.status === "verified" ? "（已实测）" : item.status === "experimental" ? "（实验，未经实际导入验证）" : "（自定义模板）" }}{{ item.usable === false ? " - 缺列不可用" : "" }}
+            </option>
+          </select>
+        </label>
+        <span class="muted">其他软件：把自家账套下载的空白导入模板放进 {{ templateFolder }}/，按表头自动对列。</span>
+      </div>
+      <p v-if="chosenFormat && chosenFormat.status !== 'verified'" class="banner banner--error" role="note">
+        {{ chosenFormat.status === "experimental" ? "实验格式，未经实际导入验证：" : "自定义模板：" }}{{ chosenFormat.note }}
+        <template v-if="chosenFormat.unmatched?.length">对不上、将留空的列：{{ chosenFormat.unmatched.join("、") }}。</template>
+        请先只把一张凭证标“通过”导入核对。
+      </p>
       <div class="toolbar">
         <label class="nowrap">制单人 <input v-model="preparer" maxlength="20" aria-label="制单人" placeholder="与账套里的制单人一致"></label>
         <button type="button" class="primary" :disabled="exporting || !preparer.trim()" :aria-busy="exporting" @click="runExport">{{ exporting ? "导出中…" : "确认导出" }}</button>

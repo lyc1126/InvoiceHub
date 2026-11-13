@@ -443,6 +443,7 @@
 | `src/invoice_hub/bank/ledger.py` | 读取 `凭证/科目表.json`、辅助核算档案和映射规则；按名称路径定位末级科目。 | 找不到或不唯一时返回空编码，由草稿列入待补科目，不猜相近科目。 |
 | `src/invoice_hub/bank/vouchers.py` | 凭证草稿生成：销项/进项发票、银行流水、待认证进项转出、月末增值税与附加、季度印花税；默认短摘要；账套读回（序时账）对账与补记；银行对账与月度核对；原件速查；`申报数据.json` 模板。 | 读 `workpaper.analyze` 结果与发票明细投影；只产出建议凭证，不写 `凭证/`。 |
 | `src/invoice_hub/bank/jierui.py` | 凭证审核表（带边框、下拉审核）、读回审核表、逐张校验、按月写捷锐导入模板、`做账习惯.json` 与 `已导出凭证.json`。 | 只导出“通过”的凭证；任一凭证不合格则该月整月不导出；同一凭证签名不重复导出。 |
+| `src/invoice_hub/bank/export_profiles.py` | 通用凭证导出（BK-01）：内部统一凭证模型 `Entry/Aux`、声明式配置 `Profile`；内置捷锐（已实测）、柠檬云与用友 T3/U8 文本（实验）；`profile_from_template/match_columns` 按上传模板表头同义词对列；`write` 写 xlsx 或 GBK 文本。 | 由 `jierui.export` 在写文件一步调用；页面经 `company_vouchers.export_formats/_export_profile`。守护测试 `tests/test_export_profiles.py`。 |
 | `src/invoice_hub/bank/voucher_cli.py` | `python -m invoice_hub.bank.voucher_cli draft|export` 命令行。 | 输出到公司资料夹 `做账草稿/`；只读 `凭证/`。 |
 | `src/invoice_hub/bank/workpaper.py` | 发现源文件（按首页识别版式；`parse_receipts=False` 时只解析对账单，供公司账簿）、分析、建表、原子写出私有与脱敏 JSON/XLSX、`往来单位.json` 合并。 | 两份底稿由同一构建函数经不同视图产出；不覆盖人工角色。 |
 
@@ -591,6 +592,7 @@
 | `tests/test_company_bank.py` | 银行流水账簿：月度期初/收支/期末、季度汇总、缺月不补 0、季度内缺月不成立、范围外月份、余额错误使自检不成立、签名缓存与文件变化、回单只计数不解析、API（并列返回、只读、`include_bank=false`、缺目录、无对账单）。 | services/company_bank、company_views、bank/workpaper；合成中国银行对账单 PDF。 |
 | `tests/test_company_deduction.py` | 抵扣核对：按真实导出版式在测试内生成合成清单；解析、当期/前期匹配与各类单列、税额不一致、跨期重复勾选、合计行不符、空清单与未识别文件、期间范围、旧版发票代码号码，以及 compare API（只读、顺序无关、拒绝无关组合与非法月份、缺目录）。 | services/company_deduction、company_views；不含真实清单。 |
 | `tests/test_company_inventory.py` | 进销存：跨月加权与品目表合并、小规模/普票/待核对的进货额、卖超与进项中没有、非货物与不可读行、期间范围从滚动库存起算（含无发票的月份）、规格是品类的细分、多单位分行、账套读回期初（按品类落行、期初月之前发票不重复、读回不足保持 0 起算、损坏/缺科目表降级、无单位分录不猜），以及 compare API（未汇总时 `no_details`、汇总后结果、读取不改任何文件、放入读回后取账套期初）。 | services/company_inventory.py、company_views.py |
+| `tests/test_export_profiles.py` | 通用导出：捷锐输出与引入导出配置之前的导出代码（冻结在 `tests/fixtures/jierui_export_golden.json`）逐单元格一致并沿用账套模板列序、柠檬云 35 列与“记-N”、用友 V800 文本与 GBK、已导出凭证换格式仍跳过、上传模板按表头对列与缺列报告、页面导出格式选择与拒绝越界 / 缺列 / 未知格式。 | bank/export_profiles、bank/jierui、services/company_vouchers。 |
 | `tests/test_company_payroll.py` | 工资社保：按电子税务局版式读 Excel、`--` 为空、图片不识别、合计与费率不成立标出、文字层 PDF（整行与逐格两种排版）、脱敏与显示原值、确认写入保留其他键 / revision 冲突 / 手工录入月份 / 删除月份、无或损坏 申报数据.json 拒绝且不覆盖、确认后生成的草稿按该月计提、API 读取不写文件。 | services/company_payroll、company_vouchers、bank/vouchers。 |
 | `tests/test_source_move.py` | 属期文件夹：文件夹名只作提示、按内容期间判定放错 / 未归属 / 无单一属期、确认后新建 `YYYY-MM` 并移动、重放不重做、同名不覆盖 / 越界 / 非法新文件夹名 / 已在目标 / 链接拒绝、计划后文件变化不移动、与监控目录重叠拒绝，以及 API（核对、计划不写公司资料夹、确认、读日志、不返回绝对路径）。 | services/source_move、company_views。 |
 | `tests/test_company_same_number.py` | 同号检查：同票多格式只算一张、无号码单列、金额与销售方不同、疑似重复与跨公司双方同一张票、两家都取得仍为疑似重复，以及 API（同一公司、跨公司、有勾稽关系的组合与非发票目录拒绝、读取不改文件）。 | services/company_same_number、company_views。 |

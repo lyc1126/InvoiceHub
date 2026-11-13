@@ -323,7 +323,7 @@ def validate(voucher: ReviewedVoucher, ledger: Ledger, aux: dict[str, set[str]])
             if not line["supplier"]:
                 errors.append(f"{where} 科目 {line['code']} 必须填供应商")
             elif line["supplier"] not in aux.get("供应商", set()):
-                warnings.append(f"{where} 供应商“{line['supplier']}”不在已采集档案中，请确认捷锐已建档")
+                warnings.append(f"{where} 供应商“{line['supplier']}”不在已采集档案中，请确认账套里已建档")
         if not line["summary"]:
             errors.append(f"{where} 缺摘要")
     if money(debit) != money(credit):
@@ -371,7 +371,12 @@ def export(
     allow_reexport: bool = False,
     preparer: str = "",
     after: dict[str, int] | None = None,
+    profile: "export_profiles.Profile | None" = None,
 ) -> ExportResult:
+    # 写出格式由导出配置决定（BK-01）；默认捷锐，并沿用 凭证/导入/模板原件.xlsx 的列序。下面的通过 / 整月拦截 /
+    # 重新编号 / 重复导出跳过对所有格式相同：已导出过的凭证换一种格式也跳过，避免同一凭证导入两个账套。
+    from . import export_profiles
+
     vouchers = read_review_xlsx(review_path)
     approved = [v for v in vouchers if v.approval == APPROVE]
     errors: dict[str, list[str]] = {}
@@ -400,7 +405,10 @@ def export(
             ok.append(voucher)
     # 任一月份有错误时，该月整月不写出，避免会计人员只导入半个月。
     bad_months = {label.split(" ")[0] for label in errors}
-    sheet_name, columns = _template(template)
+    if profile is None:
+        sheet_name, columns = _template(template)
+        base_profile = export_profiles.PROFILES["jierui"]
+        profile = export_profiles.Profile(**{**base_profile.__dict__, "sheet": sheet_name, "columns": columns})
     files: list[Path] = []
     by_month: dict[str, list[ReviewedVoucher]] = defaultdict(list)
     for voucher in ok:
@@ -419,32 +427,21 @@ def export(
     habits = load_json(out_dir / HABITS_FILE, {"version": 1, "slots": {}})
     learned = 0
     for month, items in sorted(by_month.items()):
-        path = out_dir / f"捷锐导入_{month}_{stamp}.xlsx"
-
-        def write(tmp: Path, items=items, base=starts.get(month, 1) - 1) -> None:
-            from openpyxl import Workbook
-
-            wb = Workbook()
-            ws = wb.active
-            ws.title = sheet_name
-            ws.append(columns)
-            for seq, voucher in enumerate(items, start=1):
-                for line in voucher.lines:
-                    row = {c: None for c in columns}
-                    row.update({
-                        "凭证类别": voucher_type, "凭证号": f"{base + seq:03d}", "凭证日期": voucher.voucher_date.isoformat(),
-                        "附单据数": "0", "摘要": line["summary"], "科目编码": line["code"],
-                        "借方金额": f"{line['debit']:.2f}" if line["debit"] is not None else None,
-                        "贷方金额": f"{line['credit']:.2f}" if line["credit"] is not None else None,
-                        "供应商": line["supplier"] or None,
-                        "数量": f"{line['qty']:f}" if line.get("qty") is not None else None,
-                        "计量单位": line.get("unit") or None,
-                        "制单人": preparer or None,  # 捷锐实测（2026-10-21）：制单人为必填，缺了整张拒绝
-                    })
-                    ws.append([row[c] for c in columns])
-            wb.save(tmp)
-
-        _atomic(path, write)
+        path = out_dir / f"{profile.file_prefix}_{month}_{stamp}{profile.file_suffix}"
+        base = starts.get(month, 1) - 1
+        entries = [
+            export_profiles.Entry(
+                voucher_date=voucher.voucher_date, voucher_type=voucher_type, number=f"{base + seq:03d}", attachments=0,
+                preparer=preparer,  # 捷锐实测（2026-10-21）：制单人为必填，缺了整张拒绝
+                line_no=line_no, summary=line["summary"], account_code=line["code"],
+                account_name=ledger.full_name(line["code"]) if line["code"] in ledger.by_code else "",
+                debit=line["debit"], credit=line["credit"], qty=line.get("qty"), unit=line.get("unit") or "",
+                aux=[export_profiles.Aux("供应商", "", line["supplier"])] if line["supplier"] else [],
+            )
+            for seq, voucher in enumerate(items, start=1)
+            for line_no, line in enumerate(voucher.lines, start=1)
+        ]
+        _atomic(path, lambda tmp, profile=profile, entries=entries: export_profiles.write(profile, entries, tmp))
         files.append(path)
         now = datetime.now().isoformat(timespec="seconds")
         for voucher in items:
