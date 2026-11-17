@@ -1,5 +1,13 @@
 # InvoiceHub 完整文件地图
 
+## 2026-11-17 P3 分阶段新增文件
+
+| 文件 | 职责 |
+|---|---|
+| `tests/test_workspace_p3.py` | P3 合成后端/API 分阶段回归 |
+| `frontend/tests/workspace-p3.spec.ts` | P3 Vue 消费分阶段回归 |
+
+
 ## 2026-11-17 P2 文件与衔接
 
 | 文件 | 职责与消费者 |

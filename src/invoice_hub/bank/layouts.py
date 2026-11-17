@@ -157,6 +157,12 @@ def validate_mapping(table: Table, mapping: object) -> dict[str, int]:
     return dict(mapping)
 
 
+def account_fixed(value: object = "") -> str:
+    if not isinstance(value, str) or (value.strip() and not re.fullmatch(r"[A-Za-z0-9-]{1,64}", value.strip())):
+        raise ValueError("本方账号须为 1—64 位字母、数字或短横线，保留前导零。")
+    return value.strip()
+
+
 def evaluate(table: Table, mapping: object) -> dict:
     mapping = validate_mapping(table, mapping)
     parsed, breaks = [], []
@@ -204,14 +210,25 @@ def evaluate(table: Table, mapping: object) -> dict:
             "rows": parsed}
 
 
-def statement(table: Table, mapping: dict, direction: dict, *, source_file: str) -> BankStatement:
+def statement(table: Table, mapping: dict, direction: dict, *, source_file: str, account_fixed: str = "") -> BankStatement:
     result = evaluate(table, mapping)
     if not result["ok"] or result["direction"] != direction:
         raise ValueError("新文件的余额链或方向与已确认版式不同。")
     rows = list(reversed(result["rows"])) if direction["reverse"] else result["rows"]
     accounts = {row["account"] for row in rows if row["account"]}
-    if len(accounts) != 1 or any(not row["account"] for row in rows):
+    # A fixed profile cannot hide a recognized account column that was left unmapped.
+    # Check it too, so another account with the same headers is never silently merged.
+    inferred = guess_mapping(table.columns).get("account")
+    if account_fixed and "account" not in mapping and inferred is not None:
+        present = [cells[inferred] for _, cells in table.rows]
+        if any(value != account_fixed for value in present):
+            raise ValueError("文件账号与版式档案中手填的本方账号不一致，未套用。")
+    if account_fixed and accounts and accounts != {account_fixed}:
+        raise ValueError("文件账号与版式档案中手填的本方账号不一致，未套用。")
+    if "account" in mapping and (len(accounts) != 1 or any(not row["account"] for row in rows)):
         raise ValueError("必须指定账号列，且一份对账单只含一个账号。")
+    if not accounts and not account_fixed:
+        raise ValueError("必须指定账号列或手填本方账号，且一份对账单只含一个账号。")
     identity = f"L{table.sha256[:16]}"
     built = []
     for seq, row in enumerate(rows, 1):
@@ -219,5 +236,5 @@ def statement(table: Table, mapping: dict, direction: dict, *, source_file: str)
         built.append(StatementRow(f"{identity}-{seq}", identity, 1, row["line"], row["day"], None, "", "", row["details"],
                                   max(delta, Decimal(0)), max(-delta, Decimal(0)), row["balance"], "", row["flow_no"], Counterparty(row["party"])))
     opening = built[0].balance - built[0].inflow + built[0].outflow
-    return BankStatement(identity, "confirmed-layout-v1", source_file, table.sha256, next(iter(accounts)), "", "", "CNY",
+    return BankStatement(identity, "confirmed-layout-v1", source_file, table.sha256, next(iter(accounts), account_fixed), "", "", "CNY",
                          built[0].booking_date, built[-1].booking_date, opening, built[-1].balance, [], built)
