@@ -2148,7 +2148,7 @@ def test_invoice_search_scope_with_large_snapshot(tmp_path: Path, monkeypatch) -
     invoice = client.get("/api/v1/invoices", params={"keyword": " synthetic ", "search_scope": "invoice"}).json()
     assert invoice["count"] == 2
     assert {item["source_file"] for item in invoice["items"]} == {"seller.xml", "number.pdf"}
-    assert invoice["stats"]["filtered"]["total_amount"] == 20
+    assert invoice["stats"]["filtered"]["total_amount"] == "20.00"
     assert invoice["stats"]["all"]["total"] == 7003
     assert client.get("/api/v1/invoices", params={"keyword": "synthetic", "search_scope": "filename"}).json()["count"] == 6000
     for scope in ({}, {"search_scope": "all"}):

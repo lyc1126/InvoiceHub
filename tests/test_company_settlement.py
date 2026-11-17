@@ -186,3 +186,37 @@ def test_parties_and_matches_point_at_their_rows_side_by_side():
     # Statement rows that settle no invoice stay in the list, so the side-by-side view shows every row.
     assert len(result["records"]["b"]) == party["flow_count"] + len(result["non_invoice_flows"])
     assert party["steps"][-1] == "期初 0.00 + 本期发票 23730.00（5 张） − 本期付款 20010.00（4 笔）= 期末 3720.00"
+
+
+def test_summary_cards_and_flow_details_follow_algorithm_ids():
+    from invoice_hub.services.company_compare_details import attach_details
+    result = build_settlement_check(INVOICES, FLOWS, side='payable')
+    attach_details(result)
+    assert [card['value'] for card in result['summary_details']] == [result['totals'][key] for key in ('opening', 'invoiced', 'settled', 'closing')]
+    match = result['matches'][1]
+    flow_id = match['record_ids']['b'][0]
+    flow = next(row for row in result['records']['b'] if row['id'] == flow_id)
+    assert flow['detail']['record_ids'] == match['record_ids']
+    assert any('7910.00' in step and '5650.00' in step and '2260.00' in step for step in flow['detail']['steps'])
+    unmatched = next(row for row in result['records']['b'] if row['id'] not in {id_ for match in result['matches'] for id_ in match['record_ids']['b']})
+    assert any('不得按金额比例' in step for step in unmatched['detail']['steps'])
+
+
+def test_receipts_in_comparison_link_the_same_flow_and_invoice(app, client, tmp_path):
+    from test_bank_workpaper import write_receipts_pdf
+    root = tmp_path / 'synthetic'
+    bank_dir = root / '银行流水'
+    bank_dir.mkdir(parents=True)
+    inputs = root / '成本发票'
+    inputs.mkdir()
+    (inputs / 'a.xml').write_text(_xml_invoice(N[1], SUPPLIER, OWN, [('12E', '10', '44247.79', '5752.21', '钢筋')]), encoding='utf-8')
+    write_statement_pdf(bank_dir / 'statement.pdf', statement_text())
+    write_receipts_pdf(bank_dir / 'receipts.pdf')
+    company = _company(client, root)
+    _sync(app, inputs)
+    result = client.get(f'/api/v1/companies/{company}/compare?a=cost_invoice_dir&b=bank_flow_dir').json()
+    assert len(result['receipts']) == 5 and len(result['summary_details']) == 4
+    receipt = next(row for row in result['receipts'] if row['amount'] == '50000.00')
+    assert receipt['detail']['record_ids'] == result['matches'][0]['record_ids']
+    assert receipt['preview']['kind'] == 'receipt'
+    assert result['checks_ok']

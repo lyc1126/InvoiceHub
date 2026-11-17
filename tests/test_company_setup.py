@@ -220,3 +220,48 @@ def test_incomplete_nested_record_is_preserved_and_rejected(context):
     record.write_text(saved)
     assert client.get(f"/api/v1/companies/setup-jobs/{job['job_id']}").status_code == 409
     assert record.read_text() == saved and list(parent.iterdir()) == []
+
+
+@pytest.mark.parametrize("damage", ["binding", "duplicate_item", "timestamp", "signature", "created_paths", "bool_schema"])
+def test_corrupt_nested_job_cannot_be_read_or_confirmed(context, damage):
+    app, client, parent = context
+    job = plan(client, parent).json()
+    service = app.state.invoice_hub.companies.setup
+    record = service._path(job["job_id"])
+    raw = json.loads(record.read_text())
+    if damage == "binding": raw["binding"]["input"]["subdirs"]["bank_flow_dir"] = "../outside"
+    elif damage == "duplicate_item": raw["binding"]["items"][1] = raw["binding"]["items"][0]
+    elif damage == "timestamp": raw["created_at"] = float("nan")
+    elif damage == "signature": raw["binding"]["parent_signature"] = [True, 123]
+    elif damage == "created_paths":
+        raw["created"] = ["../outside"]
+        raw["created_signatures"] = {"../outside": [1, 123]}
+    elif damage == "bool_schema": raw["schema_version"] = True
+    original = json.dumps(raw, ensure_ascii=False)
+    record.write_text(original)
+    for response in (client.get(f"/api/v1/companies/setup-jobs/{job['job_id']}"), confirm(client, job)):
+        assert response.status_code == 409
+        assert response.json()["error"]["code"] == "COMPANY_SETUP_STATE_INVALID"
+    assert record.read_text() == original and list(parent.iterdir()) == []
+    assert not service._intent(job["job_id"]).exists()
+
+
+def test_directory_replaced_after_its_creation_cannot_be_registered(context, monkeypatch):
+    app, client, parent = context
+    job = plan(client, parent).json()
+    service = app.state.invoice_hub.companies.setup
+    mkdir = service._mkdir
+    root = parent / "新公司"
+
+    def replace_previous(job, current_root, relative):
+        mkdir(job, current_root, relative)
+        if relative == "费用报销":
+            (root / "成本发票").rename(root / "原成本发票")
+            (root / "成本发票").mkdir()
+
+    monkeypatch.setattr(service, "_mkdir", replace_previous)
+    result = confirm(client, job).json()
+    assert result["state"] == "failed"
+    assert client.get("/api/v1/companies").json()["companies"] == []
+    assert (root / "原成本发票").is_dir() and (root / "成本发票").is_dir()
+    assert confirm(client, job).json() == result

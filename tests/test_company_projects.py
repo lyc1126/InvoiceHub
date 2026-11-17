@@ -124,3 +124,54 @@ def test_bad_requests_and_a_damaged_file_are_refused(app, client, tmp_path: Path
     assert client.get(f"/api/v1/companies/{company_id}/projects").status_code == 409
     cross = client.put(url, json={"revision": 0, "assignments": {N[1]: "甲"}}, headers={"Origin": "http://evil.example"})
     assert cross.status_code in {400, 403}
+
+
+def test_classic_list_project_updates_without_rebuilding_and_fails_closed(app, client, tmp_path):
+    company_id, root = _setup(app, client, tmp_path)
+    app.state.invoice_hub.update_settings({'watch_dir': str(root / '成本发票')})
+    before = client.get('/api/v1/invoices').json()
+    assert before['items'][0]['project'] == ''
+    source_files = {p: p.read_bytes() for p in (root / '成本发票').iterdir() if p.is_file()}
+    url = f'/api/v1/companies/{company_id}/projects/assignments'
+    assert client.put(url, json={'revision': 0, 'assignments': {N[1]: '人工项目'}}).status_code == 200
+    after = client.get('/api/v1/invoices').json()
+    assert after['items'][0]['project'] == '人工项目'
+    assert after['items'][0]['project_source'] == 'manual'
+    omit = {'project', 'project_source'}
+    assert {k: v for k, v in before['items'][0].items() if k not in omit} == {k: v for k, v in after['items'][0].items() if k not in omit}
+    assert source_files == {p: p.read_bytes() for p in source_files}
+    (root / PROJECTS_FILE_NAME).write_text('{broken', encoding='utf-8')
+    damaged = client.get('/api/v1/invoices').json()
+    assert damaged['items'][0]['project'] == '' and damaged['items'][0]['project_source'] == 'unavailable'
+    assert damaged['projects_error']
+
+
+def test_display_project_uses_same_precedence_and_conflict_rule():
+    from invoice_hub.services.company_projects import project_fields
+    remarks = {N[1]: {'甲项目', '乙项目'}}
+    assert project_fields(N[1], remarks, {}) == {'project': '', 'project_source': 'conflict'}
+    assert project_fields(N[1], remarks, {N[1]: {'project': '人工'}}) == {'project': '人工', 'project_source': 'manual'}
+    assert project_fields(N[2], {N[2]: {'备注'}}, {}) == {'project': '备注', 'project_source': 'remark'}
+
+
+def test_nested_damaged_assignment_is_preserved(app, client, tmp_path):
+    company_id, root = _setup(app, client, tmp_path)
+    path = root / PROJECTS_FILE_NAME
+    raw = json.dumps({'version': 1, 'revision': 0, 'invoices': {N[1]: ['bad']}})
+    path.write_text(raw, encoding='utf-8')
+    assert client.put(f'/api/v1/companies/{company_id}/projects/assignments', json={'revision': 0, 'assignments': {N[1]: 'new'}}).status_code == 409
+    assert path.read_text(encoding='utf-8') == raw
+
+
+def test_classic_project_uses_filename_family_for_numberless_copy(app, client, tmp_path):
+    company, root = _setup(app, client, tmp_path)
+    state = app.state.invoice_hub
+    state.update_settings({'watch_dir': str(root / '成本发票')})
+    client.put(f'/api/v1/companies/{company}/projects/assignments', json={'revision': 0, 'assignments': {N[1]: '同票项目'}})
+    payload = {'target_id': state.active_profile.id, 'items': [
+        {'invoice_number': N[1], 'source_file': 'a.xml'},
+        {'invoice_number': '', 'source_file': f'{N[1]}.pdf'},
+    ]}
+    result = state.company_views.active_project_fields(payload)
+    assert [row['project'] for row in result['items']] == ['同票项目', '同票项目']
+    assert all('project' not in row for row in payload['items'])

@@ -297,3 +297,63 @@ def test_cross_origin_registry_writes_are_rejected(client, tmp_path):
     )
     assert response.status_code == 403
     assert client.get("/api/v1/companies").json()["companies"] == []
+
+
+def test_detect_is_read_only_and_registration_only_creates_selected(client, tmp_path):
+    root = tmp_path / '检测公司'
+    (root / '成本发票').mkdir(parents=True)
+    (root / '成本发票' / '保留.txt').write_text('synthetic')
+    before = {str(path.relative_to(root)) for path in root.rglob('*')}
+    detected = client.post('/api/v1/companies/detect', json={'root_dir': str(root)}).json()
+    assert detected['root_status'] == 'present'
+    assert detected['subdirs'][0]['file_count'] == 1
+    assert {str(path.relative_to(root)) for path in root.rglob('*')} == before
+    assert client.get('/api/v1/companies').json()['companies'] == []
+    payload = {'root_dir': str(root), 'name': '检测公司', 'revision': 0,
+               'plan_hash': detected['plan_hash'], 'create_missing': ['bank_flow_dir']}
+    response = client.post('/api/v1/companies', json=payload)
+    assert response.status_code == 200, response.text
+    assert response.json()['state'] == 'completed'
+    assert (root / '银行流水').is_dir() and not (root / '开具发票').exists()
+    assert (root / '成本发票' / '保留.txt').read_text() == 'synthetic'
+    # Replaying a lost response reads the durable result, never registers twice.
+    assert client.post('/api/v1/companies', json=payload).json()['company']['id'] == response.json()['company']['id']
+    assert len(client.get('/api/v1/companies').json()['companies']) == 1
+    assert client.get(f"/api/v1/companies/registration-jobs/{detected['plan_hash']}").json()['state'] == 'completed'
+
+
+def test_failed_registration_before_registry_write_can_run_again(client, tmp_path, monkeypatch):
+    import invoice_hub.services.company_detection as detection
+    root = tmp_path / '检测公司'
+    (root / '成本发票').mkdir(parents=True)
+    detected = client.post('/api/v1/companies/detect', json={'root_dir': str(root)}).json()
+    payload = {'root_dir': str(root), 'name': '检测公司', 'revision': 0,
+               'plan_hash': detected['plan_hash'], 'create_missing': ['bank_flow_dir']}
+    real = detection.create_empty_subdir
+    monkeypatch.setattr(detection, 'create_empty_subdir', lambda *a: (_ for _ in ()).throw(OSError('synthetic')))
+    assert client.post('/api/v1/companies', json=payload).json()['state'] == 'failed'
+    assert client.get('/api/v1/companies').json()['companies'] == []
+    monkeypatch.setattr(detection, 'create_empty_subdir', real)
+    # Nothing was created, so the plan hash is unchanged and must be allowed to run again.
+    again = client.post('/api/v1/companies', json=payload)
+    assert again.status_code == 200 and again.json()['state'] == 'completed', again.text
+    assert (root / '银行流水').is_dir()
+    assert len(client.get('/api/v1/companies').json()['companies']) == 1
+
+
+def test_detect_plan_rejects_replaced_directory_and_links(client, tmp_path):
+    root = tmp_path / '检测公司'
+    (root / '成本发票').mkdir(parents=True)
+    detected = client.post('/api/v1/companies/detect', json={'root_dir': str(root)}).json()
+    (root / '成本发票').rename(root / '保留原目录')
+    (root / '成本发票').mkdir()
+    stale = client.post('/api/v1/companies', json={'root_dir': str(root), 'name': '检测公司', 'revision': 0,
+        'plan_hash': detected['plan_hash'], 'create_missing': ['bank_flow_dir']})
+    assert stale.status_code == 409 and not (root / '银行流水').exists()
+    (root / '开具发票').symlink_to(root / '成本发票', target_is_directory=True)
+    linked = client.post('/api/v1/companies/detect', json={'root_dir': str(root)}).json()
+    issued = next(item for item in linked['subdirs'] if item['key'] == 'issued_invoice_dir')
+    assert issued['status'] == 'outside_root' and issued['file_count'] is None
+    denied = client.post('/api/v1/companies', json={'root_dir': str(root), 'name': '检测公司', 'revision': 0,
+        'plan_hash': linked['plan_hash'], 'create_missing': ['issued_invoice_dir']})
+    assert denied.status_code == 422

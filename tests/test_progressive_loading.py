@@ -21,7 +21,7 @@ def test_paged_invoices_keep_full_stats_and_selection_identity(tmp_path, monkeyp
         assert len(last["items"]) == 3
         assert last["items"][-1]["invoice_key"] == "7002"
         assert last["count"] == 7003
-        assert last["stats"]["all"]["total_amount"] == 70030
+        assert last["stats"]["all"]["total_amount"] == "70030.00"
         all_items = client.get("/api/v1/invoices").json()
         assert len(all_items["items"]) == 7003
         assert all_items["snapshot"]["revision"] == last["snapshot"]["revision"]

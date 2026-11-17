@@ -39,6 +39,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
+from zipfile import BadZipFile
 
 from invoice_hub.bank import jierui
 from invoice_hub.bank.jierui import APPROVE, REJECT, REVIEW_COLUMNS, REVIEW_SHEET, _atomic, export, read_review_xlsx, validate
@@ -96,7 +97,8 @@ def _draft_path(root: Path, name: str) -> Path:
         raise VoucherDraftError("VOUCHER_DRAFT_INVALID", "只能打开 做账草稿/ 下的 凭证草稿_*.xlsx。")
     folder = root / DRAFT_DIR
     path = folder / name
-    if path.is_symlink() or not path.is_file() or path.resolve().parent != folder.resolve():
+    if (folder.is_symlink() or (hasattr(folder, "is_junction") and folder.is_junction())
+            or path.is_symlink() or not path.is_file() or path.resolve().parent != folder.resolve()):
         raise VoucherDraftError("VOUCHER_DRAFT_NOT_FOUND", f"找不到 {DRAFT_DIR}/{name}。", status_code=404)
     return path
 
@@ -136,6 +138,49 @@ def list_drafts(root: Path) -> list[dict]:
             stat = path.stat()
             items.append({"name": path.name, "size": stat.st_size, "modified_ns": stat.st_mtime_ns})
     return items
+
+
+def draft_months(root: Path, name: str) -> list[dict]:
+    from invoice_hub.bank.jierui import load_json
+
+    path = _draft_path(root, name)
+    before = _revision(path)
+    vouchers = read_review_xlsx(path)
+    books = _books(root)
+    history = load_json(root / DRAFT_DIR / jierui.EXPORTED_FILE, {"vouchers": {}})
+    counts: dict[str, dict] = {}
+    seen: dict[str, int] = defaultdict(int)
+    for voucher in vouchers:
+        row = counts.setdefault(voucher.month, {"month": voucher.month, "vouchers": 0, "approved": 0, "blocked": 0, "exported": 0})
+        row["vouchers"] += 1
+        row["approved"] += voucher.approval == APPROVE
+        row["blocked"] += bool(validate(voucher, books.ledger, books.aux)[0]) if books.ledger else True
+        if voucher.approval == APPROVE:
+            signature = jierui._signature(voucher)
+            seen[signature] += 1
+            if seen[signature] > 1:
+                signature += f"#{seen[signature]}"
+            row["exported"] += signature in history["vouchers"]
+    if _revision(path) != before:
+        raise VoucherDraftError("VOUCHER_DRAFT_CONFLICT", "审核表在读取时变化，请刷新。", status_code=409)
+    return [counts[month] for month in sorted(counts)]
+
+
+def draft_index(root: Path) -> dict:
+    drafts = list_drafts(root)
+    totals: dict[str, dict] = {}
+    errors = []
+    for item in drafts:
+        try:
+            item["months"] = draft_months(root, item["name"])
+        except (OSError, ValueError, KeyError, BadZipFile, VoucherDraftError) as exc:
+            item["months"] = []
+            errors.append({"name": item["name"], "message": f"审核表无法读取：{type(exc).__name__}"})
+        for month in item["months"]:
+            target = totals.setdefault(month["month"], {"month": month["month"], "vouchers": 0, "approved": 0, "blocked": 0, "exported": 0})
+            for key in ("vouchers", "approved", "blocked", "exported"):
+                target[key] += month[key]
+    return {"drafts": drafts, "months": [totals[month] for month in sorted(totals)], "index_errors": errors}
 
 
 def _display_columns(path: Path) -> dict[int, dict[str, str]]:
@@ -263,7 +308,7 @@ def read_draft(root: Path, name: str) -> dict:
                 "basis": display.get(line["row"], {}).get("依据", ""),
             } for line in voucher.lines],
         })
-    return {"name": name, "revision": revision, "books_error": books.error, "vouchers": items, "sheets": sheets,
+    return {"name": name, "revision": revision, "months": draft_months(root, name), "books_error": books.error, "vouchers": items, "sheets": sheets,
             "current_month": date.today().strftime("%Y-%m"),
             "periods_revision": periods["revision"], "periods_error": periods.get("error", ""), "cross_period_hint": CROSS_PERIOD_HINT,
             "approved": sum(1 for item in items if item["approval"] == APPROVE),
@@ -460,7 +505,11 @@ def export_draft(root: Path, name: str, body: dict) -> dict:
     `{revision, preparer, after?: {YYYY-MM: last used number}, format?: jierui|ningmeng|yonyou_t3|template:<file>, confirm: true}`.
     """
     path = _draft_path(root, name)
-    if body.get("confirm") is not True:
+    dry_run = body.get("dry_run") is True
+    month = body.get("month", "")
+    if not isinstance(month, str) or (month and not _MONTH.fullmatch(month)):
+        raise VoucherDraftError("VOUCHER_DRAFT_INVALID", "导出月份格式无效。")
+    if not dry_run and body.get("confirm") is not True:
         raise VoucherDraftError("VOUCHER_DRAFT_INVALID", "导出需要确认。")
     preparer = _text(body.get("preparer")).strip()
     if not preparer or len(preparer) > MAX_PREPARER:
@@ -484,9 +533,12 @@ def export_draft(root: Path, name: str, body: dict) -> dict:
             raise VoucherDraftError("VOUCHER_DRAFT_CONFLICT", "审核表已在别处修改（或刚重新生成），已刷新，请重新核对后再导出。", status_code=409)
         try:
             result = export(path, root / DRAFT_DIR, books.ledger, books.aux, template=root / "凭证" / "导入" / "模板原件.xlsx",
-                            preparer=preparer, after=after, profile=_export_profile(root, body.get("format")))
+                            preparer=preparer, after=after, profile=_export_profile(root, body.get("format")), dry_run=dry_run, month=month)
         except (ValueError, KeyError) as exc:
             raise VoucherDraftError("VOUCHER_DRAFT_UNREADABLE", f"{name} 无法导出：{exc}") from exc
+    if dry_run:
+        from invoice_hub.bank.export_profiles import match_columns
+        return {"name": name, "dry_run": True, **result, "unmatched": match_columns(result["columns"])[1]}
     return {
         "name": name,
         # File names only: the files stay in the company folder's 做账草稿/.

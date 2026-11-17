@@ -107,9 +107,9 @@ def _ningmeng_cell(entry: Entry, column: str) -> Any:
     values: dict[str, Any] = {
         "日期": entry.voucher_date.isoformat(), "凭证号": f"{entry.voucher_type}-{int(entry.number)}",
         "行号": entry.line_no, "摘要": entry.summary, "科目编码": entry.account_code, "科目名称": entry.account_name,
-        "借方本币": float(entry.debit) if entry.debit is not None else 0,
-        "贷方本币": float(entry.credit) if entry.credit is not None else 0,
-        "借方数量" if debit_side else "贷方数量": float(entry.qty) if entry.qty is not None else None,
+        "借方本币": entry.debit if entry.debit is not None else Decimal("0"),
+        "贷方本币": entry.credit if entry.credit is not None else Decimal("0"),
+        "借方数量" if debit_side else "贷方数量": entry.qty if entry.qty is not None else None,
         "制单人": entry.preparer or None, "附件数": entry.attachments,
     }
     for kind, prefix in (("客户", "客户"), ("供应商", "供应商"), ("职员", "职员"), ("部门", "部门"), ("项目", "项目"), ("存货", "存货")):
@@ -193,9 +193,9 @@ def _field_value(entry: Entry, name: str) -> Any:
     return {
         "date": entry.voucher_date.isoformat(), "type": entry.voucher_type, "number": entry.number,
         "attachments": entry.attachments, "line_no": entry.line_no, "summary": entry.summary, "code": entry.account_code,
-        "name": entry.account_name, "debit": float(entry.debit) if entry.debit is not None else None,
-        "credit": float(entry.credit) if entry.credit is not None else None,
-        "qty": float(entry.qty) if entry.qty is not None else None, "unit": entry.unit or None, "preparer": entry.preparer or None,
+        "name": entry.account_name, "debit": entry.debit if entry.debit is not None else None,
+        "credit": entry.credit if entry.credit is not None else None,
+        "qty": entry.qty if entry.qty is not None else None, "unit": entry.unit or None, "preparer": entry.preparer or None,
         "supplier": supplier.name if supplier else None, "customer": customer.name if customer else None,
     }.get(name)
 

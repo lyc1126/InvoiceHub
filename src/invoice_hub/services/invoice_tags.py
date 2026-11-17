@@ -36,6 +36,8 @@ def _invalid(message: str, field: str = "") -> CompanyRegistryError:
 
 
 def _read(path: Path, empty: dict, list_key: str, list_type: type) -> dict:
+    if path.is_symlink():
+        raise CompanyRegistryError("INVOICE_TAGS_UNREADABLE", "标签文件为链接，未读取或改动。", status_code=409)
     if not path.exists():
         return dict(empty)
     try:
@@ -107,7 +109,12 @@ class InvoiceTagStore:
         return root / TAG_MARKS_NAME
 
     def marks(self, root: Path) -> dict:
-        return _read(self.marks_path(root), {"version": SCHEMA_VERSION, "revision": 0, "invoices": {}}, "invoices", dict)
+        payload = _read(self.marks_path(root), {"version": SCHEMA_VERSION, "revision": 0, "invoices": {}}, "invoices", dict)
+        if any(not isinstance(number, str) or not _NUMBER.fullmatch(number) or not isinstance(ids, list)
+               or any(not isinstance(tag, str) or not _TAG_ID.fullmatch(tag) for tag in ids)
+               for number, ids in payload["invoices"].items()):
+            raise CompanyRegistryError("INVOICE_TAGS_UNREADABLE", "发票标签标记损坏，未覆盖。", status_code=409)
+        return payload
 
     def visible_marks(self, root: Path) -> dict[str, list[str]]:
         """Invoice number -> ids of tags that still exist, in definition order."""

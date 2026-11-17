@@ -4,7 +4,7 @@ Source: the PDFs under the company's 银行流水 subfolder, read at request tim
 ``bank/`` adapters. Only statements are parsed; receipts are recognised by their first page and
 counted. Nothing is written to the company folder (the CLI workpaper stays the only writer of
 ``银行流水整理/``) and nothing runs in the background. The parse result is cached in memory per
-folder and reused while every PDF keeps its (mtime_ns, size).
+folder and reused while every PDF keeps its timestamps, size and filesystem identity.
 
 Per account and month, the opening balance is the balance before the month's first row and the
 closing balance the one after its last row. A month that no statement covers is missing: it
@@ -34,13 +34,13 @@ BANK_CACHE_FOLDERS = 8
 ZERO = Decimal("0")
 
 
-def list_files(directory: Path, suffixes: tuple[str, ...]) -> tuple[dict[str, tuple[int, int]], bool]:
-    """Files with ``suffixes`` under ``directory`` -> (mtime_ns, size); bounded, no link following.
+def list_files(directory: Path, suffixes: tuple[str, ...]) -> tuple[dict[str, tuple[int, ...]], bool]:
+    """Files -> (mtime_ns, size, ctime_ns, dev, ino); bounded, no link following.
 
     Entries starting with "." (hidden, like ``discover``) or "~$" (Office lock files) are skipped.
     Returns (signatures, complete).
     """
-    signatures: dict[str, tuple[int, int]] = {}
+    signatures: dict[str, tuple[int, ...]] = {}
     deadline = time.monotonic() + BANK_MAX_SECONDS
     pending = [directory]
     while pending:
@@ -60,13 +60,15 @@ def list_files(directory: Path, suffixes: tuple[str, ...]) -> tuple[dict[str, tu
                     if len(signatures) >= BANK_MAX_FILES:
                         return signatures, False
                     stat = entry.stat(follow_symlinks=False)
-                    signatures[entry.path] = (int(stat.st_mtime_ns), int(stat.st_size))
+                    # Receipt references must expire even after equal-size replacements with
+                    # restored mtime; the folder cache cannot reuse the previous PDF's fields.
+                    signatures[entry.path] = (stat.st_mtime_ns, stat.st_size, stat.st_ctime_ns, stat.st_dev, stat.st_ino)
         except OSError:
             return signatures, False
     return signatures, True
 
 
-def list_bank_pdfs(directory: Path) -> tuple[dict[str, tuple[int, int]], bool]:
+def list_bank_pdfs(directory: Path) -> tuple[dict[str, tuple[int, ...]], bool]:
     """PDFs under ``directory`` the same way ``bank.workpaper.discover`` finds them."""
     return list_files(directory, (".pdf",))
 
@@ -90,7 +92,7 @@ class CachedFolderReader(Generic[T]):
     """Request-time, read-only parse of one folder's files with a small per-folder signature cache.
 
     ``parse`` gets the sorted file list. The cached result is reused only while every file keeps
-    its (mtime_ns, size) and no file appears or disappears.
+    its timestamps, size and filesystem identity and no file appears or disappears.
     """
 
     def __init__(self, parse: Callable[[list[Path]], T], suffixes: tuple[str, ...], label: str) -> None:
@@ -98,14 +100,17 @@ class CachedFolderReader(Generic[T]):
         self._suffixes = suffixes
         self._label = label
         self._lock = threading.Lock()
-        self._cache: OrderedDict[str, tuple[dict[str, tuple[int, int]], T]] = OrderedDict()
+        self._cache: OrderedDict[str, tuple[dict[str, tuple[int, ...]], T]] = OrderedDict()
 
     def read(self, directory: Path) -> FolderRead[T]:
         signatures, complete = list_files(directory, self._suffixes)
         if not complete:
             # A partial listing would silently drop months; refuse instead of summing part of them.
             return FolderRead(None, len(signatures), False, False, f"{self._label}目录过大或无法完整读取，未汇总。")
-        key = str(directory)
+        try:
+            key = str(directory) + (self._cache_context(directory) if hasattr(self, "_cache_context") else "")
+        except (OSError, ValueError):
+            return FolderRead(None, len(signatures), True, False, f"{self._label}版式档案不可读，请核对公司目录。")
         with self._lock:
             hit = self._cache.get(key)
             if hit is not None and hit[0] == signatures:
@@ -115,6 +120,15 @@ class CachedFolderReader(Generic[T]):
                 data = self._parse([Path(path) for path in sorted(signatures)])
             except Exception as exc:  # one broken file must not take the invoice ledger down with it
                 return FolderRead(None, len(signatures), True, False, f"{self._label}读取失败：{exc}")
+            # A parse crossing a replacement must not publish mixed old/new fields or cache
+            # a receipt capability for a PDF different from the one that was inspected.
+            after, complete = list_files(directory, self._suffixes)
+            try:
+                context = str(directory) + (self._cache_context(directory) if hasattr(self, "_cache_context") else "")
+            except (OSError, ValueError):
+                context = None
+            if not complete or after != signatures or context != key:
+                return FolderRead(None, len(signatures), False, False, f"{self._label}读取期间来源变化，请重新核对。")
             self._cache[key] = (signatures, data)
             self._cache.move_to_end(key)
             while len(self._cache) > BANK_CACHE_FOLDERS:
@@ -125,8 +139,10 @@ class CachedFolderReader(Generic[T]):
 class BankFlowReader(CachedFolderReader[WorkpaperInput]):
     """Statements only: the ledger needs the balance chain, and receipts are slow to parse."""
 
-    def __init__(self, discover_files: Callable[..., WorkpaperInput] = discover) -> None:
-        super().__init__(lambda paths: discover_files(paths, parse_receipts=False), (".pdf",), "银行流水")
+    def __init__(self, discover_files: Callable[..., WorkpaperInput] = discover, *, cache_context=None) -> None:
+        self._cache_context = cache_context or (lambda directory: "")
+        suffixes = (".pdf", ".csv", ".xlsx") if cache_context else (".pdf",)
+        super().__init__(lambda paths: discover_files(paths, parse_receipts=False), suffixes, "银行流水")
 
 
 def _month_key(day) -> str:

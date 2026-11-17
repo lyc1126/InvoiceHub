@@ -23,6 +23,9 @@ Opening is zero before the first invoice or flow (no ledger read-back yet), and 
 
 from __future__ import annotations
 
+import calendar
+from datetime import date
+
 import itertools
 from collections import defaultdict
 from decimal import Decimal
@@ -251,11 +254,25 @@ def build_settlement_check(invoice_items: list[dict], bank: WorkpaperInput, *, s
                    "ok": matched_invoices + offset_invoices + unpaid_count + red_left == len(invoices_in_range),
                    "message": f"本期发票：已对上{spec['verb']} {matched_invoices} + 红冲抵销 {offset_invoices} + 未对上 {unpaid_count}"
                               f" + 未找到原票的红字 {red_left} = {len(invoices_in_range)} 张"})
-    statement_errors = [issue for statement in bank.statements for issue in check_statement(statement) if issue.level == "错误"]
+    statement_errors = [issue for issue in bank.issues if issue.level == "错误"]
+    statement_errors += [issue for statement in bank.statements for issue in check_statement(statement) if issue.level == "错误"]
     statement_errors += [issue for issue in check_continuity(bank.statements) if issue.level == "错误"]
     checks.append({"code": "statement_checks", "ok": not statement_errors,
                    "message": "对账单逐行余额、页脚合计、期间衔接均成立" if not statement_errors
                    else f"对账单自检有 {len(statement_errors)} 处错误，流水可能不全"})
+
+    matched_families = {inv["family_key"] for match in matches for inv in match["invoices"]}
+    offset_families = {inv["family_key"] for offset in offsets for inv in (offset["red"], offset["blue"])}
+    def flow_state(item: dict) -> str | None:
+        if not bank.statements or not all(check["ok"] for check in checks) or item["total"] <= ZERO or item["family_key"] in offset_families:
+            return None
+        if item["family_key"] in matched_families:
+            return "matched"
+        year, month = map(int, item["month"].split("-"))
+        first_day, last_day = date(year, month, 1), date(year, month, calendar.monthrange(year, month)[1])
+        # An absent match is meaningful only with a complete statement period for
+        # that invoice month. Other months or partial mapped tables prove nothing.
+        return "unmatched" if any(s.period_start <= first_day and s.period_end >= last_day for s in bank.statements) else None
 
     warnings = []
     first = min([item["month"] for item in invoices] + [item["month"] for item in flows], default=None)
@@ -284,7 +301,11 @@ def build_settlement_check(invoice_items: list[dict], bank: WorkpaperInput, *, s
         "records": {
             "a": [{"id": invoice_id(item), "invoice_number": item["invoice_number"], "invoice_date": item["invoice_date"],
                    "counterpart": party_names.get(item["party_key"], item["party"]), "amount": _money(item["total"]),
-                   "source_file": item["source_files"][0] if item["source_files"] else ""}
+                   "source_file": item["source_files"][0] if item["source_files"] else "",
+                   # Red offsets settle invoices without a bank flow; only actual matching IDs
+                   # can produce the gallery's matched pill, including matches before start.
+                   "flow_match": flow_state(item),
+                   "project": None, "project_source": None}
                   for item in invoices if in_range(item["month"])],
             "b": [{"id": flow_id(item), "invoice_number": "", "invoice_date": item["date"], "counterpart": item["counterparty"],
                    "amount": _money(item["amount"]), "source_file": item["file"], "details": item["details"]}

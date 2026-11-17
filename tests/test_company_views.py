@@ -288,3 +288,77 @@ def test_every_cost_projection_and_synchronizer_receives_the_registry_lookup():
                         end = index
                         break
                 assert "company_taxpayer=" in call[:end], f"{path.relative_to(SRC)}: {name} without company_taxpayer"
+                assert "company_outbound=" in call[:end], f"{path.relative_to(SRC)}: {name} without company_outbound"
+
+
+def test_list_statistics_match_selection_family_rules():
+    from invoice_hub.services.invoice_list import InvoiceListService
+
+    number = '10000000000000000001'
+    rows = [
+        {"invoice_number": number, "amount": "0.10"},
+        {"source_file": f"invoice_{number}.pdf", "amount": "0.10"},
+        {"invoice_number": "2", "amount": "0.20"},
+        {"invoice_number": "3", "amount": "invalid"},
+        {"invoice_number": "4", "amount": "100.00"},
+        {"invoice_number": "4", "amount": "101.00"},
+        {"invoice_number": "5", "amount": "-0.01"},
+    ]
+    stats = InvoiceListService._invoice_stats(rows)
+    assert stats["total"] == 7
+    assert stats["total_amount"] == "0.29"
+    assert stats["total_amount_valid_count"] == 3
+    assert stats["total_amount_missing_count"] == 1
+    assert stats["total_amount_conflict_count"] == 1
+    assert InvoiceListService._invoice_stats([])["total_amount"] == "0.00"
+
+
+def test_company_cost_context_uses_selected_month_and_never_another_company(app, client, tmp_path):
+    root = tmp_path / '期间公司'
+    (root / '成本发票').mkdir(parents=True)
+    company_id = _company(client, root, taxpayer_periods=[
+        {'effective_from': '2026-06', 'taxpayer_type': 'small_scale'},
+        {'effective_from': '2026-09', 'taxpayer_type': 'general'},
+    ])
+    other = tmp_path / '其他公司'
+    (other / '成本发票').mkdir(parents=True)
+    response = client.post('/api/v1/companies', json={'revision': 1, 'root_dir': str(other), 'name': '其他公司',
+        'taxpayer_periods': [{'effective_from': '2020-01', 'taxpayer_type': 'general'}]})
+    other_id = response.json()['company']['id']
+    before = _tree(root)
+    url = f'/api/v1/companies/{company_id}/cost-tax-profile'
+    assert client.get(url, params={'month': '2026-07'}).json()['taxpayer_type'] == 'small_scale'
+    assert client.get(url, params={'month': '2026-09'}).json()['taxpayer_type'] == 'general'
+    fallback = client.get(url, params={'month': '2026-05'}).json()
+    assert fallback['source'] == 'fallback' and fallback['taxpayer_type'] == 'general'
+    assert client.get(f'/api/v1/companies/{other_id}/cost-tax-profile', params={'month': '2026-07'}).json()['taxpayer_type'] == 'general'
+    assert client.get(url, params={'month': 'bad'}).status_code == 422
+    assert _tree(root) == before
+
+
+def test_company_outbound_source_never_falls_back_to_other_company(app, client, tmp_path):
+    from invoice_hub.targets.companies import company_outbound_for
+    root = tmp_path / '销项公司'
+    (root / '成本发票').mkdir(parents=True)
+    _company(client, root)
+    config = app.state.invoice_hub.config
+    assert company_outbound_for(config, root / '成本发票') == str(root / '开具发票')
+    assert company_outbound_for(config, tmp_path / '未登记') is None
+    (root / '开具发票').symlink_to(tmp_path, target_is_directory=True)
+    assert company_outbound_for(config, root / '成本发票') == ''
+
+
+def test_cost_identity_lookup_rejects_linked_status_and_directory(client, tmp_path):
+    root = tmp_path / '合成口径'
+    folder = root / '成本发票'
+    folder.mkdir(parents=True)
+    company_id = _company(client, root)
+    outside = tmp_path / '另一公司状态.json'
+    outside.write_text('{"tax_profile":{"output_tax_rate":"0.03"}}')
+    (folder / '成本开票状态.json').symlink_to(outside)
+    url = f'/api/v1/companies/{company_id}/cost-tax-profile'
+    assert client.get(url).status_code == 409
+    (folder / '成本开票状态.json').unlink()
+    folder.rmdir()
+    folder.symlink_to(tmp_path, target_is_directory=True)
+    assert client.get(url).status_code == 409

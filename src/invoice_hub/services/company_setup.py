@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import re
 import sqlite3
@@ -19,6 +20,7 @@ from typing import TYPE_CHECKING
 from invoice_hub.services.company_registry import (
     MAX_COMPANIES, STANDARD_SUBDIRS, CompanyRegistryError, clean_relative_subdir, clean_taxpayer_periods,
 )
+from invoice_hub.services.company_directory_guard import directory_entry
 from invoice_hub.storage import atomic_write_json
 from invoice_hub.targets.companies import is_within
 
@@ -75,11 +77,11 @@ class CompanySetupService:
             if _linked(path) or path.stat().st_size > 64 * 1024:
                 raise ValueError()
             job = json.loads(path.read_text(encoding="utf-8"))
-            if (not isinstance(job, dict) or job.get("schema_version") != 1 or job.get("job_id") != job_id
+            if (not isinstance(job, dict) or type(job.get("schema_version")) is not int or job.get("schema_version") != 1 or job.get("job_id") != job_id
                     or job.get("state") not in {"prepared", "creating", "registering", "completed", "failed"}
                     or not isinstance(job.get("binding"), dict) or not isinstance(job.get("created"), list)
                     or not isinstance(job.get("plan_hash"), str)
-                    or not isinstance(job.get("created_at"), (int, float))
+                    or type(job.get("created_at")) not in {int, float} or not math.isfinite(job["created_at"])
                     or not isinstance(job["binding"].get("root_path"), str)
                     or not isinstance(job["binding"].get("input"), dict)
                     or not isinstance(job["binding"].get("items"), list)):
@@ -92,8 +94,31 @@ class CompanySetupService:
                            or not isinstance(item.get("label"), str)
                            or not isinstance(item.get("relative_path"), str) for item in binding["items"])):
                 raise ValueError()
+            raw = binding["input"]
+            subdirs = raw.get("subdirs")
+            if (job["plan_hash"] != self._hash(binding)
+                    or type(binding.get("revision")) is not int or binding["revision"] < 0
+                    or raw.get("revision") != binding["revision"] or type(raw.get("revision")) is not int
+                    or not isinstance(subdirs, dict) or set(subdirs) != set(STANDARD_SUBDIRS)
+                    or self.registry._clean_subdirs(subdirs, {}) != subdirs
+                    or clean_taxpayer_periods(raw.get("taxpayer_periods")) != raw.get("taxpayer_periods")
+                    or binding["items"] != [{"key": key, "label": label, "relative_path": subdirs[key]}
+                                            for key, (label, _) in STANDARD_SUBDIRS.items()]):
+                raise ValueError()
+            signatures = job.get("created_signatures")
+            signature = binding.get("parent_signature")
+            if (not isinstance(signature, list) or len(signature) != 2
+                    or any(type(value) is not int or value < 0 for value in signature)
+                    or not isinstance(signatures, dict) or set(signatures) != set(job["created"])
+                    or len(job["created"]) != len(set(job["created"]))):
+                raise ValueError()
+            for relative, identity in signatures.items():
+                if (relative != "." and clean_relative_subdir(relative, "created") != relative
+                        or not isinstance(identity, list) or len(identity) != 2
+                        or any(type(value) is not int or value < 0 for value in identity)):
+                    raise ValueError()
             return job
-        except (OSError, ValueError, TypeError) as exc:
+        except (OSError, ValueError, TypeError, OverflowError, CompanyRegistryError) as exc:
             raise _error("创建记录损坏，已保留原文件并停止执行。", "COMPANY_SETUP_STATE_INVALID", 409) from exc
 
     def _binding(self, raw: object, registry: dict) -> dict:
@@ -198,6 +223,13 @@ class CompanySetupService:
                         if _linked(root) or _signature(root) != root_signature:
                             raise _error("新建的公司文件夹已变化，已停止后续创建。")
                         self._mkdir(job, root, relative)
+                # Registration exposes these paths to company readers. Recheck the
+                # entire created tree, since an earlier sibling can change while
+                # later directories are being created; do not register that replacement.
+                for relative, identity in job["created_signatures"].items():
+                    path = root if relative == "." else root / relative
+                    if directory_entry(path) != ["present", identity]:
+                        raise _error("已创建目录发生变化，已停止登记；请核对保留的目录。")
                 job["state"] = "registering"
                 job["in_progress"] = "company-registry"
                 self._save(job)

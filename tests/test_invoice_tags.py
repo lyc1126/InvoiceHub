@@ -112,3 +112,21 @@ def test_a_damaged_marks_file_is_kept_and_the_list_still_works(app, client, tmp_
     assert (root / TAG_MARKS_NAME).read_text(encoding="utf-8") == "{broken"
     cross = client.put("/api/v1/invoice-tags", json={"revision": 1, "tags": []}, headers={"Origin": "http://evil.example"})
     assert cross.status_code in {400, 403}
+
+
+@pytest.mark.parametrize("active", [False, True])
+def test_tag_stats_combine_filters_before_pagination(app, client, tmp_path, active):
+    company_id, root = _setup(app, client, tmp_path)
+    if active:
+        app.state.invoice_hub.update_settings({"watch_dir": str(root / "成本发票")})
+    tag = _define(client)["tags"][0]["id"]
+    client.put(f"/api/v1/companies/{company_id}/invoice-tags", json={"revision": 0, "changes": {A: [tag]}})
+    payload = _invoices(client, company_id, tag=tag, keyword=A, file_ext="xml", status="已识别", page=1, page_size=1)
+    assert payload["count"] == payload["stats"]["filtered"]["total"] == 1
+    assert payload["stats"]["all"]["total"] == 2
+    assert payload["stats"]["filtered"]["total_amount"] == "1130.00"
+    assert payload["stats"]["filtered"]["total_amount_valid_count"] == 1
+    empty = _invoices(client, company_id, tag=tag, keyword=B)
+    assert empty["stats"]["filtered"]["total_amount"] == "0.00"
+    assert empty["stats"]["filtered"]["total_amount_valid_count"] == 0
+    assert "tags_error" not in client.get("/api/v1/invoices").json()

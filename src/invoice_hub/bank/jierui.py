@@ -18,6 +18,10 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from invoice_hub.bank import export_profiles
 from typing import Any
 
 from .ledger import Ledger, load_aux_values
@@ -372,12 +376,16 @@ def export(
     preparer: str = "",
     after: dict[str, int] | None = None,
     profile: "export_profiles.Profile | None" = None,
-) -> ExportResult:
+    dry_run: bool = False,
+    month: str = "",
+) -> ExportResult | dict:
     # 写出格式由导出配置决定（BK-01）；默认捷锐，并沿用 凭证/导入/模板原件.xlsx 的列序。下面的通过 / 整月拦截 /
     # 重新编号 / 重复导出跳过对所有格式相同：已导出过的凭证换一种格式也跳过，避免同一凭证导入两个账套。
     from . import export_profiles
 
     vouchers = read_review_xlsx(review_path)
+    if month:
+        vouchers = [voucher for voucher in vouchers if voucher.month == month]
     approved = [v for v in vouchers if v.approval == APPROVE]
     errors: dict[str, list[str]] = {}
     warnings: dict[str, list[str]] = {}
@@ -426,6 +434,7 @@ def export(
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     habits = load_json(out_dir / HABITS_FILE, {"version": 1, "slots": {}})
     learned = 0
+    sample_rows = []
     for month, items in sorted(by_month.items()):
         path = out_dir / f"{profile.file_prefix}_{month}_{stamp}{profile.file_suffix}"
         base = starts.get(month, 1) - 1
@@ -441,6 +450,13 @@ def export(
             for seq, voucher in enumerate(items, start=1)
             for line_no, line in enumerate(voucher.lines, start=1)
         ]
+        if dry_run:
+            # Preview shares validation, duplicate skipping, numbering and the actual column
+            # mapper. Stop before files, export history or learned habits acquire side effects.
+            for entry in entries[:max(0, 5 - len(sample_rows))]:
+                sample_rows.append([str(value) if isinstance(value, Decimal) else value
+                                    for column in profile.columns for value in [profile.cell(entry, column)]])
+            continue
         _atomic(path, lambda tmp, profile=profile, entries=entries: export_profiles.write(profile, entries, tmp))
         files.append(path)
         now = datetime.now().isoformat(timespec="seconds")
@@ -451,6 +467,14 @@ def export(
                     habits["slots"][line["slot"]] = {"code": line["code"], "name": ledger.full_name(line["code"]),
                                                      "supplier": line["supplier"], "updated_at": now}
                     learned += 1
+    if dry_run:
+        return {
+            "format": profile.key, "columns": profile.columns, "sample_rows": sample_rows,
+            "months": [{"month": month, "approved": sum(v.month == month for v in approved),
+                        "blocked_reason": "；".join(error for label, errs in errors.items() if label.startswith(month + " ") for error in errs)}
+                       for month in sorted({v.month for v in vouchers})],
+            "duplicates": duplicates,
+        }
     if files:
         save_json(out_dir / EXPORTED_FILE, exported_log)
         save_json(out_dir / HABITS_FILE, habits)

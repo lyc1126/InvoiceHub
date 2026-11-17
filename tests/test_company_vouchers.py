@@ -211,3 +211,112 @@ def test_voucher_draft_api_lists_reads_and_reports_blockers(client, tmp_path: Pa
     error = response.json()["error"]
     assert error["code"] == "VOUCHER_DRAFT_NOT_APPROVABLE" and error["details"][0]["number"] == "002"
     assert client.get(f"{base}/missing.xlsx").status_code == 422
+
+
+def test_month_index_and_export_preview_are_read_only_and_match_export(tmp_path):
+    from invoice_hub.services.company_vouchers import draft_index, export_draft
+    from invoice_hub.bank.jierui import EXPORTED_FILE
+    root = _company_folder(tmp_path / '甲公司')
+    before = {str(path.relative_to(root)): path.read_bytes() for path in root.rglob('*') if path.is_file()}
+    index = draft_index(root)
+    assert index['months'] == [{'month': '2026-06', 'vouchers': 2, 'approved': 1, 'blocked': 1, 'exported': 0}]
+    body = {'revision': read_draft(root, NAME)['revision'], 'preparer': '合成制单人', 'after': {'2026-06': 5}}
+    preview = export_draft(root, NAME, {**body, 'dry_run': True})
+    assert preview['sample_rows'] and len(preview['sample_rows']) <= 5
+    assert preview['months'] == [{'month': '2026-06', 'approved': 1, 'blocked_reason': ''}]
+    assert {str(path.relative_to(root)): path.read_bytes() for path in root.rglob('*') if path.is_file()} == before
+    result = export_draft(root, NAME, {**body, 'confirm': True})
+    wb = load_workbook(root / '做账草稿' / result['files'][0], data_only=True)
+    rows = list(wb.active.values)
+    assert list(rows[0]) == preview['columns']
+    assert [list(row) for row in rows[1:6]] == preview['sample_rows']
+    assert draft_index(root)['months'][0]['exported'] == 1
+    log_before = (root / '做账草稿' / EXPORTED_FILE).read_bytes()
+    assert export_draft(root, NAME, {**body, 'dry_run': True})['sample_rows'] == []
+    assert (root / '做账草稿' / EXPORTED_FILE).read_bytes() == log_before
+
+
+def test_export_preview_uses_whole_month_blocking_and_requires_preparer(tmp_path):
+    from invoice_hub.services.company_vouchers import export_draft
+    root = _company_folder(tmp_path / '甲公司')
+    path = root / '做账草稿' / NAME
+    wb = load_workbook(path)
+    ws = wb[REVIEW_SHEET]
+    ws.cell(4, REVIEW_COLUMNS.index('审核') + 1).value = APPROVE
+    wb.save(path)
+    body = {'revision': read_draft(root, NAME)['revision'], 'preparer': '合成'}
+    preview = export_draft(root, NAME, {**body, 'dry_run': True})
+    assert preview['months'][0]['blocked_reason'] and preview['sample_rows'] == []
+    real = export_draft(root, NAME, {**body, 'confirm': True})
+    assert real['blocked_months'] == ['2026-06'] and real['files'] == []
+    with pytest.raises(VoucherDraftError):
+        export_draft(root, NAME, {**body, 'preparer': '', 'dry_run': True})
+    with pytest.raises(VoucherDraftError):
+        export_draft(root, NAME, {**body, 'revision': 'stale', 'dry_run': True})
+
+
+def test_export_api_preview_month_filter_and_durable_receipt(client, tmp_path, monkeypatch):
+    root = _company_folder(tmp_path / '合成公司')
+    company_id = _company(client, root)
+    base = f'/api/v1/companies/{company_id}/voucher-drafts/{NAME}'
+    body = {'revision': read_draft(root, NAME)['revision'], 'preparer': '合成', 'month': '2026-06'}
+    before = {str(p.relative_to(root)): p.read_bytes() for p in root.rglob('*') if p.is_file()}
+    preview = client.post(base + '/export', json={**body, 'dry_run': True})
+    assert preview.status_code == 200 and preview.json()['sample_rows']
+    assert before == {str(p.relative_to(root)): p.read_bytes() for p in root.rglob('*') if p.is_file()}
+    empty = client.post(base + '/export', json={**body, 'month': '2026-05', 'dry_run': True}).json()
+    assert empty['sample_rows'] == [] and empty['months'] == []
+    token = '11111111-2222-4333-8444-555555555555'
+    result = client.post(base + '/export', json={**body, 'confirm': True, 'request_id': token})
+    assert result.status_code == 200 and result.json()['state'] == 'completed'
+    assert client.get(base + '/export-jobs/' + token).json() == result.json()
+    monkeypatch.setattr('invoice_hub.services.company_export_jobs.export_draft', lambda *a: pytest.fail('must not replay'))
+    assert client.post(base + '/export', json={**body, 'confirm': True, 'request_id': token}).json() == result.json()
+
+
+def test_export_interrupted_intent_stays_unknown(tmp_path, monkeypatch):
+    from invoice_hub.services.company_export_jobs import get_export_job, run_export_job
+    root = _company_folder(tmp_path / '合成公司')
+    token = '11111111-2222-4333-8444-666666666666'
+    monkeypatch.setattr('invoice_hub.services.company_export_jobs.export_draft', lambda *a: (_ for _ in ()).throw(OSError('synthetic interruption')))
+    with pytest.raises(OSError):
+        run_export_job(root, NAME, {'confirm': True, 'request_id': token})
+    assert get_export_job(root, NAME, token)['state'] == 'unknown'
+    assert run_export_job(root, NAME, {'confirm': True, 'request_id': token})['state'] == 'unknown'
+
+
+def test_export_pre_write_refusal_records_rejected_receipt(tmp_path, monkeypatch):
+    from invoice_hub.services.company_export_jobs import get_export_job, run_export_job
+    root = _company_folder(tmp_path / '合成公司')
+    token = '11111111-2222-4333-8444-777777777777'
+    body = {'revision': 'stale', 'preparer': '合成', 'confirm': True, 'request_id': token}
+    with pytest.raises(VoucherDraftError) as caught:
+        run_export_job(root, NAME, body)
+    assert caught.value.code == 'VOUCHER_DRAFT_CONFLICT'
+    job = get_export_job(root, NAME, token)
+    assert job['state'] == 'rejected' and job['code'] == 'VOUCHER_DRAFT_CONFLICT'
+    # Same token never replays, even after a definite refusal.
+    monkeypatch.setattr('invoice_hub.services.company_export_jobs.export_draft', lambda *a: pytest.fail('must not replay'))
+    assert run_export_job(root, NAME, body)['state'] == 'rejected'
+
+
+def test_export_mid_write_error_stays_unknown(tmp_path, monkeypatch):
+    from invoice_hub.services.company_export_jobs import get_export_job, run_export_job
+    root = _company_folder(tmp_path / '合成公司')
+    token = '11111111-2222-4333-8444-888888888888'
+    def unreadable(*a):
+        raise VoucherDraftError('VOUCHER_DRAFT_UNREADABLE', 'synthetic mid-write failure')
+    monkeypatch.setattr('invoice_hub.services.company_export_jobs.export_draft', unreadable)
+    with pytest.raises(VoucherDraftError):
+        run_export_job(root, NAME, {'confirm': True, 'request_id': token})
+    assert get_export_job(root, NAME, token)['state'] == 'unknown'
+
+
+def test_preview_refuses_linked_draft_folder(tmp_path):
+    from invoice_hub.services.company_vouchers import export_draft
+    outside = _company_folder(tmp_path / '另一公司')
+    root = tmp_path / '合成公司'
+    root.mkdir()
+    (root / '做账草稿').symlink_to(outside / '做账草稿', target_is_directory=True)
+    with pytest.raises(VoucherDraftError):
+        export_draft(root, NAME, {'dry_run': True, 'preparer': '合成'})

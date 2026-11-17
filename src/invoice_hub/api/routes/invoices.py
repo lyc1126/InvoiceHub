@@ -33,7 +33,10 @@ def router() -> APIRouter:
     def invoices(request: Request, search_scope: Literal["invoice", "filename", "all"] = "all",
                  page: int | None = Query(None, ge=1), page_size: int = Query(100, ge=1, le=200),
                  date_sort: Literal["", "asc", "desc"] = "") -> dict:
-        return _state(request).invoices.list_invoices({**dict(request.query_params), "search_scope": search_scope})
+        state = _state(request)
+        return state.company_views.active_project_fields(
+            state.invoices.list_invoices({**dict(request.query_params), "search_scope": search_scope})
+        )
 
     @routes.post("/api/v1/invoices/trash-jobs")
     async def prepare_invoice_trash(request: Request):

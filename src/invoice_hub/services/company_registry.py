@@ -28,12 +28,14 @@ from invoice_hub.domain.models import TargetProfile, utc_now_text
 from invoice_hub.platform import HostRpcCommand, host_rpc, pick_directory
 from invoice_hub.projections.cost_analysis import TAXPAYER_LABELS
 from invoice_hub.services.dossier import BUSINESS_DOSSIER_DIR_HINTS
+from invoice_hub.services.company_directory_guard import (
+    CompanyDirectoryChanged, create_empty_subdir, directory_entry, subdir_snapshot,
+)
 from invoice_hub.storage import SQLiteRepository, atomic_write_json
 from invoice_hub.targets import AppConfig
 from invoice_hub.targets.companies import (
     REGISTRY_SCHEMA_VERSION,
     is_within as _is_within,
-    path_key as _path_key,
     company_taxpayer_for,
     current_month,
     resolve_company_root,
@@ -125,7 +127,7 @@ def detect_subdirs(root: Path) -> dict[str, tuple[str, str]]:
     children: list[str] = []
     try:
         for entry in sorted(root.iterdir(), key=lambda item: item.name.casefold()):
-            if not entry.name.startswith(".") and entry.is_dir() and not entry.is_symlink():
+            if not entry.name.startswith(".") and directory_entry(entry)[0] == "present":
                 children.append(entry.name)
     except OSError:
         children = []
@@ -168,6 +170,8 @@ class CompanyRegistryService:
         # Setup is a registry companion sharing this RLock and its CAS, never a second watch_dir.
         from invoice_hub.services.company_setup import CompanySetupService
         self.setup = CompanySetupService(self)
+        from invoice_hub.services.company_detection import CompanyDetectionService
+        self.detection = CompanyDetectionService(self)
 
     @property
     def config(self) -> AppConfig:
@@ -186,17 +190,33 @@ class CompanyRegistryService:
             payload = json.loads(self.registry_path.read_text(encoding="utf-8-sig"))
         except (OSError, ValueError) as exc:
             raise self._corrupt(f"公司清单无法读取：{exc.__class__.__name__}") from exc
-        if not isinstance(payload, dict) or payload.get("schema_version") != REGISTRY_SCHEMA_VERSION:
+        if not isinstance(payload, dict) or type(payload.get("schema_version")) is not int or payload.get("schema_version") != REGISTRY_SCHEMA_VERSION:
             raise self._corrupt("公司清单版本不受支持。")
         revision = payload.get("revision")
         companies = payload.get("companies")
-        if not isinstance(revision, int) or revision < 0 or not isinstance(companies, list):
+        if type(revision) is not int or revision < 0 or not isinstance(companies, list) or len(companies) > MAX_COMPANIES:
             raise self._corrupt("公司清单结构损坏。")
+        ids, names = set(), set()
         for company in companies:
             if not isinstance(company, dict) or not all(
                 isinstance(company.get(field), str) and company.get(field) for field in ("id", "name", "root_dir")
             ) or not isinstance(company.get("subdirs"), dict) or not isinstance(company.get("taxpayer_periods"), list):
                 raise self._corrupt("公司清单中有损坏的公司条目。")
+            try:
+                if (company["id"] in ids or company["name"].casefold() in names
+                        or self._clean_name(company["name"], {"companies": []}, None) != company["name"]
+                        or not company["root_dir"].strip() or "\0" in company["root_dir"]
+                        or set(company["subdirs"]) != set(STANDARD_SUBDIRS)
+                        or any(not isinstance(value, str) for value in company["subdirs"].values())
+                        or self._clean_subdirs(company["subdirs"], {}) != company["subdirs"]
+                        or clean_taxpayer_periods(company["taxpayer_periods"]) != company["taxpayer_periods"]):
+                    raise ValueError()
+            except (ValueError, CompanyRegistryError) as exc:
+                # Readers feed directory plans and later writes. A syntactically valid
+                # but malformed mapping must never become a default path or be overwritten.
+                raise self._corrupt("公司清单中的目录映射、身份或纳税人记录损坏。") from exc
+            ids.add(company["id"])
+            names.add(company["name"].casefold())
         return payload
 
     def _corrupt(self, message: str) -> CompanyRegistryError:
@@ -244,6 +264,10 @@ class CompanyRegistryService:
 
     def _resolve_root(self, stored: str) -> Path:
         return resolve_company_root(self.config.root_dir, stored)
+
+    def _registered_root(self, stored: str) -> Path:
+        root = Path(stored).expanduser()
+        return (root if root.is_absolute() else self.config.root_dir / root).absolute()
 
     def _clean_root(self, raw: object, registry: dict, company_id: str | None, *, allow_missing: bool = False) -> str:
         text = str(raw or "").strip().strip('"').strip("'")
@@ -304,21 +328,12 @@ class CompanyRegistryService:
     # ---- inspection (read-only, cheap: stat calls only, no recursive scan) -----------------
 
     def _subdir_status(self, root: Path, relative: str) -> tuple[Path, str]:
-        path = root / relative
-        try:
-            # resolve() follows links in the existing prefix too, so a missing folder under a
-            # linked parent that leaves the root is refused before anything is created there.
-            if path.is_symlink() or not _is_within(path, root):
-                return path, "outside_root"
-            if not path.exists():
-                return path, "missing"
-            return path, "present" if path.is_dir() else "not_directory"
-        except OSError:
-            return path, "unreadable"
+        snapshot = subdir_snapshot(root, relative)
+        return root / relative, next(reversed(snapshot.values()))[0]
 
     def _public(self, company: dict, today_month: str) -> dict:
-        root = self._resolve_root(company["root_dir"])
-        root_status = "present" if root.is_dir() else ("not_directory" if root.exists() else "missing")
+        root = self._registered_root(company["root_dir"])
+        root_status = directory_entry(root)[0]
         watch_dir = Path(self.active_profile.watch_dir)
         monitored = _is_within(watch_dir, root)
         subdirs = []
@@ -395,9 +410,11 @@ class CompanyRegistryService:
 
     def create_company(self, payload: object) -> dict:
         payload = payload if isinstance(payload, dict) else {}
-        taxpayer_before = self._active_taxpayer()
+        if "plan_hash" in payload or "create_missing" in payload:
+            return self.detection.register(payload)
         with self._lock:
             registry = self._load()
+            taxpayer_before = self._active_taxpayer()
             self._check_revision(registry, payload)
             if len(registry["companies"]) >= MAX_COMPANIES:
                 raise _invalid(f"最多登记 {MAX_COMPANIES} 家公司。", "name")
@@ -427,9 +444,9 @@ class CompanyRegistryService:
 
     def update_company(self, company_id: str, payload: object) -> dict:
         payload = payload if isinstance(payload, dict) else {}
-        taxpayer_before = self._active_taxpayer()
         with self._lock:
             registry = self._load()
+            taxpayer_before = self._active_taxpayer()
             company = self._find(registry, company_id)
             self._check_revision(registry, payload)
             updated = dict(company)
@@ -450,9 +467,9 @@ class CompanyRegistryService:
         return self._after_write(self.get_company(company_id), taxpayer_before)
 
     def delete_company(self, company_id: str, revision: object) -> dict:
-        taxpayer_before = self._active_taxpayer()
         with self._lock:
             registry = self._load()
+            taxpayer_before = self._active_taxpayer()
             company = self._find(registry, company_id)
             self._check_revision(registry, {"revision": revision})
             # Only the registry entry goes; the company folder and everything in it stay.
@@ -464,10 +481,12 @@ class CompanyRegistryService:
 
     # ---- missing subfolders: preview -> confirm -> mkdir only --------------------------------
 
-    def _plan(self, registry: dict, company: dict) -> dict:
-        root = self._resolve_root(company["root_dir"])
+    def _plan(self, registry: dict, company: dict, *, snapshots: dict | None = None) -> dict:
+        root = self._registered_root(company["root_dir"])
         items = []
-        if not root.is_dir():
+        if snapshots is None:
+            snapshots = {key: subdir_snapshot(root, company["subdirs"][key]) for key in STANDARD_SUBDIRS}
+        if next(iter(snapshots.values()))["."][0] != "present":
             blocked_reason = "公司资料夹不存在或不是文件夹。"
             for key, (label, _hints) in STANDARD_SUBDIRS.items():
                 relative = company["subdirs"].get(key) or label
@@ -481,15 +500,17 @@ class CompanyRegistryService:
             }
             for key, (label, _hints) in STANDARD_SUBDIRS.items():
                 relative = company["subdirs"].get(key) or label
-                path, status = self._subdir_status(root, relative)
+                path = root / relative
+                status = next(reversed(snapshots[key].values()))[0]
                 action = {"present": "exists", "missing": "create"}.get(status, "blocked")
                 items.append({"key": key, "label": label, "relative_path": relative, "path": str(path),
                               "action": action, "reason": reasons.get(status, "")})
         binding = {
             "company_id": company["id"],
             "registry_revision": registry["revision"],
-            "root": _path_key(root),
-            "items": [[item["key"], _path_key(Path(item["path"])), item["action"]] for item in items],
+            "root": str(root).casefold(),
+            "items": [[item["key"], item["path"].casefold(), item["action"]] for item in items],
+            "directory_identities": snapshots,
         }
         plan_hash = hashlib.sha256(json.dumps(binding, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
         return {
@@ -514,27 +535,33 @@ class CompanyRegistryService:
         with self._lock:
             registry = self._load()
             company = self._find(registry, company_id)
-            plan = self._plan(registry, company)
-            # The hash covers the registry revision and every path/action: any edit, or a folder
-            # appearing/disappearing since the preview, needs a fresh preview and confirmation.
+            root = self._registered_root(company["root_dir"])
+            snapshots = {key: subdir_snapshot(root, company["subdirs"][key]) for key in STANDARD_SUBDIRS}
+            plan = self._plan(registry, company, snapshots=snapshots)
+            # A same-named replacement is a different directory. Bind existing prefix
+            # identities as well as actions before handing the plan to filesystem writes.
             if str(payload.get("plan_hash") or "") != plan["plan_hash"]:
                 raise CompanyRegistryError(
                     "COMPANY_PLAN_STALE", "子目录状态已变化，请重新预览后确认。", status_code=409, field="plan_hash"
                 )
             created, skipped, failed = [], [], []
+            observed = {}
+            for snapshot in snapshots.values():
+                observed.update(snapshot)
             for item in plan["items"]:
                 if item["action"] != "create":
                     continue
-                path = Path(item["path"])
                 try:
-                    path.mkdir(parents=True, exist_ok=False)
+                    create_empty_subdir(root, item["relative_path"], observed)
                     created.append(item["key"])
                 except FileExistsError:
                     # Appeared between hash check and mkdir: leave whatever is there untouched.
-                    if path.is_dir():
+                    if self._subdir_status(root, item["relative_path"])[1] == "present":
                         skipped.append(item["key"])
                     else:
                         failed.append({"key": item["key"], "message": "路径上已有同名文件，未改动。"})
+                except CompanyDirectoryChanged as exc:
+                    failed.append({"key": item["key"], "message": str(exc)})
                 except OSError as exc:
                     failed.append({"key": item["key"], "message": f"{exc.__class__.__name__}: {exc.strerror or exc}"})
             self.repo.append_event(

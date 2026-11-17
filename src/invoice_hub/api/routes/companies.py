@@ -12,7 +12,7 @@ from collections.abc import Callable
 from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Query, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from starlette.concurrency import run_in_threadpool
 
 from invoice_hub.api.common import (
@@ -20,8 +20,10 @@ from invoice_hub.api.common import (
     _run_native_picker,
     _require_same_origin_write,
     _state,
+    PREVIEW_CONTENT_HEADERS,
 )
 from invoice_hub.services.company_registry import CompanyRegistryError
+from invoice_hub.services.file_preview import FilePreviewError
 
 
 def _error_response(exc: CompanyRegistryError) -> JSONResponse:
@@ -61,6 +63,16 @@ def router() -> APIRouter:
         _require_same_origin_write(request)
         payload = await _json_body(request)
         return await _call(lambda: _state(request).companies.create_company(payload))
+
+    @routes.post("/api/v1/companies/detect")
+    async def detect_company(request: Request):
+        _require_same_origin_write(request)
+        payload = await _json_body(request)
+        return await _call(lambda: _state(request).companies.detection.detect(payload))
+
+    @routes.get("/api/v1/companies/registration-jobs/{plan_hash}")
+    async def company_registration_result(request: Request, plan_hash: str):
+        return await _call(lambda: _state(request).companies.detection.get(plan_hash))
 
     @routes.post("/api/v1/companies/pick-directory")
     async def pick_company_directory(request: Request):
@@ -136,6 +148,11 @@ def router() -> APIRouter:
         filters = {**dict(request.query_params), "search_scope": search_scope}
         return await _call(lambda: _state(request).company_views.directory_invoices(company_id, key, filters))
 
+    @routes.get("/api/v1/companies/{company_id}/cost-tax-profile")
+    async def company_cost_tax_profile(request: Request, company_id: str,
+                                       month: str = Query("", pattern=r"^(|\d{4}-(0[1-9]|1[0-2]))$")):
+        return await _call(lambda: _state(request).company_views.cost_tax_profile(company_id, month))
+
     @routes.get("/api/v1/companies/{company_id}/ledger")
     async def company_ledger(
         request: Request,
@@ -171,6 +188,39 @@ def router() -> APIRouter:
         b_company: str = Query(""),
     ):
         return await _call(lambda: _state(request).company_views.same_number(company_id, a, b, b_company_id=b_company))
+
+    @routes.post("/api/v1/companies/{company_id}/receipt-preview-jobs")
+    async def create_receipt_preview(request: Request, company_id: str):
+        _require_same_origin_write(request)
+        body = await _json_body(request)
+        try:
+            result = await run_in_threadpool(_state(request).company_views.receipts.create, company_id, body)
+            return JSONResponse(result, headers=PREVIEW_CONTENT_HEADERS)
+        except FilePreviewError as exc:
+            raise HTTPException(exc.status_code, detail=str(exc), headers=PREVIEW_CONTENT_HEADERS)
+        except CompanyRegistryError as exc:
+            return _error_response(exc)
+
+    @routes.get("/api/v1/companies/{company_id}/receipt-preview-jobs/{job_id}/pages/{page_number}")
+    def receipt_preview_page(request: Request, company_id: str, job_id: str, page_number: int):
+        try:
+            page = _state(request).company_views.receipts.page(company_id, job_id, page_number)
+            return Response(page.content, media_type="image/png", headers=PREVIEW_CONTENT_HEADERS)
+        except FilePreviewError as exc:
+            raise HTTPException(exc.status_code, detail=str(exc), headers=PREVIEW_CONTENT_HEADERS)
+        except CompanyRegistryError as exc:
+            return _error_response(exc)
+
+    @routes.post("/api/v1/companies/{company_id}/receipt-preview-jobs/{job_id}/keep-alive")
+    def keep_receipt_preview(request: Request, company_id: str, job_id: str):
+        _require_same_origin_write(request)
+        try:
+            result = _state(request).company_views.receipts.keep_alive(company_id, job_id)
+            return JSONResponse(result, headers=PREVIEW_CONTENT_HEADERS)
+        except FilePreviewError as exc:
+            raise HTTPException(exc.status_code, detail=str(exc), headers=PREVIEW_CONTENT_HEADERS)
+        except CompanyRegistryError as exc:
+            return _error_response(exc)
 
     @routes.get("/api/v1/companies/{company_id}/projects")
     async def company_projects(
@@ -246,6 +296,10 @@ def router() -> APIRouter:
         payload = await _json_body(request)
         return await _call(lambda: _state(request).company_views.rebook_voucher_invoice(company_id, name, payload))
 
+    @routes.get("/api/v1/companies/{company_id}/voucher-drafts/{name}/export-jobs/{token}")
+    async def company_voucher_export_job(request: Request, company_id: str, name: str, token: str):
+        return await _call(lambda: _state(request).company_views.voucher_export_job(company_id, name, token))
+
     @routes.post("/api/v1/companies/{company_id}/voucher-drafts/{name}/export")
     async def export_company_voucher_draft(request: Request, company_id: str, name: str):
         _require_same_origin_write(request)
@@ -253,8 +307,8 @@ def router() -> APIRouter:
         return await _call(lambda: _state(request).company_views.export_voucher_draft(company_id, name, payload))
 
     @routes.get("/api/v1/invoice-tags")
-    async def invoice_tags(request: Request):
-        return await _call(_state(request).company_views.invoice_tags)
+    async def invoice_tags(request: Request, include_usage: bool = Query(False)):
+        return await _call(lambda: _state(request).company_views.invoice_tags(include_usage=include_usage))
 
     @routes.put("/api/v1/invoice-tags")
     async def save_invoice_tags(request: Request):

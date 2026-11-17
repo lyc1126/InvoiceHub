@@ -57,6 +57,17 @@ def remark_projects(detail_rows: list[dict]) -> dict[str, set[str]]:
     return found
 
 
+def project_fields(number: str, remarks: dict[str, set[str]], manual: dict) -> dict:
+    """Shared display/aggregation precedence; ambiguous remarks never become a guessed project."""
+    names = sorted(remarks.get(number, set()))
+    saved = manual.get(number)
+    project = _clean(saved.get("project")) if isinstance(saved, dict) else ""
+    if project:
+        return {"project": project, "project_source": "manual"}
+    return {"project": names[0] if len(names) == 1 else "",
+            "project_source": "remark" if len(names) == 1 else "conflict" if names else "none"}
+
+
 class ProjectAssignmentStore:
     """``<company root>/项目归属.json``: manual projects by invoice number, written under a lock."""
 
@@ -76,7 +87,10 @@ class ProjectAssignmentStore:
         except (OSError, ValueError) as exc:
             raise CompanyRegistryError("COMPANY_PROJECTS_UNREADABLE", f"{PROJECTS_FILE_NAME} 无法读取，未改动：{exc}", status_code=409) from exc
         if (not isinstance(payload, dict) or payload.get("version") != PROJECTS_SCHEMA_VERSION
-                or not isinstance(payload.get("invoices"), dict) or not isinstance(payload.get("revision"), int)):
+                or not isinstance(payload.get("invoices"), dict) or type(payload.get("revision")) is not int
+                or payload["revision"] < 0
+                or any(not isinstance(row, dict) or not isinstance(row.get("project"), str)
+                       for row in payload["invoices"].values())):
             # A damaged file is kept as it is: overwriting it would lose the user's assignments.
             raise CompanyRegistryError("COMPANY_PROJECTS_UNREADABLE", f"{PROJECTS_FILE_NAME} 格式不正确，未改动。", status_code=409)
         return payload
@@ -142,14 +156,10 @@ def build_project_summary(
                 continue
             number = family_key.split(":", 1)[1] if family_key.startswith("number:") else ""
             found = sorted(remarks.get(number, set()))
-            source = "remark"
-            project = found[0] if len(found) == 1 else UNASSIGNED
-            if number and manual.get(number):
-                project, source = manual[number], "manual"
-            elif len(found) > 1:
-                source, conflicts = "conflict", conflicts + 1
-            elif not found:
-                source = "none"
+            fields = project_fields(number, remarks, {number: {"project": manual[number]}} if manual.get(number) else {})
+            project, source = fields["project"], fields["project_source"]
+            if source == "conflict":
+                conflicts += 1
             bucket = projects[project][direction]
             bucket["count"] += 1
             for name in ("pretax", "tax", "total"):

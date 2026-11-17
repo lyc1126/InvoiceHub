@@ -17,6 +17,7 @@ import json
 import re
 import threading
 from datetime import datetime
+from decimal import Decimal
 from pathlib import Path
 from typing import Callable
 
@@ -32,7 +33,9 @@ from invoice_hub.platform import open_local_path
 from invoice_hub.projections.cost_analysis import invoice_cost_breakdown
 from invoice_hub.projections.costs import CostProjectionService
 from invoice_hub.projections.summary import SUMMARY_HEADERS, write_summary_xlsx
-from invoice_hub.services.invoice_selection import file_format_from_source, invoice_number_from_filename
+from invoice_hub.services.invoice_selection import (
+    file_format_from_source, invoice_number_from_filename, selection_family_key, selection_money_value,
+)
 from invoice_hub.storage import SQLiteRepository, atomic_write_json, read_csv_rows, read_json_object, write_csv_rows
 from invoice_hub.storage.read_views import ReadViews, file_signature
 from invoice_hub.targets.paths import profile_identity as _profile_identity
@@ -165,21 +168,25 @@ class InvoiceListService:
 
         return [item for item in items if matches(item)]
 
-    def _invoice_stats(self, items: list[dict]) -> dict:
-        total_amount = 0.0
+    @staticmethod
+    def _invoice_stats(items: list[dict]) -> dict:
+        # The directory view calls this again after tags, before paging. Match selection totals:
+        # one invoice family contributes only when its legal face amounts agree across formats.
+        families: dict[str, set[Decimal]] = {}
         for item in items:
-            if not is_valid_money(str(item.get("amount") or "")):
-                continue
-            try:
-                total_amount += float(str(item.get("amount") or "0").replace(",", ""))
-            except ValueError:
-                pass
+            values = families.setdefault(selection_family_key(item), set())
+            if (value := selection_money_value(item.get("amount"))) is not None:
+                values.add(value)
+        valid = [next(iter(values)) for values in families.values() if len(values) == 1]
         return {
             "total": len(items),
             "recognized": sum(1 for item in items if item.get("status") == "已识别"),
             "needs_review": sum(1 for item in items if item.get("status") == "待核对"),
             "duplicates": sum(1 for item in items if item.get("duplicate")),
-            "total_amount": round(total_amount, 2),
+            "total_amount": format(sum(valid, Decimal("0")).quantize(Decimal("0.01")), ".2f"),
+            "total_amount_valid_count": len(valid),
+            "total_amount_missing_count": sum(not values for values in families.values()),
+            "total_amount_conflict_count": sum(len(values) > 1 for values in families.values()),
         }
 
     def _consistency_group_key(self, item: dict) -> str:

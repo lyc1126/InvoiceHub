@@ -31,23 +31,27 @@ from invoice_hub.monitoring.state import PROCESSED_FILE_NAME, canonical_path as 
 from invoice_hub.projections.cost_analysis import COST_DETAIL_CSV_NAME
 from invoice_hub.projections.costs import CostProjectionService
 from invoice_hub.services.company_bank import BankFlowReader, build_bank_ledger
+from invoice_hub.services.company_bank_layouts import BankLayoutService
+from invoice_hub.services.company_tax import CompanyTaxService
+from invoice_hub.services.company_compare_details import attach_details
+from invoice_hub.services.company_receipts import CompanyReceiptService
 from invoice_hub.services.company_deduction import DeductionListReader, build_deduction_check
 from invoice_hub.services.company_inventory import build_inventory_check, read_book_inputs
 from invoice_hub.services.company_payroll import read_payroll, save_confirmed as save_payroll_months
-from invoice_hub.services.company_projects import ProjectAssignmentStore, build_project_summary
+from invoice_hub.services.company_projects import ProjectAssignmentStore, build_project_summary, project_fields, remark_projects
 from invoice_hub.services.company_same_number import INVOICE_DIR_KEYS, build_same_number_check
 from invoice_hub.services.company_settlement import build_settlement_check
 from invoice_hub.services import company_vouchers
 from invoice_hub.services.invoice_tags import TAG_DEFINITIONS_NAME, InvoiceTagStore
 from invoice_hub.services.company_ledger import build_invoice_ledger
 from invoice_hub.services.company_registry import CompanyRegistryError, CompanyRegistryService
-from invoice_hub.services.file_preview import MAX_PREVIEW_SELECTION_RECORDS
+from invoice_hub.services.file_preview import FilePreviewError, MAX_PREVIEW_SELECTION_RECORDS
 from invoice_hub.services.invoice_selection import selection_family_key
 from invoice_hub.services.invoice_list import InvoiceListService
 from invoice_hub.services.source_move import SourceMoveService, period_folder_check
 from invoice_hub.storage import SQLiteRepository
 from invoice_hub.targets import AppConfig, target_profile_for
-from invoice_hub.targets.companies import company_taxpayer_for
+from invoice_hub.targets.companies import company_outbound_for, company_taxpayer_for
 
 # Folder pair -> comparison algorithm. Only pairs with a reconciliation relation are listed.
 COMPARE_RELATIONS = {
@@ -181,9 +185,12 @@ class CompanyViewService:
         self._active_profile = active_profile
         self._registry = registry
         self._active_invoices = active_invoices
-        self._bank_reader = bank_reader or BankFlowReader()
+        self.bank_layouts = BankLayoutService(registry)
+        self.tax = CompanyTaxService(registry)
+        self._bank_reader = bank_reader or BankFlowReader(self.bank_layouts.discover, cache_context=self.bank_layouts.cache_revision)
         self._deduction_reader = deduction_reader or DeductionListReader()
         self._projects = ProjectAssignmentStore()
+        self.receipts = CompanyReceiptService(registry)
         # Tag definitions live beside the company registry; marks live in each company folder.
         self._tags = InvoiceTagStore(Path(registry.registry_path).parent / TAG_DEFINITIONS_NAME)
         # Move plans and journals of misfiled source files (WS-05): runtime state, never business data.
@@ -251,6 +258,8 @@ class CompanyViewService:
         page_size = max(1, min(200, int(filters.pop("page_size", None) or 100)))
         tag_filter = str(filters.pop("tag", "") or "")
         payload, read_only = self._list_payload(profile, filters)
+        if not read_only:
+            payload = self.active_project_fields(payload)
         # Copies: the active folder's rows come from the live homepage service, whose payload
         # must not pick up the company fields or tags added here.
         payload = dict(payload)
@@ -270,6 +279,7 @@ class CompanyViewService:
             items = [item for item in items if tag_filter in item["tags"]]
             payload["items"] = items
             payload["count"] = len(items)
+            payload["stats"] = {**payload["stats"], "filtered": InvoiceListService._invoice_stats(items)}
         count = len(items)
         if page is not None:
             last_page = max(1, (count + page_size - 1) // page_size)
@@ -360,6 +370,22 @@ class CompanyViewService:
             result = handler(company, base, start=start, end=end)
         for side, key in zip(("a", "b"), RECORD_SIDES[relation]):
             self._attach_previews((result.get("records") or {}).get(side), company, key, (result.get("sources") or {}).get(key))
+        attach_details(result)
+        if result.get("records") and result.get("relation") == "settlement":
+            try:
+                catalog = self.receipts.catalog(company_id, start=start, end=end)
+                visible = {row["id"] for row in result["records"]["b"]}
+                result["receipts"] = catalog["records"]
+                result["warnings"].extend(catalog["issues"])
+                for receipt in result["receipts"]:
+                    flow_ids = set(receipt.pop("flow_ids")) & visible
+                    related = [row["detail"] for row in result["records"]["b"] if row["id"] in flow_ids]
+                    receipt["detail"] = {"label": f"回单 · {receipt['source_file']}", "steps": receipt.pop("steps"),
+                                         "record_ids": {"a": sorted({id_ for row in related for id_ in row["record_ids"]["a"]}),
+                                                        "b": sorted(flow_ids)}}
+            except (FilePreviewError, CompanyRegistryError):
+                result["receipts"] = []
+                result["warnings"].append({"code": "receipts_unavailable", "message": "银行回单暂不可读取，请核对公司目录后重新核对。"})
         return result
 
     def _attach_previews(self, records: list[dict] | None, company: dict, key: str, view: dict | None) -> None:
@@ -486,18 +512,37 @@ class CompanyViewService:
         bank_subdir = next(item for item in company["subdirs"] if item["key"] == "bank_flow_dir")
         sources = {key: invoice_view, "bank_flow_dir": {**bank_subdir}}
         base = {**base, "relation": "settlement", "side": side, "sources": sources}
-        if invoice_subdir["status"] != "present" or bank_subdir["status"] != "present":
-            return {**base, "state": "missing_dir", "message": f"{label}或银行流水目录不存在。"}
-        read = self._bank_reader.read(Path(bank_subdir["path"]))
-        sources["bank_flow_dir"].update(file_count=read.file_count, cached=read.cached)
-        if read.data is None:
-            return {**base, "state": "unreadable", "message": read.error}
-        items = self._list_payload(invoice_profile, {})[0]["items"]
-        result = build_settlement_check(items, read.data, side=side, own_names={company["name"]}, start=start, end=end)
+        items = []
+        if invoice_subdir["status"] == "present":
+            items = self._list_payload(invoice_profile, {})[0]["items"]
+        from invoice_hub.bank.workpaper import WorkpaperInput
+        read = self._bank_reader.read(Path(bank_subdir["path"])) if bank_subdir["status"] == "present" else None
+        if read:
+            sources["bank_flow_dir"].update(file_count=read.file_count, cached=read.cached)
+        data = read.data if read and read.data else WorkpaperInput([], [], [], [])
+        result = build_settlement_check(items, data, side=side, own_names={company["name"]}, start=start, end=end)
         self._freshness_warnings(result, {key: invoice_view}, {key: label})
-        if not read.data.statements:
-            return {**base, "state": "no_statements", "message": "银行流水目录里没有可识别的对账单（目前支持中国银行 PDF）。", **result}
-        return {**base, "state": "ok", "message": "", **result}
+        try:
+            manual = self._projects.load(self._company_root(company))["invoices"]
+            details = self._cost_service(invoice_profile).read_only_inputs()["detail_rows"] if items else []
+            remarks = remark_projects(details)
+            for row in result["records"]["a"]:
+                fields = project_fields(row["invoice_number"], remarks, manual)
+                row.update(project=fields["project"] or None,
+                           project_source=fields["project_source"] if fields["project_source"] in {"manual", "remark"} else None)
+        except (CompanyRegistryError, OSError, ValueError):
+            result["warnings"].append({"code": "projects_unavailable", "message": "项目归属无法读取，请到项目页核对。"})
+        state, message = "ok", ""
+        if invoice_subdir["status"] != "present" or bank_subdir["status"] != "present":
+            state, message = "missing_dir", f"{label}或银行流水目录不存在。"
+        elif read and read.data is None:
+            state, message = "unreadable", read.error
+        elif not data.statements:
+            state, message = "no_statements", "银行流水目录里没有可识别的对账单。"
+        if state != "ok" or invoice_view["freshness"]["state"] in {"stale", "unknown", "never_built"}:
+            for row in result["records"]["a"]:
+                row["flow_match"] = None
+        return {**base, "state": state, "message": message, **result}
 
     def _company_root(self, company: dict) -> Path:
         if company.get("root_status") != "present":
@@ -531,6 +576,30 @@ class CompanyViewService:
         return {"ok": True, "revision": payload["revision"], "company": company, "sources": sources,
                 "assignments_revision": assignments["revision"], **result}
 
+    def active_project_fields(self, payload: dict) -> dict:
+        # Enrich copies after paging; project edits must be visible without invalidating the
+        # invoice identity cache, and must never change selection totals or write projections.
+        profile = self.active_profile
+        result = {**payload, "items": [{**row, "project": "", "project_source": "none"} for row in payload["items"]]}
+        if payload.get("target_id") != profile.id:
+            return result
+        try:
+            company = next((company for company in self._registry.list_companies()["companies"]
+                            if company.get("monitored_subdir_key") in INVOICE_DIR_KEYS and company.get("monitored")), None)
+            remarks = remark_projects(self._cost_service(profile).read_only_inputs()["detail_rows"])
+            manual = self._projects.load(self._company_root(company))["invoices"] if company else {}
+            for row in result["items"]:
+                # The ledger also accepts a unique 20-digit filename family when the
+                # format has no header number; all copies must show the same project.
+                family = selection_family_key(row)
+                number = family.split(":", 1)[1] if family.startswith("number:") else ""
+                row.update(project_fields(number, remarks, manual))
+        except (CompanyRegistryError, OSError, ValueError):
+            result["projects_error"] = "项目归属无法读取，未显示项目；请到公司项目页核对。"
+            for row in result["items"]:
+                row["project_source"] = "unavailable"
+        return result
+
     def save_project_assignments(self, company_id: str, body: object) -> dict:
         # Written into the company folder on the user's explicit save only; rebuilds never touch it.
         company = self._registry.get_company(company_id)["company"]
@@ -538,10 +607,35 @@ class CompanyViewService:
         return {"ok": True, "assignments_revision": saved["revision"], "count": len(saved["invoices"])}
 
     # ---- voucher draft review (WS-05 stage 1): the CLI's review workbook in 做账草稿/, edited in place.
+    def cost_tax_profile(self, company_id: str, month: str = "") -> dict:
+        from invoice_hub.projections.cost_analysis import effective_tax_profile, reference_tax_profile_from_status
+        from invoice_hub.projections.costs import _read_reference_status_payload
+        from invoice_hub.targets.companies import taxpayer_type_for, current_month
+
+        company = self._registry.get_company(company_id)["company"]
+        subdir, profile = self._directory(company, "cost_invoice_dir")
+        status_path = Path(profile.watch_dir) / "成本开票状态.json"
+        # A read-only identity lookup must not adopt another company's status through a
+        # replaced directory or state-file link. The registry's availability is authoritative.
+        if subdir["status"] != "present" or status_path.is_symlink():
+            raise CompanyRegistryError("COMPANY_DIRECTORY_UNAVAILABLE", "本公司成本目录或状态文件不可用，请核对资料夹。", status_code=409)
+        selected_month = month or current_month()
+        taxpayer_type = taxpayer_type_for(company["taxpayer_periods"], selected_month)
+        saved = reference_tax_profile_from_status(_read_reference_status_payload(status_path))
+        effective = effective_tax_profile(saved, {
+            "company_id": company_id, "company_name": company["name"], "month": selected_month,
+            "taxpayer_type": taxpayer_type,
+        })
+        # Historical context is a read-only lookup, not a workbook rewrite or a second target.
+        payload = effective.api_payload()
+        payload.update(company_id=company_id, month=selected_month,
+                       source="company" if taxpayer_type else "fallback")
+        return {"ok": True, **payload}
+
     def voucher_drafts(self, company_id: str) -> dict:
         company = self._registry.get_company(company_id)["company"]
         root = self._company_root(company)
-        return {"ok": True, "drafts": company_vouchers.list_drafts(root), "inputs": company_vouchers.draft_inputs(root),
+        return {"ok": True, **company_vouchers.draft_index(root), "inputs": company_vouchers.draft_inputs(root),
                 **company_vouchers.export_formats(root)}
 
     def generate_voucher_draft(self, company_id: str, body: object) -> dict:
@@ -621,13 +715,40 @@ class CompanyViewService:
         company = self._registry.get_company(company_id)["company"]
         if not isinstance(body, dict):
             raise company_vouchers.VoucherDraftError("VOUCHER_DRAFT_INVALID", "请求格式不对。")
-        return {"ok": True, **company_vouchers.export_draft(self._company_root(company), name, body)}
+        from invoice_hub.services.company_export_jobs import run_export_job
+        return {"ok": True, **run_export_job(self._company_root(company), name, body)}
 
-    def invoice_tags(self) -> dict:
-        return {"ok": True, **self._tags.definitions()}
+    def voucher_export_job(self, company_id: str, name: str, token: str) -> dict:
+        from invoice_hub.services.company_export_jobs import get_export_job
+        company = self._registry.get_company(company_id)["company"]
+        return {"ok": True, **get_export_job(self._company_root(company), name, token)}
+
+    def invoice_tags(self, *, include_usage: bool = False) -> dict:
+        with self._lock:
+            result = {"ok": True, **self._tags.definitions()}
+            if not include_usage:
+                return result
+            numbers = {tag["id"]: set() for tag in result["tags"]}
+            unavailable = []
+            for company in self._registry.list_companies()["companies"]:
+                try:
+                    root = self._company_root(company)
+                    marks = self._tags.visible_marks(root)
+                except (CompanyRegistryError, OSError):
+                    unavailable.append({"id": company["id"], "name": company["name"]})
+                    continue
+                for number, ids in marks.items():
+                    for tag_id in ids:
+                        if tag_id in numbers:
+                            numbers[tag_id].add(number)
+            # Numbers are global across registered folders. Offline folders make this a
+            # known subtotal, never evidence that an otherwise unseen tag has zero uses.
+            result.update(usage={key: len(value) for key, value in numbers.items()},
+                          usage_unavailable=unavailable, usage_complete=not unavailable)
+            return result
 
     def save_invoice_tags(self, body: object) -> dict:
-        saved, removed = self._tags.save_definitions(body)
+        _saved, removed = self._tags.save_definitions(body)
         purged, failed = 0, []
         if removed:
             # A deleted tag disappears from every company folder; offline folders are listed and
@@ -640,7 +761,7 @@ class CompanyViewService:
                     purged += int(self._tags.purge(Path(company["root_path"]), removed))
                 except (CompanyRegistryError, OSError):
                     failed.append(company["name"])
-        return {"ok": True, **saved, "purged_companies": purged, "purge_failed": failed}
+        return {**self.invoice_tags(include_usage=True), "purged_companies": purged, "purge_failed": failed}
 
     def company_invoice_tags(self, company_id: str) -> dict:
         company = self._registry.get_company(company_id)["company"]
@@ -658,6 +779,7 @@ class CompanyViewService:
             Path(profile.watch_dir), Path(profile.workspace_dir), profile.id,
             reference_markup_rate=self.config.reference_markup_rate,
             company_taxpayer=lambda: company_taxpayer_for(self.config, Path(profile.watch_dir)),
+            company_outbound=lambda: company_outbound_for(self.config, Path(profile.watch_dir)),
         )
 
     def _bank_ledger(self, company: dict, *, granularity: str, start: str, end: str) -> dict:
