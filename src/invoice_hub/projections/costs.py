@@ -325,12 +325,14 @@ class CostProjectionService:
         reference_markup_rate: str = "0.08",
         *,
         company_taxpayer: Callable[[], dict | None] | None = None,
+        company_outbound: Callable[[], str | None] | None = None,
     ):
         self.watch_dir = Path(watch_dir)
         # Registry lookup (targets.companies.company_taxpayer_for) supplied by every caller —
         # API, monitor daemon, background child, manual rebuild — so the workbook and the page
         # price the reference with the same taxpayer type. None means "no registry company".
         self._company_taxpayer = company_taxpayer
+        self._company_outbound = company_outbound
         self.workspace_dir = Path(workspace_dir)
         self.target_id = target_id
         self.reference_markup_rate = reference_markup_rate
@@ -366,6 +368,7 @@ class CostProjectionService:
         # The registry taxpayer type changes prices without touching any projection file, so it
         # is part of the read generation; otherwise the paged view keeps serving old prices.
         return [str(self.watch_dir.resolve()), self.target_id, str(self.reference_markup_rate), self.company_taxpayer(),
+                self._company_outbound() if self._company_outbound else None,
                 *[file_signature(path) for path in (self.detail_csv, self.summary_xlsx, self.status_json, self.summary_csv,
                                                     self.outbound_summary_json)]]
 
@@ -386,8 +389,17 @@ class CostProjectionService:
             "locked": _truthy(payload.get("reference_markup_locked", False)),
         }
 
+    def _outbound_summary(self) -> dict:
+        summary = load_outbound_summary(self.workspace_dir)
+        expected = self._company_outbound() if self._company_outbound else None
+        # Registry mapping is authoritative. A cached global/previous source must never
+        # leak into the company's page or workbook while waiting for manual rebuild.
+        if expected is not None and (not expected or str(Path(str(summary.get("outbound_dir") or "")).resolve()) != str(Path(expected).resolve())):
+            return {**_empty_outbound_summary(expected, "本公司开具目录尚未读取、已变化或不可用，请重新汇总。"), "read_at": ""}
+        return summary
+
     def _outbound_items(self) -> dict[str, dict]:
-        items = load_outbound_summary(self.workspace_dir).get("items")
+        items = self._outbound_summary().get("items")
         return items if isinstance(items, dict) else {}
 
     def refresh_outbound(self, outbound_dir: str | Path | None, progress: Callable[[int, int], None] | None = None) -> dict:
@@ -406,7 +418,7 @@ class CostProjectionService:
         return summary
 
     def _outbound_overview(self, invoice_reference: list[dict]) -> dict:
-        summary = load_outbound_summary(self.workspace_dir)
+        summary = self._outbound_summary()
         # Matched / unmatched must use the same 品目表 grouping as the reference rows.
         summary = {**summary, "items": canonical_outbound_items(summary.get("items"), self._item_catalog(), self._exclusions())}
         return outbound_overview(summary, [row["key"] for row in invoice_reference], invoice_reference)

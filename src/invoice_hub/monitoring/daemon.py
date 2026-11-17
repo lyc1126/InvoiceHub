@@ -12,7 +12,7 @@ from invoice_hub.monitoring.state import MonitorState
 from invoice_hub.monitoring.sync import MonitorSynchronizer
 from invoice_hub.storage import SQLiteRepository
 from invoice_hub.targets import ensure_runtime_layout, load_config, target_profile_for
-from invoice_hub.targets.companies import company_taxpayer_for
+from invoice_hub.targets.companies import company_outbound_for, company_taxpayer_for
 
 
 def _event_kind(path: Path, state: MonitorState) -> str | None:
@@ -47,6 +47,7 @@ def run_monitor(root_dir: Path, config_path: str | None, sync_interval_seconds: 
         repo=repo,
         reference_markup_rate=config.reference_markup_rate,
         company_taxpayer=lambda: company_taxpayer_for(config, Path(profile.watch_dir)),
+        company_outbound=lambda: company_outbound_for(config, Path(profile.watch_dir)),
     )
 
     if notify_self_test:

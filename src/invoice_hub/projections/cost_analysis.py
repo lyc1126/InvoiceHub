@@ -423,6 +423,7 @@ class ReferenceTaxProfile:
     # written back to the status file, which keeps only what the cost page itself saved.
     taxpayer_source: str = ""
     company_name: str = ""
+    month: str = ""
 
     def status_payload(self) -> dict:
         return {
@@ -446,6 +447,8 @@ class ReferenceTaxProfile:
             # cost_settings: saved on this page; default: nothing saved (一般纳税人 + 13%).
             "taxpayer_source": self.taxpayer_source or ("cost_settings" if self.configured else "default"),
             "company_name": self.company_name,
+            "source": "company" if self.taxpayer_source == "company_registry" else "fallback",
+            "month": self.month,
         }
 
 
@@ -481,6 +484,7 @@ def effective_tax_profile(profile: ReferenceTaxProfile, company_taxpayer: dict |
         taxpayer_type=taxpayer_type,
         taxpayer_source="company_registry",
         company_name=str(company_taxpayer.get("company_name") or ""),
+        month=str(company_taxpayer.get("month") or ""),
     )
 
 

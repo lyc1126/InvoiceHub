@@ -103,3 +103,22 @@ def company_taxpayer_for(config: AppConfig, directory: Path, month: str | None =
         "taxpayer_type": taxpayer_type,
         "month": month,
     }
+
+
+def company_outbound_for(config: AppConfig, directory: Path) -> str | None:
+    """None means unregistered (legacy setting); empty means registered but unavailable."""
+    company = company_for_dir(read_registry_companies(company_registry_path(config.runtime_dir)), config.root_dir, directory)
+    if company is None:
+        return None
+    root = Path(company["root_dir"])
+    if not root.is_absolute():
+        root = config.root_dir / root
+    relative = (company.get("subdirs") or {}).get("issued_invoice_dir", "开具发票")
+    path = root / relative
+    if not is_within(path, root) or Path(relative).is_absolute() or ".." in Path(relative).parts:
+        return ""
+    # Company mappings never authorize following a linked directory, even back into its root.
+    for candidate in (root, *(root.joinpath(*Path(relative).parts[:i]) for i in range(1, len(Path(relative).parts) + 1))):
+        if candidate.is_symlink() or (hasattr(candidate, "is_junction") and candidate.is_junction()):
+            return ""
+    return str(path)

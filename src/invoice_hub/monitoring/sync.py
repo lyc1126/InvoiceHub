@@ -19,12 +19,14 @@ class MonitorSynchronizer:
         reference_markup_rate: str = "0.08",
         *,
         company_taxpayer: Callable[[], dict | None] | None = None,
+        company_outbound: Callable[[], str | None] | None = None,
     ):
         self.state = state
         self.repo = repo
         self.reference_markup_rate = reference_markup_rate
         # Registry taxpayer lookup for the cost reference (see CostProjectionService).
         self.company_taxpayer = company_taxpayer
+        self.company_outbound = company_outbound
         if self.repo:
             self.repo.init_db()
 
@@ -39,6 +41,7 @@ class MonitorSynchronizer:
             self.state.profile.id,
             reference_markup_rate=self.reference_markup_rate,
             company_taxpayer=self.company_taxpayer,
+            company_outbound=self.company_outbound,
         )
 
     def run_sync(

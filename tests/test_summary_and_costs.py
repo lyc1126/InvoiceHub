@@ -1722,3 +1722,22 @@ def test_reference_exclusions_hide_sales_of_removed_rows_from_unmatched(tmp_path
 
     assert "钢筋 / 12E / 吨" not in overview["unmatched_items"]
     assert overview["matched_item_count"] == 0
+
+
+def test_company_outbound_mapping_invalidates_previous_source_cache(tmp_path):
+    watch, outbound, workspace = _outbound_fixture(tmp_path)
+    expected = [str(outbound)]
+    service = CostProjectionService(watch, workspace, 'company', company_outbound=lambda: expected[0])
+    service.rebuild()
+    service.refresh_outbound(outbound)
+    assert service._outbound_items()
+    before = service.read_fingerprint()
+    expected[0] = str(tmp_path / '另一公司' / '开具发票')
+    assert service._outbound_items() == {}
+    assert '重新汇总' in service._outbound_summary()['warning']
+    assert service._outbound_summary()['read_at'] == ''
+    assert before != service.read_fingerprint()
+    service._refresh_workbook_from_current_detail(service._markup_meta()['rate'])
+    assert all(not row['outbound_quantity'] for row in service.snapshot().invoice_reference)
+    expected[0] = ''  # registered but linked/offline: never use the legacy cache
+    assert service._outbound_items() == {}

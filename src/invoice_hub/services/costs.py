@@ -24,7 +24,7 @@ from invoice_hub.services.errors import StaleInvoiceSelectionError
 from invoice_hub.storage import SQLiteRepository
 from invoice_hub.storage.read_views import COST_FIELDS, ReadViews
 from invoice_hub.targets import AppConfig
-from invoice_hub.targets.companies import company_taxpayer_for
+from invoice_hub.targets.companies import company_outbound_for, company_taxpayer_for
 from invoice_hub.targets.paths import profile_identity as _profile_identity
 
 
@@ -72,6 +72,7 @@ class CostService:
             profile.id,
             reference_markup_rate=self.config.reference_markup_rate,
             company_taxpayer=self._company_taxpayer(profile),
+            company_outbound=lambda: company_outbound_for(self.config, Path(profile.watch_dir)),
         )
 
     def cost_snapshot(self) -> dict:
@@ -89,6 +90,7 @@ class CostService:
                 profile.id,
                 reference_markup_rate=reference_markup_rate,
                 company_taxpayer=self._company_taxpayer(profile),
+                company_outbound=lambda: company_outbound_for(self.config, Path(profile.watch_dir)),
             ).snapshot().model_dump(mode="json")
         payload["recent_watch_dirs"] = recent_watch_dirs
         return payload
@@ -101,6 +103,7 @@ class CostService:
         service = CostProjectionService(
             Path(profile.watch_dir), Path(profile.workspace_dir), profile.id, reference_markup_rate=rate,
             company_taxpayer=self._company_taxpayer(profile),
+            company_outbound=lambda: company_outbound_for(self.config, Path(profile.watch_dir)),
         )
         views = ReadViews(profile.workspace_dir)
         monitor = MonitorState(profile, self._db_path)
@@ -166,6 +169,7 @@ class CostService:
             refreshed = CostProjectionService(
                 Path(profile.watch_dir), Path(profile.workspace_dir), profile.id, reference_markup_rate=rate,
                 company_taxpayer=self._company_taxpayer(profile),
+                company_outbound=lambda: company_outbound_for(self.config, Path(profile.watch_dir)),
             ).refresh_workbook_tax_profile()
         if refreshed:
             self.append_event("cost_analysis.tax_profile_refreshed", {"target_id": profile.id})
@@ -184,6 +188,7 @@ class CostService:
                 profile.id,
                 reference_markup_rate=reference_markup_rate,
                 company_taxpayer=self._company_taxpayer(profile),
+                company_outbound=lambda: company_outbound_for(self.config, Path(profile.watch_dir)),
             )
             if payload.get("revision"):
                 service.cache_snapshot()

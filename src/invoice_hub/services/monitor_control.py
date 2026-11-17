@@ -23,7 +23,7 @@ from invoice_hub.projections.summary import build_summary
 from invoice_hub.services.monitor_bridge import MonitorBridge
 from invoice_hub.storage import SQLiteRepository
 from invoice_hub.targets import AppConfig
-from invoice_hub.targets.companies import company_taxpayer_for
+from invoice_hub.targets.companies import company_outbound_for, company_taxpayer_for
 from invoice_hub.targets.paths import Layout
 from invoice_hub.targets.paths import profile_identity as _background_profile_identity
 
@@ -155,7 +155,10 @@ class MonitorControlService:
             profile = self.active_profile.model_copy(deep=True)
             profile_identity = _background_profile_identity(profile)
             reference_markup_rate = str(self.config.reference_markup_rate)
-            outbound_dir = self._outbound_invoice_dir_text()
+            company_outbound = company_outbound_for(self.config, Path(profile.watch_dir))
+            # A registered company always owns its sales source, even if its mapping is
+            # unavailable. Falling back then would compare another company's sales.
+            outbound_dir = self._outbound_invoice_dir_text() if company_outbound is None else company_outbound
         self.repo.create_task(task_id, "bridge.rebuild", "running", {"watch_dir": profile.watch_dir})
         progress = None
         try:
@@ -170,6 +173,7 @@ class MonitorControlService:
                         profile.id,
                         reference_markup_rate=reference_markup_rate,
                         company_taxpayer=lambda: company_taxpayer_for(self.config, Path(profile.watch_dir)),
+                        company_outbound=lambda: company_outbound_for(self.config, Path(profile.watch_dir)),
                     )
                     progress.report("summary", "正在生成普通汇总", percent=0)
                     summary = build_summary(

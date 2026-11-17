@@ -25,7 +25,7 @@ from invoice_hub.monitoring.sync import MonitorSynchronizer
 from invoice_hub.platform import host_rpc
 from invoice_hub.storage import SQLiteRepository
 from invoice_hub.targets import AppConfig
-from invoice_hub.targets.companies import company_taxpayer_for
+from invoice_hub.targets.companies import company_outbound_for, company_taxpayer_for
 from invoice_hub.targets.paths import Layout
 from invoice_hub.targets.paths import profile_identity as _background_profile_identity
 
@@ -43,6 +43,7 @@ def _run_background_sync_process(
     trigger: str,
     result_sender,
     company_taxpayer: dict | None = None,
+    company_outbound: str | None = None,
 ) -> None:
     """Run the potentially native/Python-heavy first sync outside the API process.
 
@@ -58,6 +59,7 @@ def _run_background_sync_process(
             repo=repository,
             reference_markup_rate=reference_markup_rate,
             company_taxpayer=lambda: company_taxpayer,
+            company_outbound=lambda: company_outbound,
         ).run_sync(trigger, force=False, emit_events=False, notify=False)
         result_sender.send({"ok": bool(result.get("ok")), "sync": result})
     except Exception as exc:
@@ -353,6 +355,7 @@ class BackgroundSyncService:
                         args=(
                             profile.model_dump(), db_path, reference_markup_rate, trigger, result_sender,
                             company_taxpayer_for(self.config, Path(profile.watch_dir)),
+                            company_outbound_for(self.config, Path(profile.watch_dir)),
                         ),
                         name="invoice-hub-background-sync",
                         daemon=True,

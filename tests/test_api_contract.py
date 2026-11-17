@@ -36,6 +36,7 @@ def _slow_background_sync_worker(
     trigger: str,
     result_sender,
     company_taxpayer: dict | None = None,
+    company_outbound: str | None = None,
 ) -> None:
     del db_path, reference_markup_rate, company_taxpayer
     try:
@@ -2240,7 +2241,7 @@ def test_background_startup_sync_uses_spawn_worker_and_clears_current_profile_ca
             calls["process"] = kwargs
             return FakeProcess(**kwargs)
 
-    def fake_sync_worker(profile_payload, db_path, reference_markup_rate, trigger, result_sender, company_taxpayer=None) -> None:
+    def fake_sync_worker(profile_payload, db_path, reference_markup_rate, trigger, result_sender, company_taxpayer=None, company_outbound=None) -> None:
         calls["profile_payload"] = profile_payload
         calls["db_path"] = db_path
         calls["reference_markup_rate"] = reference_markup_rate
@@ -2348,7 +2349,7 @@ def test_background_sync_completion_does_not_invalidate_new_active_profile_cache
         def Process(self, **kwargs) -> FakeProcess:
             return FakeProcess(**kwargs)
 
-    def blocked_sync_worker(profile_payload, db_path, reference_markup_rate, trigger, result_sender, company_taxpayer=None) -> None:
+    def blocked_sync_worker(profile_payload, db_path, reference_markup_rate, trigger, result_sender, company_taxpayer=None, company_outbound=None) -> None:
         started.set()
         assert release.wait(timeout=5)
         result_sender.send(
@@ -2539,7 +2540,7 @@ def test_new_background_generation_retires_prior_worker_with_bounded_kill(tmp_pa
         def Process(self, **kwargs) -> FastProcess:
             return FastProcess(**kwargs)
 
-    def fast_sync_worker(profile_payload, db_path, reference_markup_rate, trigger, result_sender, company_taxpayer=None) -> None:
+    def fast_sync_worker(profile_payload, db_path, reference_markup_rate, trigger, result_sender, company_taxpayer=None, company_outbound=None) -> None:
         result_sender.send({"ok": True, "sync": {"ok": True, "target_id": profile_payload["id"], "rebuilt": False}})
 
     prior = PriorProcess()
@@ -2701,7 +2702,7 @@ def test_background_worker_rejecting_kill_stays_managed_without_sync_failure(tmp
             created.append(process)
             return process
 
-    def fast_sync_worker(profile_payload, db_path, reference_markup_rate, trigger, result_sender, company_taxpayer=None) -> None:
+    def fast_sync_worker(profile_payload, db_path, reference_markup_rate, trigger, result_sender, company_taxpayer=None, company_outbound=None) -> None:
         result_sender.send({"ok": True, "sync": {"ok": True, "target_id": profile_payload["id"], "rebuilt": False}})
 
     monkeypatch.setattr("invoice_hub.services.background_sync.multiprocessing.get_context", lambda method: SpawnContext())
