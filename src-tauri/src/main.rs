@@ -413,7 +413,7 @@ fn create_desktop_window(
     .build()?;
     let drop_window = window.clone();
     window.on_webview_event(move |event| {
-        // Forward paths only to the owned localhost homepage; never expose private Host RPC credentials.
+        // Forward only to the fixed homepage/temporary workspace; no Host RPC credentials enter Web content.
         if drop_window.url().ok().is_none_or(|url| !invoicehub_desktop::accepts_temporary_file_drop(&url)) {
             return;
         }

@@ -15,14 +15,17 @@ pub fn backend_origin() -> String {
 }
 
 pub fn accepts_temporary_file_drop(url: &tauri::Url) -> bool {
-    // A detail-return token and no_skin only change homepage state; they must
-    // not disable native drops or broaden the event to other origins/pages.
+    // The Vue temporary page shares the original selection service. State queries
+    // must not disable drops or grant another workspace module access to paths.
     url.scheme() == "http"
         && url.host_str() == Some(FIXED_BACKEND_HOST)
         && url.port() == Some(FIXED_BACKEND_PORT)
         && url.username().is_empty()
         && url.password().is_none()
-        && url.path() == "/"
+        && matches!(
+            url.path(),
+            "/" | "/workspace/temporary" | "/workspace/temporary/"
+        )
 }
 
 #[cfg(test)]
@@ -41,6 +44,8 @@ mod tests {
         for value in [
             "http://127.0.0.1:8766/",
             "http://127.0.0.1:8766/?selection_return=test&no_skin=1",
+            "http://127.0.0.1:8766/workspace/temporary?no_skin=1",
+            "http://127.0.0.1:8766/workspace/temporary/",
         ] {
             assert!(super::accepts_temporary_file_drop(&value.parse().unwrap()));
         }
@@ -49,6 +54,8 @@ mod tests {
             "http://127.0.0.1:8767/",
             "http://localhost:8766/",
             "http://127.0.0.1:8766/invoices/0",
+            "http://127.0.0.1:8766/workspace/",
+            "http://127.0.0.1:8766/workspace/costs",
             "http://user@127.0.0.1:8766/",
             "http://example.org/",
         ] {
