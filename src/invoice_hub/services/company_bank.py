@@ -52,6 +52,10 @@ def list_files(directory: Path, suffixes: tuple[str, ...]) -> tuple[dict[str, tu
                         return signatures, False
                     if entry.name.startswith((".", "~$")):
                         continue
+                    if entry.is_symlink() or (hasattr(entry, "is_junction") and entry.is_junction()):
+                        continue
+                    if hasattr(entry, "is_junction") and entry.is_junction():
+                        continue
                     if entry.is_dir(follow_symlinks=False):
                         pending.append(Path(entry.path))
                         continue

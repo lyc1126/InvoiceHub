@@ -10,13 +10,13 @@ from collections import OrderedDict
 from pathlib import Path
 
 from invoice_hub.bank.layouts import FIELDS, Table, account_fixed, validate_mapping, evaluate, fingerprint, guess_mapping, read_table, statement
-from invoice_hub.bank.models import CheckIssue
-from invoice_hub.bank.workpaper import SourceFile, discover
+from invoice_hub.bank.workpaper import discover
 from invoice_hub.bookkeeping.repository import bookkeeping_write_lock
 from invoice_hub.services.company_bank import list_files
 from invoice_hub.services.company_directory_guard import directory_entry
 from invoice_hub.services.company_files import check_revision, read_relative, read_state, write_state
 from invoice_hub.services.company_registry import CompanyRegistryError
+from invoice_hub.services.company_bank_recognition import recognize_batch, unavailable
 
 LAYOUT_FILE = "银行版式.json"
 SUFFIXES = (".csv", ".xlsx", ".pdf")
@@ -28,6 +28,7 @@ class BankLayoutService:
         self._lock = threading.RLock()
         self.refs: OrderedDict[str, dict] = OrderedDict()
         self.plans: OrderedDict[str, dict] = OrderedDict()
+        self.recognitions: OrderedDict[str, dict] = OrderedDict()
 
     def _context(self, company_id: str) -> tuple[dict, Path, Path]:
         company = self.registry.get_company(company_id)["company"]
@@ -61,19 +62,37 @@ class BankLayoutService:
 
     def index(self, company_id: str, *, files: bool = False) -> dict:
         company, root, folder = self._context(company_id)
+        revision = self.cache_revision(folder) if files else ""
         state = self._state(root)
+        if files and self.cache_revision(folder) != revision:
+            raise CompanyRegistryError("BANK_LAYOUT_STALE", "版式档案已变化，请重新列出文件。", status_code=409)
         result = {"ok": True, **state, "files": [], "fields": list(FIELDS)}
         if files:
             signatures, complete = list_files(folder, SUFFIXES)
             if not complete:
                 raise ValueError("银行目录未完整读取，未列出部分文件。")
+            identity, root_identity = directory_entry(folder), directory_entry(root)
+            keys = {path: json.dumps([company_id, str(root), str(folder), identity, root_identity, path, signature, revision])
+                    for path, signature in signatures.items()}
+            missing = [path for path in sorted(signatures) if keys[path] not in self.recognitions]
+            recognized = recognize_batch(missing, state["layouts"])
+            after, complete = list_files(folder, SUFFIXES)
+            # Do not publish a child's results after a file/profile/root swap. The same
+            # binding also prevents reuse after a same-size replacement or company remap.
+            if (not complete or after != signatures or directory_entry(folder) != identity
+                    or directory_entry(root) != root_identity or self.cache_revision(folder) != revision):
+                raise CompanyRegistryError("BANK_LAYOUT_STALE", "识别期间来源已变化，请重新列出文件。", status_code=409)
+            for path, recognition in recognized.items():
+                self._put(self.recognitions, keys[path], recognition)
             for path, signature in sorted(signatures.items()):
                 token = secrets.token_urlsafe(24)
                 relative = Path(path).relative_to(folder).as_posix()
                 self._put(self.refs, token, {"company_id": company_id, "root": str(root), "folder": str(folder),
                                            "identity": directory_entry(folder), "root_identity": directory_entry(root), "relative": relative,
                                            "signature": signature, "expires": time.monotonic() + 600})
-                result["files"].append({"file_ref": token, "name": relative})
+                result["files"].append({"file_ref": token, "name": relative,
+                                        "recognition": self.recognitions.get(keys[path], unavailable("本次识别达到数量或时间上限，请刷新继续识别。"))})
+            result["recognition_complete"] = all(keys[path] in self.recognitions for path in signatures)
         return result
 
     def _table(self, company_id: str, token: str):
@@ -160,32 +179,14 @@ class BankLayoutService:
         return ""
 
     def discover(self, paths: list[Path], *, parse_receipts: bool = False):
-        data = discover([path for path in paths if path.suffix.lower() == ".pdf"], parse_receipts=parse_receipts)
         if not paths:
-            return data
+            return discover([], parse_receipts=parse_receipts)
         company = next((company for company in self.registry.list_companies()["companies"]
                         if company["root_status"] == "present" and any(
                             sub["key"] == "bank_flow_dir" and all(path.is_relative_to(Path(sub["path"])) for path in paths)
                             for sub in company["subdirs"])), None)
         profiles = self._state(Path(company["root_path"]))["layouts"] if company else {}
-        recognized = {source.path for source in data.sources if source.kind != "未识别"}
-        for path in paths:
-            if path in recognized:
-                continue
-            try:
-                folder = Path(next(sub["path"] for sub in company["subdirs"] if sub["key"] == "bank_flow_dir")) if company else path.parent
-                table = read_table(path, read_relative(folder, path.relative_to(folder).as_posix()))
-                profile = profiles.get(fingerprint(table.columns))
-                if profile is None:
-                    raise ValueError("版式未确认，请打开银行版式映射。")
-                parsed = statement(table, profile["mapping"], profile["direction"], source_file=path.name, account_fixed=profile.get("account_fixed", ""))
-                data.statements.append(parsed)
-                data.sources = [source for source in data.sources if source.path != path]
-                data.sources.append(SourceFile(path, "对账单", table.sha256))
-                data.issues = [issue for issue in data.issues if issue.message != f"{path.name} 不是已支持的格式，已跳过"]
-            except (ValueError, OSError) as exc:
-                data.issues.append(CheckIssue("错误", "BANK_LAYOUT_UNCONFIRMED", f"{path.name}：{exc}"))
-        return data
+        return discover(paths, profiles=profiles, parse_receipts=parse_receipts)
 
 
 def company_profiles(root: Path) -> dict:

@@ -56,31 +56,58 @@ def file_sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def discover(paths: list[Path], *, parse_receipts: bool = True) -> WorkpaperInput:
+def discover(paths: list[Path], *, parse_receipts: bool = True, profiles: dict | None = None) -> WorkpaperInput:
     """按内容（而非文件名）识别对账单与回单；识别不了的文件列为未识别，不猜格式。
 
     `parse_receipts=False` 供公司账簿（WS-07）只读余额链：回单仍按首页识别并计入来源，但不解析。
     """
     import fitz
+    from .layouts import MAX_BYTES, fingerprint, read_table, statement as table_statement
+    from invoice_hub.services.company_files import read_relative
+    from invoice_hub.services.company_bank import list_files
 
     files: list[Path] = []
     for path in paths:
+        path = path.absolute()
+        if any(p.is_symlink() or (hasattr(p, "is_junction") and p.is_junction()) for p in (path, *path.parents)):
+            continue
         if path.is_dir():
-            files += sorted(p for p in path.rglob("*.pdf") if not any(part.startswith(".") for part in p.parts))
-        elif path.suffix.lower() == ".pdf":
+            # CLI and page enumeration share the same no-link, 2-second/2000-file
+            # boundary. A partial directory must never become a complete workpaper.
+            signatures, complete = list_files(path, (".pdf", ".csv", ".xlsx"))
+            if not complete:
+                raise ValueError("银行目录过大或无法完整读取，未读取部分结果。")
+            files += [Path(name) for name in sorted(signatures)]
+        elif path.suffix.lower() in {".pdf", ".csv", ".xlsx"}:
             files.append(path)
+        files = list(dict.fromkeys(files))
+        if len(files) > 2000:
+            raise ValueError("银行源文件超过 2000 个，未读取部分结果。")
     statements: list[BankStatement] = []
     receipts: list[BankReceipt] = []
     sources: list[SourceFile] = []
     issues: list[CheckIssue] = []
     own_accounts: set[str] = set()
-    receipt_docs: list[tuple[Path, str]] = []
+    receipt_docs: list[tuple[Path, str, bytes]] = []
     for path in files:
-        sha = file_sha256(path)
-        with fitz.open(path) as doc:
-            # 版式只看首页；只有对账单才需要全部页面（回单另由 parse_receipt_document 读坐标）。
-            first = str(doc[0].get_text()) if doc.page_count else ""
-            pages = [str(page.get_text()) for page in doc] if first and boc.is_boc_statement(first) else [first]
+        sha, pages = "", []
+        try:
+            if path.stat().st_size > MAX_BYTES:
+                raise ValueError("银行文件超过 20 MiB。")
+            # Parse one bounded, no-link byte snapshot for every adapter. Reopening by
+            # pathname could cross a source replacement between hashing and parsing.
+            raw = read_relative(Path(path.anchor), path.relative_to(path.anchor).as_posix()) if path.is_absolute() else read_relative(Path.cwd(), path.as_posix())
+            sha = hashlib.sha256(raw).hexdigest()
+            if path.suffix.lower() == ".pdf":
+                with fitz.open(stream=raw, filetype="pdf") as doc:
+                    if doc.page_count > 100:
+                        raise ValueError("银行文件超过 100 页。")
+                    first = str(doc[0].get_text()) if doc.page_count else ""
+                    pages = [str(page.get_text()) for page in doc] if first and boc.is_boc_statement(first) else [first]
+        except Exception:
+            sources.append(SourceFile(path, "未识别", sha, "文件损坏、不可读或超过读取上限"))
+            issues.append(CheckIssue("错误", "BANK_SOURCE_UNREADABLE", f"{path.name}：文件损坏、不可读或超过读取上限"))
+            continue
         if pages and boc.is_boc_statement(pages[0]):
             try:
                 statement = boc.parse_statement_pages(pages, statement_id="", source_file=path.name, source_sha256=sha)
@@ -92,15 +119,26 @@ def discover(paths: list[Path], *, parse_receipts: bool = True) -> WorkpaperInpu
             own_accounts.add(statement.account_no)
             sources.append(SourceFile(path, "对账单", sha))
         elif pages and boc.is_boc_receipt(pages[0]):
-            receipt_docs.append((path, sha))
+            receipt_docs.append((path, sha, raw))
             sources.append(SourceFile(path, "回单", sha))
         else:
-            sources.append(SourceFile(path, "未识别", sha, "不是已支持的银行对账单或回单格式"))
-            issues.append(CheckIssue("警告", "UNSUPPORTED_FILE", f"{path.name} 不是已支持的格式，已跳过"))
+            try:
+                table = read_table(path, raw)
+                profile = (profiles or {}).get(fingerprint(table.columns))
+                if profile is None:
+                    raise ValueError("版式未确认，请打开银行版式映射。")
+                parsed = table_statement(table, profile["mapping"], profile["direction"], source_file=path.name,
+                                         account_fixed=profile.get("account_fixed", ""))
+                statements.append(parsed)
+                own_accounts.add(parsed.account_no)
+                sources.append(SourceFile(path, "对账单", table.sha256))
+            except (ValueError, OSError) as exc:
+                sources.append(SourceFile(path, "未识别", sha, str(exc)))
+                issues.append(CheckIssue("错误", "BANK_LAYOUT_UNCONFIRMED", f"{path.name}：{exc}"))
     # 回单方向依赖本公司账号，所以先解析完全部对账单再解析回单。
     own = sorted(own_accounts)[0] if len(own_accounts) == 1 else ""
-    for path, sha in receipt_docs if parse_receipts else ():
-        with fitz.open(path) as doc:
+    for path, sha, raw in receipt_docs if parse_receipts else ():
+        with fitz.open(stream=raw, filetype="pdf") as doc:
             try:
                 receipts += boc.parse_receipt_document(doc, source_file=path.name, source_sha256=sha, own_account=own)
             except boc.BankFormatError as exc:
@@ -490,8 +528,9 @@ def run(
     *,
     redact: bool = True,
     extra_terms: set[str] | frozenset[str] = frozenset(),
+    profiles: dict | None = None,
 ) -> RunResult:
-    data = discover(inputs)
+    data = discover(inputs, profiles=profiles)
     if not data.statements:
         raise ValueError("没有找到可识别的银行对账单")
     directory_path = out_dir / DIRECTORY_FILE

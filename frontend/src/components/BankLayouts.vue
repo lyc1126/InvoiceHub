@@ -7,13 +7,16 @@ import type { Company } from "../api/types";
 import WsModal from "./WsModal.vue";
 const props = defineProps<{ company: Company }>();
 interface Layout { layout_hash: string }
-interface Index { revision: number; files: { file_ref: string; name: string }[]; layouts: Record<string, Layout> }
+interface Recognition { kind: string; rows: number | null; chain_ok: boolean | null; breaks: { row: string | number | null; message: string }[]; footer: { ok: boolean | null; message: string }; message: string }
+interface BankFile { file_ref: string; name: string; recognition?: Recognition }
+interface Index { revision: number; files: BankFile[]; layouts: Record<string, Layout>; recognition_complete?: boolean }
 interface Direction { reverse: boolean; sign: number }
 interface Preview { account_fixed?: string; sample_rows?: { row: number; values: string[] }[]; columns: string[]; guessed_mapping: Record<string, number>; fields: string[]; layout_hash: string; revision: number; profile_applied: boolean; save_blockers?: string[]; balance_chain: { ok: boolean; direction?: Direction | null; breaks: { row: number | null; message: string }[] } }
 const index = ref<Index | null>(null), preview = ref<Preview | null>(null);
 const selected = ref<{ file_ref: string; name: string } | null>(null);
 const mapping = ref<Record<string, number>>({});
 const account = ref("");
+const recognitionLabel: Record<string, string> = { builtin: "内置版式", confirmed: "已确认版式", unrecognized: "未识别", receipt: "电子回单", unavailable: "待核对" };
 const busy = ref(false), dirty = ref(false), unknown = ref(false), error = ref(""), notice = ref("");
 const names: Record<string, string> = { date: "日期", balance: "余额", inflow: "收入", outflow: "支出", amount: "单金额", direction: "借贷标志", counterparty: "对方户名", account: "本方账号", details: "摘要", flow_no: "流水号" };
 let generation = 0;
@@ -87,7 +90,14 @@ onBeforeUnmount(() => { ++generation; });
     <header class="overview-section__head"><div><h3>银行版式</h3><p>按内容确认列映射；余额链全部成立后才能保存。支持 CSV、单表 XLSX 与可还原表格的文字 PDF。</p></div><button type="button" :disabled="busy || unknown" @click="load">重新列出文件</button></header>
     <button v-if="unknown && !selected" type="button" @click="query">查询保存结果</button>
     <p v-if="error && !selected" class="banner banner--error" role="alert">{{ error }}</p><p v-if="notice" class="banner banner--ok" role="status">{{ notice }}</p>
-    <div class="overview-table-wrap"><table class="grid"><thead><tr><th>银行流水文件</th><th>操作</th></tr></thead><tbody><tr v-for="file in index?.files ?? []" :key="file.file_ref"><td>{{ file.name }}</td><td><button type="button" :disabled="busy || unknown" @click="inspect(file)">确认列映射</button></td></tr><tr v-if="!index?.files.length"><td colspan="2">没有可读取的银行文件。</td></tr></tbody></table></div>
+    <p v-if="busy && !selected" role="status">正在识别文件…</p>
+    <p v-if="index?.recognition_complete === false" class="overview-notice">部分文件达到本次数量或时间上限，刷新可继续识别；待核对不表示空文件。</p>
+    <div class="overview-table-wrap"><table class="grid"><thead><tr><th>银行流水文件</th><th>版式识别</th><th class="num">行数</th><th>余额链</th><th>页脚合计</th><th>操作</th></tr></thead><tbody>
+      <tr v-for="file in index?.files ?? []" :key="file.file_ref"><td>{{ file.name }}<details v-if="file.recognition?.message || file.recognition?.breaks.length"><summary>核对说明</summary><p>{{ file.recognition.message }}</p><p v-for="(point, i) in file.recognition.breaks" :key="i">{{ point.row ? `第 ${point.row} 行：` : '' }}{{ point.message }}</p></details></td>
+        <td><span class="tag" :class="file.recognition?.kind === 'unrecognized' ? 'pill-warn' : ''">{{ recognitionLabel[file.recognition?.kind ?? 'unrecognized'] }}</span></td><td class="num">{{ file.recognition?.rows ?? '—' }}</td>
+        <td :class="{ 'check--failed': file.recognition?.chain_ok === false }">{{ file.recognition?.chain_ok === true ? '成立' : file.recognition?.chain_ok === false ? '不成立' : '未核对' }}</td><td :class="{ 'check--failed': file.recognition?.footer.ok === false }">{{ file.recognition?.footer.message ?? '未核对' }}</td>
+        <td><button v-if="!file.recognition || file.recognition.kind === 'unrecognized'" type="button" :disabled="busy || unknown" @click="inspect(file)">确认列映射</button><span v-else class="muted">—</span></td></tr>
+      <tr v-if="index && !index.files.length"><td colspan="6">没有可读取的银行文件。</td></tr></tbody></table></div>
     <WsModal :open="!!selected" :title="`确认列映射 · ${selected?.name ?? ''}`" wide @close="selected = null">
       <p class="overview-notice">方向由连续余额判定，不能仅凭“借方 / 贷方”列名。首行期初由首笔倒推，仍需核对原对账单。</p>
       <p v-if="error" class="banner banner--error" role="alert">{{ error }}</p>

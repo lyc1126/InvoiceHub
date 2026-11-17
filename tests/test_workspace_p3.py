@@ -8,11 +8,12 @@ from openpyxl import load_workbook
 from invoice_hub.bank.layouts import evaluate, guess_mapping, read_table, statement
 from invoice_hub.bank.workpaper import discover
 from invoice_hub.services.company_bank_layouts import company_profiles
+from invoice_hub.services.company_bank_recognition import recognize, recognize_batch
 from invoice_hub.services.company_vouchers import VoucherDraftError, read_draft, save_draft
 from test_company_vouchers import NAME, _company_folder
 from test_workspace_p2 import env as env, _assumption
 
-CSV = "日期,收入,支出,余额\n2026-06-01,10.10,,110.10\n2026-06-02,,20.10,90.00\n2026-06-03,5.25,,95.25\n"
+CSV = "日期,收入,支出,余额\n2026-06-01,10.10,,110.10\n2026-06-02,,20.10,90.00\n2026-06-03,5.25,,95.25\n合计,15.35,20.10,\n"
 
 
 def _save_profile(client, company, *, account="001234"):
@@ -27,8 +28,33 @@ def _save_profile(client, company, *, account="001234"):
     return base, preview
 
 
+def test_recognition_fixed_account_footer_and_shared_reader(env):
+    app, client, company, root, folder = env
+    path = folder / "合成.csv"
+    path.write_text(CSV, encoding="utf-8")
+    assert recognize(path, {})["kind"] == "unrecognized"
+    base, _ = _save_profile(client, company)
+    item = client.get(base + "?files=1").json()["files"][0]["recognition"]
+    assert item["kind"] == "confirmed" and item["rows"] == 3 and item["chain_ok"]
+    assert item["footer"]["ok"]
+    profiles = company_profiles(root)
+    data = discover([folder], profiles=profiles)
+    page = app.state.invoice_hub.company_views._bank_reader.read(folder).data
+    assert [s.account_no for s in data.statements] == ["001234"]
+    assert data.statements == page.statements
+    before = client.get(base + "?files=1").json()
+    path.write_text(CSV.replace("95.25", "95.26"), encoding="utf-8")
+    after = client.get(base + "?files=1").json()
+    assert before["files"][0]["recognition"]["chain_ok"]
+    assert after["files"][0]["recognition"]["chain_ok"] is False
+    assert path.read_text(encoding="utf-8").endswith("合计,15.35,20.10,\n")
+
+
 def test_bad_footer_and_account_mismatch_are_not_savable(tmp_path):
     path = tmp_path / "合成.csv"
+    path.write_text(CSV.replace("合计,15.35", "合计,15.36"), encoding="utf-8")
+    table = read_table(path)
+    assert not evaluate(table, guess_mapping(table.columns))["ok"]
     path.write_text(CSV, encoding="utf-8")
     table = read_table(path)
     mapping = guess_mapping(table.columns)
@@ -45,6 +71,15 @@ def test_bad_footer_and_account_mismatch_are_not_savable(tmp_path):
         statement(table, mapping, result["direction"], source_file="合成.csv", account_fixed="001234")
 
 
+def test_batch_timeout_reaps_child_and_does_not_cache_pending(tmp_path):
+    path = tmp_path / "合成.csv"
+    path.write_text(CSV, encoding="utf-8")
+    before = {child.pid for child in multiprocessing.active_children()}
+    assert recognize_batch([str(path)], {}, timeout=0) == {}
+    assert {child.pid for child in multiprocessing.active_children()} == before
+    assert recognize_batch([str(path)], {}, timeout=5)[str(path)]["rows"] == 3
+
+
 def test_fixed_account_is_bound_to_preview_and_cas(env):
     _, client, company, _, folder = env
     (folder / "合成.csv").write_text(CSV, encoding="utf-8")
@@ -52,6 +87,38 @@ def test_fixed_account_is_bound_to_preview_and_cas(env):
     response = client.post(base, json={"revision": 1, "mapping": preview["guessed_mapping"], "layout_hash": preview["layout_hash"], "account_fixed": "999"})
     assert response.status_code == 409
     assert next(iter(client.get(base).json()["layouts"].values()))["account_fixed"] == "001234"
+
+
+def test_cold_limit_and_next_refresh_finish_pending_files(env):
+    _, client, company, _, folder = env
+    for index in range(33):
+        (folder / f"synthetic-{index:02}.csv").write_text(CSV, encoding="utf-8")
+    base = f"/api/v1/companies/{company}/bank-layouts?files=1"
+    first = client.get(base).json()
+    assert first["recognition_complete"] is False
+    assert sum(item["recognition"]["kind"] == "unrecognized" for item in first["files"]) == 32
+    second = client.get(base).json()
+    assert second["recognition_complete"] is True
+    assert all(item["recognition"]["rows"] == 3 for item in second["files"])
+
+
+def test_builtin_statement_and_receipt_recognition(tmp_path):
+    from test_bank_workpaper import statement_text, write_statement_pdf, write_receipts_pdf
+
+    path = tmp_path / "synthetic.pdf"
+    write_statement_pdf(path, statement_text())
+    result = recognize(path, {})
+    assert result["kind"] == "builtin" and result["chain_ok"] and result["footer"]["ok"]
+    write_receipts_pdf(path)
+    assert recognize(path, {})["kind"] == "receipt"
+
+
+def test_directory_enumeration_refuses_partial_workpaper(tmp_path, monkeypatch):
+    monkeypatch.setattr("invoice_hub.services.company_bank.BANK_MAX_FILES", 1)
+    for name in ("one.csv", "two.csv"):
+        (tmp_path / name).write_text(CSV, encoding="utf-8")
+    with pytest.raises(ValueError, match="无法完整读取"):
+        discover([tmp_path])
 
 
 def test_profile_save_survives_file_reference_eviction_after_validation(env, monkeypatch):

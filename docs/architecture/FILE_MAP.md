@@ -6,6 +6,7 @@
 |---|---|
 | `tests/test_workspace_p3.py` | P3 合成后端/API 分阶段回归 |
 | `frontend/tests/workspace-p3.spec.ts` | P3 Vue 消费分阶段回归 |
+| `src/invoice_hub/services/company_bank_recognition.py` | 可终止的有界逐文件识别子进程 |
 
 
 ## 2026-11-17 P2 文件与衔接

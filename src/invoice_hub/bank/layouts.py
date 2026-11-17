@@ -6,12 +6,12 @@ import hashlib
 import io
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
-from .models import BankStatement, Counterparty, StatementRow
+from .models import BankStatement, Counterparty, StatementPage, StatementRow
 
 MAX_ROWS = 20000
 MAX_BYTES = 20 * 1024 * 1024
@@ -42,6 +42,7 @@ class Table:
     columns: list[str]
     rows: list[tuple[int, list[str]]]
     sha256: str
+    footers: list[tuple[int, list[str]]] = field(default_factory=list)
 
 
 def read_table(path: Path, raw: bytes | None = None) -> Table:
@@ -103,25 +104,25 @@ def _read_table(path: Path, raw: bytes | None = None) -> Table:
     columns = [_text(c) for c in matrix[header_index]]
     if len(columns) > 60 or not all(columns) or len(set(columns)) != len(columns):
         raise ValueError("表头空白、重复或列数过多，请先整理表头。")
-    rows = []
+    rows, footers = [], []
     for index, row in enumerate(matrix[header_index + 1:], header_index + 2):
         values = [_text(c) for c in row]
         if not any(values) or values == columns:
             continue
         if len(values) != len(columns):
             raise ValueError(f"第 {index} 行列数与表头不同。")
-        rows.append((index, values))
+        (footers if any(value in {"合计", "总计", "本期合计"} for value in values) else rows).append((index, values))
     if len(rows) < 2:
         raise ValueError("至少需要两行交易，才能独立验证借贷方向。")
-    return Table(columns, rows, hashlib.sha256(raw).hexdigest())
+    return Table(columns, rows, hashlib.sha256(raw).hexdigest(), footers)
 
 
 def guess_mapping(columns: list[str]) -> dict[str, int]:
     result = {}
-    for field, names in FIELDS.items():
+    for field_name, names in FIELDS.items():
         hits = [index for index, name in enumerate(columns) if name in names]
         if len(hits) == 1:
-            result[field] = hits[0]
+            result[field_name] = hits[0]
     return result
 
 
@@ -205,9 +206,29 @@ def evaluate(table: Table, mapping: object) -> dict:
     best = min(diagnostics, key=len) if diagnostics else []
     if len(candidates) != 1:
         breaks = breaks + best or [{"row": table.rows[0][0], "message": "方向不唯一，请补充跨日且有收支变化的交易。"}]
+    footer = {"ok": None, "inflow": None, "outflow": None, "message": "未提供可核对页脚"}
+    if table.footers:
+        footer["ok"] = False
+        try:
+            if len(table.footers) != 1 or "amount" in mapping:
+                raise ValueError("只支持单一整表收入/支出合计页脚；分页面小计或单金额合计须另行核对。")
+            _, cells = table.footers[0]
+            incoming = _amount(cells[mapping["inflow"]], blank=True)
+            outgoing = _amount(cells[mapping["outflow"]], blank=True)
+            # Footer columns use the selected source viewpoint; direction is applied only
+            # when building the standard statement, so inverted bank labels remain checked.
+            actual_in = sum((_amount(c[mapping["inflow"]], blank=True) for _, c in table.rows), Decimal(0))
+            actual_out = sum((_amount(c[mapping["outflow"]], blank=True) for _, c in table.rows), Decimal(0))
+            footer.update(inflow=f"{incoming:.2f}", outflow=f"{outgoing:.2f}")
+            if (incoming, outgoing) != (actual_in, actual_out):
+                raise ValueError("页脚收入/支出合计与交易行不符。")
+            footer.update(ok=True, message="页脚合计成立")
+        except ValueError as exc:
+            footer["message"] = str(exc)
+            breaks.append({"row": table.footers[0][0], "message": str(exc)})
     return {"ok": len(candidates) == 1 and not breaks, "breaks": breaks[:100],
             "direction": candidates[0] if len(candidates) == 1 and not breaks else None,
-            "rows": parsed}
+            "rows": parsed, "footer": footer}
 
 
 def statement(table: Table, mapping: dict, direction: dict, *, source_file: str, account_fixed: str = "") -> BankStatement:
@@ -236,5 +257,10 @@ def statement(table: Table, mapping: dict, direction: dict, *, source_file: str,
         built.append(StatementRow(f"{identity}-{seq}", identity, 1, row["line"], row["day"], None, "", "", row["details"],
                                   max(delta, Decimal(0)), max(-delta, Decimal(0)), row["balance"], "", row["flow_no"], Counterparty(row["party"])))
     opening = built[0].balance - built[0].inflow + built[0].outflow
+    footer = result["footer"]
+    totals = (Decimal(footer["outflow"]), Decimal(footer["inflow"])) if footer["ok"] else (None, None)
+    if direction["sign"] == -1:
+        totals = tuple(reversed(totals))
     return BankStatement(identity, "confirmed-layout-v1", source_file, table.sha256, next(iter(accounts), account_fixed), "", "", "CNY",
-                         built[0].booking_date, built[-1].booking_date, opening, built[-1].balance, [], built)
+                         built[0].booking_date, built[-1].booking_date, opening, built[-1].balance,
+                         [StatementPage(1, None, *totals, None)] if footer["ok"] else [], built)
