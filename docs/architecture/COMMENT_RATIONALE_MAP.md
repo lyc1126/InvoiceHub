@@ -1,5 +1,17 @@
 # InvoiceHub 注释与设计原因地图
 
+## 2026-11-17 P3 保护与原因
+
+- `company_tax`：手工输入是税额，不能推导销售额计税依据；basis.amount 保持 null，税额净额只进入测算和解释。守护 `test_unsigned_taxes_never_present_vat_as_all_tax_total`。
+
+- `company_bank_recognition.recognize_batch`：PDF解析可停留在库内，线程超时不能回收；spawn子进程超时 terminate/join/kill，pending不缓存，刷新续读。守护超时回收、33文件分批、档案/源变化测试。
+- `company_bank_layouts.index/save`：先后核对档案与来源身份；保存根身份留在计划上，不能在验证后再依赖可能被并发淘汰的 refs。固定账号与预览哈希绑定，未映射账号列也检查冲突。守护 CAS、缓存失效与 refs 淘汰用例。
+- `bank.vouchers.prepare`：有公司版式时拒绝公司根外的银行输入，避免把固定账号带到另一公司；无档案的旧显式输入保持兼容。守护 `test_draft_generation_cannot_apply_company_account_to_external_folder`。
+- `workpaper.discover` / `vouchers.prepare` / `company_views._voucher_bank_dir`：三入口共用适配与无链接字节快照，显式公司/目录不靠父目录猜；先全部对账单再回单保证方向；列不全拒绝。守护 CLI、页面、生成与自定义银行目录结果一致。
+- `company_voucher_rows.write_rows`：删除首行不能丢业务来源；新增分录不能继承旧数量/槽位/来源链接。含公式/合并表时不猜引用平移。守护证据、其它表保留、错误整批原子拒绝与真实浏览器结构保存。
+- `CompanyVouchers.vue`：保存未知不能重发；成功重读才放开，查询失败与迟到响应保持锁定。`WorkspaceModule.vue` 的经典frame只在首次实际访问挂载，避免公司凭证/税费页读取无关活动监控资料；浏览器断言零错误及 frame 数。
+- `company_tax.py/company_tax_rules.py`：候选算术不等于已签署适用规则，实时服务只消费候选说明；不把已知VAT小计显示为全部税费。守护独立样例与完整合计始终 needs_review。
+
 ## 2026-11-17 P2 保护与原因
 
 - `company_settlement.flow_state`：银行解析错误/缺少完整月份不能证明未匹配；红冲抵销不产生银行匹配。守护 `test_workspace_p2.py` 与 `test_company_settlement.py`。

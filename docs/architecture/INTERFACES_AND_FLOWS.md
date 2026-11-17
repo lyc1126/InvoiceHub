@@ -1,5 +1,14 @@
 # InvoiceHub 接口与运行流程
 
+## 2026-11-17 P3 接口与流程
+
+- `GET /api/v1/companies/{id}/bank-layouts?files=1` 每文件增 `recognition:{kind,rows,chain_ok,breaks,footer:{ok,message},message}`，kind 为 builtin/confirmed/unrecognized/receipt/unavailable；返回 `recognition_complete`。32 个冷文件/5 秒后返回待核对，刷新继续；目录列不全整体拒绝。识别后复核公司根、目录、文件签名和档案哈希，变化 409。只有未识别文件有映射按钮。
+- preview/save 增 `account_fixed`，与源字节、映射和 revision 一同绑定；保留前导零，有账号列时必须完整唯一且相符，未映射的已识别账号列也不能隐藏冲突。档案含业务账号，只能私有保存；不改源文件。
+- CLI `python -m invoice_hub.bank <PDF/CSV/XLSX或目录> --company <显式公司根>` 读取同一档案；不猜父目录，全部输入须在该公司内。凭证 `prepare` 及页面生成同入口，页面使用公司映射的银行目录；原 BOC 优先且先对账单后回单。
+- `PUT .../voucher-drafts/{name}` 每凭证增 `delete_rows:[已有行号]`、`add_lines:[{row:唯一负整数,summary,code,debit,credit,supplier}]`；最多新增 100 行，最终 1—500 行，不新建/删除整张凭证。响应增 added_rows/deleted_rows。结构编辑与导出共锁、带 SHA revision，审核通过仍走同一 validate，失败整批不写；来源迁到首行，公式/合并审核表拒绝。保存未知只查询审核表，读失败保持写锁定。
+- `GET .../vat-filing` 行增 `tax_basis:{amount,label,source_kind}`、`tax_rate:{value,label}`、`rule_candidate`；增 `tax_total:{amount,status,excludes,start,end,snapshot_id,missing}`，排除 income，与本次快照/期间绑定。候选未签署，自动税种和完整合计保持 null/needs_review，不能将 VAT 小计冒充全部税费。
+- 做账的公司凭证/税费页不预加载经典 active-target frame；首次访问经典标签后 v-show 常驻。合成浏览器不拦截 HTTP，使用真实源读取、CAS 与保存。
+
 ## 2026-11-17 P2 接口与恢复
 
 - `GET /api/v1/invoice-tags?include_usage=1`：usage 按全部登记公司的可见标记、票号全局去重；usage_unavailable 列不可读公司，usage_complete=false 时显示“已知 N 张”。普通查询保持轻量。删除定义后无该标签计数。

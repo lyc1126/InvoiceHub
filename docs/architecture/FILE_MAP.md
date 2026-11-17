@@ -1,15 +1,18 @@
 # InvoiceHub 完整文件地图
 
-## 2026-11-17 P3 分阶段新增文件
+## 2026-11-17 P3 文件与衔接
 
-| 文件 | 职责 |
+| 文件 | 职责与联动 |
 |---|---|
-| `tests/test_workspace_p3.py` | P3 合成后端/API 分阶段回归 |
-| `frontend/tests/workspace-p3.spec.ts` | P3 Vue 消费分阶段回归 |
-| `src/invoice_hub/services/company_bank_recognition.py` | 可终止的有界逐文件识别子进程 |
-| `src/invoice_hub/services/company_voucher_rows.py` | 凭证内结构变动与证据保留 |
-| `src/invoice_hub/services/company_tax_rules.py` | 未签署候选来源与独立算例，不接实时金额 |
+| `src/invoice_hub/services/company_bank_recognition.py` | 每请求 spawn 可终止识别子进程，最多 32 个冷文件/5 秒；由版式服务签名缓存，超时待处理不缓存 |
+| `src/invoice_hub/services/company_voucher_rows.py` | 已有凭证内分录增删、保留来源与其它表、清理新增行的旧槽位；公式/合并审核表拒绝结构编辑 |
+| `src/invoice_hub/services/company_tax_rules.py` | 附加税/印花税候选来源与 Decimal 独立审查样例；未签署、不接实时金额计算 |
+| `scripts/dev/workspace_p3_fixture.py` | 临时合成公司、独立配置与真实 FastAPI，不读本机配置；关闭后清理 |
+| `scripts/dev/workspace_p3_e2e.mjs` | 独立 Chromium 的映射保存/断链、凭证增删保存重读、税费展开、浅深窄屏与恢复入口，关闭浏览器和夹具 |
+| `tests/test_workspace_p3.py` | 银行账号/页脚/缓存/上限/CLI与自定义映射、结构编辑原子拒绝/证据、税务签署门禁 |
+| `frontend/tests/workspace-p3.spec.ts` | 固定账号重验、结构保存未知结果锁定、库存/社保/税费消费 |
 
+现有 `bank/layouts.py` 增固定账号与简单整表页脚；`bank/workpaper.py` 共用无链接字节快照与目录上限，`bank/__main__.py` 增 --company，`bank/vouchers.py` 及 `company_views.py`/`company_vouchers.py` 传公司版式/映射。`BankLayouts.vue`、`CompanyVouchers.vue`、`CompanyInventoryResult.vue`、`CompanyCompare.vue`、`CompanyPayroll.vue`、`CompanyTax.vue`、`WorkspaceModule.vue` 与 Vite 产物同步；经典做账 frame 首次实际访问才挂载。
 
 ## 2026-11-17 P2 文件与衔接
 

@@ -1,5 +1,16 @@
 # InvoiceHub Agent 工程任务导航
 
+## 2026-11-17 P3 第 1—6 项任务入口
+
+| 问题 | 入口与联动 | 最低验收 |
+|---|---|---|
+| B7.1/2/3 逐文件识别、固定账号、CLI/草稿复用 | bank/layouts、workpaper、vouchers、__main__；company_bank_layouts/company_bank_recognition/company_bank；做账规则 | test_workspace_p3、workspace_p2、bank_workpaper/bank_vouchers、company_bank/company_settlement/company_voucher_generate；账号冲突、页脚、32文件/超时、缓存失效、自定义目录一致 |
+| WS-10 凭证结构与库存/社保 | company_vouchers/company_voucher_rows → CompanyVouchers、CompanyInventoryResult/CompanyCompare、CompanyPayroll、WorkspaceModule；页面与做账规则 | 证据/其它表、非法结构422/原子拒绝、重审与导出相邻、Vue未知保存锁定；库存异常不隐藏、所选社保属期 |
+| B8.1 依据/税率与完整合计 | company_tax/company_tax_rules → CompanyTax；税务规则及政策来源待签署清单 | 独立Decimal例、未签署不自动金额、null不冒零、同源快照与排除所得税 |
+| ENG-05 P3 切片 | scripts/dev/workspace_p3_fixture.py、workspace_p3_e2e.mjs | 前端 typecheck/test/build；PYTHONPATH=src pytest；Node交互；真实Chromium映射/结构保存/税费/浅深390px/no_skin，零控制台错误 |
+
+浏览器运行示例：`PLAYWRIGHT_MODULE=<已安装playwright模块> node scripts/dev/workspace_p3_e2e.mjs`。夹具用临时独立配置，不读取真实默认资料；输出默认为 `output/playwright/workspace-p3`，收尾清理。无新依赖安装或 CI 声明；ENG-05 其余范围、WS-08/09 和真实/原生/Windows/成品验收另做。
+
 ## 2026-11-17 P2 任务补充
 
 命中标签/凭证墙/公司银行版式/税费记录时读公司清单、银行、工作区前端与税务任务行。入口为 `company_views.py`、`company_settlement.py`、`api/routes/company_workspace.py`、`company_bank_layouts.py`、`company_files.py`、`company_tax.py`、`bank/layouts.py` 及 `BankLayouts.vue`/`CompanyTax.vue`。

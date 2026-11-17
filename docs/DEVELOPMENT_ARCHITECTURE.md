@@ -1,5 +1,11 @@
 # InvoiceHub 开发架构与工程导航
 
+## 2026-11-17 工作区 P3 第 1—6 项
+
+开发现场 `codex/workspace-p3`，起点与稳定 main 见 [分支状态](BRANCH_STATUS.md)，尚未集成或发布。银行 `workpaper.discover(profiles=...)` 统一页面、显式公司 CLI 与草稿生成；`company_bank_recognition.py` 提供可终止、有界的请求时识别。`company_voucher_rows.py` 负责审核表结构编辑，仍以导出同一 validator 为准；Vue 库存/社保只消费后端值。税费 `company_tax_rules.py` 只提供未签署候选和审查样例，实时 API 不调用候选算术；完整合计维持 needs_review。合成真后端/Chromium 验收脚本见文件地图与任务导航。WS-08/09 不在本轮范围。
+
+下方 P1/P2 等日期小节为历史阶段记录，当前能力以本节 P3 补充为准。
+
 ## 2026-11-17 工作区后端 P2
 
 B3 标签使用计数、B5 凭证墙对流水/项目字段、B7 公司版式映射已在本地接入；B8 已接入独立申报/缴纳记录与明确假设的手工测算，自动政策测算仍待规则复核。开发现场为 `codex/workspace-p2`，稳定 main 基线保持不变（见 BRANCH_STATUS），不冒充已集成。领域路由 `api/routes/company_workspace.py` 组合独立 `company_bank_layouts.py`、`company_tax.py`；`company_files.py` 统一有界无链接读取、revision 与原子替换。银行通用表格算法在 `bank/layouts.py`，仅公司读取器接入，未改变 CLI/凭证生成。前端 `BankLayouts.vue`、`CompanyTax.vue` 只消费后端计算，构建产物由 Vite 生成。完整税务工作台与 BANK-01 剩余范围见待办及规格。
