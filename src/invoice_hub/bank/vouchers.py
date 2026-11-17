@@ -1148,7 +1148,14 @@ def prepare(paths: CompanyPaths, out_dir: Path, month_from: str, month_to: str, 
         raise ValueError("缺少 凭证/科目表.json：请先从捷锐采集科目表")
     if not paths.invoice_csv.exists():
         raise ValueError("缺少 成本发票明细.csv")
-    data = discover([paths.bank_dir])
+    from invoice_hub.services.company_bank_layouts import company_profiles
+
+    # The explicit company is the same profile boundary as the workspace reader;
+    # never infer another company's account from the bank directory's parents.
+    profiles = company_profiles(paths.company)
+    if profiles and not paths.bank_dir.resolve().is_relative_to(paths.company.resolve()):
+        raise ValueError("使用公司版式时，银行目录必须位于指定的公司资料夹内。")
+    data = discover([paths.bank_dir], profiles=profiles)
     if not data.statements:
         raise ValueError("银行流水目录中没有可识别的对账单")
     options = BuildOptions(month_from, month_to, invoice_parties=parties_from_invoice_csv(paths.invoice_csv))

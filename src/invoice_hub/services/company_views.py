@@ -638,12 +638,21 @@ class CompanyViewService:
         return {"ok": True, **company_vouchers.draft_index(root), "inputs": company_vouchers.draft_inputs(root),
                 **company_vouchers.export_formats(root)}
 
+    @staticmethod
+    def _voucher_bank_dir(company: dict) -> Path:
+        # Use the registry's bank mapping just like the workspace ledger; a renamed
+        # subfolder must not silently send generation back to the old standard path.
+        subdir = next(item for item in company["subdirs"] if item["key"] == "bank_flow_dir")
+        if subdir["status"] != "present":
+            raise company_vouchers.VoucherDraftError("VOUCHER_DRAFT_INVALID", "银行流水目录不可用，请核对公司目录映射。")
+        return Path(subdir["path"])
+
     def generate_voucher_draft(self, company_id: str, body: object) -> dict:
         # Only on the user's confirm: writes 做账草稿/ the way `voucher_cli draft` does, backing up an existing table.
         company = self._registry.get_company(company_id)["company"]
         if not isinstance(body, dict):
             raise company_vouchers.VoucherDraftError("VOUCHER_DRAFT_INVALID", "请求格式不对。")
-        return {"ok": True, **company_vouchers.generate_draft(self._company_root(company), body)}
+        return {"ok": True, **company_vouchers.generate_draft(self._company_root(company), body, bank_dir=self._voucher_bank_dir(company))}
 
     def voucher_draft(self, company_id: str, name: str) -> dict:
         company = self._registry.get_company(company_id)["company"]
@@ -708,7 +717,7 @@ class CompanyViewService:
         company = self._registry.get_company(company_id)["company"]
         if not isinstance(body, dict):
             raise company_vouchers.VoucherDraftError("VOUCHER_DRAFT_INVALID", "请求格式不对。")
-        return {"ok": True, **company_vouchers.rebook_invoice(self._company_root(company), name, body)}
+        return {"ok": True, **company_vouchers.rebook_invoice(self._company_root(company), name, body, bank_dir=self._voucher_bank_dir(company))}
 
     def export_voucher_draft(self, company_id: str, name: str, body: object) -> dict:
         # Only on the user's confirm; files go to the company folder's 做账草稿/, for manual import into the books.

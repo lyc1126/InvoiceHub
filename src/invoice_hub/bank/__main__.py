@@ -29,7 +29,8 @@ def build_parser() -> argparse.ArgumentParser:
         prog="python -m invoice_hub.bank",
         description="整理银行对账单与电子回单：校验余额、匹配回单、给出建议分录，并输出脱敏底稿。",
     )
-    parser.add_argument("inputs", nargs="+", type=Path, help="对账单/回单 PDF 或所在目录（递归查找）")
+    parser.add_argument("inputs", nargs="+", type=Path, help="对账单/回单 PDF、CSV、XLSX 或所在目录（递归查找）")
+    parser.add_argument("--company", type=Path, help="明确的公司资料夹，读取其私有银行版式.json；不猜父目录")
     parser.add_argument("--out", type=Path, help=f"输出目录；默认为第一个输入目录旁的“{DEFAULT_OUT_NAME}”")
     parser.add_argument("--from", dest="month_from", type=_month, help="底稿起始月份 YYYY-MM（校验仍覆盖全部对账单）")
     parser.add_argument("--to", dest="month_to", type=_month, help="底稿截止月份 YYYY-MM")
@@ -65,7 +66,12 @@ def main(argv: list[str] | None = None) -> int:
         args.month_from, args.month_to, args.book_balance, args.book_date, customers, set(args.supplier), parties
     )
     try:
-        result = run(args.inputs, out_dir, options, redact=not args.no_redacted, extra_terms=set(args.sensitive_term))
+        from invoice_hub.services.company_bank_layouts import company_profiles
+
+        profiles = company_profiles(args.company) if args.company else None
+        if args.company and any(not path.resolve().is_relative_to(args.company.resolve()) for path in args.inputs):
+            raise ValueError("使用公司版式时，全部银行输入必须位于明确指定的公司资料夹内。")
+        result = run(args.inputs, out_dir, options, redact=not args.no_redacted, extra_terms=set(args.sensitive_term), profiles=profiles)
     except RedactionLeak as exc:
         print(f"脱敏失败：{exc}", file=sys.stderr)
         return 3

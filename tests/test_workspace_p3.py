@@ -121,6 +121,30 @@ def test_directory_enumeration_refuses_partial_workpaper(tmp_path, monkeypatch):
         discover([tmp_path])
 
 
+def test_cli_and_draft_generation_share_confirmed_profile_and_company_mapping(env):
+    from invoice_hub.bank.__main__ import main
+    from invoice_hub.bank.vouchers import CompanyPaths, prepare
+
+    app, client, company, root, folder = env
+    path = folder / "合成.csv"
+    path.write_text(CSV, encoding="utf-8")
+    _save_profile(client, company)
+    _company_folder(root)
+    (root / "成本发票明细.csv").write_text("销售方,购买方,发票号码,开票日期\n", encoding="utf-8")
+    moved = root / "自定义银行"
+    folder.rename(moved)
+    revision = client.get("/api/v1/companies").json()["revision"]
+    assert client.patch(f"/api/v1/companies/{company}", json={"revision": revision, "subdirs": {"bank_flow_dir": moved.name}}).status_code == 200
+    raw = (moved / path.name).read_bytes()
+    assert main([str(moved), "--company", str(root), "--out", str(root / "银行流水整理"), "--no-redacted"]) == 0
+    data, _, _, _, _ = prepare(CompanyPaths.discover(root, moved), root / "cli-draft", "2026-06", "2026-06", {})
+    page = app.state.invoice_hub.company_views._bank_reader.read(moved).data
+    assert data.statements == page.statements
+    response = client.post(f"/api/v1/companies/{company}/voucher-drafts", json={"from": "2026-06", "to": "2026-06", "confirm": True})
+    assert response.status_code == 200, response.text
+    assert (moved / path.name).read_bytes() == raw
+
+
 def test_profile_save_survives_file_reference_eviction_after_validation(env, monkeypatch):
     app, client, company, _, folder = env
     (folder / "合成.csv").write_text(CSV, encoding="utf-8")
@@ -135,3 +159,20 @@ def test_profile_save_survives_file_reference_eviction_after_validation(env, mon
         return result
     monkeypatch.setattr(service, "_table", evict)
     assert client.post(base, json={"revision": 0, "mapping": preview["guessed_mapping"], "account_fixed": "001234", "layout_hash": preview["layout_hash"]}).status_code == 200
+
+
+def test_draft_generation_cannot_apply_company_account_to_external_folder(env, tmp_path):
+    from invoice_hub.bank.vouchers import CompanyPaths, prepare
+
+    _, client, company, root, folder = env
+    (folder / "合成.csv").write_text(CSV, encoding="utf-8")
+    _save_profile(client, company)
+    _company_folder(root)
+    (root / "成本发票明细.csv").write_text("销售方,购买方,发票号码,开票日期\n", encoding="utf-8")
+    external = tmp_path / "other-company"
+    external.mkdir()
+    (external / "合成.csv").write_text(CSV, encoding="utf-8")
+    output = root / "external-draft"
+    with pytest.raises(ValueError, match="指定的公司资料夹内"):
+        prepare(CompanyPaths.discover(root, external), output, "2026-06", "2026-06", {})
+    assert not output.exists()
