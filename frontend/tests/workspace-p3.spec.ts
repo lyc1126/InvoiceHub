@@ -72,3 +72,12 @@ it("highlights the selected social-insurance period without inventing wages", as
   expect(wrapper.get(".payroll-current").text()).toContain("2026-06");
   await wrapper.setProps({ month: "2026-05" }); expect(wrapper.get(".payroll-current").text()).toContain("2026-05"); wrapper.unmount();
 });
+
+it("renders server tax basis and preserves an unknown full total", async () => {
+  vi.stubGlobal("fetch", vi.fn(async () => response({ revision: 0, totals: { estimated: "80.00", declared: null, paid: null }, tax_total: { amount: null, status: "needs_review" }, rows: [{ month: "2026-06", tax_type: "vat", label: "增值税", tax_basis: { amount: null, label: "未提供应税销售额" }, tax_rate: { value: null, label: "不适用（税额抵减）" }, declared: null, paid: null, source: "", estimate: { amount: "80.00", closing_credit: "0.00", blockers: [], explanation: "合成解释" } }] })));
+  const wrapper = mount(CompanyTax, { props: { company, start: "2026-06", end: "2026-06" } }); await flushPromises();
+  expect(wrapper.get(".tax-total").text()).toContain("待复核");
+  expect(wrapper.findAll("th").map(th => th.text())).toContain("计税依据");
+  expect(wrapper.get('td[title="未提供应税销售额"]').text()).toBe("待确认");
+  expect(wrapper.text()).toContain("不适用（税额抵减）"); wrapper.unmount();
+});

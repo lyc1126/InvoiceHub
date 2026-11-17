@@ -239,3 +239,37 @@ def test_structural_edit_clears_approval_and_cannot_bypass_revalidation(tmp_path
         save_draft(root, NAME, body)
     body["vouchers"][0].pop("approval")
     assert save_draft(root, NAME, body)["vouchers"][0]["approval"] == ""
+
+
+def test_unsigned_taxes_never_present_vat_as_all_tax_total(env):
+    _, client, company, root, _ = env
+    base = f"/api/v1/companies/{company}/vat-filing"
+    assert client.put(base, json={"revision": 0, "months": {"2026-06": {"vat": {"assessment": _assumption("100", "20", "0")}}}}).status_code == 200
+    payload = client.get(base + "?start=2026-06&end=2026-06").json()
+    assert payload["totals"]["estimated"] == "80.00"
+    assert payload["rows"][0]["tax_basis"]["amount"] is None
+    assert "未提供应税销售额" in payload["rows"][0]["tax_basis"]["label"]
+    assert payload["rows"][0]["tax_rate"]["value"] is None
+    assert payload["tax_total"]["amount"] is None and payload["tax_total"]["status"] == "needs_review"
+    assert payload["tax_total"]["snapshot_id"] == payload["snapshot_id"]
+    assert all(row["estimate"]["amount"] is None for row in payload["rows"][1:])
+    assert "income" not in {item["tax_type"] for item in payload["tax_total"]["missing"]}
+    assert json.loads((root / "税费记录.json").read_text())["revision"] == 1
+
+
+def test_unsigned_rule_examples_and_review_gate():
+    from invoice_hub.services.company_tax_rules import catalog, draft_stamp_capital, draft_surcharges
+
+    rates = ("0.07", "0.03", "0.02")
+    assert draft_surcharges("3000", rates, sales="200000", period="month", half_confirmed=True, education_exempt=False) == ("105.00", "45.00", "30.00")
+    assert draft_surcharges("1000", rates, sales="100000", period="month", half_confirmed=True, education_exempt=True) == ("35.00", "0.00", "0.00")
+    assert draft_surcharges("0.10", rates, sales="200000", period="month", half_confirmed=True, education_exempt=False)[0] == "0.00"
+    with pytest.raises(ValueError):
+        draft_surcharges("1000", rates, sales="100000.01", period="month", half_confirmed=False, education_exempt=True)
+    assert draft_stamp_capital("1200000", "1000000", "0.00025", half_confirmed=True) == "25.00"
+    assert draft_stamp_capital("900000", "1000000", "0.00025", half_confirmed=False) == "0.00"
+    for tax in ("city", "education", "local_education", "stamp"):
+        rule = catalog(tax)
+        assert rule["review_status"] == "needs_review" and rule["reviewer"] is None
+        assert rule["verified_at"] is None and rule["coverage_through"] is None
+        assert "amount" not in rule and rule["sources"]

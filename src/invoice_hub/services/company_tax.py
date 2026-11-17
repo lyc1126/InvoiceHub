@@ -17,6 +17,7 @@ from invoice_hub.services.company_bank import _months_between
 from invoice_hub.services.company_directory_guard import directory_entry
 from invoice_hub.services.company_files import check_revision, read_state, write_state
 from invoice_hub.services.company_registry import CompanyRegistryError
+from invoice_hub.services.company_tax_rules import catalog
 from invoice_hub.targets.companies import current_month, taxpayer_type_for
 
 TAX_FILE = "税费记录.json"
@@ -140,6 +141,8 @@ class CompanyTaxService:
                 blockers = []
                 estimate = None
                 steps = []
+                basis = None
+                basis_label = "计税依据未确认"
                 credit = None
                 if tax_type != "vat":
                     blockers.append({"code": "TAX_RULE_UNVERIFIED", "message": "该税种尚无已复核规则包，仅展示录入的申报和缴纳记录。"})
@@ -152,6 +155,9 @@ class CompanyTaxService:
                 else:
                     values = {key: Decimal(assessment[key]) for key in INPUTS}
                     net = values["output_tax"] - values["input_tax"] + values["transfer_out"] - values["opening_credit"]
+                    # These inputs are tax amounts, not taxable sales. Keep the basis
+                    # unknown instead of displaying net tax under the sales-basis column.
+                    basis_label = "未提供应税销售额；手工税额抵减见算法说明"
                     estimate, credit = f"{max(net, Decimal(0)):.2f}", f"{max(-net, Decimal(0)):.2f}"
                     steps = [{"formula": "output_tax - input_tax + transfer_out - opening_credit", "inputs": assessment,
                               "net": f"{net:.2f}", "amount": estimate, "closing_credit": credit}]
@@ -164,6 +170,9 @@ class CompanyTaxService:
                 rows.append({"month": month, "tax_type": tax_type, "label": label, "taxpayer_type": taxpayer_type,
                              "declared": record.get("declared"), "paid": record.get("paid"), "source": record.get("source", ""),
                              "assessment": assessment,
+                             "rule_candidate": catalog(tax_type),
+                             "tax_basis": {"amount": basis, "label": basis_label, "source_kind": "user_assumption" if basis is not None else None},
+                             "tax_rate": {"value": None, "label": "不适用（税额抵减）" if tax_type == "vat" else "规则待复核"},
                              "estimate": {"status": "manual" if estimate is not None else "needs_review", "amount": estimate,
                                           "closing_credit": credit, "source_kind": "user_assumption", "algorithm_id": ALGORITHM if tax_type == "vat" else None,
                                           "snapshot_id": snapshot, "trace_id": hashlib.sha256(f"{snapshot}:{month}:{tax_type}:{ALGORITHM}".encode()).hexdigest(), "steps": steps, "blockers": blockers,
@@ -175,5 +184,11 @@ class CompanyTaxService:
         return {"ok": True, "company_id": company_id, "revision": state["revision"], "snapshot_id": snapshot,
                 "start": first, "end": last, "rows": rows,
                 "totals": {key: total(key) for key in ("estimated", "declared", "paid")},
+                # Never present a known VAT subtotal as all taxes. Every monthly leaf
+                # except income tax must be ready, from this same snapshot and period.
+                "tax_total": {"amount": None, "status": "needs_review", "excludes": ["income"],
+                              "start": first, "end": last, "snapshot_id": snapshot,
+                              "missing": [{"month": row["month"], "tax_type": row["tax_type"]} for row in rows
+                                          if row["tax_type"] != "income" and row["estimate"]["amount"] is None]},
                 "mode": "manual", "rule_bundle": None, "form_mapping": None, "filing_deadline": None,
                 "limitations": ["手工测算未核验到申报表行次与舍入样例，不构成税务结论。", "本页申报与缴纳记录独立保存，不会自动更新做账草稿或执行申报。"]}

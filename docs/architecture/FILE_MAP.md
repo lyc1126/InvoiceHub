@@ -8,6 +8,7 @@
 | `frontend/tests/workspace-p3.spec.ts` | P3 Vue 消费分阶段回归 |
 | `src/invoice_hub/services/company_bank_recognition.py` | 可终止的有界逐文件识别子进程 |
 | `src/invoice_hub/services/company_voucher_rows.py` | 凭证内结构变动与证据保留 |
+| `src/invoice_hub/services/company_tax_rules.py` | 未签署候选来源与独立算例，不接实时金额 |
 
 
 ## 2026-11-17 P2 文件与衔接

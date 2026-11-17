@@ -7,8 +7,8 @@ import { companySourceKey } from "../stores/companies";
 import WsModal from "./WsModal.vue";
 const props = withDefaults(defineProps<{ company: Company; start?: string; end?: string; compact?: boolean }>(), { start: "", end: "", compact: false });
 interface Assessment { output_tax: string | null; input_tax: string | null; transfer_out: string | null; opening_credit: string | null; source_kind: string; ordinary_only: boolean }
-interface Row { month: string; tax_type: string; label: string; declared: string | null; paid: string | null; source: string; assessment: Assessment | null; estimate: { amount: string | null; closing_credit: string | null; explanation: string; blockers: { code: string; message: string }[]; algorithm_id: string | null; steps: { net: string }[] } }
-interface Payload { start?: string; end?: string; revision: number; rows: Row[]; totals: { estimated: string | null; declared: string | null; paid: string | null }; limitations: string[] }
+interface Row { rule_candidate?: { id: string; review_status: string; formula: string; sources: { id: string; url: string }[] } | null; tax_basis?: { amount: string | null; label: string }; tax_rate?: { value: string | null; label: string }; month: string; tax_type: string; label: string; declared: string | null; paid: string | null; source: string; assessment: Assessment | null; estimate: { amount: string | null; closing_credit: string | null; explanation: string; blockers: { code: string; message: string }[]; algorithm_id: string | null; steps: { net: string }[] } }
+interface Payload { tax_total?: { amount: string | null; status: string }; start?: string; end?: string; revision: number; rows: Row[]; totals: { estimated: string | null; declared: string | null; paid: string | null }; limitations: string[] }
 const payload = ref<Payload | null>(null), error = ref(""), notice = ref("");
 const editorLoading = ref(false), editorReady = ref(false);
 const editing = ref(false), saving = ref(false), unknown = ref(false), loading = ref(false);
@@ -106,17 +106,18 @@ onBeforeUnmount(() => { ++generation; ++editorGeneration; });
       <div><span>已缴</span><strong :class="{ none: !payload?.totals?.paid }">{{ payload?.totals?.paid ? `¥${money(payload.totals.paid)}` : '未录入' }}</strong></div>
       <div><button type="button" :disabled="loading || saving || unknown || !payload" @click="open">录入申报结果</button><button v-if="unknown" type="button" @click="query">查询保存结果</button></div>
     </div>
+    <div v-if="!compact" class="overview-kpi tax-total"><span>{{ start && start === end ? '本月' : '所选期间' }}税费测算合计（不含企业所得税）</span><strong>{{ payload?.tax_total?.amount != null ? `¥${money(payload.tax_total.amount)}` : '待复核' }}</strong><small>全部税种资料与规则齐备后才显示完整合计。</small></div>
     <p v-if="payload?.start && payload?.end" class="overview-notice">展示期间：{{ payload.start }} 至 {{ payload.end }}{{ !start && !end ? '（仅已保存记录覆盖期间，非全部经营期间）' : '' }}</p>
     <p class="overview-notice">测算、已申报、已缴分别记录；没有记录显示“未测算 / 未录入”，不当作 0。{{ compact ? '完整期间未录齐时不显示合计。' : '测算只支持明确输入的普通一般计税手工假设，尚未核验到申报表行次。' }}</p>
     <p v-if="error" class="banner banner--error" role="alert">{{ error }}</p><p v-if="notice" class="banner banner--ok" role="status">{{ notice }}</p>
     <!-- Prototype bkTax: one row per tax, click to open "怎么算的" trace. Status only names
          which backend fields are present; it never derives an amount. -->
-    <div v-if="!compact" class="overview-table-wrap"><table class="grid"><thead><tr><th>月份 · 税种（点击看算法）</th><th class="num">测算</th><th class="num">已申报</th><th class="num">已缴</th><th>来源</th><th>状态</th></tr></thead><tbody>
+    <div v-if="!compact" class="overview-table-wrap"><table class="grid"><thead><tr><th>月份 · 税种（点击看算法）</th><th class="num">计税依据</th><th>税率</th><th class="num">测算</th><th class="num">已申报</th><th class="num">已缴</th><th>来源</th><th>状态</th></tr></thead><tbody>
       <template v-for="row in payload?.rows ?? []" :key="`${row.month}/${row.tax_type}`">
-        <tr class="row-link" :aria-expanded="openRow === key(row)" tabindex="0" @click="toggle(row)" @keydown.enter.prevent="toggle(row)"><td>{{ openRow === key(row) ? '▾' : '▸' }} {{ row.month }} · {{ row.label }}</td><td class="num"><span v-if="row.estimate.amount === null" class="muted">未测算</span><template v-else>{{ money(row.estimate.amount) }}</template></td><td class="num"><span v-if="row.declared === null" class="muted">未录入</span><template v-else>{{ money(row.declared) }}</template></td><td class="num"><span v-if="row.paid === null" class="muted">未录入</span><template v-else>{{ money(row.paid) }}</template></td><td>{{ row.source || '—' }}</td><td><span class="tag" :class="statusOf(row)[0]">{{ statusOf(row)[1] }}</span></td></tr>
-        <tr v-if="openRow === key(row)" class="tax-trace"><td colspan="6"><p>怎么算的：{{ row.estimate.explanation }}</p><p v-if="row.estimate.algorithm_id">算法 {{ row.estimate.algorithm_id }}</p><p v-for="block in row.estimate.blockers" :key="block.code">{{ block.message }}</p><p v-if="row.estimate.closing_credit !== null">期末留抵测算 {{ money(row.estimate.closing_credit) }}</p></td></tr>
+        <tr class="row-link" :aria-expanded="openRow === key(row)" tabindex="0" @click="toggle(row)" @keydown.enter.prevent="toggle(row)"><td>{{ openRow === key(row) ? '▾' : '▸' }} {{ row.month }} · {{ row.label }}</td><td class="num" :title="row.tax_basis?.label">{{ row.tax_basis?.amount != null ? money(row.tax_basis.amount) : '待确认' }}</td><td>{{ row.tax_rate?.label ?? '待复核' }}</td><td class="num"><span v-if="row.estimate.amount === null" class="muted">未测算</span><template v-else>{{ money(row.estimate.amount) }}</template></td><td class="num"><span v-if="row.declared === null" class="muted">未录入</span><template v-else>{{ money(row.declared) }}</template></td><td class="num"><span v-if="row.paid === null" class="muted">未录入</span><template v-else>{{ money(row.paid) }}</template></td><td>{{ row.source || '—' }}</td><td><span class="tag" :class="statusOf(row)[0]">{{ statusOf(row)[1] }}</span></td></tr>
+        <tr v-if="openRow === key(row)" class="tax-trace"><td colspan="8"><p>怎么算的：{{ row.estimate.explanation }}</p><p v-if="row.estimate.algorithm_id">算法 {{ row.estimate.algorithm_id }}</p><p v-for="block in row.estimate.blockers" :key="block.code">{{ block.message }}</p><template v-if="row.rule_candidate"><p>候选规则 {{ row.rule_candidate.id }} · 待人工复核签署</p><p>{{ row.rule_candidate.formula }}</p><p>原文依据：<a v-for="source in row.rule_candidate.sources" :key="source.id" :href="source.url" target="_blank" rel="noopener noreferrer">{{ source.id }} </a></p></template><p v-if="row.estimate.closing_credit !== null">期末留抵测算 {{ money(row.estimate.closing_credit) }}</p></td></tr>
       </template>
-      <tr v-if="payload && !payload.rows.length"><td colspan="6" class="overview-empty">该期间没有税费记录。</td></tr>
+      <tr v-if="payload && !payload.rows.length"><td colspan="8" class="overview-empty">该期间没有税费记录。</td></tr>
     </tbody></table></div>
     <WsModal :open="editing" title="录入申报结果与缴纳记录" wide @close="editing = false">
       <p class="overview-notice">请按申报表与完税凭证分别录入；留空表示未知，已确认无税额才填 0。保存不会执行报税或付款。</p>
@@ -136,6 +137,7 @@ onBeforeUnmount(() => { ++generation; ++editorGeneration; });
 </template>
 
 <style scoped>
+.tax-total { margin: 16px 0; }
 .overview-vat strong.none { color: var(--muted); }
 .tax-trace td { background: var(--surface-2); color: var(--muted); font-size: 12.5px; white-space: normal; }
 .tax-trace p { margin: 2px 0; }
