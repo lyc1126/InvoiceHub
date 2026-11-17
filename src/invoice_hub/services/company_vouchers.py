@@ -11,8 +11,9 @@ Rules kept here, not in the page:
   conflict and nothing is written.
 - Edited vouchers lose their approval unless the same save approves them, and approval
   (``通过``) is refused while the voucher has validation errors (unbalanced, unusable account, …).
-- Only existing rows of the sheet are edited; rows are never added, removed or moved, other sheets
-  and columns are untouched. Nothing under ``凭证/`` is written and no ledger is contacted.
+- Entries may be added/deleted inside an existing voucher; evidence stays on its first row.
+  Other sheets remain intact; formula/merged workbooks refuse structural edits. Nothing under
+  ``凭证/`` is written and no ledger is contacted.
 - A voucher moved to another month (stage 2) takes the next free number there: the export groups
   rows by month + number, so keeping its old number could silently merge it into another voucher.
   Future months are refused; a date outside the month is saved but blocks approval (``validate``).
@@ -329,6 +330,12 @@ def _amount(value: object, where: str) -> Decimal | None:
 
 
 def save_draft(root: Path, name: str, body: dict) -> dict:
+    # Saving and exporting must never race over different versions of the same draft.
+    with _EXPORT_LOCK:
+        return _save_draft(root, name, body)
+
+
+def _save_draft(root: Path, name: str, body: dict) -> dict:
     """Apply `{revision, vouchers: [{month, number, approval?, move_month?, date?, lines?: [{row, summary?, code?, debit?, credit?, supplier?}]}]}`."""
     path = _draft_path(root, name)
     if body.get("revision") != _revision(path):
@@ -343,14 +350,26 @@ def save_draft(root: Path, name: str, body: dict) -> dict:
     edits: dict[int, dict[str, object]] = {}
     approvals: dict[tuple[str, str], str] = {}
     moves: dict[tuple[str, str], dict] = {}
+    originals = {key: [line["row"] for line in voucher.lines] for key, voucher in current.items()}
+    structure_changed, temporary_rows, seen = False, set(), set()
     this_month = date.today().strftime("%Y-%m")
     for change in changes:
         key = (str(change.get("month") or ""), str(change.get("number") or "").zfill(3))
+        if key in seen:
+            raise VoucherDraftError("VOUCHER_DRAFT_INVALID", "同一凭证不能在一次保存中重复出现。")
+        seen.add(key)
         voucher = current.get(key)
         if voucher is None:
             raise VoucherDraftError("VOUCHER_DRAFT_INVALID", f"审核表里没有 {key[0]} 第 {key[1]} 号凭证。")
+        from invoice_hub.services.company_voucher_rows import apply_rows
+
+        try:
+            deleted, added = apply_rows(voucher, change, temporary_rows, _amount)
+        except ValueError as exc:
+            raise VoucherDraftError("VOUCHER_DRAFT_INVALID", str(exc)) from exc
+        touched = bool(deleted or added)
+        structure_changed |= touched
         rows = {line["row"]: line for line in voucher.lines}
-        touched = False
         lines = change.get("lines") or []
         if not isinstance(lines, list) or not all(isinstance(line, dict) for line in lines):
             raise VoucherDraftError("VOUCHER_DRAFT_INVALID", "请求格式不对。")
@@ -387,7 +406,7 @@ def save_draft(root: Path, name: str, body: dict) -> dict:
         # An edited voucher has to be reviewed again; approving it needs the same save to say so.
         if approval is None and touched and voucher.approval == APPROVE:
             approval = ""
-        if approval is not None and approval != voucher.approval:
+        if approval is not None:
             approvals[key] = approval
             voucher.approval = approval
 
@@ -425,6 +444,17 @@ def save_draft(root: Path, name: str, body: dict) -> dict:
         from openpyxl import load_workbook
 
         wb = load_workbook(path)
+        if structure_changed:
+            from invoice_hub.services.company_voucher_rows import write_rows
+
+            try:
+                write_rows(wb, current, originals, edits, books.ledger)
+            except ValueError as exc:
+                wb.close()
+                raise VoucherDraftError("VOUCHER_DRAFT_INVALID", str(exc)) from exc
+            wb.save(tmp)
+            wb.close()
+            return
         ws = wb[REVIEW_SHEET]
         header = [_text(cell.value).strip() for cell in ws[1]]
         column = {name: header.index(name) + 1 for name in REVIEW_COLUMNS if name in header}
@@ -448,11 +478,16 @@ def save_draft(root: Path, name: str, body: dict) -> dict:
                 ws.cell(row=line["row"], column=column["审核"]).value = None
         wb.save(tmp)
 
-    if edits or approvals or moves:
+    if edits or approvals or moves or structure_changed:
+        if body.get("revision") != _revision(path):
+            raise VoucherDraftError("VOUCHER_DRAFT_CONFLICT", "保存前审核表已变化，请刷新。", status_code=409)
         _atomic(path, write)
     moved = [{"from": {"month": key[0], "number": key[1]}, "to": {"month": move["month"], "number": move["number"]}}
              for key, move in moves.items()]
-    return {**read_draft(root, name), "saved_rows": len(edits), "saved_approvals": len(approvals), "moved": moved}
+    added_count = sum(sum(line["row"] < 0 for line in voucher.lines) for voucher in current.values())
+    deleted_count = sum(len(rows) - sum(line["row"] > 0 for line in current[key].lines) for key, rows in originals.items())
+    return {**read_draft(root, name), "saved_rows": len(edits) + added_count + deleted_count,
+            "added_rows": added_count, "deleted_rows": deleted_count, "saved_approvals": len(approvals), "moved": moved}
 
 
 EXPORT_TEMPLATE_DIR = "导出模板"

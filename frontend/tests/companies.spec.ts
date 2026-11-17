@@ -632,10 +632,11 @@ describe("companies module", () => {
     await wrapper.get("#company-tab-vouchers").trigger("click");
     await flushPromises();
     const card = () => wrapper.get('[aria-label="2026-06 第 002 号凭证"]');
-    expect(card().text()).toContain("借 900.00 · 贷 800.00 · 不平");
+    expect(card().get("tfoot").text()).toContain("借贷不平");
+    expect(card().get("tfoot").text()).toContain("900.00");
     expect(card().text()).toContain("借贷不平衡");
     await card().get('input[aria-label="第 5 行贷方"]').setValue("900");
-    expect(card().get(".voucher__totals").text()).toBe("借 900.00 · 贷 900.00");
+    expect(card().get("tfoot").text()).toContain("借贷平衡");
     expect(card().text()).toContain("保存后重新校验");
     await card().get("select").setValue("通过");
     await wrapper.findAll("button").find((button) => button.text().startsWith("保存（1 张）"))!.trigger("click");

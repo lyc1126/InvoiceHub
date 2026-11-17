@@ -74,6 +74,22 @@ const month = ref("");
 const onlyProblems = ref(false);
 // Unsaved edits: row → field → text, and voucher key → approval.
 const edits = reactive<Record<number, Partial<Record<Editable, string>>>>({});
+const added = reactive<Record<string, DraftLine[]>>({});
+const removed = reactive<Record<string, number[]>>({});
+const saveUnknown = ref(false);
+let nextRow = -1;
+function linesOf(voucher: DraftVoucher): DraftLine[] {
+  return [...voucher.lines.filter(line => !removed[keyOf(voucher)]?.includes(line.row)), ...(added[keyOf(voucher)] ?? [])];
+}
+function addLine(voucher: DraftVoucher): void {
+  (added[keyOf(voucher)] ??= []).push({ row: nextRow--, summary: "", code: "", name: "", debit: null, credit: null, supplier: "", qty: null, unit: "", todo: "新增分录，保存后校验", confidence: "", basis: "" });
+}
+function removeLine(voucher: DraftVoucher, line: DraftLine): void {
+  if (linesOf(voucher).length <= 1) return;
+  if (line.row < 0) added[keyOf(voucher)] = (added[keyOf(voucher)] ?? []).filter(item => item.row !== line.row);
+  else (removed[keyOf(voucher)] ??= []).push(line.row);
+  delete edits[line.row];
+}
 const approvals = reactive<Record<string, string>>({});
 // 所属期 / 记账日期 (stage 2), by voucher key. The backend renumbers a voucher moved to another month.
 const periods = reactive<Record<string, { month: string; date: string }>>({});
@@ -125,7 +141,7 @@ const shown = computed(() =>
   (draft.value?.vouchers ?? []).filter((item) => (!month.value || item.month === month.value) && (!onlyProblems.value || item.errors.length || refused.value[keyOf(item)])),
 );
 const dirtyCount = computed(() => {
-  const keys = new Set([...Object.keys(approvals), ...Object.keys(periods)]);
+  const keys = new Set([...Object.keys(approvals), ...Object.keys(periods), ...Object.keys(added).filter(key => added[key]?.length), ...Object.keys(removed).filter(key => removed[key]?.length)]);
   for (const voucher of draft.value?.vouchers ?? []) if (voucher.lines.some((line) => edits[line.row])) keys.add(keyOf(voucher));
   return keys.size;
 });
@@ -136,13 +152,13 @@ function bookEntry() {
   if (props.layout !== "split") return null;
   return (modulesStore.book[props.company.id] ??= { month: "", months: [], approved: 0, exportable: false, exportTick: 0 });
 }
-watch(() => [props.company.id, months.value.join(","), month.value, draft.value?.months, dirtyCount.value, exporting.value, exportJob.value, loading.value] as const, () => {
+watch(() => [props.company.id, months.value.join(","), month.value, draft.value?.months, dirtyCount.value, exporting.value, exportJob.value, loading.value, saving.value, saveUnknown.value] as const, () => {
   const state = bookEntry();
   if (!state) return;
   // Head count = approved but not yet exported (backend month index); exported ones would be skipped.
   state.months = months.value; state.month = month.value;
   state.approved = (draft.value?.months ?? []).filter(item => !month.value || item.month === month.value).reduce((sum, item) => sum + Math.max(0, item.approved - item.exported), 0);
-  state.exportable = state.approved > 0 && dirtyCount.value === 0 && !exporting.value && !exportJob.value && !loading.value;
+  state.exportable = state.approved > 0 && dirtyCount.value === 0 && !exporting.value && !exportJob.value && !loading.value && !saving.value && !saveUnknown.value;
 }, { immediate: true });
 watch(() => props.layout === "split" ? modulesStore.book[props.company.id]?.month : undefined, value => { if (value !== undefined && value !== month.value) month.value = value; });
 watch(() => props.layout === "split" ? modulesStore.book[props.company.id]?.exportTick : undefined, (tick, old) => {
@@ -154,28 +170,37 @@ function value(line: DraftLine, field: Editable): string {
 }
 
 function edit(line: DraftLine, field: Editable, text: string): void {
-  edits[line.row] = { ...edits[line.row], [field]: text };
+  if (saving.value || saveUnknown.value) return;
+  const next = { ...edits[line.row], [field]: text };
+  if (text === (line[field] ?? "")) delete next[field];
+  if (Object.keys(next).length) edits[line.row] = next;
+  else delete edits[line.row];
 }
 
-function cents(text: string): number | null {
+function cents(text: string): bigint | null {
   const cleaned = text.replace(/,/g, "").trim();
-  if (!cleaned) return 0;
-  return /^-?\d+(\.\d{1,2})?$/.test(cleaned) ? Math.round(Number(cleaned) * 100) : null;
+  if (!cleaned) return 0n;
+  if (!/^-?\d{1,18}(\.\d{1,2})?$/.test(cleaned)) return null;
+  const [whole = "0", fraction = ""] = cleaned.replace(/^-/, "").split(".");
+  return (BigInt(whole) * 100n + BigInt(fraction.padEnd(2, "0"))) * (cleaned.startsWith("-") ? -1n : 1n);
 }
 
 // Display only: the live totals while typing. The backend's check on save is what counts.
 function totals(voucher: DraftVoucher): { debit: string; credit: string; balanced: boolean; readable: boolean } {
-  let debit = 0;
-  let credit = 0;
+  let debit = 0n;
+  let credit = 0n;
   let readable = true;
-  for (const line of voucher.lines) {
+  for (const line of linesOf(voucher)) {
     const d = cents(value(line, "debit"));
     const c = cents(value(line, "credit"));
     if (d === null || c === null) readable = false;
-    debit += d ?? 0;
-    credit += c ?? 0;
+    debit += d ?? 0n;
+    credit += c ?? 0n;
   }
-  const show = (amount: number) => money((amount / 100).toFixed(2));
+  const show = (amount: bigint) => {
+    const digits = (amount < 0n ? -amount : amount).toString().padStart(3, "0");
+    return `${amount < 0n ? '-' : ''}${digits.slice(0, -2).replace(/\B(?=(\d{3})+(?!\d))/g, ',')}.${digits.slice(-2)}`;
+  };
   return { debit: show(debit), credit: show(credit), balanced: readable && debit === credit, readable };
 }
 
@@ -187,6 +212,8 @@ function resetEdits(): void {
   for (const key of Object.keys(edits)) delete edits[Number(key)];
   for (const key of Object.keys(approvals)) delete approvals[key];
   for (const key of Object.keys(periods)) delete periods[key];
+  for (const key of Object.keys(added)) delete added[key];
+  for (const key of Object.keys(removed)) delete removed[key];
 }
 
 function periodOf(voucher: DraftVoucher): { month: string; date: string } {
@@ -199,7 +226,7 @@ function lastDay(month: string): string {
 }
 
 function setPeriod(voucher: DraftVoucher, field: "month" | "date", value: string): void {
-  if (!value) return;
+  if (!value || saving.value || saveUnknown.value) return;
   const next = { ...periodOf(voucher), [field]: value };
   // A new month moves the date to its last day (the draft's month-end convention) unless it already fits.
   if (field === "month" && !next.date.startsWith(`${value}-`)) next.date = lastDay(value);
@@ -228,34 +255,45 @@ async function loadFiles(): Promise<void> {
   }
 }
 
-async function loadDraft(): Promise<void> {
+async function loadDraft(): Promise<boolean> {
   const mine = ++draftGeneration;
   if (!selectedFile.value) {
     draft.value = null;
-    return;
+    return false;
   }
   loading.value = true;
   if (draft.value?.name !== selectedFile.value) draft.value = null;
   error.value = "";
   try {
     const result = await request<DraftPayload>(`${base.value}/${encodeURIComponent(selectedFile.value)}`);
-    if (mine !== draftGeneration) return;
+    if (mine !== draftGeneration) return false;
     draft.value = result;
     const file = files.value?.find(item => item.name === draft.value?.name);
     if (file && draft.value.months) file.months = draft.value.months;
     resetEdits();
     refused.value = {};
     if (month.value && !months.value.includes(month.value)) month.value = "";
+    return true;
   } catch (cause) {
     if (mine === draftGeneration) error.value = errorText(cause);
+    return false;
   } finally {
     if (mine === draftGeneration) loading.value = false;
   }
 }
 
+async function querySaved(): Promise<void> {
+  // Only a successful read releases unknown state; failures must never re-enable save.
+  if (await loadDraft()) {
+    saveUnknown.value = false;
+    notice.value = "已重新读取审核表，请核对保存结果；未重放改动。";
+  }
+}
+
 async function save(): Promise<void> {
-  if (!draft.value || !dirtyCount.value) return;
+  if (!draft.value || !dirtyCount.value || saving.value || saveUnknown.value) return;
   saving.value = true;
+  const mine = draftGeneration;
   error.value = "";
   notice.value = "";
   const changes = draft.value.vouchers
@@ -263,10 +301,12 @@ async function save(): Promise<void> {
       const lines = voucher.lines.filter((line) => edits[line.row]).map((line) => ({ row: line.row, ...edits[line.row] }));
       const approval = approvals[keyOf(voucher)];
       const period = periods[keyOf(voucher)];
-      if (!lines.length && approval === undefined && !period) return null;
+      const addLines = (added[keyOf(voucher)] ?? []).map(line => ({ row: line.row, ...Object.fromEntries((["summary", "code", "debit", "credit", "supplier"] as Editable[]).map(field => [field, value(line, field)])) }));
+      const deleteRows = removed[keyOf(voucher)] ?? [];
+      if (!lines.length && approval === undefined && !period && !addLines.length && !deleteRows.length) return null;
       return {
         month: voucher.month, number: voucher.number, ...(approval !== undefined ? { approval } : {}),
-        ...(period ? { move_month: period.month, date: period.date } : {}), lines,
+        ...(period ? { move_month: period.month, date: period.date } : {}), lines, ...(addLines.length ? { add_lines: addLines } : {}), ...(deleteRows.length ? { delete_rows: deleteRows } : {}),
       };
     })
     .filter((item) => item !== null);
@@ -275,8 +315,10 @@ async function save(): Promise<void> {
       `${base.value}/${encodeURIComponent(draft.value.name)}`,
       { method: "PUT", body: { revision: draft.value.revision, vouchers: changes } },
     );
+    if (mine !== draftGeneration) return;
     draft.value = saved;
     await loadFiles();
+    if (mine !== draftGeneration) return;
     resetEdits();
     refused.value = {};
     const movedAll = saved.moved ?? [];
@@ -285,6 +327,7 @@ async function save(): Promise<void> {
     notice.value = `已保存：改动 ${saved.saved_rows} 行、审核状态 ${saved.saved_approvals} 张${movedAll.length ? `、所属期 / 日期 ${movedAll.length} 张` : ""}。`
       + (moved.length ? `移动后重新编号：${moved.join("；")}。` : "");
   } catch (cause) {
+    if (mine !== draftGeneration) return;
     if (cause instanceof ApiError && cause.code === "VOUCHER_DRAFT_CONFLICT") {
       await loadDraft();
       error.value = "审核表已在别处修改（或重新生成），已刷新，请重新编辑。";
@@ -294,9 +337,10 @@ async function save(): Promise<void> {
       error.value = "有凭证未通过校验，不能审核通过；未保存任何改动。";
     } else {
       error.value = errorText(cause);
+      saveUnknown.value = !(cause instanceof ApiError && cause.status >= 400 && cause.status < 500);
     }
   } finally {
-    saving.value = false;
+    if (mine === draftGeneration) saving.value = false;
   }
 }
 
@@ -426,7 +470,7 @@ async function readExportResult(quiet = false): Promise<void> {
 
 watch(selectedFile, () => void loadDraft());
 watch(month, value => {
-  if (!value || dirtyCount.value || files.value?.find(item => item.name === selectedFile.value)?.months?.some(item => item.month === value)) return;
+  if (!value || saving.value || saveUnknown.value || dirtyCount.value || files.value?.find(item => item.name === selectedFile.value)?.months?.some(item => item.month === value)) return;
   const file = files.value?.find(item => item.months?.some(item => item.month === value));
   if (file) selectedFile.value = file.name;
 });
@@ -437,6 +481,7 @@ watch(
     files.value = null;
     selectedFile.value = "";
     draft.value = null;
+    saveUnknown.value = false; saving.value = false; resetEdits();
     void loadFiles();
   },
   { immediate: true },
@@ -446,7 +491,7 @@ watch(
 <template>
   <section aria-label="凭证草稿">
     <div class="toolbar">
-      <select v-if="files?.length" v-model="selectedFile" aria-label="审核表">
+      <select v-if="files?.length" :disabled="saving || saveUnknown || dirtyCount > 0" v-model="selectedFile" aria-label="审核表">
         <option v-for="file in files ?? []" :key="file.name" :value="file.name">{{ file.name }}</option>
       </select>
       <select v-if="months.length > 1" v-model="month" aria-label="月份">
@@ -454,15 +499,16 @@ watch(
         <option v-for="item in months" :key="item" :value="item">{{ item }}</option>
       </select>
       <label v-if="files?.length" class="nowrap"><input v-model="onlyProblems" type="checkbox"> 只看有问题的</label>
-      <button type="button" :disabled="loading" @click="loadFiles().then(loadDraft)">重新读取</button>
-      <button v-if="files?.length" type="button" class="primary" :disabled="saving || !dirtyCount" :aria-busy="saving" @click="save">
+      <button type="button" :disabled="loading || saving || saveUnknown || dirtyCount > 0" @click="loadFiles().then(loadDraft)">重新读取</button>
+      <button v-if="files?.length" type="button" class="primary" :disabled="saving || saveUnknown || !dirtyCount" :aria-busy="saving" @click="save">
         {{ saving ? "保存中…" : `保存（${dirtyCount} 张）` }}
       </button>
-      <button v-if="files?.length" type="button" :disabled="!inputs || generating || dirtyCount > 0" :title="dirtyCount ? '先保存改动再生成' : ''" @click="openGenerate">生成草稿…</button>
+      <button v-if="saveUnknown" type="button" :disabled="loading" @click="querySaved">查询审核表</button>
+      <button v-if="files?.length" type="button" :disabled="!inputs || generating || saving || saveUnknown || dirtyCount > 0" :title="dirtyCount ? '先保存改动再生成' : ''" @click="openGenerate">生成草稿…</button>
       <button
         v-if="files?.length"
         type="button"
-        :disabled="!draft || !draft.approved || dirtyCount > 0 || exporting"
+        :disabled="!draft || !draft.approved || dirtyCount > 0 || exporting || saving || saveUnknown"
         :title="dirtyCount ? '先保存改动再导出' : !draft?.approved ? '还没有审核通过的凭证' : ''"
         @click="exportOpen = !exportOpen; exportResult = null"
       >导出已审核…</button>
@@ -631,6 +677,15 @@ watch(
       >
         <header class="voucher__head">
           <strong>{{ voucher.month }} · 记-{{ voucher.number }}</strong>
+          <span class="muted">改过的凭证需要保存后重新审核</span>
+          <select
+            :value="approvalOf(voucher)"
+            :disabled="saving || saveUnknown"
+            :aria-label="`${voucher.month} 第 ${voucher.number} 号凭证审核`"
+            @change="approvals[keyOf(voucher)] = ($event.target as HTMLSelectElement).value"
+          ><option value="">待审核</option><option value="通过">通过</option><option value="不导入">不导入</option></select>
+        </header>
+        <fieldset class="voucher-period-row" :disabled="saving || saveUnknown">
           <label class="nowrap">所属期
             <MonthPicker
               :model-value="periodOf(voucher).month"
@@ -649,19 +704,8 @@ watch(
               @change="setPeriod(voucher, 'date', ($event.target as HTMLInputElement).value)"
             >
           </label>
-          <span class="voucher__totals" :class="totals(voucher).balanced ? 'muted' : 'check--failed'">
-            借 {{ totals(voucher).debit }} · 贷 {{ totals(voucher).credit }}{{ totals(voucher).readable ? (totals(voucher).balanced ? "" : " · 不平") : " · 金额无法识别" }}
-          </span>
-          <select
-            :value="approvalOf(voucher)"
-            :aria-label="`${voucher.month} 第 ${voucher.number} 号凭证审核`"
-            @change="approvals[keyOf(voucher)] = ($event.target as HTMLSelectElement).value"
-          >
-            <option value="">待审核</option>
-            <option value="通过">通过</option>
-            <option value="不导入">不导入</option>
-          </select>
-        </header>
+          <span :class="periodOf(voucher).date.startsWith(periodOf(voucher).month) ? 'muted' : 'check--failed'">{{ periodOf(voucher).date.startsWith(periodOf(voucher).month) ? '记账日期在所属期内' : '记账日期不在所属期内，不能审核' }}</span>
+        </fieldset>
         <p v-for="doc in voucher.source_documents ?? []" :key="doc.kind + doc.number" class="voucher__source">
           原始单据：{{ doc.kind }}<template v-if="doc.number"> …{{ doc.number.slice(-8) }}</template><template v-if="doc.issue_date"> · 开票 {{ doc.issue_date }}</template>
           <span class="tag" :class="{ 'tag--danger': doc.cross }" :title="doc.cross ? draft.cross_period_hint : '单据日期与记入期在同一个月'">{{ doc.cross ? "跨期" : "同期" }}</span>
@@ -682,7 +726,7 @@ watch(
         <p v-if="periods[keyOf(voucher)] && periods[keyOf(voucher)]!.month !== voucher.month" class="muted voucher__stale">
           保存后移到 {{ periods[keyOf(voucher)]!.month }}，并接在该月已有凭证号之后重新编号；需要重新审核。
         </p>
-        <p v-if="!refused[keyOf(voucher)] && voucher.errors.length && voucher.lines.some((line) => edits[line.row])" class="muted voucher__stale">
+        <p v-if="!refused[keyOf(voucher)] && voucher.errors.length && (voucher.lines.some((line) => edits[line.row]) || added[keyOf(voucher)]?.length || removed[keyOf(voucher)]?.length)" class="muted voucher__stale">
           下面是上次保存时的校验结果，保存后重新校验。
         </p>
         <ul v-if="refused[keyOf(voucher)] || voucher.errors.length" class="warnings warnings--compact">
@@ -691,21 +735,24 @@ watch(
         <ul v-if="voucher.warnings.length" class="warnings warnings--compact">
           <li v-for="text in voucher.warnings" :key="text">{{ text }}</li>
         </ul>
-        <table class="grid voucher__lines">
-          <thead><tr><th>摘要</th><th>科目编码</th><th>科目名称</th><th class="num">借方</th><th class="num">贷方</th><th>供应商</th><th>数量</th><th>待处理</th></tr></thead>
+        <div class="overview-table-wrap"><table class="grid voucher__lines">
+          <thead><tr><th>摘要</th><th>科目编码</th><th>科目名称</th><th class="num">借方</th><th class="num">贷方</th><th>供应商</th><th>数量</th><th>待处理</th><th>操作</th></tr></thead>
           <tbody>
-            <tr v-for="line in voucher.lines" :key="line.row" :class="{ 'row--active': edits[line.row] }">
-              <td><input :value="value(line, 'summary')" :aria-label="`第 ${line.row} 行摘要`" @input="edit(line, 'summary', ($event.target as HTMLInputElement).value)"></td>
-              <td><input :value="value(line, 'code')" class="voucher__code" :aria-label="`第 ${line.row} 行科目编码`" @input="edit(line, 'code', ($event.target as HTMLInputElement).value)"></td>
+            <tr v-for="line in linesOf(voucher)" :key="line.row" :class="{ 'row--active': edits[line.row] || line.row < 0 }">
+              <td><input :disabled="saving || saveUnknown" :value="value(line, 'summary')" :aria-label="`第 ${line.row} 行摘要`" @input="edit(line, 'summary', ($event.target as HTMLInputElement).value)"></td>
+              <td><input :disabled="saving || saveUnknown" :value="value(line, 'code')" class="voucher__code" :aria-label="`第 ${line.row} 行科目编码`" @input="edit(line, 'code', ($event.target as HTMLInputElement).value)"></td>
               <td class="muted">{{ line.name }}</td>
-              <td><input :value="value(line, 'debit')" class="voucher__amount" inputmode="decimal" :aria-label="`第 ${line.row} 行借方`" @input="edit(line, 'debit', ($event.target as HTMLInputElement).value)"></td>
-              <td><input :value="value(line, 'credit')" class="voucher__amount" inputmode="decimal" :aria-label="`第 ${line.row} 行贷方`" @input="edit(line, 'credit', ($event.target as HTMLInputElement).value)"></td>
-              <td><input :value="value(line, 'supplier')" :aria-label="`第 ${line.row} 行供应商`" @input="edit(line, 'supplier', ($event.target as HTMLInputElement).value)"></td>
+              <td><input :disabled="saving || saveUnknown" :value="value(line, 'debit')" class="voucher__amount" inputmode="decimal" :aria-label="`第 ${line.row} 行借方`" @input="edit(line, 'debit', ($event.target as HTMLInputElement).value)"></td>
+              <td><input :disabled="saving || saveUnknown" :value="value(line, 'credit')" class="voucher__amount" inputmode="decimal" :aria-label="`第 ${line.row} 行贷方`" @input="edit(line, 'credit', ($event.target as HTMLInputElement).value)"></td>
+              <td><input :disabled="saving || saveUnknown" :value="value(line, 'supplier')" :aria-label="`第 ${line.row} 行供应商`" @input="edit(line, 'supplier', ($event.target as HTMLInputElement).value)"></td>
               <td class="nowrap">{{ line.qty ? `${line.qty} ${line.unit}` : "" }}</td>
               <td :title="line.basis">{{ line.todo }}</td>
+              <td><button type="button" class="ghost" :aria-label="`删除第 ${line.row} 行`" :disabled="saving || saveUnknown || linesOf(voucher).length <= 1" @click="removeLine(voucher, line)">×</button></td>
             </tr>
           </tbody>
-        </table>
+          <tfoot><tr><th colspan="3">合计 <span :class="totals(voucher).balanced ? 'muted' : 'check--failed'">{{ !totals(voucher).readable ? '金额无法识别' : totals(voucher).balanced ? '借贷平衡' : '借贷不平' }}</span></th><td class="num">{{ totals(voucher).debit }}</td><td class="num">{{ totals(voucher).credit }}</td><td colspan="4"></td></tr></tfoot>
+        </table></div>
+        <div class="toolbar"><button type="button" :disabled="saving || saveUnknown || linesOf(voucher).length >= 500" @click="addLine(voucher)">加一行</button><span class="muted">改过的凭证要重新审核；导出时还会校验科目、借贷和重复导出。</span></div>
       </article>
       </div>
       </div>
@@ -717,4 +764,8 @@ watch(
 <style scoped>
 .export-setup-table .grid { min-width: 500px; }
 .export-cols { display: flex; flex-wrap: wrap; gap: 6px; margin-block: 10px; }
+.voucher-period-row { border: 0; margin: 0; min-width: 0; display: flex; gap: 14px; align-items: center; flex-wrap: wrap; padding: 10px 0; }
+.voucher__lines input { border-color: transparent; background: transparent; min-height: 30px; width: 100%; }
+.voucher__lines input:hover, .voucher__lines input:focus { border-color: var(--line-strong); background: var(--surface); }
+.voucher__lines tfoot { background: var(--surface-2); }
 </style>

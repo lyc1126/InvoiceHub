@@ -176,3 +176,66 @@ def test_draft_generation_cannot_apply_company_account_to_external_folder(env, t
     with pytest.raises(ValueError, match="指定的公司资料夹内"):
         prepare(CompanyPaths.discover(root, external), output, "2026-06", "2026-06", {})
     assert not output.exists()
+
+
+@pytest.mark.parametrize("custom", ["formula", "merged"])
+def test_custom_structural_edit_refuses_without_writing(tmp_path, custom):
+    root = _company_folder(tmp_path / "synthetic")
+    path = root / "做账草稿" / NAME
+    book = load_workbook(path)
+    if custom == "formula":
+        book["银行对账"]["A2"] = "='凭证审核'!A2"
+    else:
+        book["凭证审核"].merge_cells("S2:T2")
+    book.save(path)
+    book.close()
+    raw = path.read_bytes()
+    with pytest.raises(VoucherDraftError, match="公式或合并"):
+        save_draft(root, NAME, {"revision": read_draft(root, NAME)["revision"], "vouchers": [{"month": "2026-06", "number": "001", "delete_rows": [2]}]})
+    assert path.read_bytes() == raw
+
+
+def test_structural_edit_preserves_evidence_other_sheets_and_export_readback(tmp_path):
+    root = _company_folder(tmp_path / "合成公司")
+    path = root / "做账草稿" / NAME
+    book = load_workbook(path)
+    sheet = book["凭证审核"]
+    source_col = next(c.column for c in sheet[1] if c.value == "来源")
+    sheet.cell(2, source_col, "进项发票 synthetic").hyperlink = "synthetic.pdf"
+    sheet.cell(2, 19, "original-slot")
+    book.save(path)
+    book.close()
+    revision = read_draft(root, NAME)["revision"]
+    saved = save_draft(root, NAME, {"revision": revision, "vouchers": [{"month": "2026-06", "number": "001",
+        "delete_rows": [2], "add_lines": [{"row": -1, "summary": "合成新增", "code": "140501", "debit": "1000"}], "approval": "通过"}]})
+    assert saved["added_rows"] == saved["deleted_rows"] == 1
+    assert saved["vouchers"][0]["approval"] == "通过"
+    book = load_workbook(path)
+    assert "银行对账" in book.sheetnames
+    sheet = book["凭证审核"]
+    assert sheet.cell(2, source_col).value == "进项发票 synthetic"
+    assert sheet.cell(2, source_col).hyperlink.target == "synthetic.pdf"
+    assert sheet.cell(3, 19).value is None  # new line must not learn an unrelated slot
+    assert len(saved["vouchers"][1]["lines"]) == 2
+    book.close()
+
+
+@pytest.mark.parametrize("change", [{"delete_rows": [2, 3]}, {"delete_rows": [4]}, {"delete_rows": [2, 2]},
+    {"add_lines": [{"row": 1}]}, {"add_lines": [{"row": -1, "slot": "unsafe"}]}])
+def test_illegal_structural_edits_are_atomic(tmp_path, change):
+    root = _company_folder(tmp_path / "合成公司")
+    path = root / "做账草稿" / NAME
+    raw = path.read_bytes()
+    with pytest.raises(VoucherDraftError):
+        save_draft(root, NAME, {"revision": read_draft(root, NAME)["revision"], "vouchers": [{"month": "2026-06", "number": "001", **change}]})
+    assert raw == path.read_bytes()
+
+
+def test_structural_edit_clears_approval_and_cannot_bypass_revalidation(tmp_path):
+    root = _company_folder(tmp_path / "合成公司")
+    draft = read_draft(root, NAME)
+    body = {"revision": draft["revision"], "vouchers": [{"month": "2026-06", "number": "001", "delete_rows": [2], "approval": "通过"}]}
+    with pytest.raises(VoucherDraftError, match="未通过校验"):
+        save_draft(root, NAME, body)
+    body["vouchers"][0].pop("approval")
+    assert save_draft(root, NAME, body)["vouchers"][0]["approval"] == ""

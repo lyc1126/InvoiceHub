@@ -31,6 +31,11 @@ function selectSection(id: string): void { section.value = id; opened.value.add(
 // never relabel that data; show a deliberate handoff until its API is company-aware.
 const activeSource = computed(() => !!company.value?.monitored && (!subdir.value || company.value.monitored_subdir_key === subdir.value.key));
 const classicVisible = computed(() => props.module === "settings" || (props.module !== "bookkeeping" && activeSource.value) || (props.module === "bookkeeping" && !!company.value && ["mapping", "setup"].includes(section.value)));
+// The classic bookkeeping frame reads the active monitor target. Mount it only
+// on its first actual tab visit; hidden company draft/tax tabs must not trigger
+// unrelated watch_dir API requests. Once opened, retain it across tab switches.
+const classicOpened = ref(false);
+watch(classicVisible, visible => { if (visible) classicOpened.value = true; }, { immediate: true });
 const book = computed(() => company.value ? modules.book[company.value.id] : undefined);
 const presentDirs = computed(() => company.value?.subdirs.filter(item => item.status === "present").length ?? 0);
 const switchPath = computed(() => subdir.value?.path ?? company.value?.subdirs.find(item => item.key === "cost_invoice_dir")?.path ?? "");
@@ -77,8 +82,8 @@ const switchPath = computed(() => subdir.value?.path ?? company.value?.subdirs.f
       <template v-for="item in companies.companies" :key="`${item.id}:${modules.refresh.bookkeeping ?? 0}`">
         <div v-if="visitedCompanies.has(item.id)" v-show="item.id === company.id">
           <CompanyVouchers v-if="opened.has('voucher')" v-show="section === 'voucher'" :company="item" layout="split" />
-          <CompanyCompare v-if="opened.has('stock')" v-show="section === 'stock'" :company="item" relation="inventory" :active="active && item.id === company.id && section === 'stock'" />
-          <CompanyPayroll v-if="opened.has('salary')" v-show="section === 'salary'" :company="item" />
+          <CompanyCompare v-if="opened.has('stock')" v-show="section === 'stock'" :company="item" relation="inventory" compact-inventory :active="active && item.id === company.id && section === 'stock'" />
+          <CompanyPayroll v-if="opened.has('salary')" v-show="section === 'salary'" :company="item" :month="modules.book[item.id]?.month" />
         </div>
       </template>
       <CompanyTax v-if="section === 'tax'" :company="company" :start="book?.month" :end="book?.month" />
@@ -89,6 +94,6 @@ const switchPath = computed(() => subdir.value?.path ?? company.value?.subdirs.f
       <button v-if="switchPath" type="button" @click="switching = true">设为监控目录后使用</button>
       <WatchSwitchConfirm v-if="switching" :path="switchPath" @done="switching = false" @cancel="switching = false" />
     </div>
-    <ClassicModuleView v-show="classicVisible" :module="module" :path="path" :label="label" :active="active && classicVisible" :recovery="recovery" @navigate="emit('navigate', $event)" @appearance="emit('appearance')" @state-changed="emit('stateChanged')" />
+    <ClassicModuleView v-if="module !== 'bookkeeping' || classicOpened" v-show="classicVisible" :module="module" :path="path" :label="label" :active="active && classicVisible" :recovery="recovery" @navigate="emit('navigate', $event)" @appearance="emit('appearance')" @state-changed="emit('stateChanged')" />
   </section>
 </template>

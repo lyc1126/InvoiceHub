@@ -15,7 +15,7 @@ import CompanyInventoryResult from "./CompanyInventoryResult.vue";
 import CompanySettlementResult from "./CompanySettlementResult.vue";
 
 // `relation` presets the pair when the page is opened from the sidebar's "与已选项进行比较".
-const props = withDefaults(defineProps<{ company: Company; relation?: string; active?: boolean }>(), { active: true });
+const props = withDefaults(defineProps<{ company: Company; relation?: string; active?: boolean; compactInventory?: boolean }>(), { active: true });
 const parentActive = inject(VIEW_ACTIVE, ref(true));
 provide(VIEW_ACTIVE, computed(() => parentActive.value && props.active));
 
@@ -116,7 +116,7 @@ watch(
         </div>
 
         <CompanyDeductionResult v-if="result.relation === 'deduction'" :result="result" />
-        <CompanyInventoryResult v-else-if="result.relation === 'inventory'" :result="result" />
+        <CompanyInventoryResult v-else-if="result.relation === 'inventory'" :result="result" :compact="compactInventory" />
         <CompanySettlementResult v-else :result="result" />
         <CompareGallery v-if="result.records" :records="result.records" :receipts="result.receipts" :labels="labels" :focus="focus" @detail="focus = $event" />
         <CompareSources v-if="result.records" :records="result.records" :labels="labels" :focus="focus" @clear="focus = null" @detail="focus = $event" />

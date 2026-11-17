@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { inject, reactive } from "vue";
+import { inject, reactive, ref } from "vue";
 import type { CompareResult, InventoryItem, InventorySpec } from "../api/types";
 import { COMPARE_FOCUS } from "../compareFocus";
 import { money } from "../format";
 
-defineProps<{ result: CompareResult }>();
+const props = defineProps<{ result: CompareResult; compact?: boolean }>();
+const detailed = ref(!props.compact);
 // Stock is per category (the books' 库存商品 detail); specs drop down under it as rows in the same columns.
 // Monthly rows open as a full-width row under the item; a nested table in one cell gets clipped.
 const specsOpen = reactive(new Set<string>());
@@ -38,7 +39,13 @@ function toggle(set: Set<string>, key: string): void {
 <template>
   <div>
     <p v-if="result.items?.length" class="muted">进货成本口径：{{ result.cost_label }}；单价为品类月末一次加权平均，规格只细分购销数量。</p>
-    <table v-if="result.items?.length" class="grid ledger" aria-label="进销存">
+    <div v-if="compact && result.items?.length" class="toolbar"><button type="button" :aria-pressed="detailed" @click="detailed = !detailed">{{ detailed ? '精简视图' : '查看明细' }}</button><span class="muted">精简视图沿用相同品类、单位和后端数量；点击品类追溯来源。</span></div>
+    <div v-if="compact && !detailed && result.items?.length" class="overview-table-wrap"><table class="grid" aria-label="库存精简视图">
+      <thead><tr><th>品类</th><th>单位</th><th class="num">期初数量</th><th class="num">购入数量</th><th class="num">销售数量</th><th class="num">期末数量</th><th class="num">期末金额</th><th>说明</th></tr></thead>
+      <tbody><tr v-for="item in result.items" :key="item.key" :class="{ 'row--failed': item.oversold }"><td><button type="button" class="link" @click="focusItem(item)">{{ item.name }}</button></td><td>{{ item.unit }}</td><td class="num">{{ item.open_qty }}</td><td class="num">{{ item.in_qty }}</td><td class="num">{{ item.out_qty }}</td><td class="num">{{ item.end_qty }}</td><td class="num">{{ money(item.end_amount) }}</td><td><span v-if="item.sold_never_bought" class="tag tag--danger">进项和期初中没有</span><span v-else-if="item.oversold" class="tag tag--danger">卖超</span></td></tr></tbody>
+      <tfoot v-if="result.totals"><tr><th colspan="6">合计金额（不同品类数量不合计）</th><td class="num">{{ money(result.totals.end_amount) }}</td><td></td></tr></tfoot>
+    </table></div>
+    <table v-if="detailed && result.items?.length" class="grid ledger" aria-label="进销存">
       <thead>
         <tr>
           <th>品类</th><th>单位</th>

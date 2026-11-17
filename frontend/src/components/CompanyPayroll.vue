@@ -21,7 +21,7 @@ interface PayrollPayload {
 }
 type Field = "count" | "wage" | "base" | "rate" | "due";
 
-const props = defineProps<{ company: Company }>();
+const props = defineProps<{ company: Company; month?: string }>();
 const FIELDS: { key: Field; label: string }[] = [
   { key: "count", label: "缴费人数" }, { key: "wage", label: "缴费工资" }, { key: "base", label: "缴费基数" },
   { key: "rate", label: "费率" }, { key: "due", label: "应缴费额（元）" },
@@ -89,7 +89,7 @@ function removeMonth(month: string): Promise<void> {
 }
 
 function startManual(): void {
-  manual.value = { month: "", rows: INSURANCES.map((insurance) => ({ insurance, unit: blank(), personal: blank() })) };
+  manual.value = { month: props.month ?? "", rows: INSURANCES.map((insurance) => ({ insurance, unit: blank(), personal: blank() })) };
 }
 
 function saveManual(): Promise<void> {
@@ -128,9 +128,9 @@ watch(() => companySourceKey(props.company, ["payroll_social_dir"]), (_value, pr
         <li v-for="file in payload.files.filter((item) => item.status !== 'parsed')" :key="file.file">{{ file.file }}：{{ file.message || "不是社保明细文件，已跳过" }}</li>
       </ul>
 
-      <article v-for="item in payload.months" :key="item.month" class="panel" :aria-label="`${item.month} 社保费应缴明细`">
+      <article v-for="item in payload.months" :key="item.month" class="panel" :class="{ 'payroll-current': item.month === month }" :aria-current="item.month === month ? 'date' : undefined" :aria-label="`${item.month} 社保费应缴明细`">
         <header class="voucher__head">
-          <strong>{{ item.month }} 社保费应缴明细</strong>
+          <strong>{{ item.month }} 社保费应缴明细</strong><span v-if="item.month === month" class="tag tag--accent">当前所属期</span>
           <span class="muted">来源：{{ item.source }}</span>
           <span :class="item.checks_ok ? 'muted' : 'check--failed'">单位 {{ money(item.unit_total) }} · 个人 {{ money(item.personal_total) }} · 合计 {{ money(item.total) }}</span>
           <span v-if="payload.confirmed[item.month]" class="tag tag--accent">已确认</span>
@@ -206,3 +206,8 @@ watch(() => companySourceKey(props.company, ["payroll_social_dir"]), (_value, pr
     </template>
   </section>
 </template>
+
+<style scoped>
+.payroll-current { border-left: 2px solid var(--ws-lime-deep); padding-left: 12px; }
+.payroll-current tbody tr:not(.row--failed) { background: var(--ws-selected); }
+</style>
