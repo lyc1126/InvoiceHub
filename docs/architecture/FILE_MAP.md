@@ -1,5 +1,90 @@
 # InvoiceHub 完整文件地图
 
+## 2026-11-17 P2 文件与衔接
+
+| 文件 | 职责与消费者 |
+|---|---|
+| `src/invoice_hub/api/routes/company_workspace.py` | 公司银行档案/预览/保存与税费查询/录入，同源写校验、线程池 IO，由 app 组合 |
+| `src/invoice_hub/services/company_files.py` | 公司根内有界无链接读取、版本校验、目录身份约束的原子 JSON 替换 |
+| `src/invoice_hub/services/company_bank_layouts.py` | 不透明文件引用、预览计划、公司银行版式档案与公司读取器适配 |
+| `src/invoice_hub/bank/layouts.py` | CSV/XLSX/文字 PDF 表格、显式列映射、正倒序/方向余额链、标准 BankStatement |
+| `src/invoice_hub/services/company_tax.py` | 独立分月税费记录、普通一般计税手工假设、同源解释与未知阻断 |
+| `frontend/src/components/BankLayouts.vue` | 银行目录映射弹窗、原始行样例、断点、冲突与未知保存查询 |
+| `frontend/src/components/CompanyTax.vue` | 总览增值税汇总、做账税费表、申报/缴纳编辑与手工假设 |
+| `tests/test_workspace_p2.py` | 合成计数/往来字段/方向/文件身份/revision/税额与留抵契约 |
+| `frontend/tests/workspace-p2.spec.ts` | 标签计数、服务端胶囊、映射重校验、税费 null 与未知写只查询 |
+
+修改衔接：`company_views.py` 组合版式读取器与税费服务；`company_bank.py` 缓存包含版式字节哈希；`company_settlement.py` 返回匹配/项目字段；`InvoiceTagsEditor.vue`、`OverviewDocuments.vue`、`CompanyOverview.vue`、`DirectoryPanel.vue`、`WorkspaceModule.vue` 消费。公司根新增私有运行资料 `银行版式.json`、`税费记录.json`，不进入源码或测试静态夹具。`web/static/app/` 由前端构建生成。
+
+## 2026-11-17 工作区 P1 新文件
+
+| 文件 | 职责与守护 |
+|---|---|
+| `src/invoice_hub/services/company_detection.py` | 只读资料夹检测、目录身份哈希、勾选空目录补建和持久登记回执；registry持有、companies routes调用，`tests/test_api_companies.py`覆盖。 |
+| `src/invoice_hub/services/company_export_jobs.py` | 正式导出前意图落盘与按request_id查询；不重放未知结果，预览无副作用；`tests/test_company_vouchers.py`覆盖。 |
+| `frontend/tests/workspace-p1.spec.ts` | B2登记中断、B4选月/导出中断只查询、B6嵌入只读与回退显示。 |
+
+现有 `company_vouchers.py` / `jierui.py` 增期间索引与dry_run；`invoice_list.py` / `company_views.py` 增同票Decimal统计及公司期间税务查询；所有成本/monitor构造点传公司开具来源，`tests/test_summary_and_costs.py`守护旧来源缓存失效。
+
+
+## 2026-11-16 工作区原型复刻（进行中）新增文件
+
+| 文件 | 职责与关联 |
+|---|---|
+| `frontend/src/prototype.css` | 以 `docs/design/workspace-sidebar-prototype.html` 为视觉基线的共享覆盖与明暗变量（`--ws-primary-*`、`--ws-inverse-*`、`--ws-scrim`）；`main.ts` 在 `styles.css` 之后引入 |
+| `frontend/src/icons.ts`、`frontend/src/components/WorkspaceIcon.vue` | 原型 SVG 路径表与只渲染打包内路径的图标组件，供模块列、侧栏、标签与总览使用 |
+| `frontend/src/components/CompanyOverview.vue` | 公司连续总览：账簿 / 项目汇总只显示服务端合计，期间切换共用一个范围；税费测算与申报显示未接入 |
+| `frontend/src/components/OverviewDocuments.vue` | 总览原始凭证墙：进入视口后才读取发票 / 银行流水比较结果，沿用其预览凭据与明细抽屉 |
+| `frontend/src/components/WorkspaceModule.vue` | 模块独立选择与公司上下文；做账复用 Vue 凭证 / 工资 / 库存，其余经典模块仅在选中对象等于监控目录时显示 |
+| `frontend/src/components/WsModal.vue` | 原型对话框（640 / 宽 1100px、标题栏 + ×、Esc、html+body 滚动锁计数、焦点归还、`open` 允许内容常驻）；临时识别、添加公司、导出凭证与关机确认共用 |
+| `frontend/src/components/ShutdownDialog.vue` | 外壳关机确认：读取关闭偏好、二选一与“记住”、单次 `POST /api/v1/server/shutdown`，失败只提示由用户重试；桌面宿主托管后端时禁用 |
+| `frontend/src/toast.ts` | 原型底部提示条（2.4 秒自动消失），只用于成功 / 中性反馈；App 渲染 |
+| `docs/design/WORKSPACE_UI_STANDARD.md` | 工作区前端设计硬性标准：令牌、排版、布局、组件、交互状态、深色 / 窄屏与验收清单；新前端必须遵守 |
+| `docs/WORKSPACE_PROTOTYPE_BACKEND_SPEC.md` | 原型后端缺口开发方向（B1—B8：目录统计、资料夹预检测、标签计数、做账期间索引与导出预览、凭证墙对流水、成本按公司身份、银行版式、增值税申报），交给 Codex 实施 |
+| `frontend/src/components/MonthPicker.vue` | 年份 + 12 月弹层，保留原生 `type=month` 输入的标签与边界 |
+
+## 2026-11-16 WS-03 / WS-04 新增文件
+
+| 文件 | 职责与关联 |
+|---|---|
+| `src/invoice_hub/services/company_compare_details.py` | 从既有比较结果生成汇总卡片与行明细，`CompanyViewService.compare` 调用 |
+| `src/invoice_hub/services/company_receipts.py` | 公司银行回单只读目录发现、匹配与公司 / 文件绑定的 PNG 预览；companies routes 接入 |
+| `frontend/src/api/preview.ts` | 按后端发票 / 回单凭据选择固定预览 API，供 SourcePreview 和 CompareThumbnail 共用 |
+| `frontend/src/components/CompareGallery.vue` | 比较与同号页六项分页凭证墙、明细和大图联动 |
+| `frontend/src/components/CompareThumbnail.vue` | 有界预览 job、页缩略图 / XML 占位、可见性续租与迟到请求保护 |
+| `tests/test_company_receipts.py` | 合成回单 PDF → 匹配 → PNG 与凭据、跨公司、替换、链接、同名和竞态保护 |
+| `frontend/tests/compare-gallery.spec.ts` | 分页、监控权限、回单对应页、隐藏停租和迟到结果 |
+
+经典首页新增项目列，公共 `app.css` 资源版本为 `20261116-project-column`；`page-index.js` 资源版本为 `20261116-workspace-projects`，详情页保持 `20261009-selection-6`。项目与往来集成回归扩展既有 `test_company_projects.py`、`test_company_settlement.py`；构建产物由 Vite 生成。
+
+## 未来设计文件：WS-08 / WS-09（2026-11-16）
+
+| 文件 | 职责与边界 |
+|---|---|
+| `docs/SERVER_CONNECTION_AND_CACHE_DESIGN.md` | SSH/SMB 路线、远程来源、缓存/投影/预览与异常恢复提案；无生产实现承诺。 |
+| `docs/design/server-connection-prototype.js` | 合成配置、打开右侧文件列表、当前目录名标签/下拉子目录/面包屑与范围汇总、边界内放大还原、游标/核对与断连恢复；不创建独立服务器公司树或全屏控件，保留原模块；固定示例缓存可跨页面重载，自填配置仅会话保存，无网络或业务 IO。 |
+| `docs/design/workspace-sidebar-prototype.html` | 仅新增上述脚本引用，原模块代码保留；进入已有原型侧栏“服务器链接（试验版）”。 |
+
+设计入口：[WS-08/09](../PRODUCT_BACKLOG.md#ws-08)。此处不把设计中的拟议服务目录视作已存在工程文件。
+
+## 2026-11-14 WS-02 目录保护与工作区外观隔离
+
+| 文件 | 职责与联动 |
+|---|---|
+| `src/invoice_hub/services/company_directory_guard.py` | 只读 lstat 前缀快照、设备 / inode 身份与逐层空目录创建；拒绝符号链接 / junction / 父路径文件，供公司清单补建与 setup 登记复核使用。 |
+| `tests/test_company_directory_guards.py` | 合成根 / 父 / 叶同名替换、根内链接、文件父路径、junction、共享上级补建、执行中替换与嵌套清单损坏保护。 |
+
+`company_setup.py` 同时增加日志 binding / 时间戳 / 签名验证和登记前已创建目录复核。`api/workspace.py` 集中维护可恢复的两款皮肤隔离名单，首屏注入策略；`frontend/src/appearance.ts` 与 `web/static/js/common.js` 在每次读回执行，单独经典页面不注入隔离策略。公共脚本引用版本与构建产物同步更新，原皮肤资产保留。
+
+## 2026-11-14 工作区模块桥（WS-01 第五阶段）
+
+| 文件 | 职责与关联 |
+|---|---|
+| `src/invoice_hub/api/workspace.py` | 固定经典页面在 `workspace_embed=1` 时注入嵌入布局与页面桥；经 `api/app.py::render_page` 及做账专用模板包装，不新增 API 或业务规则。 |
+| `web/static/js/workspace-embed.js` | 同源 / parent window / view token 消息校验，模块导航交接、皮肤 / 恢复同步；隐藏时暂停 SSE transport，恢复仍调用原控制器的事件监听。 |
+| `web/static/css/workspace-embed.css` | 嵌入页面只调整顶栏与外边距，复用原表格和皮肤。 |
+| `tests/workspace_embed.test.cjs` | SSE 暂停 / 恢复与监听保留、消息来源拒绝、皮肤迟到与失败恢复、模块 / 详情导航。 |
+
 ## 2026-10-09 勾选工作流文件
 
 | 文件 | 职责与联动 |
@@ -45,7 +130,7 @@
 
 | 文件 | 职责 | 实现状态与关联 |
 |---|---|---|
-| `docs/design/workspace-sidebar-prototype.html` | 左侧模块列（含临时识别、↑ 更新入口）、可拖动调宽的公司 › 项目 / 目录侧栏与右键置顶、悬停全名卡片；目录页保留现有首页发票列表与勾选合计详情、右键标签；`⇄` 比较标签按关系勾稽（进销存、往来、抵扣），类目可点开明细、下方原始文件并排联动；首页标签可全部关闭（空白起始页），其他模块不显示标签并各自缓存对象与滚动位置；公司/项目票面汇总、原始凭证缩略图、缺失子目录创建与新建工作区向导；做账（可编辑凭证、年月小日历选所属期、记账日期、跨期单据、通用凭证导出、库存加权、工资社保、税费）；双击 `hi.` 刷新本页缓存；银行版式识别与余额链 | 单文件合成数据交互原型：进项、销项、流水、勾选清单由同一份合成账簿派生；不读写真实目录、不进入 `web/` 或包资源清单、无生产 API；仍是单活动监控目录。分阶段落地见 [产品待办 WS-01—06](../PRODUCT_BACKLOG.md#ws-01) 与 [BANK-01](../PRODUCT_BACKLOG.md#bank-01) |
+| `docs/design/workspace-sidebar-prototype.html` | 左侧模块列（含临时识别、↑ 更新入口）、可拖动调宽的公司 › 项目 / 目录侧栏与右键置顶、悬停全名卡片；目录页保留现有首页发票列表与勾选合计详情、右键标签；`⇄` 比较标签按关系勾稽（进销存、往来、抵扣），类目可点开明细、下方原始文件并排联动；首页标签可全部关闭（空白起始页），其他模块不显示标签并各自缓存对象与滚动位置；公司/项目票面汇总、原始凭证缩略图、缺失子目录创建与新建工作区向导；做账（可编辑凭证、年月小日历选所属期、记账日期、跨期单据、通用凭证导出、库存加权、工资社保、税费）；双击 `hi.` 刷新本页缓存；银行版式识别与余额链 | 合成数据交互原型（服务器演示由独立脚本隔离）：进项、销项、流水、勾选清单由同一份合成账簿派生；不读写真实目录、不进入 `web/` 或包资源清单、无生产 API；仍是单活动监控目录。分阶段落地见 [产品待办 WS-01—06](../PRODUCT_BACKLOG.md#ws-01) 与 [BANK-01](../PRODUCT_BACKLOG.md#bank-01) |
 
 2026-09-08 OFD 预览新增工程文件：
 
@@ -666,8 +751,19 @@
 | `frontend/env.d.ts` | Vite 客户端类型声明。 | 类型检查入口。 |
 | `frontend/index.html` | 开发与构建的 HTML 入口。 | 构建后成为 `web/static/app/index.html`。 |
 | `frontend/src/main.ts` | 创建 Vue 应用并挂载 Pinia 与路由。 | 全局插件入口。 |
-| `frontend/src/App.vue` | 工作区外框（WS-01）：最左模块列（首页为 Vue 工作区；成本分析、单据、做账、OCR、一致性、设置在迁移前链接经典页面；左下“更新”进设置、“经典界面”回首页）、错误横幅与 `KeepAlive` 包裹的路由视图；双击 `hi.` 只刷新当前首页标签并重读公司清单。 | 模块切换保留各视图实例（页面缓存）；`stores/workspace.ts::refreshActive`。 |
-| `frontend/src/router.ts` | 客户端路由与 `/workspace/` history 基址：`/` 为首页（HomeView），旧的 `/companies`、`/directory` 与未知路径重定向到首页。 | 新模块在此登记；深链接由 FastAPI 回落到同一外壳。 |
+| `frontend/src/appearance.ts` | 共享恢复参数判断、首屏皮肤身份补齐与受控 CSS 预加载；CSS 加载有超时和取消，只接受同源皮肤 API 资源。 | `AppearanceToggle.vue`、模块列与侧栏恢复导航；不另存外观设置。 |
+| `frontend/src/components/AppearanceToggle.vue` | 模块列明暗切换：先加载后保存并核对身份，成功才替换样式；失败保留当前外观，卸载丢弃迟到结果，恢复模式不请求 / 不保存。 | 消费既有 skins / enable / reset API，保留业务组件、草稿与勾选。 |
+| `frontend/tests/appearance.spec.ts` | CSS 与保存失败、重复点击、取消 / 迟到、恢复只读的外观交接测试。 | App 草稿 / 恢复导航测试及工作区 HTTP / 真实浏览器验收相邻覆盖。 |
+| `frontend/src/App.vue` | 工作区外框（WS-01）：首页、临时识别和六个经典模块的最左模块列，所有已访问视图用 `v-show` 常驻；仅首页显示侧栏与标签，更新进设置 › 关于。单一外壳 SSE 更新系统 / 公司快照，双击 `hi.` 只刷新当前首页标签或当前模块，模块切换保留滚动；外观 / 导航交接与恢复参数同步。 | `stores/workspace.ts::refreshActive`、`stores/modules.ts`、`ClassicModuleView.vue`。 |
+| `frontend/src/router.ts` | 客户端路由与 `/workspace/` history 基址：`/` 首页、`/temporary` 临时识别与六个固定模块路由；旧的 `/companies`、`/directory` 与未知路径重定向到首页并保留查询。 | 深链接由 FastAPI 回落到同一外壳。 |
+| `frontend/src/modules.ts` | 六模块元数据、固定同源页面允许列表、工作区导航转换及视图可见性注入键。 | `App.vue`、`ClassicModuleView.vue`、首页 / 预览可见性。 |
+| `frontend/src/stores/modules.ts` | 已访问模块、显式输入目的地和局部刷新计数，只存在内存；普通切换不重建，批量入库等新输入显式刷新对应模块。 | 不持久化 URL 或业务数据。 |
+| `frontend/src/components/ClassicModuleView.vue` | 每模块独立 iframe，保持浏览上下文 / 草稿 / 筛选 / 滚动，当前刷新生成新上下文与 token；校验 origin + source + token，隐藏拒绝导航，加载超时 / 错误可显式重试。 | `api/workspace.py` 与 `workspace-embed.js`；原控制器继续处理全部业务确认与 CAS。 |
+| `frontend/src/temporary.ts` | 临时队列、设置草稿、历史 / 结果、后台进度与展示历史双重复核、复制前来源校验，代际丢弃迟到结果。 | 复用既有 temporary-recognition API；不写正式投影。 |
+| `frontend/src/views/TemporaryRecognitionView.vue` | 独立临时识别工作区：选择 / 原生拖入 / 浏览器选择回退、指针 / 键盘排序、队列、进度、历史改名 / 删除、设置、TSV 与预览入口。 | 仅当前可见页处理 Esc / 原生拖入；返回保留队列。 |
+| `frontend/src/components/TemporaryPreview.vue` | 不透明选择 / 历史身份的 XML 纯文本、PDF/OFD PNG 翻页与缩放；可见时定期来源复核，隐藏 / 卸载释放 blob、取消读取并拒绝迟到结果。 | 复用 `/temporary-recognition/files/{id}/preview*`。 |
+| `frontend/tests/modules.spec.ts` | 同源 / source / token 拒绝、隐藏导航、独立刷新 / 缓存、加载失败及显式交接 URL 的组件验证。 | iframe window 为模拟，真实页面加载另做浏览器验收。 |
+| `frontend/tests/temporary.spec.ts` | 运行任务与当前历史同时复核、来源失效、复制前校验、迟到选择 / 读取、创建失联不重放、自动打开与 XML 纯文本。 | 既有后端 / Node 临时识别与浏览器相邻回归。 |
 | `frontend/src/api/client.ts` | 同源 `/api/v1` 请求封装：超时、JSON、`detail/message` 错误映射为 `ApiError`，结构化错误带 `code` 与逐项原因 `details`；`acceptPartial` 让带逐项结果的 `ok:false`（子目录补建部分失败）返回给调用方。 | 所有视图请求经此；与后端错误模型一致。 |
 | `frontend/src/api/types.ts` | 已消费 API 字段的类型子集。 | 后端字段变化时同步。 |
 | `frontend/src/stores/system.ts` | health/settings 只读快照；刷新失败保留上次结果并给出错误。 | Pinia 全局状态。 |
@@ -702,13 +798,13 @@
 | `frontend/src/components/InvoiceTagsEditor.vue` | 发票标签管理：颜色、名称、意义的增删改，整表保存带 revision，删除时说明会移除已打标记，冲突时刷新。 | `stores/tags.ts`，`/api/v1/invoice-tags`；首页“发票标签”标签。 |
 | `frontend/src/stores/tags.ts` | 标签定义的 Pinia store：读取、整表保存（带 revision，冲突时重读）与按 id 查找。 | `InvoiceTagsEditor.vue`、`DirectoryInvoices.vue`。 |
 | `frontend/src/components/CompanySettings.vue` | 公司名称、六类相对目录映射与纳税人身份生效期编辑（不移动 / 改名文件）、从清单移除（说明不删除任何文件）；只在切换公司时重置草稿；显示成本汇总表是否已按新身份重写。 | `stores/companies.ts::update/remove`。 |
-| `frontend/src/styles.css` | 外框基础样式、模块列、工作区侧栏与标签、窄屏布局（900px 以下侧栏改抽屉，640px 以下模块列横排）。 | 仅作用于 `/workspace`。 |
+| `frontend/src/styles.css` | 共用经典皮肤变量的外框 / 表单 / 浮层样式、模块列、工作区侧栏与标签、窄屏布局（900px 以下侧栏改抽屉，640px 以下模块列横排）。 | 仅作用于 `/workspace`。 |
 | `frontend/tests/directory-preview.spec.ts` | WS-01 目录排序与勾选原票、101 个文件的窗口 / 跳转、XML 纯文本与迟到正文、持续失效恢复、监控切换。 | Vitest + Vue Test Utils；相邻比较预览仍由 `companies.spec.ts` 覆盖。 |
 | `frontend/tests/company-setup.spec.ts` | WS-02 原生选择重复 / 取消 / 迟到、从零向导先计划后确认、确认失联只 GET、映射只保存改动引用、目录选择 / 旧路径 / 监控确认失效与未保存项目草稿保护。 | Vitest + Vue Test Utils；服务端文件系统边界由 `test_company_setup.py` 覆盖。 |
 | `frontend/tests/client.spec.ts` | 请求封装的成功、错误、`ok:false`、请求体与超时测试。 | Vitest + happy-dom。 |
 | `frontend/tests/companies.spec.ts` | 公司标签：侧栏列出公司并默认打开监控中的公司、新建带 revision 且不假定纳税人身份、版本冲突后重新读取、补建必须先预览并发送 `plan_hash`、预览过期要求重新预览、守恒校验失败标红且展开、非监控目录只读、金额分组。 | Vitest + Vue Test Utils，桩接 `fetch`。 |
 | `frontend/tests/app.spec.ts` | 外框与首页（WS-01）：无公司时的起始页与 health、旧路径重定向、未迁移模块链接经典页面、刷新失败保留快照；侧栏节点打开为标签且不重复、隐藏标签保持挂载、全部关闭后停在起始页、项目展开时才读取、Shift+F10 菜单置顶并写入本机偏好、同公司有勾稽关系才可比较（无关系与不同公司禁用并说明）并以预选关系打开 ⇄ 标签、双击 `hi.` 只重载当前标签、侧栏宽度限位。 | Vitest + Vue Test Utils，桩接 `fetch`。 |
-| `web/static/app/index.html` | 提交的构建外壳，引用带 `?v=` 的资源。 | 由 `/workspace/*` 以 no-store 返回；不手改。 |
+| `web/static/app/index.html` | 提交的构建外壳，引用带 `?v=` 的资源。 | 由 `/workspace/*` 以 no-store 返回并按请求注入活动皮肤，恢复入口跳过；不手改。 |
 | `web/static/app/assets/app.js` | 提交的 Vue 应用 bundle（含 Vue/Pinia/Vue Router）。 | `?v=` 存在时按 immutable 缓存；CI 校验与源码构建逐字节一致。 |
 | `web/static/app/assets/app.css` | 提交的工作区样式。 | 同上。 |
 

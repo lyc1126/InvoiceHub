@@ -1,5 +1,61 @@
 # InvoiceHub 注释与设计原因地图
 
+## 2026-11-17 P2 保护与原因
+
+- `company_settlement.flow_state`：银行解析错误/缺少完整月份不能证明未匹配；红冲抵销不产生银行匹配。守护 `test_workspace_p2.py` 与 `test_company_settlement.py`。
+- `bank/layouts.evaluate`：方向靠每笔余额验证，不靠借贷列名；脏行和多解必须阻断。`statement` 要求显式唯一账号，避免不同账户混入账簿。首行倒推不冒充独立期初校验。守护三种金额/顺逆序、错误余额与 XLSX 零值用例。
+- `company_bank_layouts`：计划绑定源字节、映射和 revision，保存时重读；新文件再验证，不能用已确认表头跳过自检。`company_bank` 缓存加档案 SHA 并在读取后重验，避免显示旧方向结果。守护源替换/冲突/复用/破坏用例。
+- `company_files`：读取拒绝链接并校验目录句柄身份，原子替换绑定读时根身份；坏状态不覆盖。Windows fallback 只有前后检查，原生 reparse/race 仍需平台验收。守护 parent/leaf/root swap 测试。
+- `company_tax`：未签署政策包时只接受显式手工假设，申报/缴纳独立，零需来源。月度正额不跨月冲销，留抵核对不能因查询范围缩短而绕过。守护独立手算、query-independent carry、脏值与状态保护。
+- `CompanyTax.vue`：编辑切换税种/月份先读该月及 revision；未知响应查询须比较完整 assumption，不能把另一笔同额记录误认为本次写入。`BankLayouts.vue` 修改映射后禁存直到重校验；`company_bank_layouts.preview` 先跑保存时的 `statement()` 账号检查并返回 `save_blockers`，否则余额链成立却缺账号列的文件会显示可保存、提交后 422。守护 `workspace-p2.spec.ts`、`test_bank_preview_reports_save_blocker_without_account_column`。`WsModal` 传送到 `<body>`，`#app` 前缀的按钮规则不生效，弹窗内主按钮/危险按钮由 `.ws-modal button.*` 同步覆盖。
+
+## 2026-11-17 P1 衔接原因与保护
+
+- `invoice_list._invoice_stats` / `company_views.directory_invoices`：同票家族 Decimal 金额在全部筛选后、分页前计算，避免多格式重复计入及标签合计失真；守护 `test_invoice_tags.py`、`test_company_views.py`、Vue companies 标签测试。
+- `company_detection.py`：计划绑定目录身份，创建前校验所有登记输入，持久意图优先于 mkdir 后变化的检测哈希；失败保留已创建目录，登记阶段失败可能已写清单，必须 unknown。守护 `test_api_companies.py`、`workspace-p1.spec.ts`。
+- `jierui.export` / `company_export_jobs.py`：预览在任何文件/导出日志/习惯写入前退出；正式执行意图先落盘，未知响应不能重放，防止部分月份已经写出却重复导入。守护 `test_company_vouchers.py`、原导出格式 golden 与 `workspace-p1.spec.ts`。
+- `CostProjectionService._outbound_summary`：缓存来源须与公司映射一致，否则目录改映射后会沿用旧全局/旧公司销项；所有入口传递同一来源，当前月有效身份不写回状态。守护 `test_summary_and_costs.py`、`test_company_views.py` 的全部构造点检查和 `workspace-p1.spec.ts` 的只读/回退显示。
+
+
+## 2026-11-16 工作区明暗协调
+
+| 位置 | 原因 / 不变量 | 守护验证 |
+|---|---|---|
+| `web/static/skins/website-dark/skin.css` 裸按钮规则 | 外壳的透明 / 选中按钮由变量表达，皮肤裸 `button` 规则会盖出方框并抹掉选中态；`:where` 保持经典页面特异度，后续 `.btn--primary` 仍生效 | 浏览器明暗核对、`test_workspace_frontend.py` |
+| `frontend/src/prototype.css` 深色变量 | 浅色原型的墨色填充在深色下会变成近白块；遮罩色须与经典 `.modal-backdrop` 一致，否则外壳与 iframe 出现色差 | 浏览器明暗核对 |
+| `workspace-embed.js::reportModal`、`ClassicModuleView.vue::dimmed` | 经典对话框只遮住 iframe；外壳遮罩仅表现层，文档替换 / 隐藏 / 卸载必须清除，避免卡住外壳 | `workspace_embed.test.cjs`、`modules.spec.ts` |
+| `OverviewDocuments.vue` 可见后加载 | 每次读取会两次执行银行流水比较；总览打开不应因此变慢，勾稽标签的懒加载保持不变 | `companies.spec.ts` |
+
+## 2026-11-16 项目列与回单保护
+
+| 位置 | 原因 / 不变量 | 守护验证 |
+|---|---|---|
+| `company_views.py::active_project_fields`、`company_projects.py::project_fields/load` | 分页后附加项目使人工保存立即可见且不改变勾选身份 / 金额；冲突不猜、嵌套损坏拒写 | `test_company_projects.py` |
+| `company_receipts.py::_read/create/_validate/page` | 回单独立公司能力，唯一 manifest 源 + HMAC + 文件身份；目录重映射、链接或渲染中变化都不能返回旧票面 | `test_company_receipts.py`、`test_company_settlement.py` |
+| `company_bank.py::CachedFolderReader.read/list_files` | 等大小恢复 mtime 的替换及解析中变化不能复用旧字段 | `test_company_receipts.py` 与银行 / 抵扣回归 |
+| `CompareGallery.vue`、`CompareThumbnail.vue` | 六项分页限制活跃作业；隐藏停止、迟到响应丢弃，非监控发票不发预览请求 | `compare-gallery.spec.ts`、`companies.spec.ts` |
+
+## 2026-11-14 WS-02 目录身份与 WS-01 隔离策略
+
+- `company_directory_guard.py`：路径名相同不证明目录相同；补建 hash 必须绑定根与现有前缀的设备 / inode，每次 mkdir 之前重验，不使用会穿透被替换父路径的 `parents=True`。缺失子目录的祖先若为文件 / 链接必须阻断。守护：`test_company_directory_guards.py` 的同名替换、根内链接、junction、共享父路径与执行中替换。
+- `company_registry.py::_load` 与 `company_setup.py::_load`：JSON 能解析不等于结构有效；目录计划和后续写入会使用嵌套字段，不能把错误映射退回默认值。写前先验证清单，新建登记前重新核对先前目录，避免后续读者得到已经被替换的来源。守护：嵌套清单 / 任务损坏保留与登记前替换测试。
+- `api/workspace.py`、`appearance.ts`、`common.js`：用户仅暂停工作区两款皮肤；首次 HTML 和之后的 Vue / 经典缓存读回须遵循同一注入名单，否则刷新会重新加载。隔离只改呈现，不清除偏好 / 资产，独立经典页面继续使用原设置。守护：HTTP、Vue 与 Node 隔离回归；真实默认 / 双平台外观另验。
+
+## 2026-11-14 模块缓存与临时识别（WS-01 第五阶段）
+
+- `App.vue` / `ClassicModuleView.vue`：iframe 脱离 DOM 会丢失浏览上下文，常规切换用附着的 `v-show`；当前刷新才更换 frame key / token，拒绝旧 window / token 返回。隐藏视图不得导航外壳。守护：`modules.spec.ts`、App 缓存 / 批量入库交接与合成浏览器。
+- `workspace-embed.js`：六个常驻 SSE 会占满 HTTP/1 连接并阻塞 API；只暂停隐藏 transport，保留原消费者，恢复 onopen 复核。皮肤同步使用代次，旧 GET 不得覆盖较新的恢复入口。守护：`workspace_embed.test.cjs` 的 SSE、来源拒绝、迟到与失败恢复。
+- `api/workspace.py`：只对固定页面显式请求加展示适配，原业务控制器与确认 / CAS 保持单一实现；做账使用专用模板也必须包装。守护：`test_workspace_frontend.py` 的七模块嵌入与无关路由拒绝。
+- `temporary.ts`：后台运行任务不能挤掉当前历史的来源复核；两者按独立 id 轮询，失效只清空受影响展示。复制也是缓存字段输出，必须在剪贴板写入前再次复核；创建未知不重放。守护：`temporary.spec.ts`，服务端源变更 / 原文件保护相邻回归。
+- `TemporaryPreview.vue`：旧页超时只取消它自身的 controller，隐藏 / 切换使旧代次失效并释放 blob；XML 不进入 DOM。守护：临时预览组件用例与实际 PNG 翻页 / XML 验收。
+
+## 2026-11-14 Vue 工作区外观（WS-01 第四阶段）
+
+- `api/app.py::workspace_shell` 共用 `active_skin_link`：只在 Vue 挂载后读取皮肤会令暗色首屏先出现浅色面板；在 head 注入同一份已校验身份与 CSS，并共用恢复判断。守护：`test_workspace_frontend.py` 的三款首屏 / 深链接和恢复不重置保存状态用例。
+- `appearance.ts::prepareSkinStylesheet` 与 `AppearanceToggle.vue::toggle`：CSS 预加载时不生效，加载完成才发送保存请求，响应身份一致后替换当前样式；否则资源失败会持久化不可用外观。保存响应丢失只提示核对，不能自动重放；卸载取消待处理样式与请求，迟到结果不能改变页面。守护：`appearance.spec.ts` 的加载 / 超时 / 断线 / 身份不符 / 重复 / 迟到用例。
+- `styles.css` 将 Vue 面板和状态色映射到经典皮肤变量；源票面图片保留原色，不用页面整体反色。皮肤的 `overflow-x:hidden` 会形成额外纵向滚动容器，导致长列表时 sticky 模块列 / 侧栏滚出视口；工作区在 html/body 用更高优先级的 `clip` 保留装饰裁剪而不建立滚动容器。切换只换 link 与皮肤身份，不重新挂载业务树。守护：App 未保存公司表单保留测试；1280 / 390 合成浏览器覆盖两款皮肤、勾选与原票面，桌面长列表另核对模块列和侧栏的视口位置。
+- `router.ts`、模块列与侧栏返回链接保留 `no_skin`：修复入口若在重定向或导航中丢参数，下一页又会加载损坏皮肤。守护：App 的旧 / 未知路径恢复导航测试；恢复模式组件零请求与 HTTP 保存状态不变契约。
+
 ## 2026-11-13 公司选择、新建向导与映射（WS-02）
 
 - 公司 picker 是独立固定用途，返回只填草稿；复用监控用途会混淆“登记公司”与“切换业务来源”。host 拒绝路径等额外元数据，UI 不接收覆盖手工草稿的迟到结果。守护：`test_company_picker_is_a_draft_fixed_capability_with_origin_and_body_guards`、前端 picker 取消 / 重复 / 迟到用例与 Rust payload / ownership 契约。
@@ -172,6 +228,12 @@
 - `effective_tax_profile` 只换类型、不换税率：清单不替用户在 3% 与 1% 之间选择，小规模配非常用税率时由既有 `warning` 提示。`save_reference_status` 拒绝与清单不同的类型，避免页面保存后又被清单覆盖、看起来“保存无效”。
 - `company_registry.py::_after_write` 在释放 AppState 锁后才回调成本刷新，并且只比较纳税人类型（改名不重写工作簿）：刷新要取投影写锁，持有 AppState 锁去等它会阻塞其它请求。守护：`test_registry_edit_reprices_the_active_company_and_rewrites_the_workbook`。
 - `company_views.py::_read_processed/_scan_signatures` 不用 `MonitorState`：它的构造函数会建目录，`load_processed` 遇坏文件会备份并重写；非活动目录必须完全只读。扫描有 20,000 项 / 2 秒上限，未扫完时删除数不计、无差异只能判 `unknown`。守护：`test_directory_views_report_projection_and_freshness_without_writing`、`test_missing_processed_record_reads_as_unknown`。
+
+## 2026-11-17 工作区 P1 对接修正
+
+- `company_export_jobs.py::_REJECTED_BEFORE_WRITE`：只有 `export_draft` 在调用 `export()` 前自查抛出的错误码记 `rejected`，页面据此放开按钮；`VOUCHER_DRAFT_UNREADABLE` 包住 `export()` 本身，可能已写一半，必须保持 `unknown` 只查询。两种状态下同 token 都不重放。守护：`test_export_pre_write_refusal_records_rejected_receipt`、`test_export_mid_write_error_stays_unknown`。
+- `company_detection.py::register` 的 `failed` 分支：`failed` 只在写公司清单之前记录，同一计划可再执行；旧记录改名保留，不覆盖。守护：`test_failed_registration_before_registry_write_can_run_again`。
+- `page-costs.js::renderTaxProfile`：工作区内只锁纳税人身份（以公司清单为准），销项税率保持可改，依据用户 2026-11-10 的决定；后端 `save_reference_status` 拒绝与公司身份不一致的类型。守护：`workspace-p1.spec.ts` 的 B6 用例。
 
 ## 2026-11-10 公司清单（WS-07 第 1 步）
 
@@ -656,3 +718,7 @@ Windows验包测试中的假凭据在运行时拼接：保持生成文件的扫�
 - [接口与运行流程](INTERFACES_AND_FLOWS.md)
 - [数据结构与算法](DATA_AND_ALGORITHMS.md)
 - [Agent 任务导航](AGENT_TASK_MAP.md)
+
+## 2026-11-16 设计提案与原型（非生产能力）
+
+服务器原型 `docs/design/server-connection-prototype.js` 以 Shadow DOM/独立状态保护原有模块；最新修订移除独立服务器工作区及模块捕获拦截，只打开右侧文件面板。当前目录标签/下拉选择只改变根内缓存视图，不修改连接根或 monitor；目录边界匹配防相邻目录串统计，空目录与无缓存/错误区分。updatePanelBoundary 测量原主内容区左缘，窗口 resize 与 ResizeObserver 跟随公司栏宽度，普通和放大面板都不覆盖左栏；网页全屏已移除。epoch 拒绝迟到任务，完整任务后才发布代际；缓存按协议/服务器/账号/根隔离，同来源重连复用，严格合成样本可持久化，自填配置只留内存。离线 DOM 检查覆盖目录、边界、来源、缓存与异常；真实浏览器视觉仍待验。生产 cursor 与代际同提交的原因及故障矩阵见[设计 §11—12](../SERVER_CONNECTION_AND_CACHE_DESIGN.md)。

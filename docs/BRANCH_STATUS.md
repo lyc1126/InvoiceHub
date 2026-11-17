@@ -1,5 +1,40 @@
 # 分支整理、main 同步与双平台候选准备
 
+## 工作区 P2 开发（2026-11-17）
+
+起点 `codex/workspace-p1@ab9d4b8530c9212c9427e6e498e2e0f9faf53d73`；开工核验本地/远端 main 均为 `ee0f2c2557d2b2a3640e9c00d9b8241581db4409`。依赖前序 P1/工作区未提交实现，在同目录建立 `codex/workspace-p2`，未用 worktree。开工已有 modified 99、untracked 42 与 ignored 运行态；全部保留。B3/B5/B7 与 B8 手工基础已接入，自动税务规则未解锁；未暂存、提交、推送、合并或打包。与前序修改共用文件，按项独立提交须先整理前序基线；本轮保存相对开工文件副本的增量供审阅，不混入前序提交。
+
+## 工作区 P1 开发（2026-11-17）
+
+起点 `codex/cost-select-all-transitions@ab9d4b8530c9212c9427e6e498e2e0f9faf53d73`，开工实时核验本地/远端 main 为 `ee0f2c2557d2b2a3640e9c00d9b8241581db4409`。规格依赖已有开发线及未提交的工作区前端，保留全部现场后在同目录建立 `codex/workspace-p1`；未创建 worktree。实现 B1/B2/B4/B6，未提交、推送、合并或打包。规格每项独立提交尚未执行：新增改动与前序未提交内容共用文件，需要先独立整理前序基线，禁止直接把它们混入 P1 提交。源码工作不代表稳定 main/发行成品已包含。
+
+
+## WS-03 / WS-04 开发补齐（2026-11-16）
+
+任务 `ws-03-04-20261116` 在既有 `codex/cost-select-all-transitions@ab9d4b8530c9212c9427e6e498e2e0f9faf53d73` 接续，保留已有未提交代码、文档、原型与 ignored 本机状态；本地 main 仍为 `ee0f2c2557d2b2a3640e9c00d9b8241581db4409`。新增项目列、比较明细和受限回单预览，未切换分支、提交、推送、合并或打包；本轮未重新查询远端。源码开发完成不代表稳定 main 或成品已包含。
+
+## WS-02 后端与工作区皮肤隔离接续（2026-11-14）
+
+任务 `ws-02-backend-20261114` 接续现有 `codex/cost-select-all-transitions@ab9d4b8`，保留起点 WS-01 未提交代码 / 文档与原有 HTML。实时 `git ls-remote` 核对 main 为 `ee0f2c2`，当前开发分支尚无同名远端引用。沿既有 WS 开发线补齐目录身份 / 状态校验，并按用户确认隔离工作区两款装饰皮肤；不切换分支、不提交、不推送、不合并、不打包，稳定主线与已发布成品保持原身份。
+
+## WS-01 临时识别与模块缓存接续（2026-11-14）
+
+任务 `ws-01-completion-20261114` 从同一 `codex/cost-select-all-transitions@ab9d4b8` 恢复；原聊天已暂停且无后台写入，接手复核通过。保留起点 32 份 modified、13 份 untracked 与 ignored 本机状态，在既有未完成源码上补保护、专用回归、构建与文档。当前分支 / HEAD / main 未改，不提交、不推送、不合并、不打包；本地实现仍不属于稳定 main 或已发布成品。
+
+## WS-01 外观衔接接续（2026-11-14）
+
+本轮 `ws-01-appearance-20261114` 从 `codex/cost-select-all-transitions@ab9d4b8530c9212c9427e6e498e2e0f9faf53d73` 继续已整合的 WS 开发范围；本地 main 仍为 `ee0f2c2557d2b2a3640e9c00d9b8241581db4409`。开工保留前轮九份文档修改、原有未跟踪 HTML 与 ignored 本机状态。新增 Vue 皮肤衔接、对应回归和文档，尚未提交；不切换分支、不推送、不合并、不打包，不将源码能力记入已发布成品。当前开发余项与 37 项待真实验收继续由下列统一入口维护。
+
+## WS 任务线现场核对（2026-11-13）
+
+本轮任务为 `ws-status-acceptance-audit-20261113`：核对 WS-01—07 与待真实验收清单，修正文档口径；起点为 `codex/cost-select-all-transitions@ab9d4b8530c9212c9427e6e498e2e0f9faf53d73`。
+
+- 主目录的 `codex/cost-select-all-transitions` 与独立 worktree 的 `codex/ws-07-company-registry` 同指 `ab9d4b8`，WS-02 最新实现已包含在本地成本开发线。
+- 本地 `main`、`origin/main` 与 `git ls-remote origin refs/heads/main` 均为 `ee0f2c2557d2b2a3640e9c00d9b8241581db4409`；与任务起点双向差异为 `0 / 69`，开发线领先 69 个提交。远端未返回上述两条开发分支的同名引用。
+- 本轮只改核对文档，不切换分支、不提交、不推送、不合并、不打包；这些本地能力不属于已发布成品。起点已有未跟踪 HTML 与 ignored 本机配置 / 运行态 / 产物保留。
+
+开发范围见 [WS 当前汇总](../IMPLEMENTATION_STATUS.md)；待真实验收见[三轮清单](MIGRATION_GAP_CHECKLIST.md#ws-real-acceptance)。本节是核对时的引用快照，后续以实时 Git 为准；下方是各次整合与发布的历史记录。
+
 ## 工程门禁并入本地成本开发线（2026-11-09）
 
 `codex/engineering-guardrails`（CI 门禁、API 路由拆分、Vue 工作区前端基础，4 个 DCO 提交）由用户授权在本地合并：以快进方式并入 `codex/cost-select-all-transitions`，该开发线仍领先 `main` 且未推送、未开 PR；用户决定功能稳定后再开 PR，`main` 不变。合并前主工作区的未提交修改（成本页、银行模块、交接工具及相关文档）先备份到仓库外并 stash，快进后原样恢复为未提交状态，逐文件核对无丢失；合并后在该工作区运行全量 pytest、ruff、Node 交互测试与前端类型检查/组件测试/构建可复现检查。精确提交以实时 Git 为准。

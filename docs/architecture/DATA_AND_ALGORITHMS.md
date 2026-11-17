@@ -1,5 +1,39 @@
 # InvoiceHub 数据结构与算法
 
+## 2026-11-17 P2 数据与计算
+
+`银行版式.json` 为公司根 v1 `{version,revision,layouts:{header_fingerprint:{columns,mapping,direction,layout_hash}}}`；不保存原始交易样例。表头精确指纹只在同公司复用。输入支持 UTF-8/GB18030 CSV、单表 XLSX、每页唯一可还原表格的文字 PDF；20 MiB、20000 行、60 列、100 页，至少两笔交易。双收支、金额+方向、带符号金额均独立尝试顺逆序 × 两种站位，只接受一个全部成立假设；脏行不跳过。账号须每行非空且全文件唯一。首笔期初倒推不是独立证明，页面明示须核对原件；OFD/OCR/复杂表格未实现。
+
+`税费记录.json` 为公司根 v1 `{version,revision,months:{YYYY-MM:{vat|city|education|local_education|stamp|income:{declared,paid,source,assessment}}}}`。Decimal 字符串最多两位，未知 null、确认零与未申报分开；非空金额必须给来源。与旧 `做账草稿/申报数据.json` 无自动复制。身份取 taxpayer_periods 的当期版本，快照包含全部记录与身份。
+
+唯一可运行的手工场景 `vat-general-manual-balance-v1`：普通一般计税净额 = 销项 − 已确认进项 + 进项转出 − 已核对期初留抵，应纳测算=max(净额,0)，期末留抵=max(-净额,0)。身份不支持、输入缺失、连续前期留抵不符均 needs_review/null；检查与查询窗口无关。逐月正额相加，禁止按季净额抵销前月应纳。trace_id、snapshot_id、steps 与解释由同一次 Decimal 运算产生；前端仅显示。
+
+没有已复核政策包、表式版本/行次、征期或优惠结论，rule_bundle/form_mapping/filing_deadline 均 null。其余税种只保存记录；它们的已申报/已缴不进入增值税 totals。完整自动税务引擎仍按 D0—D5 推进。
+
+## 2026-11-17 工作区 P1 数据口径
+
+B1 统计复用 `selection_family_key/selection_money_value`：各家族合法金额唯一时 Decimal 累加；多个不同金额视为冲突，完全缺失/非法单列，不以 0 填入。记录总数和识别状态仍逐记录；金额家族计数与记录数量不混用。
+
+B2 检测哈希覆盖根、六类映射及逐层 dev/inode 身份；文件计数只用于展示，不授权写入，最多遍历两万条目/两秒，跳过链接与 junction。runtime `local_state/company-registrations/<plan_hash>.json` 与排他 `.started` 记录意图、创建进度及登记结果；同计划不同请求身份拒绝，未知结果不重放。创建前校验 CAS、名称、身份、数量上限；每步复核目录身份，不回滚删除已建目录。
+
+B4 月份统计直接读取审核表并复用导出校验与同签名出现次数规则；approved 为审核通过数，blocked 为校验有问题数，exported 为历史已导出签名数，三者可重叠。多审核表顶层按表汇总，重叠期间不表示可合并导出，当前选表决定操作范围。预览复用正式导出的整月阻断、重复跳过、连续编号及列映射，Decimal 样例序列化为字符串。`做账草稿/导出记录/<request_id>.json` 只存执行回执，先 fsync 意图再写正式产物；崩溃留下 unknown，不根据文件缺失推断失败。预览不创建回执，不改导出历史/学习习惯。
+
+B6 有效纳税人身份只读覆盖，不写回 `tax_profile`；历史 month 查询读取对应期间，未设置时回退该公司状态或一般纳税人 13%。实际 v1 投影继续按当月身份、原品目表和已开快照算法；历史成本重算不在本轮。销项缓存的 expected source 加入读取 fingerprint，映射变化后的旧来源不参与工作簿或 API。已开数量、品目表仍位于该公司成本目录的状态 JSON，工作区缓存不成为业务主存储。
+
+
+## 2026-11-16 项目展示与比较解释（WS-03 / WS-04）
+
+- `project_fields` 是汇总与经典列表共同优先级：非空人工值 > 唯一备注 > 空；多备注标 conflict，损坏人工文件标 unavailable 并拒写，不能悄悄回退覆盖。列表只复制分页行追加字段，号码缺失时与账簿同样采用文件名中的 20 位号码家族。
+- `attach_details` 消费现有库存 / 往来 totals、品类 / 往来单位、抵扣期间与匹配 ID，不另建金额引擎；每行 detail 可独立查看，跨期记录在 steps 披露，前端只用可见 record_ids 过滤。
+- 回单复用 `discover` 与 `match_receipts`；只在 source manifest 内按 basename + SHA 唯一定位 PDF，重名同内容来源不给预览。HMAC 绑定公司、根及映射目录 dev/inode、回单 ID / SHA / 页、源路径链与文件 dev/inode/size/mtime/ctime。创建复核 SHA，逐页前后与续租复核身份，链接 / junction 拒绝。每个服务最多八个作业，renderer 保留页数、像素与字节上限。
+- 请求期 `CachedFolderReader` 签名为 `(mtime_ns,size,ctime_ns,dev,ino)`；新增 / 删除 / 等大小还原 mtime 的替换均失效，解析前后签名不一致不发布也不缓存，银行 / 抵扣读者共用此保护。无任何源文件或投影写入。
+
+## 2026-11-14 工作区视图缓存（WS-01 第五阶段）
+
+模块缓存只存在前端内存：`visits`、局部 `refresh` 计数、显式交接目的地及每模块滚动位置；经典页面以附着 DOM 的 iframe 保留其控制器、对象、筛选和未保存草稿。刷新只替换当前浏览上下文与 view token，不重放业务写入；首页仍只替换当前标签。外壳 / 公司异步快照采用请求代次，旧返回不能覆盖新目录身份。
+
+Vue 临时识别继续消费既有 session/item 数据，来源和字段真值仍在下方服务协议，不新增数据库 schema 或票据主存储。运行 session 与当前展示 session 可不同，按各自 id 复核，只有展示来源失效才清空对应结果；隐藏清空未经复核的展示并停止定时器，队列 / 设置草稿保留。复制先复核来源再生成业务列 TSV；操作列不参与。预览只保存当前 PNG blob / XML 文本，切换、隐藏或卸载释放并使旧代次失效。
+
 ## 2026-10-09 平台结果与构建身份
 
 Windows回收在PreDeleteItem保护后，再检查PostDeleteItem返回的实际回收站目标；成功HRESULT不足以单独证明可恢复。构建指纹继续纳入真实src/web及既定输入，只排除不参与组包的editable `.egg-info`，和既有字节码/cache排除规则一致；源码变化仍改变core build ID。图标生成显式选择BASIC字形布局，避免可选Raqm导致平台差异。
@@ -294,7 +328,7 @@ Lifecycle lease 是 host 运行态授权快照，不是可持久化业务状态�
 - `subdirs` 是相对根目录的 POSIX 路径；拒绝绝对路径、盘符、`~`、空段、`.`/`..` 和 Windows 保留字符，六类之间不得相同或嵌套。登记时未给出的键按“标准名存在 → 根目录直接子目录中唯一命中提示词（同一文件夹命中多类则不用） → 标准名（待创建）”推断，此后映射固定保存，不随目录变化重新猜测。
 - `taxpayer_periods` 按月份升序、月份唯一；某月身份取 `effective_from <= 该月` 的最后一项（`targets/companies.py::taxpayer_type_for`），早于首项或为空时为“未设置”，不默认一般纳税人。成本开票参考以它为准，见 §9.3。
 - 读取到非 JSON、`schema_version != 1`、revision/列表结构错误或缺少 `id/name/root_dir/subdirs/taxpayer_periods` 的条目时返回 `COMPANY_REGISTRY_CORRUPT`，保留原文件并拒绝写入。
-- 子目录补建的 `plan_hash = SHA256(company_id, registry revision, 根路径键, [key, 路径键, action]...)`；apply 在同一锁内重算并比对，只对 `create` 项 `mkdir(exist_ok=False)`，遇到已出现的目录记为 `skipped`，路径上有同名文件记为 `failed`，不触碰任何既有文件。
+- 子目录补建的 `plan_hash = SHA256(company_id, registry revision, 根路径键, [key, 路径键, action]..., directory_identities)`；`directory_identities` 对根和每级前缀保存 lstat 状态及设备 / inode，不含文件内容或目录 mtime（新增普通源文件不会误伤计划）。apply 在同一锁内重算并比对，逐层 mkdir 前复核现有 / 本次已建父路径身份，共享上级只建一次；链接 / junction（即使指向根内）与父路径文件阻断，同名替换使旧计划失效。执行中变化保留已建目录并列入 `failed`，不触碰既有文件；OS syscall 级并发及 Windows / 网络盘语义仍须平台实测。
 
 按公司只读目录（WS-07 第 2 步，`services/company_views.py`）：
 
@@ -908,3 +942,14 @@ OFD 从 `OFD.xml/DocRoot → Document.xml/Pages` 读取真实页数，仅接受�
 
 
 返回 [开发架构总入口](../DEVELOPMENT_ARCHITECTURE.md)。
+
+## 2026-11-16 设计提案与原型（非生产能力）
+
+未来逐文件缓存、来源身份与完整代际方案见[设计](../SERVER_CONNECTION_AND_CACHE_DESIGN.md) §5—7，尚未落地。SQLite 仅作可重建缓存，手改覆盖独立保存；弱元数据签名的同大小同时间替换需内容核验，扫描不完整不得计算删除，远程成本投影路径例外须先评审。
+
+
+## 服务器跨模块缓存与增量游标提案（2026-11-16）
+
+[设计 §11—12](../SERVER_CONNECTION_AND_CACHE_DESIGN.md)补充 SourceBinding 按来源/公司/目录/绑定版本隔离，各领域读取同一完整 generation；未归属不计入公司，人工覆盖不是可丢弃缓存。连续授权变更日志可跳过重连枚举，新增/修改更新同一文件身份，显式 tombstone 才移出投影；游标与完整代际共同提交，断档/失效回到轻量完整核对。标准 SMB/SFTP 无可靠续接时仍可能 O(N) 元数据核对，未变正文不再解析。仅设计，当前无新增生产 schema 或业务算法。
+
+右侧原型的目录选择只在已连接根内切换读取范围，统计含该目录及子目录；路径匹配按完整段边界，不用相邻字符串前缀混合目录。目录选择不改 source_id/根或已发布缓存代际，切换/重新打开不触发正文解析。空目录/不支持内容、筛选无匹配与尚无缓存分别提示；当前没有跨模块业务接入。

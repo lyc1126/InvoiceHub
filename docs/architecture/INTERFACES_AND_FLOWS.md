@@ -1,5 +1,56 @@
 # InvoiceHub 接口与运行流程
 
+## 2026-11-17 P2 接口与恢复
+
+- `GET /api/v1/invoice-tags?include_usage=1`：usage 按全部登记公司的可见标记、票号全局去重；usage_unavailable 列不可读公司，usage_complete=false 时显示“已知 N 张”。普通查询保持轻量。删除定义后无该标签计数。
+- 往来比较 `records.a` 增 `flow_match:matched|unmatched|null`、`project` 与 `project_source:remark|manual|null`；项目沿用人工优先规则。只有真实匹配家族可为 matched；红冲/源过期/银行错误为 null。unmatched 还要求发票月有完整对账单期间，局部交易表不能证明未匹配。凭证墙不在前端推断。
+- `GET /api/v1/companies/{company_id}/bank-layouts?files=1` 返回 revision、layouts、files[{file_ref,name}]。file_ref 绑定公司/根/目录/相对文件/签名，10 分钟有效；不接受任意路径。`POST /api/v1/companies/{company_id}/bank-layouts/preview` 带 file_ref 和可选 mapping，返回 columns、guessed_mapping、至多五行 sample_rows、balance_chain{ok,breaks,direction}、save_blockers[]、layout_hash、revision。save_blockers 是保存时同一 `statement()` 检查（例如缺唯一本方账号列）的预判，非空时页面禁存。预览只读，计划绑定文件 SHA、映射、当前 revision，5 分钟有效。
+- `POST .../bank-layouts` 带 mapping/layout_hash/revision，重读源、验证唯一方向/完整余额链/账号后原子保存。409 刷新不重放；网络/5xx 结果未知只能 GET 档案查询 layout_hash。公司 bank reader 对新文件重新校验方向与余额，profile 哈希变化清缓存；原 BOC 优先。CLI 和生成凭证未接此档案。
+- `GET /api/v1/companies/{company_id}/vat-filing?start&end` 返回 revision、snapshot_id、分月六税种 rows 和增值税 totals；空范围仅已保存记录的首末月（无记录为当月），页面明确展示覆盖期间，最多 120 月。未知值 null 不作零，不完整期间无合计。
+- `PUT .../vat-filing` 带 revision 与 months{YYYY-MM:{tax_type:{declared,paid,source,assessment}}}；单税种 null 可移除记录，金额只接受到分十进制字符串，确认的零也需来源。一般纳税人普通一般计税的 assessment 仅手工明确输入四项值与 user_assumption/ordinary_only；保存不执行报税/付款/草稿更新。GET 的结果与解释同源且绑定身份/记录快照；未知写响应只查询，比较完整记录和手工输入，409 不自动重放。
+- 所有上述写操作经同源校验和线程池，跨进程锁位于 runtime/company-p2-locks，不写真实账套凭证目录。状态损坏、链接或目录替换拒绝写入，保留原文件；错误不暴露内部 OSError 路径。
+
+## 2026-11-17 工作区 P1 接口补齐
+
+- B1：`GET /api/v1/invoices` 与公司目录列表的 `stats.all/filtered.total_amount` 改为两位十进制字符串；后者先应用标签与其它筛选、后统计、最后分页。同票家族只计一次，新增 `total_amount_valid_count/missing_count/conflict_count`（完整字段名均以 `total_amount_` 开头）；Vue 兼容旧数字类型一个版本。
+- B2：`POST /api/v1/companies/detect` 只读返回根状态、六类子目录、文件数（受限或不可读为 null）与绑定目录身份的 `plan_hash`；不登记、补目录或切换 monitor。`POST /api/v1/companies` 带 `revision/plan_hash/create_missing`，重检后仅补选中的缺失空目录。执行意图、每个目录和登记结果保存在 runtime；`GET /api/v1/companies/registration-jobs/{plan_hash}` 查询。迟到检测被丢弃，未知写响应锁定查询，同一计划不执行两次，目录替换为 409。`failed` 只在写公司清单之前记录：同一计划再次提交时旧记录改名保留（`<plan_hash>.failed-<ns>.json`）并重新执行；Vue 读到 `failed` 自动重新检测，冲突/计划过期后提供“重新检测”按钮。
+- B4：`GET /api/v1/companies/{company_id}/voucher-drafts` 返回逐审核表及顶层 `months:[{month,vouchers,approved,blocked,exported}]` 和 `index_errors`；读取不改工作簿或导出历史。`POST /api/v1/companies/{company_id}/voucher-drafts/{name}/export` 支持 `dry_run:true`，仍校验 revision 和制单人，返回 format、columns、unmatched、至多五行 sample_rows、months 的整月阻断原因。可选 `month` 同时限制预览与正式导出；空值为当前审核表全部月份。页头月份来自索引，导出数量为当前审核表对应月份的后端值。
+- 正式导出仍须 `confirm:true`；Vue 生成 `request_id`，执行前落盘意图，完成后落盘结果，`GET /api/v1/companies/{company_id}/voucher-drafts/{name}/export-jobs/{token}` 读取。中断、未找到或损坏记录均不能视为未执行；未知响应只读结果，服务端同 token 不重放。`export()` 运行前的确定拒绝（`VOUCHER_DRAFT_INVALID/BOOKS_UNAVAILABLE/CONFLICT`）照常返回错误，回执记为 `state:rejected`（带 `code/message`）；Vue 报错后只 GET 一次回执，`rejected` 才放开导出按钮，`unknown`/读不到保持只读查询。`VOUCHER_DRAFT_UNREADABLE` 可能发生在写出中途，仍记 `unknown`。页头“导出凭证（N）”为已审核未导出张数。旧无 token API/CLI 调用保持兼容。
+- B6：`GET /api/v1/companies/{company_id}/cost-tax-profile?month=YYYY-MM` 只读公司生效身份与该公司的已保存销项率，返回 `source:company|fallback` 与 month。嵌入成本页按 2026-11-10 用户决定只锁纳税人身份（隐藏身份选择器，显示公司身份胶囊或“未设置，按…计算（回退口径）”），销项税率选择器与保存按钮保留可改，后端 `save_reference_status` 继续拒绝与公司清单不一致的身份；保留品目表。该只读接口当前没有页面消费方。实际 v1 成本投影仍按当前月身份计价，不将历史查询当作历史工作簿重算。
+- 已登记公司的手动汇总只读同公司映射的开具目录，缺失/链接不能回退到全局；未登记来源保留旧配置。API、daemon、后台子进程、手动汇总共同传递开具来源；缓存来源不匹配时页面、工作簿均排除旧销项并提示重新汇总。开具目录仍不被 monitor 自动扫描。
+
+
+## 2026-11-16 工作区对话框遮罩桥
+
+经典页面 → 外壳新增展示消息 `{channel:"invoicehub.workspace.v1", token, type:"modal", open:boolean}`：`workspace-embed.js` 观察 `.modal-backdrop` 可见性，变化时（rAF 合并）发送，`DOMContentLoaded` / `pageshow` 报告当前态，`pagehide` 补发关闭。`ClassicModuleView` 沿用同源 + 当前 frame window + 当前 view token 校验，写入 `modules.modals[module]`（仅活动模块为真）；`App.vue` 据此显示 `.ws-module-scrim`，当前 iframe 提升到遮罩之上。重载、`load`、隐藏与卸载都清除状态。消息只影响外观，不触发任何对话框动作或 API。适配器资源版本 `20261116-prototype-2`。
+
+## 2026-11-16 项目列与比较凭证（WS-03 / WS-04）
+
+`GET /api/v1/invoices` 及活动公司目录列表分页后附加 `project`、`project_source=manual/remark/conflict/none/unavailable`；项目读取失败保留发票列表并返回 `projects_error`。不写投影、不改变行身份与金额。人工归属来自当前公司根，备注来自当前成本明细。
+
+比较结果增加 `summary_details[{label,value,steps,record_ids}]`、每条 `records.a/b[].detail`。往来结果增加 `receipts[]`（日期、收付双方、金额、用途、来源页、匹配明细与可选 preview）；回单 → 对账单流水 → 发票的 ID 来自后端既有算法。跨期间匹配说明隐藏记录，不生成不可见行的预览。
+
+| 方法与路径 | 输入 / 输出与边界 |
+|---|---|
+| `POST /api/v1/companies/{company_id}/receipt-preview-jobs` | 严格接受后端 `preview={kind:receipt,company_id,receipt_id,token,page}`，无路径字段；复核公司 / 目录 / 源文件与 SHA，返回 `initial_page`、受限 PNG 页模板、续租 URL |
+| `GET /api/v1/companies/{company_id}/receipt-preview-jobs/{job_id}/pages/{page_number}` | 返回 PNG，渲染前后复核来源；不能跨公司访问 |
+| `POST /api/v1/companies/{company_id}/receipt-preview-jobs/{job_id}/keep-alive` | 同源续租，复核目录和源文件版本；闲置过期 / 未知 job 为 410，来源变化为 409 |
+
+回单响应 no-store；不返回源绝对路径，作业仅内存。Vue `CompareGallery` 每组最多六项，只有后端 preview 才请求，回单打开对应页；隐藏标签卸载缩略图并关闭大图，停止续租；恢复重新核对，迟到结果丢弃。非监控发票仍不能预览，回单是独立只读能力。
+
+## 2026-11-14 WS-02 后端与 WS-01 皮肤隔离
+
+- 原有补建 API 不变：`plan_hash` 新增根与每级目录身份绑定；同名替换返回 `COMPANY_PLAN_STALE`，执行中变化列入 `failed` 并保留已创建目录；逐层 mkdir 拒绝链接、junction 与文件父路径。公司 `root_status` 可返回 `outside_root/unreadable`，子目录均为 `root_unavailable`。登记前复核新建目录；清单 / 任务嵌套损坏分别以既有 409 `COMPANY_REGISTRY_CORRUPT/COMPANY_SETUP_STATE_INVALID` 拒绝。
+- 工作区与显式 `workspace_embed=1` 页在首屏注入同一隔离名单；Ink Pulse / Animal Island 不注入活动 CSS，Vue 与经典公共皮肤消费者后续读回也不应用。只影响展示，不写偏好、不删资产；独立经典页面沿原设置，浅色 / website-dark / no_skin 保留。皮肤页展示暂停范围，公共脚本版本为 `20261114-workspace-skin-isolation-1`。
+
+## 2026-11-14 工作区缓存与临时识别（WS-01 第五阶段）
+
+`/workspace/` 外壳常驻首页 / 临时识别 Vue 视图，以及首次访问后各自常驻的六个经典 iframe。`GET /costs|documents|bookkeeping|ocr|consistency|settings` 仅在 `workspace_embed=1` 时注入固定嵌入资源；`/skins` 与 `/invoices/{key}` 保持模块内详情导航，普通经典入口保持原控制器。页面桥携带每个浏览上下文的 view token，只接受同源、当前 source window 和 token；隐藏模块不能发起外壳导航。当前刷新替换该模块上下文，旧 window / token 不再消费。
+
+外壳单一 SSE 消费监控 / 目录 / 汇总变化及重连，刷新 health/settings/companies 并通知目录列表。当前 iframe 继续用原 SSE 控制器；隐藏时只关闭 transport，事件监听保留，恢复后 onopen 按原规则重新核对。普通模块切换不重载页面，首页标签只在首页显示；批量入库沿用 sessionStorage 的 target / key / path 草稿，经 `workspace:navigate` 进入单据模块并显式接收新批次。“更新”进入设置的 `#about`，恢复参数和皮肤同步各缓存页面，迟到皮肤读取不得覆盖更新的恢复状态。
+
+Vue `/workspace/temporary` 共用下方临时 API 与独立 worker，队列排序按 ids 提交，不扫描父目录；隐藏停止轮询并丢弃未复核的结果 / 预览，返回复核。另有 worker 运行且查看旧历史时同时检查两份来源；复制之前再 GET 当前 session，TSV 只含业务列。创建响应未知只提示查历史，不自动再次 POST。桌面拖入允许固定 origin 的经典首页和该临时页面（含尾斜线），其它工作区路径仍拒绝，不改变 OpenAPI 操作集合。
+
 ## 2026-10-09 桌面交接完善
 
 两平台Tauri启动在原有严格build/ownership/静态页验证后，要求OpenAPI存在临时识别pick/drop/sessions、`GET /api/v1/cost-analysis/view`、删除计划POST、状态GET和确认POST；缺方法或路径拒绝接入。原生拖入仅送至固定http://127.0.0.1:8766的首页路径，允许selection_return/no_skin等页面状态查询，不对详情/其它来源开放。Windows删除结果同时要求成功HRESULT、未aborted及回收站目标；结果不明保持停止和核对提示。
@@ -124,10 +175,12 @@ flowchart LR
 | `GET /backend` | `backend.html` 内联脚本 | health、settings、bridge/status | 不注入皮肤，不进入普通首要导航 | API/前端契约 |
 | `GET /invoices/{invoice_key}` | `detail.html` + `page-detail.js` | invoice detail、manual-fields、open-file、open-location | `invoice_key` 是当前汇总位置键，不是长期主键 | 详情与成本拆分 API 测试 |
 | `GET /invoices/print/{job_id}` | `invoice_print.html` 内联打印脚本 | print job、逐页 PNG | 不注入活动皮肤；全部图片完成 `load + decode` 和两次渲染帧后调用 `window.print()`；票面跟随实际页框；私有 no-store；macOS 子窗口只允许该同端口受控路径 | 打印服务/前端契约、真实浏览器分页与 macOS 策略测试 |
-| `GET /workspace`、`GET /workspace/{client_path:path}` | `web/static/app/index.html`（`frontend/` 的提交构建，Vue 3） | health、settings；首页（`/workspace/`，WS-01 侧栏 + 标签；旧 `/workspace/companies`、`/workspace/directory` 重定向到首页）另消费 `/api/v1/companies*`（§3.5.1；项目名称在侧栏展开公司时才读取 `projects`），写操作只有公司清单增删改、子目录补建确认、项目归属、发票标签与凭证草稿保存 / 导出（同号检查 `same-number` 只读，可跨两家公司；属期文件夹移动须在页面确认；工资社保确认写 申报数据.json），以及经确认的 `PUT /api/v1/settings` 切换监控目录；比较与同号检查的“原票”消费 `preview-jobs`（创建、页面、文本、续租）；监控目录的目录标签另消费经典首页同一组勾选接口（`selection-summary`、`preview-jobs` 完整源文件队列、`print-jobs`、`trash-jobs` 预备与确认、单据页入库会话交接）；侧栏置顶、展开与宽度只存浏览器 `localStorage` | 所有客户端路由返回同一外壳，`Cache-Control: no-store`；资源带 `?v=` 内容哈希走 immutable；`include_in_schema=false`，不改变桌面 OpenAPI 握手；构建缺失时 404；不注入皮肤、不连接 SSE | `test_workspace_frontend.py`、`frontend/tests/*.spec.ts` |
+| `GET /workspace`、`GET /workspace/{client_path:path}` | `web/static/app/index.html`（`frontend/` 的提交构建，Vue 3） | health、settings；首页（`/workspace/`，WS-01 侧栏 + 标签；旧 `/workspace/companies`、`/workspace/directory` 重定向到首页）另消费 `/api/v1/companies*`（§3.5.1；项目名称在侧栏展开公司时才读取 `projects`），写操作只有公司清单增删改、子目录补建确认、项目归属、发票标签与凭证草稿保存 / 导出（同号检查 `same-number` 只读，可跨两家公司；属期文件夹移动须在页面确认；工资社保确认写 申报数据.json），以及经确认的 `PUT /api/v1/settings` 切换监控目录；比较与同号检查的“原票”消费 `preview-jobs`（创建、页面、文本、续租）；监控目录的目录标签另消费经典首页同一组勾选接口（`selection-summary`、`preview-jobs` 完整源文件队列、`print-jobs`、`trash-jobs` 预备与确认、单据页入库会话交接）；侧栏置顶、展开与宽度只存浏览器 `localStorage` | 所有客户端路由返回同一外壳，`Cache-Control: no-store`；资源带 `?v=` 内容哈希走 immutable；`include_in_schema=false`，不改变桌面 OpenAPI 握手；构建缺失时 404；复用经典页面活动皮肤首屏注入，`no_skin` 跳过且不重置保存状态；外壳单一 SSE 与当前经典模块 SSE，隐藏模块暂停 transport；临时识别共用既有 API | `test_workspace_frontend.py`、`frontend/tests/*.spec.ts` |
 | `GET /favicon.ico` | 静态响应 | 无业务数据 | `include_in_schema=false`，但仍属于 FastAPI 路由契约 | API 静态契约 |
 
 API 路由分布：页面、官网、打印页、`/workspace`、health 与桌面握手在 `api/app.py`；其余 `/api/v1` 路由按领域在 `api/routes/*.py`，由 `create_app` 按原注册顺序 `include_router`，因此路径匹配顺序与拆分前一致；共享的来源校验、认证 transcript 与错误映射在 `api/common.py`。
+
+工作区外观另消费既有 `GET /api/v1/skins`、`POST /api/v1/skins/website-dark/enable` 与 `POST /api/v1/skins/reset`（写入 body 为 `{}`）：不生效的 CSS 先加载成功，保存响应身份一致才替换当前 link；失败保留外观，保存未知不重放，卸载取消迟到交接。Vue 色彩别名取同一皮肤变量，切换保留业务 DOM / 草稿 / 勾选；恢复入口固定浅色、不写设置，旧 / 未知深链接与经典导航保留参数。守护为 `appearance.spec.ts`、App 草稿 / 导航与工作区 HTTP 契约。
 
 所有普通页面由 `_template()` 做有限占位替换，不是 Jinja2 模板引擎。活动皮肤由服务端在 `</head>` 前注入；`/backend` 和带 `?no_skin=1` 的请求跳过注入。
 
@@ -956,3 +1009,7 @@ Actions artifact；发布到 GitHub Release 仍须单独授权。
 - [数据结构与算法](DATA_AND_ALGORITHMS.md)
 - [Agent 任务导航](AGENT_TASK_MAP.md)
 - [注释与设计原因地图](COMMENT_RATIONALE_MAP.md)
+
+## 2026-11-16 设计提案与原型（非生产能力）
+
+未来远程连接与增量流程见[WS-08/09 设计](../SERVER_CONNECTION_AND_CACHE_DESIGN.md) §5—9；均未接入生产 API。连接在线、同步状态与快照新鲜度分离；旧完整代际继续读，完成后原子切换，远程预览另建 source-bound 会话，不扩大现有本地接口。“打开服务器文件列表”只开右侧面板，目录名标签下拉选择子目录，面包屑返回祖先，统计取当前目录及子目录的缓存；空内容显示“无可读取的文件”，错误/无缓存不当空目录。移除独立服务器公司栏及全屏，两种面板宽度均限于主内容区，本机模块上下文保留。跨模块 SourceBinding 与完整 generation、首次清单/后续可靠 cursor/失效核对协议见设计 §11—12；标准 SMB/SFTP 不承诺断线重连免枚举。

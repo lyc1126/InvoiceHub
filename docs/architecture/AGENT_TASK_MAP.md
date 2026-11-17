@@ -1,5 +1,25 @@
 # InvoiceHub Agent 工程任务导航
 
+## 2026-11-17 P2 任务补充
+
+命中标签/凭证墙/公司银行版式/税费记录时读公司清单、银行、工作区前端与税务任务行。入口为 `company_views.py`、`company_settlement.py`、`api/routes/company_workspace.py`、`company_bank_layouts.py`、`company_files.py`、`company_tax.py`、`bank/layouts.py` 及 `BankLayouts.vue`/`CompanyTax.vue`。
+
+最低新增 `tests/test_workspace_p2.py`、`frontend/tests/workspace-p2.spec.ts`；相邻覆盖标签、公司视图/项目/往来/银行/抵扣/凭证/API，同跑 Vue typecheck/test/build、Node 交互、文档契约与链接检查。浏览器核对浅色/深色/390px/no_skin、原始行样例、断点禁存、未知保存仅查询和 null/零区别。真实资料/Windows/原生/成品另验。B8 手工记录基础不等于完整税务工作台，BANK-01 的 CLI/凭证生成、OFD/OCR 等仍待实施。
+
+## 2026-11-17 P1 补充任务行
+
+| 问题 | 入口与联动 | 最低验收 |
+|---|---|---|
+| 标签筛选统计、十进制同票合计 B1 | `services/invoice_list.py`、`company_views.py`、DirectoryInvoices；遵守页面规则 | invoice_tags/company_views/progressive_loading/API contract；Vue 标签筛选与旧数字兼容 |
+| 公司资料夹只读检测及选中补建 B2 | `services/company_detection.py` → registry/routes → CompanyCreateForm；遵守页面与目录身份规则 | API detect无写/替换409/只建所选/重复查询；Vue 未知响应与原生取消草稿 |
+| 凭证期间与导出预览 B4 | `company_vouchers.py`、`company_export_jobs.py`、`bank/jierui.py/export_profiles.py`、CompanyVouchers；完整读取做账规则 | 月份/预览无副作用/API回执/整月阻断/格式 golden；Vue月份与未知响应；合成双外观/390px |
+| 公司成本只读口径 B6 | `targets/companies.py`、所有 CostProjectionService/MonitorSynchronizer 构造、company_views/routes、page-costs；完整读取成本与监控规则 | company_views/summary_and_costs/API与monitor相邻回归；来源缓存失效、身份期间/回退、Vue只读显示；合成双外观 |
+
+
+## 未来任务：服务器链接与增量汇总
+
+遇到 SMB/SFTP/SSH、服务器文件列表/右栏控件、跨模块来源绑定、远程预览/断连缓存或“刷新不重做全部汇总”，先读 [WS-08](../PRODUCT_BACKLOG.md#ws-08)、[WS-09](../PRODUCT_BACKLOG.md#ws-09) 与[设计](../SERVER_CONNECTION_AND_CACHE_DESIGN.md)，再读监控/页面/提取规则和本页目录、监控、预览任务行；涉及成本再读成本规则，正式连接器还需平台/宿主规则。当前只改原型：JS 语法、文档契约/本地链接、离线 DOM 验来源隔离/目录下拉与范围统计/空内容/本机状态保留/游标回退/两种面板边界；真实浏览器桌面/窄屏、侧栏拖宽与实际边界另验。生产实现最低验收以设计 §10 为准，不可把合成连接状态当真实服务通过。
+
 <a id="quick-lookup"></a>
 
 ## 按问题快速定位
@@ -18,7 +38,7 @@
 | 删除所选、回收站/废纸篓、确认与断线结果 | [页面](rules/WEB_UI.md)、[监控](rules/MONITORING.md)、[Windows](rules/WINDOWS.md)、[macOS](rules/MACOS.md) | [勾选工作流](#task-selection-workflow) |
 | 临时识别、临时文件线程、拖放排序与源失效 | [页面](rules/WEB_UI.md)、[提取](rules/INVOICE_EXTRACTION.md)、[宿主](rules/TAURI_HOST.md) | [临时识别](#task-temporary) |
 | JS/CSS、资源缓存、目录草稿、SSE、滚动与表格 | [页面/单据/预览/皮肤](rules/WEB_UI.md) | [9. 前端页面与静态资源](#task-web) |
-| Vue 工作区前端、`frontend/`、`web/static/app`、`/workspace` | [页面/单据/预览/皮肤](rules/WEB_UI.md) | [9.2 Vue 工作区前端](#task-workspace-frontend) |
+| Vue 工作区前端、`frontend/`、`web/static/app`、`/workspace` | [页面/单据/预览/皮肤](rules/WEB_UI.md)、[前端设计标准](../design/WORKSPACE_UI_STANDARD.md)（强制） | [9.2 Vue 工作区前端](#task-workspace-frontend) |
 | 独立官网、介绍页面与打包白名单 | [页面/单据/预览/皮肤](rules/WEB_UI.md)、[构建与发行](rules/RELEASE.md) | [9.1 独立产品官网](#task-website) |
 | 大列表卡顿、索引停止、入库/出库、批量队列 | [页面/单据/预览/皮肤](rules/WEB_UI.md)、[成本](rules/COST_ANALYSIS.md) | [10. 入库单与出库单](#task-documents) |
 | 勾选合计、搜索税率、来源追溯、超过100份预览、OFD 缺字、打印空白/漏页 | [页面/单据/预览/皮肤](rules/WEB_UI.md) | [10.1 发票预览与批量打印](#task-preview) |
@@ -47,7 +67,7 @@
 
 | 导航项 | 内容 |
 |---|---|
-| 状态 | 当前仅设计与合成原型，旧 MVP 不在 main；不把本文拟议路径误认成现有实现 |
+| 状态 | 完整政策引擎仍为设计与合成原型；B8 已有独立公司记录/显式手工假设基础，不代表 D0—D5 完成；旧 MVP 不在 main，拟议路径不可误认成现有实现 |
 | 首先阅读 | [工作台设计](../TAX_WORKBENCH_DESIGN.md)、[税务算法与政策](../TAX_ALGORITHMS_AND_POLICY.md)、[政策来源与核验](../TAX_POLICY_SOURCES_AND_REVIEW.md)、[价值评估与就绪度](../TAX_WORKBENCH_VALUE_AND_READINESS.md)，再核对 `services/dossier.py::BusinessDossierService.business_dossier_root/_scan_business_dossier` 与 W8/W9 现有边界 |
 | 修改入口 | D0 审查迁入旧计算器；D1 独立 router/模型/引擎/弹窗；D2 独立公司绑定、税费种认定录入、只读适配；D3 月季税额、申报表映射、征期提醒与留存备查；D4 后台任务；D5 规则包治理与政策中心 |
 | 必须联动 | 来源、规则与解释共源；当前 `watch_dir` 隔离；前后端、静态版本、build/package data 与握手能力清单；公司原生选择需联动 `platform/windows.py::pick_directory`、Python/Rust Host RPC 枚举及 `select_path`、tax picker route、平台架构 |
@@ -239,17 +259,23 @@ flowchart TD
 
 ## 9.2 Vue 工作区前端
 
+当前外观验收按用户隔离范围执行：工作区 Ink Pulse / Animal Island 不应用且保存偏好不变，独立经典页面继续应用；默认浅色 / 深色 / no_skin 以及缓存草稿仍需回归。集中名单由 `api/workspace.py` 注入，Vue `appearance.ts` 和经典 `common.js` 在读回时消费；对应 HTTP / Vue / Node 回归必须同时通过。历史两款皮肤视觉矩阵在重新启用时恢复执行。
+
 必读功能规则：[页面/单据/预览/皮肤](rules/WEB_UI.md) 的“Vue 工作区前端”。
 
 | 导航项 | 内容 |
 |---|---|
 | 首先阅读 | 文件地图 15.1 节；接口流程第 2 节 `/workspace` 行；[未来工作总览](../PRODUCT_BACKLOG.md) 的 WS 条目与原型 |
-| 首要入口 | `frontend/src/router.ts`、`App.vue`（模块列与 `hi.` 刷新）、`views/HomeView.vue`（标签）、`components/WorkspaceSidebar.vue`、`stores/workspace.ts`（标签、置顶、宽度、比较选择）、`relations.ts`、`api/client.ts`、`stores/`；后端 `api/app.py::workspace_shell` |
+| 首要入口 | `frontend/src/router.ts`、`App.vue`（模块列、缓存与 `hi.` 刷新）、`views/HomeView.vue`（标签）、`modules.ts`、`stores/modules.ts`、`components/ClassicModuleView.vue`（六模块缓存）、`components/WorkspaceSidebar.vue`、`stores/workspace.ts`（标签、置顶、宽度、比较选择）、`relations.ts`、`api/client.ts`、`stores/`；后端 `api/app.py::workspace_shell` 与 `api/workspace.py`，经典嵌入资源 `web/static/js/workspace-embed.js`、`css/workspace-embed.css` |
 | 必须联动 | 后端 API 与 `frontend/src/api/types.ts`、提交构建 `web/static/app/`、THIRD_PARTY_NOTICES（新运行时依赖）、FILE_MAP 15.1 |
 | 产物与消费者 | 浏览器/Tauri WebView 中的 `/workspace/*`；发布包随 `web/` 携带构建产物 |
 | 最低自动化 | `cd frontend && pnpm run typecheck && pnpm test && pnpm run build`；`tests/test_workspace_frontend.py`；目录勾选预览 / 日期排序同时覆盖 `frontend/tests/directory-preview.spec.ts` 与比较预览相邻回归 |
 | 真实验收 | localhost 上 `/workspace` 深链接、桌面/390px（侧栏抽屉）、控制台、标签切换保留状态、侧栏拖动限位与持久化、右键比较；系统原生能力仍需真实应用窗口 |
 | 高风险提醒 | 不手改 `web/static/app`；不把业务口径写进前端；依赖只用精确版本；`/workspace` 不进 OpenAPI |
+
+WS-01 外观衔接入口为 `components/AppearanceToggle.vue`、`appearance.ts`、`styles.css` 与 `api/app.py::workspace_shell`；复用同一皮肤设置与首屏注入，不新增皮肤 API。最低增加 `frontend/tests/appearance.spec.ts` 的 CSS 失败 / 超时、保存失联 / 身份不符、重复点击、卸载迟到与恢复只读，以及 App 草稿保留 / 深链接导航和工作区 HTTP 首屏 / 恢复契约；浏览器覆盖 1280 / 390、两款皮肤、`no_skin`、勾选与原票面原色，桌面长列表另核对模块列 / 侧栏 sticky 位置。
+
+WS-01 六模块与临时识别最低增加 `frontend/tests/modules.spec.ts`、`temporary.spec.ts`、`node --test tests/workspace_embed.test.cjs`：frame 来源 / token、隐藏导航拒绝、SSE 暂停 / 恢复、皮肤迟到、加载失败、独立缓存 / 当前刷新、批量入库路由交接、运行与展示历史双重来源复核及复制。临时识别还执行下方专用任务行。浏览器真实加载六模块并核对草稿与滚动，不能只靠 iframe 的模拟 window 宣称已加载。
 
 <a id="task-documents"></a>
 
@@ -323,7 +349,13 @@ OFD 专用入口为 `services/ofd_rendering.py`、`tools/ofd-preview/` 与 `scri
 
 ## 10.4 公司清单（WS-07）
 
+WS-02 目录保护另读 `services/company_directory_guard.py`，最低增加 `tests/test_company_directory_guards.py`（同名替换、根 / 前缀链接、junction、文件父路径、共享上级与嵌套清单损坏）；`test_company_setup.py` 同时覆盖任务 binding / 签名损坏和登记前目录替换。只读发现不写目录；POSIX 句柄创建与 Windows / 网络盘真实语义分别验收。
+
 必读功能规则：[做账（公司清单）](rules/BOOKKEEPING.md#company-registry)、[监控与关闭](rules/MONITORING.md)、[页面/API](rules/WEB_UI.md)；方案与后续步骤见[未来工作总览 WS-07](../PRODUCT_BACKLOG.md#ws-07)。
+
+WS-03 / WS-04 另定位 `company_views.py::active_project_fields`、`company_projects.py::project_fields`、`company_compare_details.py`、`company_receipts.py`、`CompareGallery.vue`、`CompareThumbnail.vue` 与共享 `api/preview.ts`。最低增加 `tests/test_company_receipts.py`、项目 / 往来集成回归、`frontend/tests/compare-gallery.spec.ts`、静态首页契约及 Node 交互；接口与算法地图同日条目定义能力边界。银行 / 抵扣缓存签名修改需两者相邻回归。非监控发票仍不可预览。
+
+WS-01—07 核对先看[当前实现与开发余项](../../IMPLEMENTATION_STATUS.md)，再按[三轮真实验收清单](../MIGRATION_GAP_CHECKLIST.md#ws-real-acceptance)执行；历史测试记录不替代当前版本实测，待开发能力不按已实现范围验收。
 
 | 导航项 | 内容 |
 |---|---|
@@ -551,7 +583,7 @@ bash -n macos/InvoiceHubMac/script/build_and_run.sh
 
 原文件预览联动 `FilePreviewService`，最低增加 `test_file_preview.py`、打印相邻回归及临时预览 HTTP/Node 测试；浏览器覆盖队列/历史、PDF翻页、XML纯文本、失效清空、返回与窄屏。只改临时预览消费时无需重跑未变的原生选择器实现，但原生/成品未覆盖必须披露。
 
-入口：`services/temporary_recognition.py`、`api/temporary_recognition.py`、`temporary_recognition.html`、`temporary-recognition.js/css`、首页与设置模板。原生联动 Python/Rust Host RPC、native_dialogs 和 Tauri main；不接入普通/成本投影或 monitor。
+入口：`services/temporary_recognition.py`、`api/temporary_recognition.py`、`temporary_recognition.html`、`temporary-recognition.js/css`、首页与设置模板；Vue 独立入口为 `frontend/src/views/TemporaryRecognitionView.vue`、`temporary.ts`、`components/TemporaryPreview.vue`，与经典页共用后端。原生联动 Python/Rust Host RPC、native_dialogs 和 Tauri main/lib 的固定路径允许列表；不接入普通/成本投影或 monitor。
 
 最低验收：`test_temporary_recognition.py`、`temporary_recognition.test.cjs`、`test_tauri_host_rpc.py`、API/前端/文档契约；Rust check；三份合成票的排序、渐进进度、历史改名、源删除/移动/替换拒绝、复制、自动打开设置、取消/重复点击/迟到响应；默认外观、两款皮肤和 no_skin 的桌面/390px。真实原生多选/OS拖入及平台成品未跑必须披露。
 

@@ -32,7 +32,7 @@
 - 当前不做：多用户、权限、授权、云部署、MSI、Windows ARM64、macOS Intel/Universal、App Store、本地 OCR 正式打包版、SQLite 发票主存储。
 - 本文件已整合旧项目仓库根 `AGENTS.md` 与 `发票处理脚本/AGENTS.md` 中仍适配重构版的约束。旧项目特有的目录名、版本号、旧 `web_localhost` 布局和旧包名只作为历史基线，不作为新项目结构要求。
 - 共享业务核心为 Python/FastAPI/Web 与独立 monitor，当前桌面宿主为 `src-tauri/`；SwiftUI/WKWebView 保留为开发与迁移参考。版本与契约以 `src/invoice_hub/version.py`、`src/invoice_hub/release/build_manifest.py` 为准。
-- 税务工作台当前仅设计与合成原型，后续按 [税务规则](docs/architecture/rules/TAX_WORKBENCH.md) 进入；设计文件和旧草稿不能当作已实现产品能力。
+- 税务工作台完整政策引擎仍为设计；工作区 B8 已有公司税费记录与显式假设的手工测算基础，不代表已复核政策自动计算或申报能力。后续按 [税务规则](docs/architecture/rules/TAX_WORKBENCH.md) 进入；设计文件和旧草稿不能当作已实现产品能力。
 
 ## 第一性原则
 
