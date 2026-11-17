@@ -2,6 +2,15 @@
 
 ## 未发布
 
+### 2026-11-17 工作区 P1/P2 按风险拆分提交
+
+- 需求与现场：用户要求按风险程度拆分提交，并要求每个提交完整、批准安装 Rust 工具链。起点 `codex/workspace-p2@ab9d4b8`，modified 105 / untracked 46（含与项目无关的 `pelican-bicycle.html`）；未推送、未开 PR、未合并 `main`。
+- 方案：按风险分组并按依赖排序（文档 → B6 成本 / monitor → 公司工作区后端 → 经典页 → Vue 前端 → Tauri），`app.py`、`test_api_contract.py`、`test_company_views.py` 按代码块分入对应提交。七个提交的哈希、风险与验证见 [分支状态](docs/BRANCH_STATUS.md)。
+- 过程中发现与处理：首轮拆分因状态清单被截断漏看 `workspace-embed.css/js`、`workspace_embed.test.cjs`、`test_company_directory_guards.py`，曾以补漏提交追加，导致三个提交单独检出时缺嵌入资源。按用户要求在本地未推送范围内重放，把它们并入对应提交，最终树与改写前相同；首轮提交保留在备份分支 `backup/workspace-p2-split-20261117`。
+- Rust：本机 `~/.rustup` 已有项目固定的 1.85.0 工具链与 crate 缓存，仅缺 rustup 代理，未重新安装；直接用该工具链离线运行。
+- 验证：每个代码提交在临时 worktree 独立检出后跑后端全量（1022 / 1109 / 1124 / 1124 通过）与 Node 测试；Vue 提交另跑类型检查、Vitest 102 项与构建，构建结果与提交产物一致。Rust `cargo test --lib --offline` 56 项通过（含原生拖入判定），4 项回环套接字测试因本机会话禁止连接 127.0.0.1 失败（`Operation not permitted`，与代码无关，涉及文件本轮未改）。
+- 未覆盖：上述 4 项 Rust 回环测试需在普通终端复跑；真实资料、Windows BAT、正式入口前台拉起、原生选择器、Tauri 宿主与打包产物。
+
 ### 2026-11-17 工作区 P2 前后端对接核对与后续规划
 
 - 需求与现场：用户要求对接 Codex 已完成的 P2 后端，并规划后续前后端开发。分支 `codex/workspace-p2@ab9d4b8`，保留全部既有 modified/untracked；未暂存、提交、推送或合并。
