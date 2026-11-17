@@ -52,6 +52,7 @@ const refs = {
   invoicedReferenceTotal: document.getElementById("invoicedReferenceTotal"),
   uninvoicedReferenceTotal: document.getElementById("uninvoicedReferenceTotal"),
   taxpayerTypeSelect: document.getElementById("taxpayerTypeSelect"),
+  taxProfileReadonly: document.getElementById("costTaxProfileReadonly"),
   outputTaxRateSelect: document.getElementById("outputTaxRateSelect"),
   saveTaxProfileBtn: document.getElementById("saveTaxProfileBtn"),
   taxProfileHint: document.getElementById("taxProfileHint"),
@@ -521,6 +522,18 @@ function renderTaxProfile() {
     refs.taxpayerTypeSelect.value = saved.taxpayer_type;
     refs.outputTaxRateSelect.value = saved.output_tax_rate_percent;
   }
+  const profile = state.payload?.reference_tax_profile || {};
+  const embedded = new URLSearchParams(location.search).get("workspace_embed") === "1";
+  // User decision 2026-11-10: identity comes from the company registry (read-only chip in the
+  // workspace); the output rate stays editable here and save_reference_status enforces it.
+  refs.taxpayerTypeSelect.disabled = embedded || profile.taxpayer_source === "company_registry";
+  if (refs.taxProfileReadonly) {
+    refs.taxProfileReadonly.hidden = !embedded;
+    setText(refs.taxProfileReadonly, profile.taxpayer_source === "company_registry"
+      ? `${profile.company_name || "本公司"} · ${profile.taxpayer_type_label || "一般纳税人"}`
+      : `未设置，按${profile.taxpayer_type_label || "一般纳税人"}计算（回退口径）`);
+  }
+  if (refs.taxpayerTypeSelect.closest("label")) refs.taxpayerTypeSelect.closest("label").hidden = embedded;
   updateTaxProfileControls();
 }
 
@@ -535,7 +548,8 @@ function updateTaxProfileControls() {
   const selectedSmallScale = refs.taxpayerTypeSelect.value === "small_scale";
   const basis = selectedSmallScale ? "小规模：进项税全部计入成本" : "一般纳税人：专票按不含税、普票（旅客运输除外）含税计成本";
   const notices = [basis];
-  if (!profile.configured && !changed) notices.push("未保存，按一般纳税人 13% 计算");
+  if (profile.taxpayer_source === "company_registry") notices.push(`身份来自公司设置${profile.month ? `（${profile.month}）` : ""}，请在公司设置修改`);
+  else if (!changed) notices.push(`未设置公司身份，按${profile.taxpayer_type_label || "一般纳税人"} ${profile.output_tax_rate_display || "13%"} 计算（回退口径）`);
   if (changed) notices.push(blockedByDrafts ? "有未保存的开票参考草稿，请先保存" : "修改未保存");
   else if (profile.warning) notices.push(profile.warning);
   setText(refs.taxProfileHint, notices.join("；"));

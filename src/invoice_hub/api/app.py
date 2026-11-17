@@ -16,6 +16,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
 
 from invoice_hub.api.temporary_recognition import router as temporary_router
+from invoice_hub.api.workspace import embed_workspace_page, workspace_appearance_policy, workspace_skin_isolated
 from invoice_hub.services.temporary_recognition import TemporaryRecognitionService
 from invoice_hub.platform import host_rpc
 from invoice_hub.services import (
@@ -42,8 +43,8 @@ from invoice_hub.api.routes import costs as costs_routes
 from invoice_hub.api.routes import documents as documents_routes
 from invoice_hub.api.routes import dossier as dossier_routes
 from invoice_hub.api.routes import companies as companies_routes
-from invoice_hub.api.routes import appearance as appearance_routes
 from invoice_hub.api.routes import company_workspace as company_workspace_routes
+from invoice_hub.api.routes import appearance as appearance_routes
 from invoice_hub.api.routes import monitor as monitor_routes
 from invoice_hub.api.routes import bookkeeping as bookkeeping_routes
 from invoice_hub.api.routes import ocr as ocr_routes
@@ -145,7 +146,7 @@ def create_app(
         response = await call_next(request)
         version = str(request.query_params.get("v") or "").strip()
         path = request.url.path
-        if path.startswith(("/api/v1/temporary-recognition/", "/api/v1/invoices/trash-jobs")):
+        if path.startswith(("/api/v1/temporary-recognition/", "/api/v1/invoices/trash-jobs")) or request.query_params.get("workspace_embed") == "1":
             response.headers["Cache-Control"] = "private, no-store"
         is_static_asset = path.startswith("/static/")
         is_skin_asset = path.startswith("/api/v1/skins/") and "/files/" in path
@@ -162,6 +163,8 @@ def create_app(
         try:
             active = _state(request).appearance.skins().get("active_skin") or {}
         except Exception:
+            return ""
+        if workspace_skin_isolated(request, str(active.get("id") or "")):
             return ""
         href = str(active.get("stylesheet_url") or "").strip()
         if not href:
@@ -196,13 +199,13 @@ def create_app(
         )
 
     def render_page(request: Request, name: str, bootstrap: dict[str, object], skin: bool = True) -> str:
-        return _template(
+        return embed_workspace_page(_template(
             name,
             {"BOOTSTRAP_JSON": bootstrap},
             web_dir=web_dir,
             skin_link=active_skin_link(request) if skin else "",
             favicon_link=app_icon_favicon_link(request),
-        )
+        ), request)
 
     @app.get("/", response_class=HTMLResponse)
     def index(request: Request) -> str:
@@ -255,13 +258,13 @@ def create_app(
     @app.get("/bookkeeping", response_class=HTMLResponse)
     def bookkeeping_page(request: Request) -> str:
         base_head = _template("base_head.html", web_dir=web_dir)
-        return _template(
+        return embed_workspace_page(_template(
             "bookkeeping.html",
             {"BASE_HEAD": base_head, "BOOTSTRAP_JSON": {"page": "bookkeeping"}},
             web_dir=web_dir,
             skin_link=active_skin_link(request),
             favicon_link=app_icon_favicon_link(request),
-        )
+        ), request)
 
     @app.get("/invoices/print/{job_id}", response_class=HTMLResponse)
     def invoice_print_page(request: Request, job_id: str):
@@ -295,11 +298,17 @@ def create_app(
     # only this HTML must stay uncached for a rebuilt bundle to reach the browser.
     @app.get("/workspace", response_class=HTMLResponse, include_in_schema=False)
     @app.get("/workspace/{client_path:path}", response_class=HTMLResponse, include_in_schema=False)
-    def workspace_shell(client_path: str = "") -> HTMLResponse:
+    def workspace_shell(request: Request, client_path: str = "") -> HTMLResponse:
         shell = web_dir / "static" / "app" / "index.html"
         if not shell.is_file():
             raise HTTPException(status_code=404, detail="工作区前端尚未构建：运行 frontend 的 pnpm run build")
-        return HTMLResponse(shell.read_text(encoding="utf-8"), headers={"Cache-Control": "no-store"})
+        text = workspace_appearance_policy(shell.read_text(encoding="utf-8"))
+        # Reuse the classic pages' validated skin and recovery gate before body paint;
+        # client-only hydration would flash light surfaces on every dark workspace entry.
+        skin_link = active_skin_link(request)
+        if skin_link:
+            text = text.replace("</head>", f"  {skin_link}\n</head>", 1)
+        return HTMLResponse(text, headers={"Cache-Control": "no-store"})
 
     @app.get("/api/v1/health")
     def health(request: Request) -> dict:
@@ -315,6 +324,7 @@ def create_app(
     app.include_router(documents_routes.router())
     app.include_router(dossier_routes.router())
     app.include_router(companies_routes.router())
+    app.include_router(company_workspace_routes.router())
     app.include_router(appearance_routes.router())
     app.include_router(monitor_routes.router())
 
@@ -324,6 +334,5 @@ def create_app(
     app.include_router(bookkeeping_routes.router())
     app.include_router(ocr_routes.router())
     app.include_router(system_routes.router())
-    app.include_router(company_workspace_routes.router())
 
     return app

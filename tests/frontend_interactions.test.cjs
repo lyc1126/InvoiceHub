@@ -294,6 +294,29 @@ test("recovery stays white without saving and skin reset synchronizes the moon",
   assert.equal(dark.button.getAttribute("aria-pressed"), "false");
 });
 
+test("embedded skin reads isolate decorative builtins while classic and default dark remain available", () => {
+  for (const id of ["ink-pulse", "animal-island"]) {
+    const h = appearanceHarness();
+    const draft = h.element("watchDirInput"); draft.value = "synthetic unsaved draft";
+    const skin = { id, stylesheet_url: `/api/v1/skins/${id}/files/skin.css` };
+    const payload = { active_skin: skin, enabled_skin_id: id, skins: [skin] };
+    h.html.dataset.workspaceIsolatedSkins = "animal-island ink-pulse";
+    assert.equal(h.app.applySkinPayload(payload), null);
+    assert.equal(h.html.dataset.activeSkin, undefined);
+    assert.equal(h.links.length, 0);
+    const dark = { id: "website-dark", stylesheet_url: "/api/v1/skins/website-dark/files/skin.css" };
+    h.app.applySkinPayload({ active_skin: dark, enabled_skin_id: dark.id, skins: [dark] });
+    assert.equal(h.html.dataset.activeSkin, dark.id);
+    h.app.applySkinPayload(payload);
+    assert.equal(h.html.dataset.activeSkin, undefined);
+    assert.equal(draft.value, "synthetic unsaved draft");
+    assert.deepEqual(h.calls, []);
+    delete h.html.dataset.workspaceIsolatedSkins;
+    h.app.applySkinPayload(payload);
+    assert.equal(h.html.dataset.activeSkin, id);
+  }
+});
+
 test("concurrent slow reads keep feedback through body parsing and clear it after failure", async () => {
   const h = setup();
   let resolveBody, rejectSecond, bodyStarted;

@@ -562,7 +562,7 @@ function renderInvoiceRefreshFailure(error) {
   const message = `发票列表刷新失败：${refreshErrorMessage(error)}`;
   if (!state.hasInvoiceSnapshot) {
     const diagnostic = `${message}。暂无可保留的发票列表，请稍后刷新。`;
-    refs.invoiceBody.innerHTML = `<tr><td colspan="10"><span role="status" aria-live="polite">${app.escapeHtml(diagnostic)}</span></td></tr>`;
+    refs.invoiceBody.innerHTML = `<tr><td colspan="11"><span role="status" aria-live="polite">${app.escapeHtml(diagnostic)}</span></td></tr>`;
     refs.tableMeta.textContent = "发票列表暂时不可用";
   }
   return state.hasInvoiceSnapshot
@@ -889,6 +889,7 @@ function rowHtml(item) {
       <td class="table__seller" title="${app.escapeHtml(item.seller || "--")}">${app.escapeHtml(app.text(item.seller))}${fileName}</td>
       <td class="table__format"><span class="format-badge format-badge--${app.escapeHtml(fileFormatTone)}">${app.escapeHtml(fileFormat)}</span></td>
       <td class="table__number">${app.escapeHtml(app.text(item.invoice_number))}</td>
+      <td title="${app.escapeHtml(({ manual: '人工指定', remark: '发票备注', conflict: '备注项目不一致，请到公司项目页指定', unavailable: '项目归属无法读取，请到公司项目页核对' })[item.project_source] || '未归属')}">${app.escapeHtml(item.project || (item.project_source === 'unavailable' ? '无法读取' : '未归属'))}</td>
       <td class="table__classification">
         <div class="invoice-classification">
           ${invoiceTypePill(invoiceType)}
@@ -930,7 +931,7 @@ function renderInvoiceRows() {
   updateDateSortControl();
   refs.invoiceBody.innerHTML = items.length
     ? pageItems.map(rowHtml).join("")
-    : `<tr><td colspan="10">${Object.entries(state.filters).some(([key, value]) => key !== "search_scope" && String(value || "").trim())
+    : `<tr><td colspan="11">${Object.entries(state.filters).some(([key, value]) => key !== "search_scope" && String(value || "").trim())
       ? "没有符合当前筛选条件的发票。"
       : "暂无发票。请选择目录后点击“重新汇总”。"}</td></tr>`;
   updateSelectedInvoiceTotal();

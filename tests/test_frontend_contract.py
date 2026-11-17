@@ -203,9 +203,9 @@ def test_cost_page_keeps_required_controls() -> None:
     assert "applySelectedMarkup" in js
     assert "锁定" in js
     assert "解锁" in js
-    assert "common.js?v=20260907-desktop-integrated-2" in html
-    assert "app.css?v=20261111-cost-tooltip-viewport" in html
-    assert "page-costs.js?v=20261111-cost-tooltip-viewport" in html
+    assert "common.js?v=20261114-workspace-skin-isolation-1" in html
+    assert "app.css?v=20261116-project-column" in html
+    assert "page-costs.js?v=20261117-company-tax-rate-editable" in html
     for token in (
         "发票大类",
         "特定业务类型",
@@ -520,10 +520,10 @@ def test_main_pages_keep_user_visible_controls() -> None:
     assert "过去保存" in index
     assert 'class="inline-panel path-inline" hidden' not in index
     assert 'id="watchDirDraft" class="watch-dir-draft" hidden' in index
-    assert "app.css?v=20261111-cost-tooltip-viewport" in index
+    assert "app.css?v=20261116-project-column" in index
     assert "settings-actions.css?v=20260907-desktop-integrated-2" in index
-    assert "common.js?v=20260907-desktop-integrated-2" in index
-    assert "page-index.js?v=20261009-selection-6" in index
+    assert "common.js?v=20261114-workspace-skin-isolation-1" in index
+    assert "page-index.js?v=20261116-workspace-projects" in index
     assert 'select name="search_scope"' in index
     assert '<option value="invoice" selected>销售方 / 发票号</option>' in index
     assert 'select name="invoice_type"' in index
@@ -640,7 +640,7 @@ def test_main_pages_keep_user_visible_controls() -> None:
     assert "data-invoice-select" in page_index
     assert "data-invoice-amount" in page_index
     assert "已勾选 ${invoiceCount} 张（${recordCount} 条记录）" in page_index
-    assert 'td colspan="10"' in page_index
+    assert 'td colspan="11"' in page_index
     assert 'refs.pickBtn.addEventListener("click", pickWatchDir)' in page_index
     assert 'refs.saveBtn.addEventListener("click", saveWatchDir)' in page_index
     assert "monitor.sync_completed" in common
@@ -729,8 +729,8 @@ def test_main_pages_keep_user_visible_controls() -> None:
     assert "特定业务类型" in page_detail
     assert "类型识别状态" in page_detail
     assert "类型识别说明" in page_detail
-    assert "common.js?v=20260907-desktop-integrated-2" in detail
-    assert "app.css?v=20261111-cost-tooltip-viewport" in detail
+    assert "common.js?v=20261114-workspace-skin-isolation-1" in detail
+    assert "app.css?v=20261116-project-column" in detail
     assert ".panel__head .detail-file-actions" in css
     assert ".detail-grid" in css
     assert ".detail-grid .stat-card strong { min-width: 0; overflow-wrap: anywhere; word-break: break-word; }" in css
@@ -947,8 +947,8 @@ def test_selected_invoice_summary_frontend_contract() -> None:
 
     for template_name in ("backend.html", "base_head.html", "consistency.html", "costs.html", "detail.html", "documents.html", "index.html", "ocr.html", "settings.html", "skins.html"):
         template = (ROOT / "web" / "templates" / template_name).read_text(encoding="utf-8")
-        assert "app.css?v=20261111-cost-tooltip-viewport" in template
-    assert "page-index.js?v=20261009-selection-6" in index
+        assert "app.css?v=20261116-project-column" in template
+    assert "page-index.js?v=20261116-workspace-projects" in index
 
 
 def test_consistency_page_is_user_facing_not_raw_json() -> None:
@@ -1011,8 +1011,8 @@ def test_documents_page_contract() -> None:
     assert ">是</button>" in html
     assert ">否</button>" in html
     assert ">打开该文件</button>" in html
-    assert "app.css?v=20261111-cost-tooltip-viewport" in html
-    assert "common.js?v=20260907-desktop-integrated-2" in html
+    assert "app.css?v=20261116-project-column" in html
+    assert "common.js?v=20261114-workspace-skin-isolation-1" in html
     assert "page-documents.js?v=20261009-progressive-3" in html
     assert "large-lists.css?v=20260907-large-list-1" in html
     assert 'id="documentIndexStop"' in html
@@ -1115,7 +1115,7 @@ def test_bookkeeping_page_static_contract() -> None:
     assert 'body data-page="bookkeeping"' in html
     assert "{{BASE_HEAD}}" in html
     assert "{{BOOTSTRAP_JSON}}" in html
-    assert "app.css?v=20261111-cost-tooltip-viewport" in base_head
+    assert "app.css?v=20261116-project-column" in base_head
     assert "page-bookkeeping.js?v=20260711-w9-ledger-review-v3" in html
     assert 'id="voucherBlockers"' in html
     assert "item.can_approve === true" in js
@@ -1321,9 +1321,9 @@ def test_settings_page_contract() -> None:
     assert 'class="settings-edit-card settings-defaults-card"' in html
     assert 'href="/skins"' in html
     assert 'href="/backend"' in html
-    assert "app.css?v=20261111-cost-tooltip-viewport" in html
+    assert "app.css?v=20261116-project-column" in html
     assert "settings-actions.css?v=20260907-desktop-integrated-2" in html
-    assert "common.js?v=20260907-desktop-integrated-2" in html
+    assert "common.js?v=20261114-workspace-skin-isolation-1" in html
     assert "page-settings.js?v=20260907-desktop-integrated-2" in html
     assert 'id="settingsAboutWebsiteLink" class="btn btn--ghost" href="/website/"' in html
     assert 'refs.website.href = safeWebsiteHref(payload?.links?.website)' in js
@@ -1609,8 +1609,8 @@ def test_skin_page_contract_and_common_skin_loader() -> None:
     assert "disabled>替换" in html
     assert "skinList" in html
     assert 'role="radiogroup"' in html
-    assert "app.css?v=20261111-cost-tooltip-viewport" in html
-    assert "common.js?v=20260907-desktop-integrated-2" in html
+    assert "app.css?v=20261116-project-column" in html
+    assert "common.js?v=20261114-workspace-skin-isolation-1" in html
     assert "page-skins.js?v=20260907-desktop-integrated-2" in html
     assert '@app.get("/skins", response_class=HTMLResponse)' in api_app
     assert 'render_page(request, "skins.html"' in api_app
@@ -1838,11 +1838,11 @@ def test_home_invoice_list_centers_content_and_uses_one_status_badge() -> None:
         html = template_path.read_text(encoding="utf-8")
         if "app.css?v=" not in html:
             continue
-        assert "app.css?v=20261111-cost-tooltip-viewport" in html
+        assert "app.css?v=20261116-project-column" in html
         assert "app.css?v=20260727-invoice-list-status-layout" not in html
         assert "app.css?v=20260726-invoice-taxonomy" not in html
     index = (templates_dir / "index.html").read_text(encoding="utf-8")
-    assert "page-index.js?v=20261009-selection-6" in index
+    assert "page-index.js?v=20261116-workspace-projects" in index
 
 
 def test_ink_pulse_body_page_entry_never_creates_fixed_modal_containing_block() -> None:

@@ -1051,19 +1051,20 @@ body[data-page="ocr"] .table-shell {
 #projectTable th:nth-child(9), #projectTable td:nth-child(9) { width: 108px; }
 #projectTable th:nth-child(10), #projectTable td:nth-child(10) { width: 118px; }
 .table--invoice-list {
-  min-width: 1430px;
+  min-width: 1580px;
   table-layout: fixed;
 }
 .table--invoice-list th:nth-child(1), .table--invoice-list td:nth-child(1) { width: 240px; }
 .table--invoice-list th:nth-child(2), .table--invoice-list td:nth-child(2) { width: 76px; }
 .table--invoice-list th:nth-child(3), .table--invoice-list td:nth-child(3) { width: 220px; }
-.table--invoice-list th:nth-child(4), .table--invoice-list td:nth-child(4) { width: 150px; }
-.table--invoice-list th:nth-child(5), .table--invoice-list td:nth-child(5) { width: 72px; }
-.table--invoice-list th:nth-child(6), .table--invoice-list td:nth-child(6) { width: 130px; }
-.table--invoice-list th:nth-child(7), .table--invoice-list td:nth-child(7) { width: 136px; }
+.table--invoice-list th:nth-child(5), .table--invoice-list td:nth-child(5) { width: 150px; }
+.table--invoice-list th:nth-child(6), .table--invoice-list td:nth-child(6) { width: 72px; }
+.table--invoice-list th:nth-child(7), .table--invoice-list td:nth-child(7) { width: 130px; }
 .table--invoice-list th:nth-child(8), .table--invoice-list td:nth-child(8) { width: 136px; }
-.table--invoice-list th:nth-child(9), .table--invoice-list td:nth-child(9) { width: 190px; }
-.table--invoice-list th:nth-child(10), .table--invoice-list td:nth-child(10) { width: 76px; }
+.table--invoice-list th:nth-child(9), .table--invoice-list td:nth-child(9) { width: 136px; }
+.table--invoice-list th:nth-child(10), .table--invoice-list td:nth-child(10) { width: 190px; }
+.table--invoice-list th:nth-child(11), .table--invoice-list td:nth-child(11) { width: 76px; }
+.table--invoice-list th:nth-child(4), .table--invoice-list td:nth-child(4) { width: 150px; overflow-wrap: anywhere; }
 .data-table th, .data-table td, .table th, .table td {
   border-bottom: 1px solid var(--line);
   padding: 9px 10px;

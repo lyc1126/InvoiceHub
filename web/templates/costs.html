@@ -4,7 +4,7 @@
   <title>成本分析</title>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <link rel="stylesheet" href="/static/css/app.css?v=20261111-cost-tooltip-viewport">
+  <link rel="stylesheet" href="/static/css/app.css?v=20261116-project-column">
   <link rel="stylesheet" href="/static/css/settings-actions.css?v=20260907-desktop-integrated-2">
 </head>
 <body data-page="costs">
@@ -59,6 +59,7 @@
     <section class="cost-context-grid" aria-label="税务设置与销项比对">
       <div id="costTaxProfile" class="inline-panel cost-tax-profile" aria-label="本公司设置">
         <strong class="cost-panel-title">本公司设置</strong>
+        <div id="costTaxProfileReadonly" class="tag cost-tax-profile__readonly" hidden aria-live="polite"></div>
         <div class="cost-tax-profile__controls">
           <label class="cost-tax-profile__field">纳税人类型
             <select id="taxpayerTypeSelect" class="input">
@@ -237,8 +238,8 @@
     </div>
   </dialog>
   {{system_controls}}
-  <script src="/static/js/common.js?v=20260907-desktop-integrated-2"></script>
+  <script src="/static/js/common.js?v=20261114-workspace-skin-isolation-1"></script>
   <script src="/static/js/system-controls.js?v=20260907-desktop-integrated-2"></script>
-  <script src="/static/js/page-costs.js?v=20261111-cost-tooltip-viewport"></script>
+  <script src="/static/js/page-costs.js?v=20261117-company-tax-rate-editable"></script>
 </body>
 </html>
