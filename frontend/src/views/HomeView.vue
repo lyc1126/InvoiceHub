@@ -1,13 +1,13 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, onMounted, provide, ref, watch } from "vue";
+import { VIEW_ACTIVE } from "../modules";
 import CompanyCompare from "../components/CompanyCompare.vue";
-import CompanyCreateForm from "../components/CompanyCreateForm.vue";
 import CompanyPanel from "../components/CompanyPanel.vue";
 import CompanyProjects from "../components/CompanyProjects.vue";
 import CompanySameNumber from "../components/CompanySameNumber.vue";
 import DirectoryPanel from "../components/DirectoryPanel.vue";
 import InvoiceTagsEditor from "../components/InvoiceTagsEditor.vue";
-import WorkspaceSidebar from "../components/WorkspaceSidebar.vue";
+import WorkspaceIcon from "../components/WorkspaceIcon.vue";
 import { RELATIONS, SAME_NUMBER } from "../relations";
 import { useCompaniesStore } from "../stores/companies";
 import { useSystemStore } from "../stores/system";
@@ -17,10 +17,11 @@ import { type WorkspaceTab, tabId, useWorkspaceStore } from "../stores/workspace
 // filters, results and scroll survive switching; closing a tab drops that cache. The tab's
 // `refresh` counter is part of its key, so "hi." rebuilds only the active one.
 const companies = useCompaniesStore();
+const props = withDefaults(defineProps<{ active?: boolean; sidebarOpen?: boolean }>(), { active: true, sidebarOpen: false });
+defineEmits<{ toggleSidebar: [] }>();
+provide(VIEW_ACTIVE, computed(() => props.active));
 const system = useSystemStore();
 const workspace = useWorkspaceStore();
-const sidebarOpen = ref(false);
-const createdNotice = ref<Record<string, string>>({});
 
 const companyOf = (tab: WorkspaceTab) => companies.companies.find((item) => item.id === tab.companyId) ?? null;
 const otherCompanyOf = (tab: WorkspaceTab) => companies.companies.find((item) => item.id === tab.otherCompanyId) ?? null;
@@ -49,17 +50,8 @@ function title(tab: WorkspaceTab): string {
 // Stable DOM ids per tab (indexes shift when a tab closes).
 const domId = (tab: WorkspaceTab) => tab.id.replace(/[^A-Za-z0-9_-]/g, (char) => `_${char.codePointAt(0)!.toString(36)}`);
 
-const ICONS: Record<WorkspaceTab["kind"], string> = { company: "▦", directory: "▭", project: "◇", compare: "⇄", "new-company": "＋", tags: "●" };
+const ICONS: Record<WorkspaceTab["kind"], string> = { company: "building", directory: "folder", project: "project", compare: "compare", "new-company": "plus", tags: "pick" };
 
-function onCreated(sources: Record<string, string>): void {
-  const id = companies.selectedId;
-  workspace.close(tabId({ kind: "new-company" }));
-  if (!id) return;
-  const created = Object.values(sources).filter((value) => value === "created").length;
-  const detected = Object.values(sources).filter((value) => value === "detected" || value === "standard").length;
-  createdNotice.value[id] = created ? `已新建工作区并登记，六类空目录已创建；监控目录保持原样。` : `已登记。识别到 ${detected} 个已有子目录，其余可在“目录”里补建。`;
-  workspace.open({ kind: "company", companyId: id });
-}
 
 function onTabKey(event: KeyboardEvent, index: number): void {
   const tabs = workspace.tabs;
@@ -101,13 +93,10 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="ws-home" :class="{ 'ws-home--sidebar-open': sidebarOpen }" :style="{ '--ws-sidebar': `${workspace.sidebarWidth}px` }">
-    <WorkspaceSidebar @opened="sidebarOpen = false" @keydown.escape="sidebarOpen = false" />
-    <!-- Narrow screens show the sidebar as a drawer; tapping outside closes it. -->
-    <div v-if="sidebarOpen" class="ws-backdrop" aria-hidden="true" @click="sidebarOpen = false" />
+  <div class="ws-home">
     <div class="ws-main">
       <div class="ws-tabbar">
-        <button type="button" class="ws-sidebar-toggle" :aria-expanded="sidebarOpen" @click="sidebarOpen = !sidebarOpen">☰ 公司与目录</button>
+        <button type="button" class="ws-sidebar-toggle" :aria-expanded="sidebarOpen" @click="$emit('toggleSidebar')"><WorkspaceIcon name="building" />公司与目录</button>
         <div class="ws-tabs" role="tablist" aria-label="已打开">
           <div
             v-for="(tab, index) in workspace.tabs"
@@ -127,10 +116,10 @@ onMounted(() => {
               @click="workspace.activeId = tab.id"
               @keydown="onTabKey($event, index)"
             >
-              <span class="ws-tab__icon" aria-hidden="true">{{ ICONS[tab.kind] }}</span>
+              <WorkspaceIcon :name="ICONS[tab.kind]" />
               <span class="ws-tab__title">{{ title(tab) }}</span>
             </button>
-            <button type="button" class="ws-tab__close" :aria-label="`关闭 ${title(tab)}`" @click="workspace.close(tab.id)">×</button>
+            <button type="button" class="ws-tab__close" :aria-label="`关闭 ${title(tab)}`" @click="workspace.close(tab.id)"><WorkspaceIcon name="x" /></button>
           </div>
         </div>
       </div>
@@ -138,12 +127,9 @@ onMounted(() => {
       <div class="ws-content">
         <template v-for="tab in workspace.tabs" :key="`${tab.id}#${tab.refresh}`">
           <div v-show="tab.id === workspace.activeId" :id="`ws-panel-${domId(tab)}`" role="tabpanel" :aria-labelledby="`ws-tab-${domId(tab)}`">
-            <template v-if="tab.kind === 'new-company'">
-              <CompanyCreateForm @created="onCreated" @cancel="workspace.close(tab.id)" />
-            </template>
-            <InvoiceTagsEditor v-else-if="tab.kind === 'tags'" @close="workspace.close(tab.id)" />
+            <InvoiceTagsEditor v-if="tab.kind === 'tags'" />
             <template v-else-if="companyOf(tab)">
-              <CompanyPanel v-if="tab.kind === 'company'" :company="companyOf(tab)!" :notice="createdNotice[tab.companyId!]" />
+              <CompanyPanel v-if="tab.kind === 'company'" :company="companyOf(tab)!" :active="tab.id === workspace.activeId" />
               <DirectoryPanel v-else-if="tab.kind === 'directory'" :company="companyOf(tab)!" :dir-key="tab.dirKey!" />
               <section v-else-if="tab.kind === 'project'" :aria-label="title(tab)">
                 <header class="detail-header"><h2>{{ title(tab) }}</h2><p class="muted">项目取自发票备注的“项目名称”，没有的可在下方人工指定。</p></header>
@@ -151,25 +137,27 @@ onMounted(() => {
               </section>
               <section v-else-if="tab.kind === 'compare' && tab.relation === SAME_NUMBER" :aria-label="title(tab)">
                 <header class="detail-header"><h2>⇄ 同号检查：{{ title(tab) }}</h2><p class="muted">两个没有勾稽关系的发票目录只比对发票号码；只读，不改任何文件。</p></header>
-                <CompanySameNumber v-if="otherCompanyOf(tab)" :company="companyOf(tab)!" :dir-key="tab.dirKey!" :other-company="otherCompanyOf(tab)!" :other-dir-key="tab.otherDirKey!" />
+                <CompanySameNumber v-if="otherCompanyOf(tab)" :company="companyOf(tab)!" :dir-key="tab.dirKey!" :other-company="otherCompanyOf(tab)!" :other-dir-key="tab.otherDirKey!" :active="tab.id === workspace.activeId" />
                 <p v-else class="muted">另一家公司已删除。</p>
               </section>
               <section v-else-if="tab.kind === 'compare'" :aria-label="title(tab)">
                 <header class="detail-header"><h2>⇄ {{ title(tab) }}</h2><p class="muted">同一公司的两类资料按勾稽关系核对；只读，不改任何文件。</p></header>
-                <CompanyCompare :company="companyOf(tab)!" :relation="tab.relation" />
+                <CompanyCompare :company="companyOf(tab)!" :relation="tab.relation" :active="tab.id === workspace.activeId" />
               </section>
             </template>
           </div>
         </template>
 
         <section v-if="!workspace.tabs.length" class="ws-start" aria-label="起始页">
-          <h1>InvoiceHub</h1>
-          <p class="muted">在左侧选择公司、项目或目录打开；右键可置顶或选择两个目录进行勾稽比较。</p>
+          <span class="brand start-brand" aria-hidden="true">hi.</span>
+          <h1>今天处理哪家公司？</h1>
+          <p class="muted">从左侧选择公司、项目或目录，会在上方打开标签；关掉所有标签就回到这里。</p>
           <div class="actions">
             <button v-if="monitoredCompany" type="button" class="primary" @click="workspace.open({ kind: 'company', companyId: monitoredCompany.id })">
               打开 {{ monitoredCompany.name }}
             </button>
-            <button type="button" @click="workspace.open({ kind: 'new-company' })">添加公司资料夹</button>
+            <button type="button" aria-haspopup="dialog" @click="workspace.createOpen = true">添加公司资料夹</button>
+            <button type="button" @click="$router.push({ name: 'temporary', query: $route.query })"><WorkspaceIcon name="temp" />临时识别</button>
           </div>
           <table v-if="system.health" class="facts">
             <tbody>

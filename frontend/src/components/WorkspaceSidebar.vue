@@ -1,5 +1,10 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
+import { useRoute, useRouter } from "vue-router";
+import WorkspaceIcon from "./WorkspaceIcon.vue";
+import { MODULES, type ModuleId } from "../modules";
+import { useModulesStore } from "../stores/modules";
+import { skinBypassRequested } from "../appearance";
 import { request } from "../api/client";
 import type { Company, CompanySubdir, ProjectSummary } from "../api/types";
 import { errorText } from "../format";
@@ -15,6 +20,29 @@ const emit = defineEmits<{ opened: [] }>();
 const companies = useCompaniesStore();
 const system = useSystemStore();
 const workspace = useWorkspaceStore();
+const route = useRoute();
+const router = useRouter();
+const modules = useModulesStore();
+const searchOpen = ref(false);
+const search = ref("");
+const visibleCompanies = computed(() => companies.companies.filter(company => {
+  const term = search.value.trim().toLocaleLowerCase();
+  return !term || [company.name, company.root_path, ...company.subdirs.map(dir => dir.label), ...(projects.value[company.id]?.names ?? [])].some(value => value.toLocaleLowerCase().includes(term));
+}));
+function nodeIcon(node: SidebarNode): string {
+  return node.kind === "company" ? "building" : node.kind === "project" ? "project" : node.dirKey === "bank_flow_dir" ? "bank" : "folder";
+}
+function isCurrent(companyId: string, kind: SidebarNode["kind"], dirKey?: string): boolean {
+  const current = route.name !== "settings" && MODULES.some(item => item.id === route.name)
+    ? modules.selections[route.name as ModuleId] : workspace.active;
+  return current?.companyId === companyId && current.kind === kind && (kind !== "directory" || current.dirKey === dirKey);
+}
+function openHome(spec: Parameters<typeof workspace.open>[0]): void {
+  workspace.open(spec);
+  if (route.name !== "home") void router.push({ name: "home", query: route.query });
+  emit("opened");
+}
+const classicHref = computed(() => skinBypassRequested(route.query.no_skin) ? "/?no_skin=1" : "/");
 
 const KIND_TAGS: Record<string, string> = {
   cost_invoice_dir: "进项",
@@ -128,9 +156,12 @@ watch(
 
 function open(node: SidebarNode): void {
   closeMenu(false);
-  if (node.kind === "company") workspace.open({ kind: "company", companyId: node.company.id });
-  else if (node.kind === "directory") workspace.open({ kind: "directory", companyId: node.company.id, dirKey: node.dirKey });
-  else workspace.open({ kind: "project", companyId: node.company.id, project: node.project });
+  const spec = { kind: node.kind, companyId: node.company.id, dirKey: node.dirKey, project: node.project };
+  if (MODULES.some(item => item.id === route.name) && route.name !== "settings") {
+    // Module selections are independent UI contexts. They never change watch_dir;
+    // consumers must check whether their existing API can serve the selected company.
+    modules.select(route.name as ModuleId, spec);
+  } else openHome(spec);
   emit("opened");
 }
 
@@ -160,10 +191,10 @@ function compareWith(node: SidebarNode): void {
   const base = workspace.compareBase;
   if (!state.ok || !base) return;
   if (state.relation === SAME_NUMBER) {
-    workspace.open({ kind: "compare", companyId: base.companyId, dirKey: base.dirKey, relation: SAME_NUMBER,
+    openHome({ kind: "compare", companyId: base.companyId, dirKey: base.dirKey, relation: SAME_NUMBER,
       otherCompanyId: node.company.id, otherDirKey: node.dirKey });
   } else {
-    workspace.open({ kind: "compare", companyId: node.company.id, relation: state.relation });
+    openHome({ kind: "compare", companyId: node.company.id, relation: state.relation });
   }
   workspace.compareBase = null;
   closeMenu(false);
@@ -280,24 +311,28 @@ onBeforeUnmount(() => {
 <template>
   <aside class="ws-sidebar" aria-label="工作区">
     <div class="ws-sidebar__head">
-      <button type="button" class="ws-brand" :aria-expanded="headerMenu" aria-haspopup="menu" @click="headerMenu = !headerMenu">InvoiceHub ⌄</button>
+      <button type="button" class="ws-brand" :aria-expanded="headerMenu" aria-haspopup="menu" @click="headerMenu = !headerMenu">InvoiceHub <WorkspaceIcon name="chev" /></button>
+      <button type="button" class="ws-head-button" aria-label="通知与状态" title="查看当前系统状态" @click="headerMenu = !headerMenu"><WorkspaceIcon name="bell" /></button>
+      <button type="button" class="ws-head-button" aria-label="搜索公司、项目或目录" :aria-expanded="searchOpen" @click="searchOpen = !searchOpen; search = ''"><WorkspaceIcon name="search" /></button>
       <div v-if="headerMenu" class="ws-menu ws-menu--head" role="menu" @keydown.escape="headerMenu = false">
         <button type="button" role="menuitem" @click="headerMenu = false; companies.load()">刷新公司清单</button>
-        <button type="button" role="menuitem" @click="headerMenu = false; workspace.open({ kind: 'tags' }); emit('opened')">发票标签</button>
-        <a role="menuitem" href="/">返回经典界面</a>
+        <button type="button" role="menuitem" @click="headerMenu = false; openHome({ kind: 'tags' })">发票标签</button>
+        <a role="menuitem" :href="classicHref">返回经典界面</a>
       </div>
     </div>
-    <button type="button" class="ws-add" @click="workspace.open({ kind: 'new-company' }); emit('opened')">＋ 添加公司资料夹</button>
+    <label v-if="searchOpen" class="ws-search"><WorkspaceIcon name="search" /><input v-model="search" aria-label="搜索公司、项目或目录" placeholder="搜索公司、项目或目录"></label>
+    <button type="button" class="ws-add" aria-haspopup="dialog" @click="workspace.createOpen = true; emit('opened')"><WorkspaceIcon name="building" />添加公司资料夹</button>
     <p v-if="workspace.compareBase" class="ws-compare-hint" role="status">
       已选择 {{ nodesById.get(`dir:${workspace.compareBase.companyId}:${workspace.compareBase.dirKey}`)?.label ?? "目录" }} 进行比较：在另一个目录上选“与已选项进行比较”：同一公司有勾稽关系的做核对，发票目录之间做同号检查。
       <button type="button" class="link" @click="workspace.compareBase = null">取消</button>
     </p>
 
     <nav class="ws-tree" aria-label="公司与目录">
-      <template v-if="pinned.length">
-        <h3 class="ws-section">置顶</h3>
+      <h3 class="ws-section">置顶</h3>
+      <p v-if="!pinned.length" class="ws-empty-pin">右键任意公司 / 项目 / 目录 →「置顶」</p>
+      <template v-else>
         <ul>
-          <li v-for="node in pinned" :key="`pin:${node.id}`" class="ws-row" :class="{ 'ws-row--base': isBase(node) }">
+          <li v-for="node in pinned" :key="`pin:${node.id}`" class="ws-row ws-row--pin" :class="{ 'ws-row--base': isBase(node) }">
             <button
               type="button"
               class="ws-node"
@@ -309,7 +344,7 @@ onBeforeUnmount(() => {
               @mouseleave="hideCard"
               @focus="hideCard"
             >
-              <span class="ws-icon" aria-hidden="true">{{ node.kind === "company" ? "▦" : node.kind === "project" ? "◇" : "▭" }}</span>
+              <WorkspaceIcon :name="nodeIcon(node)" />
               <span class="ws-text"><span class="ws-label">{{ node.label }}</span><span class="ws-sub">{{ node.sub }}</span></span>
             </button>
             <button type="button" class="ws-more" :aria-label="`${node.label} 的操作`" @click="openMenu(node, $event)">⋯</button>
@@ -321,7 +356,7 @@ onBeforeUnmount(() => {
       <p v-if="companies.error" class="banner banner--error" role="alert">{{ companies.error }}</p>
       <p v-else-if="companies.list && !companies.companies.length" class="muted ws-empty">还没有登记公司。</p>
       <ul>
-        <li v-for="company in companies.companies" :key="company.id">
+        <li v-for="company in visibleCompanies" :key="company.id">
           <div class="ws-row ws-row--company">
             <button
               type="button"
@@ -329,12 +364,12 @@ onBeforeUnmount(() => {
               :aria-expanded="workspace.expanded.includes(company.id)"
               :aria-label="`展开 ${company.name}`"
               @click="toggle(company)"
-            >{{ workspace.expanded.includes(company.id) ? "▾" : "▸" }}</button>
+            ><WorkspaceIcon name="chev" /></button>
             <button
               type="button"
               class="ws-node"
               :aria-label="`${company.name}（${companyNode(company).sub}）`"
-              :aria-current="workspace.active?.kind === 'company' && workspace.active.companyId === company.id ? 'page' : undefined"
+              :aria-current="isCurrent(company.id, 'company') ? 'page' : undefined"
               @click="open(companyNode(company))"
               @contextmenu.prevent="openMenu(companyNode(company), $event)"
               @keydown="onRowKey(companyNode(company), $event)"
@@ -342,7 +377,7 @@ onBeforeUnmount(() => {
               @mouseleave="hideCard"
               @focus="hideCard"
             >
-              <span class="ws-icon" aria-hidden="true">▦</span>
+              <WorkspaceIcon name="building" />
               <span class="ws-text">
                 <span class="ws-label">{{ company.name }}</span>
                 <span class="ws-sub">{{ companyNode(company).sub }}<template v-if="company.root_status !== 'present'"> · 资料夹不可用</template></span>
@@ -365,7 +400,7 @@ onBeforeUnmount(() => {
                 @mouseleave="hideCard"
                 @focus="hideCard"
               >
-                <span class="ws-icon" aria-hidden="true">◇</span>
+                <WorkspaceIcon name="project" />
                 <span class="ws-text"><span class="ws-label">{{ name }}</span></span>
               </button>
               <button type="button" class="ws-more" :aria-label="`项目 ${name} 的操作`" @click="openMenu(projectNode(company, name), $event)">⋯</button>
@@ -379,8 +414,8 @@ onBeforeUnmount(() => {
               <button
                 type="button"
                 class="ws-node"
-                :aria-label="`${subdir.label}${subdir.status !== 'present' ? '（缺失）' : ''}${company.monitored_subdir_key === subdir.key ? '（监控中）' : ''}`"
-                :aria-current="workspace.active?.kind === 'directory' && workspace.active.companyId === company.id && workspace.active.dirKey === subdir.key ? 'page' : undefined"
+                :aria-label="`${subdir.label}${subdir.status !== 'present' ? '（缺失）' : ''}${company.monitored_subdir_key === subdir.key ? '（当前监控目录）' : ''}`"
+                :aria-current="isCurrent(company.id, 'directory', subdir.key) ? 'page' : undefined"
                 @click="open(directoryNode(company, subdir))"
                 @contextmenu.prevent="openMenu(directoryNode(company, subdir), $event)"
                 @keydown="onRowKey(directoryNode(company, subdir), $event)"
@@ -388,9 +423,9 @@ onBeforeUnmount(() => {
                 @mouseleave="hideCard"
                 @focus="hideCard"
               >
-                <span class="ws-icon" aria-hidden="true">▭</span>
+                <WorkspaceIcon :name="subdir.key === 'bank_flow_dir' ? 'bank' : 'folder'" />
                 <span class="ws-text"><span class="ws-label">{{ subdir.label }}</span></span>
-                <span v-if="company.monitored_subdir_key === subdir.key" class="ws-live" title="监控中" />
+                <span v-if="company.monitored_subdir_key === subdir.key" class="ws-live" title="当前监控目录" />
                 <span class="ws-kind">{{ subdir.status === "present" ? KIND_TAGS[subdir.key] ?? "" : "缺失" }}</span>
               </button>
               <button
@@ -409,7 +444,7 @@ onBeforeUnmount(() => {
 
     <p class="ws-status" :title="system.settings?.watch_dir || ''">
       <span class="ws-live" :class="{ 'ws-live--off': !watchLabel }" aria-hidden="true" />
-      <span class="ws-status__text">{{ watchLabel ? `实时监控中（仅 1 个目录）：${watchLabel}` : "未设置监控目录" }}</span>
+      <span class="ws-status__text">{{ watchLabel ? `当前监控目录（仅 1 个）：${watchLabel}` : "未设置监控目录" }}</span>
     </p>
 
     <div

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { companySourceKey } from "../stores/companies";
-import { computed, provide, reactive, ref, watch } from "vue";
+import { computed, inject, onBeforeUnmount, provide, reactive, ref, watch } from "vue";
+import { VIEW_ACTIVE } from "../modules";
 import { request } from "../api/client";
 import type { Company, CompareResult } from "../api/types";
 import { errorText } from "../format";
@@ -8,12 +9,15 @@ import { COMPARE_FOCUS, type CompareFocus } from "../compareFocus";
 import { RELATIONS } from "../relations";
 import CompareDrawer from "./CompareDrawer.vue";
 import CompareSources from "./CompareSources.vue";
+import CompareGallery from "./CompareGallery.vue";
 import CompanyDeductionResult from "./CompanyDeductionResult.vue";
 import CompanyInventoryResult from "./CompanyInventoryResult.vue";
 import CompanySettlementResult from "./CompanySettlementResult.vue";
 
 // `relation` presets the pair when the page is opened from the sidebar's "与已选项进行比较".
-const props = defineProps<{ company: Company; relation?: string }>();
+const props = withDefaults(defineProps<{ company: Company; relation?: string; active?: boolean }>(), { active: true });
+const parentActive = inject(VIEW_ACTIVE, ref(true));
+provide(VIEW_ACTIVE, computed(() => parentActive.value && props.active));
 
 // The backend names the two settlement sides one relation; the page keeps them apart.
 function relationOf(item: CompareResult): string {
@@ -40,6 +44,7 @@ let loadGeneration = 0;
 async function load(): Promise<void> {
   const mine = ++loadGeneration;
   focus.value = null;
+  result.value = null;
   loading.value = true;
   error.value = "";
   const query = new URLSearchParams({ a: relation.value.a, b: relation.value.b });
@@ -61,9 +66,10 @@ watch(
   () => filters.relation,
   () => void load(),
 );
+onBeforeUnmount(() => { loadGeneration += 1; });
 
 watch(
-  () => companySourceKey(props.company),
+  () => `${companySourceKey(props.company)}/${props.company.monitored_subdir_key}/${props.company.monitored}`,
   () => {
     result.value = null;
     void load();
@@ -103,11 +109,17 @@ watch(
         <ul v-if="result.warnings?.length" class="warnings warnings--compact">
           <li v-for="warning in result.warnings" :key="warning.code">{{ warning.message }}</li>
         </ul>
+        <div v-if="result.summary_details?.length" class="compare-summary" aria-label="比较汇总">
+          <button v-for="item in result.summary_details" :key="item.label" type="button" class="compare-summary__card" @click="focus = item">
+            <span>{{ item.label }}</span><strong>{{ item.value }}</strong><small>查看来源与计算过程</small>
+          </button>
+        </div>
 
         <CompanyDeductionResult v-if="result.relation === 'deduction'" :result="result" />
         <CompanyInventoryResult v-else-if="result.relation === 'inventory'" :result="result" />
         <CompanySettlementResult v-else :result="result" />
-        <CompareSources v-if="result.records" :records="result.records" :labels="labels" :focus="focus" @clear="focus = null" />
+        <CompareGallery v-if="result.records" :records="result.records" :receipts="result.receipts" :labels="labels" :focus="focus" @detail="focus = $event" />
+        <CompareSources v-if="result.records" :records="result.records" :labels="labels" :focus="focus" @clear="focus = null" @detail="focus = $event" />
         <CompareDrawer v-if="focus" :focus="focus" :labels="labels" @close="focus = null" />
       </template>
     </template>

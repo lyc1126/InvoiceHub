@@ -1,4 +1,4 @@
-import { flushPromises, mount } from "@vue/test-utils";
+import { DOMWrapper, flushPromises, mount } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createMemoryHistory } from "vue-router";
@@ -57,6 +57,7 @@ function defaultResponse(url: string, method: string, revision: number): [number
   if (url.endsWith("/health")) return [200, { ok: true, product_version: "合成", watch_dir: "/合成/甲/成本发票", target_id: "t1" }];
   if (url.endsWith("/settings")) return [200, { ok: true, watch_dir: "/合成/甲/成本发票", active_target_id: "t1" }];
   if (url === "/api/v1/companies" && method === "GET") return [200, { ok: true, revision, companies: [OTHER, COMPANY], monitored_company_id: "co_1", target_id: "t1", watch_dir: "" }];
+  if (url === "/api/v1/companies/detect") return [200, { ok: true, root_status: "present", plan_hash: "h1", subdirs: SUBDIRS.map(item => ({ ...item, file_count: 1, suggested_action: item.status === "missing" ? "create" : "keep" })) }];
   if (url === "/api/v1/companies" && method === "POST") return [200, { ok: true, revision: revision + 1, company: { ...OTHER, id: "co_3", name: "丙公司" }, subdir_sources: { cost_invoice_dir: "detected", issued_invoice_dir: "default" } }];
   if (url.includes("/directories?") || url.endsWith("/directories")) return [200, { ok: true, revision, company: COMPANY, directories: DIRECTORIES }];
   if (url.includes("/subdirs/plan")) return [200, { ok: true, company_id: "co_1", revision, plan_hash: "h1", create_count: 1, blocked_count: 0, items: [{ ...SUBDIRS[1], action: "create", reason: "" }] }];
@@ -67,11 +68,11 @@ function defaultResponse(url: string, method: string, revision: number): [number
   return [404, { detail: `unexpected ${method} ${url}` }];
 }
 
-async function mountCompanies() {
+async function mountCompanies(stubs = {}) {
   setActivePinia(createPinia());
   const router = createAppRouter(createMemoryHistory());
   await router.push("/companies");
-  const wrapper = mount(App, { global: { plugins: [router] }, attachTo: document.body });
+  const wrapper = mount(App, { global: { plugins: [router], stubs }, attachTo: document.body });
   await flushPromises();
   return wrapper;
 }
@@ -106,16 +107,20 @@ describe("companies module", () => {
     });
     const wrapper = await mountCompanies();
     await wrapper.get("button.ws-add").trigger("click");
-    const form = wrapper.get('form[aria-label="新建公司"]');
-    const [name, root] = form.findAll("input");
-    await name!.setValue("丙公司");
-    await root!.setValue("/合成/丙");
+    // The wizard is a prototype dialog teleported to <body>, not a home tab.
+    const form = new DOMWrapper(document.body.querySelector<HTMLFormElement>('form[aria-label="新建公司"]')!);
+    await form.get('[aria-label="公司名称"]').setValue("丙公司");
+    await form.get('[aria-label="公司资料夹"]').setValue("/合成/丙");
+    await form.get('input[value="later"]').setValue(true);
+    await new Promise(resolve => setTimeout(resolve, 350));
+    await flushPromises();
     await form.trigger("submit");
     await flushPromises();
-    const post = calls.find((call) => call.method === "POST");
-    expect(post?.body).toEqual({ name: "丙公司", root_dir: "/合成/丙", taxpayer_periods: [], revision: 3 });
+    const post = calls.find((call) => call.method === "POST" && call.url === "/api/v1/companies");
+    expect(post?.body).toEqual({ name: "丙公司", root_dir: "/合成/丙", taxpayer_periods: [], revision: 3, plan_hash: "h1", create_missing: [] });
     expect(wrapper.text()).toContain("识别到 1 个已有子目录");
-    // The form tab closes and the new company opens in its place.
+    // The dialog closes, the result shows as a toast and the new company opens as a tab.
+    expect(document.body.querySelector('form[aria-label="新建公司"]')).toBeNull();
     expect(wrapper.findAll(".ws-tab__title").map((item) => item.text())).toEqual(["甲公司", "丙公司"]);
   });
 
@@ -160,7 +165,7 @@ describe("companies module", () => {
   it("shows failing conservation checks in red and lists excluded invoices", async () => {
     stubBackend();
     const wrapper = await mountCompanies();
-    expect(calls.some((call) => call.url.includes("/ledger"))).toBe(false); // loads on first open
+    expect(calls.filter((call) => call.url.includes("/ledger"))).toHaveLength(1); // overview uses the same server ledger
     await wrapper.get("#company-tab-ledger").trigger("click");
     await flushPromises();
     expect(wrapper.get(".checks").classes()).toContain("checks--failed");
@@ -227,10 +232,12 @@ describe("companies module", () => {
     };
     stubBackend((url) => (url.includes("/compare") ? [200, compare] : undefined));
     const wrapper = await mountCompanies();
-    expect(calls.some((call) => call.url.includes("/compare"))).toBe(false); // loads on first open
+    // The overview gallery reads bank-flow pairs; the 勾稽 deduction pair loads on first open.
+    const deduction = (call: { url: string }) => call.url.includes("/compare") && call.url.includes("b=input_deduction_dir");
+    expect(calls.some(deduction)).toBe(false);
     await wrapper.get("#company-tab-compare").trigger("click");
     await flushPromises();
-    const url = calls.find((call) => call.url.includes("/compare"))!.url;
+    const url = calls.find(deduction)!.url;
     expect(url).toContain("a=cost_invoice_dir");
     expect(url).toContain("b=input_deduction_dir");
     const panel = wrapper.get('[aria-label="勾稽"]');
@@ -337,7 +344,7 @@ describe("companies module", () => {
       return undefined;
     });
     vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
-    const wrapper = await mountCompanies();
+    const wrapper = await mountCompanies({ CompareGallery: true });
     await wrapper.get("#company-tab-compare").trigger("click");
     await flushPromises();
     await wrapper.get('select[aria-label="比较关系"]').setValue("inventory");
@@ -376,6 +383,8 @@ describe("companies module", () => {
         unpaid: [{ invoice_number: "2".repeat(20), invoice_date: "2026-06-20", total: "1130.00", source_files: [] }],
         unallocated: [{ ...flow, row_id: "S1-002", date: "2026-07-05", amount: "1000.00", details: "部分货款" }] }],
       matches: [{ kind: "one_to_one", basis: "金额一致", flow, invoices: [{ invoice_number: "1".repeat(20), invoice_date: "2026-06-03", total: "11300.00", source_files: [] }] }],
+      summary_details: [{ label: "期末往来", value: "130.00", steps: ["期初 + 本期发票 − 收付款 = 期末"], record_ids: { a: [], b: ["flow:1"] } }],
+      records: { a: [], b: [{ id: "flow:1", invoice_number: "", invoice_date: "2026-06-05", counterpart: "供应商", amount: "11300.00", source_file: "s.pdf", details: "合成流水", detail: { label: "合成流水", steps: ["流水对应合成原票"], record_ids: { a: [], b: ["flow:1"] } } }] },
       red_offsets: [], red_unmatched: [], ambiguous_flows: [], excluded_invoices: [],
       non_invoice_flows: [{ ...flow, row_id: "S1-003", counterparty: "张小三", amount: "2000.00", reason: "no_party" }],
       totals: { opening: "0.00", invoiced: "12430.00", settled: "12300.00", closing: "130.00" },
@@ -395,6 +404,12 @@ describe("companies module", () => {
     expect(parties.get('[aria-label="丙丁建材有限公司 未逐笔对应流水"]').text()).toContain("部分货款");
     expect(wrapper.get('[aria-label="逐笔对应"]').text()).toContain("1".repeat(20));
     expect(wrapper.get('[aria-label="非发票流水"]').text()).toContain("不是发票上的往来单位");
+    await wrapper.get('.compare-summary__card').trigger('click');
+    expect(wrapper.get('[role="dialog"]').text()).toContain("期初 + 本期发票 − 收付款 = 期末");
+    await wrapper.get('[role="dialog"]').trigger('keydown', { key: "Escape" });
+    await wrapper.get('button[aria-label="明细 合成流水"]').trigger('click');
+    expect(wrapper.get('[role="dialog"]').text()).toContain("流水对应合成原票");
+    wrapper.unmount();
   });
 
   it("assigns projects to unassigned invoices and sends only the changes with the revision", async () => {
@@ -442,7 +457,7 @@ describe("companies module", () => {
       if (url === "/api/v1/invoice-tags") return [200, { ok: true, revision: 3, tags }];
       if (url.endsWith("/invoice-tags") && (init.method ?? "GET") === "GET") return [200, { ok: true, revision: 7, invoices: {} }];
       if (url.endsWith("/invoice-tags")) return [200, { ok: true, revision: 8, invoices: { ["1".repeat(20)]: ["tag_aaaaaaaa"] } }];
-      if (url.includes("/invoices")) return [200, { ok: true, count: 1, page: 1, page_size: 50, read_only: false, directory, items: [row] }];
+      if (url.includes("/invoices")) return [200, { ok: true, count: 1, page: 1, page_size: 50, read_only: false, directory, items: [row], stats: { all: { total: 1 }, filtered: { total: 1, total_amount: url.includes("&tag=") ? "0.30" : 1130, total_amount_valid_count: 1 } } }];
       return undefined;
     });
     const wrapper = await mountCompanies();
@@ -462,6 +477,8 @@ describe("companies module", () => {
     await wrapper.get('select[aria-label="按标签筛选"]').setValue("tag_aaaaaaaa");
     await flushPromises();
     expect(calls.some((call) => call.url.includes("&tag=tag_aaaaaaaa"))).toBe(true);
+    expect(wrapper.get(".dir-stats").text()).toContain("0.30");
+    expect(wrapper.get(".dir-stats").text()).toContain("计入 1 张");
   });
 
   it("selects invoices on the monitored folder and uses the backend for totals, printing and deletion", async () => {
@@ -670,13 +687,15 @@ describe("companies module", () => {
     const line = (row: number) => ({ row, summary: "付款", code: "1002", name: "", debit: row === 2 ? "10.00" : null, credit: row === 3 ? "10.00" : null,
       supplier: "", qty: null, unit: "", todo: "", confidence: "高", basis: "" });
     const voucher = (month: string, number: string) => ({ month, number, date: `${month}-30`, approval: "通过", debit_total: "10.00", credit_total: "10.00", errors: [], warnings: [], lines: [line(2), line(3)] });
-    const payload = { ok: true, name: NAME, revision: "r1", books_error: "", vouchers: [voucher("2026-05", "001"), voucher("2026-06", "001")], approved: 2, blocked: 0, sheets: [], current_month: "2026-11" };
+    const months = ["2026-05", "2026-06"].map(month => ({ month, vouchers: 1, approved: 1, blocked: 0, exported: 0 }));
+    const payload = { months, ok: true, name: NAME, revision: "r1", books_error: "", vouchers: [voucher("2026-05", "001"), voucher("2026-06", "001")], approved: 2, blocked: 0, sheets: [], current_month: "2026-11" };
     stubBackend((url, init) => {
-      if (url.endsWith("/voucher-drafts")) return [200, { ok: true, drafts: [{ name: NAME }], template_folder: "做账草稿/导出模板", formats: [
+      if (url.endsWith("/voucher-drafts")) return [200, { ok: true, drafts: [{ name: NAME, months }], months, template_folder: "做账草稿/导出模板", formats: [
         { key: "jierui", label: "捷锐云记账", status: "verified", note: "", file_suffix: ".xlsx" },
         { key: "ningmeng", label: "柠檬云", status: "experimental", note: "表头来自第三方模板", file_suffix: ".xlsx" },
         { key: "template:缺列.xlsx", label: "缺列", status: "custom", note: "", file_suffix: ".xlsx", usable: false, missing: ["凭证号"] },
       ] }];
+      if (url.endsWith("/export") && JSON.parse(String(init.body)).dry_run) return [200, { format: "jierui", columns: ["日期", "金额"], unmatched: [], sample_rows: [["2026-05-30", "10.00"]], months: [{ month: "2026-06", approved: 1, blocked_reason: "科目不存在" }] }];
       if (url.endsWith("/export")) return [200, { ok: true, name: NAME, files: ["捷锐导入_2026-05_20261113_101010.xlsx"], exported: 1, skipped: 1, learned: 0,
         errors: [{ voucher: "2026-06 第001号", errors: ["第 3 行 科目 1002 不存在、未启用或不是末级"] }], blocked_months: ["2026-06"], warnings: [], duplicates: [] }];
       if (url.includes("/voucher-drafts/") && (init.method ?? "GET") === "GET") return [200, payload];
@@ -693,7 +712,7 @@ describe("companies module", () => {
     await wrapper.findAll("button").find((button) => button.text() === "重新读取")!.trigger("click");
     await flushPromises();
     await exportButton().trigger("click");
-    const panel = wrapper.get('[aria-label="导出已审核凭证"]');
+    const panel = new DOMWrapper(document.body.querySelector<HTMLElement>('[aria-label="导出已审核凭证"]')!); // dialog teleported to <body>
     const confirm = () => panel.findAll("button").find((button) => button.text() === "确认导出")!;
     expect(confirm().attributes("disabled")).toBeDefined(); // 制单人 is required
     expect(calls.some((call) => call.url.endsWith("/export"))).toBe(false);
@@ -706,9 +725,12 @@ describe("companies module", () => {
     expect(panel.find('[role="note"]').exists()).toBe(false);
     await panel.get('input[aria-label="2026-06 账套已用到的凭证号"]').setValue("5");
     await panel.get('input[aria-label="制单人"]').setValue("张三");
+    await new Promise(resolve => setTimeout(resolve, 350));
+    await flushPromises();
+    expect(panel.get('[aria-label="导出预览"]').text()).toContain("10.00");
     await confirm().trigger("click");
     await flushPromises();
-    expect(calls.find((call) => call.url.endsWith("/export"))!.body).toEqual({ revision: "r1", preparer: "张三", after: { "2026-06": 5 }, format: "jierui", confirm: true });
+    expect(calls.find((call) => call.url.endsWith("/export") && (call.body as { confirm?: boolean })?.confirm)!.body).toEqual({ revision: "r1", preparer: "张三", after: { "2026-06": 5 }, format: "jierui", month: "", request_id: expect.any(String), confirm: true });
     const result = wrapper.get('[aria-label="导出结果"]');
     expect(result.text()).toContain("做账草稿/捷锐导入_2026-05_20261113_101010.xlsx");
     expect(result.text()).toContain("2026-06 整月未导出");

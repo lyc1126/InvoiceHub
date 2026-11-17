@@ -11,8 +11,10 @@ export const useSystemStore = defineStore("system", () => {
   const settings = ref<SettingsPayload | null>(null);
   const loading = ref(false);
   const error = ref("");
+  let generation = 0;
 
   async function refresh(): Promise<void> {
+    const turn = ++generation;
     loading.value = true;
     error.value = "";
     try {
@@ -20,12 +22,13 @@ export const useSystemStore = defineStore("system", () => {
         request<HealthPayload>("/api/v1/health"),
         request<SettingsPayload>("/api/v1/settings"),
       ]);
+      if (turn !== generation) return;
       health.value = nextHealth;
       settings.value = nextSettings;
     } catch (cause) {
-      error.value = cause instanceof Error ? cause.message : String(cause);
+      if (turn === generation) error.value = cause instanceof Error ? cause.message : String(cause);
     } finally {
-      loading.value = false;
+      if (turn === generation) loading.value = false;
     }
   }
 

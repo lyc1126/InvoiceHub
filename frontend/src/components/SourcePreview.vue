@@ -1,7 +1,9 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, inject, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { VIEW_ACTIVE } from "../modules";
 import { ApiError, request } from "../api/client";
 import type { PreviewRef } from "../api/types";
+import { createPreviewJob } from "../api/preview";
 import { errorText } from "../format";
 
 // Directory selections and compare records share the homepage preview pipeline. Every source
@@ -15,6 +17,8 @@ interface PreviewJob { job_id: string; keep_alive_url: string; idle_timeout_seco
 
 const props = defineProps<{ label: string; preview: PreviewRef }>();
 const emit = defineEmits<{ close: [] }>();
+const viewActive = inject(VIEW_ACTIVE, ref(true));
+watch(viewActive, (active) => { if (!active) emit("close"); });
 const THUMBNAIL_LIMIT = 12;
 const FILE_WINDOW = 100;
 const job = ref<PreviewJob | null>(null);
@@ -61,7 +65,7 @@ async function createJob(): Promise<void> {
   loading.value = true;
   error.value = "";
   try {
-    const created = await request<PreviewJob>("/api/v1/invoices/preview-jobs", { method: "POST", body: props.preview, timeoutMs: 60_000 });
+    const created = await createPreviewJob<PreviewJob>(props.preview);
     if (mine !== generation) return;
     job.value = created;
     fileIndex.value = Math.max(0, Math.min(fileIndex.value, created.files.length - 1));
@@ -73,7 +77,7 @@ async function createJob(): Promise<void> {
   } catch (cause) {
     if (mine !== generation) return;
     job.value = null;
-    error.value = cause instanceof ApiError && cause.status === 409 ? "发票或监控目录已变化，请刷新列表、重新勾选后再预览。" : errorText(cause);
+    error.value = cause instanceof ApiError && cause.status === 409 ? "来源文件或目录已变化，请刷新列表、重新核对后再预览。" : errorText(cause);
   } finally {
     if (mine === generation) loading.value = false;
   }
@@ -149,7 +153,7 @@ function onImageError(): void {
 
 watch(() => JSON.stringify(props.preview), () => {
   fileIndex.value = 0;
-  page.value = 1;
+  page.value = "kind" in props.preview ? props.preview.page : 1;
   imageRebuilds = 0;
   textRebuilds = 0;
   job.value = null;

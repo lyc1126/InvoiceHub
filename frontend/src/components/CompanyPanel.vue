@@ -8,9 +8,12 @@ import CompanyPayroll from "./CompanyPayroll.vue";
 import CompanyProjects from "./CompanyProjects.vue";
 import CompanySettings from "./CompanySettings.vue";
 import CompanyVouchers from "./CompanyVouchers.vue";
+import CompanyOverview from "./CompanyOverview.vue";
+import WorkspaceIcon from "./WorkspaceIcon.vue";
 
-type Tab = "directories" | "ledger" | "projects" | "compare" | "vouchers" | "payroll" | "settings";
+type Tab = "overview" | "directories" | "ledger" | "projects" | "compare" | "vouchers" | "payroll" | "settings";
 const TABS: { id: Tab; label: string }[] = [
+  { id: "overview", label: "总览" },
   { id: "directories", label: "目录" },
   { id: "ledger", label: "发票账簿" },
   { id: "projects", label: "项目" },
@@ -22,14 +25,16 @@ const TABS: { id: Tab; label: string }[] = [
 
 // One company tab of the workspace home. Each section loads on first open and then stays
 // mounted (hidden) so its filters, results and scroll survive switching sections or tabs.
-const props = defineProps<{ company: Company; notice?: string }>();
-const tab = ref<Tab>("directories");
-const opened = ref(new Set<Tab>(["directories", "settings"]));
+const props = withDefaults(defineProps<{ company: Company; notice?: string; active?: boolean }>(), { active: true });
+const tab = ref<Tab>("overview");
+const tools = ref<HTMLDetailsElement>();
+function selectTab(value: Tab): void { tab.value = value; if (tools.value) tools.value.open = false; }
+const opened = ref(new Set<Tab>(["overview", "directories", "settings"]));
 watch(tab, (value) => opened.value.add(value));
 watch(
   () => props.company.id,
   () => {
-    tab.value = "directories";
+    tab.value = "overview";
   },
 );
 </script>
@@ -41,7 +46,9 @@ watch(
       <p class="muted path">{{ company.root_path }}</p>
     </header>
     <p v-if="notice" class="banner banner--ok" role="status">{{ notice }}</p>
-    <div class="tabs" role="tablist" aria-label="公司内容">
+    <details ref="tools" class="company-tools">
+    <summary aria-label="公司工具" title="目录、账簿、项目与公司设置"><WorkspaceIcon name="gear" /></summary>
+    <div class="tabs company-sections" role="tablist" aria-label="公司内容">
       <button
         v-for="item in TABS"
         :id="`company-tab-${item.id}`"
@@ -50,8 +57,12 @@ watch(
         role="tab"
         :aria-selected="tab === item.id"
         :aria-controls="`company-panel-${item.id}`"
-        @click="tab = item.id"
+        @click="selectTab(item.id)"
       >{{ item.label }}</button>
+    </div>
+    </details>
+    <div v-show="tab === 'overview'" id="company-panel-overview" role="tabpanel" aria-labelledby="company-tab-overview">
+      <CompanyOverview :company="company" :active="props.active && tab === 'overview'" @section="tab = $event" />
     </div>
     <div v-show="tab === 'directories'" id="company-panel-directories" role="tabpanel" aria-labelledby="company-tab-directories">
       <CompanyDirectories :company="company" />
@@ -63,7 +74,7 @@ watch(
       <CompanyProjects :company="company" />
     </div>
     <div v-if="opened.has('compare')" v-show="tab === 'compare'" id="company-panel-compare" role="tabpanel" aria-labelledby="company-tab-compare">
-      <CompanyCompare :company="company" />
+      <CompanyCompare :company="company" :active="props.active && tab === 'compare'" />
     </div>
     <div v-if="opened.has('vouchers')" v-show="tab === 'vouchers'" id="company-panel-vouchers" role="tabpanel" aria-labelledby="company-tab-vouchers">
       <CompanyVouchers :company="company" />

@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { companySourceKey } from "../stores/companies";
-import { computed, nextTick, onMounted, onBeforeUnmount, ref, watch } from "vue";
+import { computed, inject, nextTick, onMounted, onBeforeUnmount, ref, watch } from "vue";
+import { VIEW_ACTIVE } from "../modules";
 import { ApiError, request } from "../api/client";
 import type { Company, DirectoryInvoicesPayload, InvoiceRow, InvoiceTagMarks, PreviewRef } from "../api/types";
-import { errorText, money } from "../format";
+import { errorText, ratePercent, money } from "../format";
 import { useTagsStore } from "../stores/tags";
 import SourcePreview from "./SourcePreview.vue";
 import DirectorySelectionBar, { type SelectedInvoice, type TrashJob } from "./DirectorySelectionBar.vue";
@@ -12,7 +13,20 @@ import DirectorySelectionBar, { type SelectedInvoice, type TrashJob } from "./Di
 // folder). Shown in a directory tab of the workspace home; tags are display data only.
 const props = defineProps<{ company: Company; dirKey: string }>();
 const tagStore = useTagsStore();
+const viewActive = inject(VIEW_ACTIVE, ref(true));
+let stale = false;
+function refreshFromEvent(): void {
+  if (viewActive.value) void loadInvoices(invoicesPage.value);
+  else stale = true;
+}
+watch(viewActive, (active) => { if (active && stale) { stale = false; void loadInvoices(invoicesPage.value); } });
 const tagFilter = ref("");
+// Prototype filters; all are applied by the server before sorting/paging (WEB_UI rule).
+const keyword = ref("");
+const fileExt = ref("");
+const statusFilter = ref("");
+let keywordTimer: ReturnType<typeof setTimeout> | undefined;
+function keywordChanged(): void { clearTimeout(keywordTimer); keywordTimer = setTimeout(() => void loadInvoices(1), 300); }
 // Revision of this company's 发票标签.json, read lazily before the first mark is saved.
 const marksRevision = ref<number | null>(null);
 // Batch mode (WS-06): opened on a row that belongs to a multi-row selection, the menu works on
@@ -79,7 +93,13 @@ function previewSelected(): void {
   previewing.value = { target_id: invoices.value!.directory.target_id, items: selectedItems.value.map((item) => ({ ...item })) };
 }
 
-const queryFilters = () => `${tagFilter.value ? `&tag=${encodeURIComponent(tagFilter.value)}` : ""}${dateSort.value ? `&date_sort=${dateSort.value}` : ""}`;
+const queryFilters = () => [
+  tagFilter.value && `&tag=${encodeURIComponent(tagFilter.value)}`,
+  dateSort.value && `&date_sort=${dateSort.value}`,
+  keyword.value.trim() && `&keyword=${encodeURIComponent(keyword.value.trim())}`,
+  fileExt.value && `&file_ext=${encodeURIComponent(fileExt.value)}`,
+  statusFilter.value && `&status=${encodeURIComponent(statusFilter.value)}`,
+].filter(Boolean).join("");
 
 function toggleDateSort(): void {
   dateSort.value = dateSort.value === "asc" ? "desc" : "asc";
@@ -283,6 +303,7 @@ function tagTitle(id: string): string {
 }
 
 onMounted(() => {
+  window.addEventListener("workspace:invoices-updated", refreshFromEvent);
   if (!tagStore.definitions) void tagStore.load();
 });
 
@@ -300,26 +321,37 @@ watch(
 );
 // A preview is a snapshot of this exact selection; changing it releases its heartbeat.
 watch(() => JSON.stringify(selectedItems.value), () => { previewing.value = null; });
-onBeforeUnmount(() => { listGeneration += 1; selectionGeneration += 1; });
+onBeforeUnmount(() => { clearTimeout(keywordTimer); listGeneration += 1; selectionGeneration += 1; window.removeEventListener("workspace:invoices-updated", refreshFromEvent); });
 </script>
 
 <template>
   <div>
     <p v-if="error" class="banner banner--error" role="alert">{{ error }}</p>
     <section v-if="invoices" class="panel" aria-label="目录发票">
-      <h3>
-        {{ invoices.directory.label }} · {{ invoices.count }} 张
-        <span v-if="invoices.read_only" class="tag">只读 · 上次汇总</span>
-      </h3>
+      <!-- Tag filtering, same-invoice deduplication and decimal totals all come from the server. -->
+      <div v-if="invoices.stats?.all" class="dir-stats">
+        <div class="overview-kpi"><span>全部记录</span><strong>{{ invoices.stats.all.total }}</strong><small>已识别 {{ invoices.stats.all.recognized }} 张</small></div>
+        <div class="overview-kpi"><span>待核对</span><strong>{{ invoices.stats.all.needs_review }}</strong><small>金额或字段未识别</small></div>
+        <div class="overview-kpi"><span>同票其他格式</span><strong>{{ invoices.stats.all.duplicates }}</strong><small>合计时只计一次</small></div>
+        <div class="overview-kpi"><span>当前筛选合计</span><strong>{{ !invoices.stats.filtered ? "—" : money(String(invoices.stats.filtered.total_amount)) }}</strong><small>价税合计 · 同票去重 · 计入 {{ invoices.stats.filtered?.total_amount_valid_count ?? "—" }} 张<template v-if="invoices.stats.filtered?.total_amount_missing_count"> · 缺金额 {{ invoices.stats.filtered.total_amount_missing_count }} 张未计</template><template v-if="invoices.stats.filtered?.total_amount_conflict_count"> · 多格式金额不一 {{ invoices.stats.filtered.total_amount_conflict_count }} 张未计</template></small></div>
+      </div>
+      <div class="overview-section__head dir-list-head">
+        <div>
+          <h3>发票列表 <span class="muted">· {{ invoices.count }} 张</span> <span v-if="invoices.read_only" class="tag">只读 · 上次汇总</span></h3>
+          <p>可直接打开本地文件或进入详情手工修订。{{ selectable ? "勾选后底部出现合计与批量操作；" : "" }}右键一行（或 Shift+F10）可以打标签{{ selectable ? "，在已勾选的行上右键给全部勾选的发票打标签" : "" }}。</p>
+        </div>
+      </div>
       <p v-if="invoices.read_only" class="muted">非监控目录只能查看；预览、打印、改名或删除请先设为监控目录。</p>
       <p v-if="!invoices.directory.projection.summary_exists" class="muted">这个目录还没有汇总过。</p>
       <p v-if="invoices.tags_error" class="banner banner--error" role="alert">标签读取失败，未显示：{{ invoices.tags_error }}</p>
-      <div v-if="tagStore.tags.length" class="toolbar">
-        <select v-model="tagFilter" aria-label="按标签筛选" @change="loadInvoices(1)">
-          <option value="">全部标签</option>
+      <div class="filters">
+        <label class="field">关键字<input v-model="keyword" aria-label="关键字" :placeholder="dirKey === 'issued_invoice_dir' ? '购买方 / 发票号 / 文件名' : '销售方 / 发票号 / 文件名'" @input="keywordChanged"></label>
+        <label class="field">格式<select v-model="fileExt" aria-label="格式" @change="loadInvoices(1)"><option value="">全部</option><option value=".pdf">PDF</option><option value=".ofd">OFD</option><option value=".xml">XML</option></select></label>
+        <label class="field">状态<select v-model="statusFilter" aria-label="状态" @change="loadInvoices(1)"><option value="">全部</option><option value="已识别">已识别</option><option value="待核对">待核对</option></select></label>
+        <label v-if="tagStore.tags.length" class="field">标签<select v-model="tagFilter" aria-label="按标签筛选" @change="loadInvoices(1)">
+          <option value="">全部</option>
           <option v-for="tag in tagStore.tags" :key="tag.id" :value="tag.id">{{ tag.name }}</option>
-        </select>
-        <span class="muted">右键一行（或 Shift+F10）打标签{{ selectable ? "；在已勾选的行上右键，给全部勾选的发票打标签" : "" }}</span>
+        </select></label>
       </div>
       <table v-if="invoices.directory.projection.summary_exists" class="grid directory-invoices-table" :aria-busy="invoicesLoading">
         <thead>
@@ -358,10 +390,10 @@ onBeforeUnmount(() => { listGeneration += 1; selectionGeneration += 1; });
               <span class="invoice-type" :class="{ 'invoice-type--special': row.invoice_type === '增值税专用发票', 'invoice-type--ordinary': row.invoice_type === '增值税普通发票' }">{{ row.invoice_type || '—' }}</span>
               <span class="muted invoice-classification__business">业务：{{ row.business_type || '—' }}</span>
             </td>
-            <td class="nowrap">{{ row.tax_rate }}</td>
+            <td class="nowrap">{{ ratePercent(row.tax_rate) }}</td>
             <td class="num">{{ money(row.amount) }}</td>
             <td class="nowrap">{{ row.invoice_date }}</td>
-            <td class="nowrap">{{ row.status }}</td>
+            <td class="nowrap"><span class="tag" :class="row.status === '已识别' ? 'pill-ok' : row.status ? 'pill-warn' : ''">{{ row.status || "—" }}</span></td>
             <td v-if="selectable" class="select-cell">
               <input
                 type="checkbox"

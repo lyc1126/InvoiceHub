@@ -11,9 +11,9 @@ export const useTagsStore = defineStore("tags", () => {
   const tags = computed<InvoiceTag[]>(() => definitions.value?.tags ?? []);
   const byId = computed(() => new Map(tags.value.map((tag) => [tag.id, tag])));
 
-  async function load(): Promise<void> {
+  async function load(includeUsage = false): Promise<void> {
     try {
-      definitions.value = await request<InvoiceTagDefinitions>("/api/v1/invoice-tags");
+      definitions.value = await request<InvoiceTagDefinitions>(`/api/v1/invoice-tags${includeUsage ? "?include_usage=1" : ""}`);
       error.value = "";
     } catch (cause) {
       error.value = cause instanceof Error ? cause.message : String(cause);

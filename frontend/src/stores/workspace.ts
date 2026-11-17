@@ -27,7 +27,7 @@ export interface CompareBase {
   dirKey: string;
 }
 
-export const SIDEBAR_DEFAULT = 280;
+export const SIDEBAR_DEFAULT = 292;
 export const SIDEBAR_MIN = 220;
 export const SIDEBAR_MAX = 460;
 // The content area keeps at least this much room next to the sidebar.
@@ -78,6 +78,8 @@ export const useWorkspaceStore = defineStore("workspace", () => {
   // The first visit opens the monitored company once; after the user closes every tab the
   // start page stays empty instead of reopening it.
   const seeded = ref(false);
+  // Prototype openWizard(): adding a company folder is a dialog over the current view, not a tab.
+  const createOpen = ref(false);
 
   const active = computed(() => tabs.value.find((tab) => tab.id === activeId.value) ?? null);
 
@@ -137,7 +139,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
   }
 
   return {
-    tabs, activeId, active, pins, expanded, sidebarWidth, compareBase, seeded,
+    tabs, activeId, active, pins, expanded, sidebarWidth, compareBase, seeded, createOpen,
     open, close, closeCompany, refreshActive, togglePin, toggleExpanded,
   };
 });

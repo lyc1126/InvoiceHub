@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import WorkspaceIcon from "./WorkspaceIcon.vue";
 import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { request } from "../api/client";
 import { errorText, money } from "../format";
@@ -122,7 +123,7 @@ function inbound(): void {
   try {
     // Same handoff as the classic homepage: source paths stay out of the URL and the documents API revalidates them.
     sessionStorage.setItem("invoicehub.inbound-selection", JSON.stringify({ version: 1, created_at: Date.now(), target_id: props.targetId, items: props.items }));
-    window.location.assign("/documents?batch=inbound");
+    window.dispatchEvent(new CustomEvent("workspace:navigate", { detail: { path: "/documents?batch=inbound", refresh: true } }));
   } catch {
     notice.value = { tone: "error", text: "无法传递勾选发票，请检查浏览器是否允许会话存储后重试。" };
   }
@@ -180,19 +181,21 @@ onBeforeUnmount(() => clearTimeout(summaryTimer));
 
 <template>
   <div class="selection-bar" role="region" aria-label="已勾选发票">
+    <!-- Prototype selbar: ink strip, lime count, a bordered sum chip that opens the details,
+         borderless icon actions, and "select all filtered" + close at the far end. -->
     <div class="selection-bar__main">
-      <strong>
-        已勾选 {{ summary?.selection.invoice_count ?? items.length }} 张<template v-if="summary && summary.selection.record_count > summary.selection.invoice_count">（{{ summary.selection.record_count }} 条记录）</template>
-      </strong>
-      <span :aria-busy="summaryLoading">价税合计 {{ summaryLoading && !summary ? "计算中…" : amount(summary?.totals.total_with_tax) }}</span>
-      <button type="button" class="link" :aria-expanded="details" :disabled="!summary" @click="details = !details">合计详情</button>
-      <span class="selection-bar__actions">
-        <button v-if="items.length < total" type="button" :disabled="selectingAll" :aria-busy="selectingAll" @click="emit('selectAll')">全选筛选结果（{{ total }}）</button>
-        <button type="button" :disabled="busy || !targetId" @click="emit('preview')">预览</button>
-        <button type="button" :disabled="busy" @click="print">打印</button>
-        <button type="button" :disabled="busy || !targetId" @click="inbound">开具入库单</button>
-        <button type="button" class="danger" :disabled="busy" @click="prepareTrash">删除所选…</button>
-        <button type="button" @click="emit('clear')">取消勾选</button>
+      <span class="sb-count">已勾选 <b>{{ summary?.selection.invoice_count ?? items.length }}</b> 张<small v-if="summary && summary.selection.record_count > summary.selection.invoice_count">（{{ summary.selection.record_count }} 条记录）</small></span>
+      <button type="button" class="sb-sum" :aria-expanded="details" :aria-busy="summaryLoading" :disabled="!summary" @click="details = !details">
+        <span>价税合计</span><strong>{{ summaryLoading && !summary ? "计算中…" : amount(summary?.totals.total_with_tax) }}</strong><em>合计详情 ›</em>
+      </button>
+      <span class="sb-sep" aria-hidden="true" />
+      <button type="button" class="sb-btn" :disabled="busy || !targetId" @click="emit('preview')"><WorkspaceIcon name="eye" />预览</button>
+      <button type="button" class="sb-btn" :disabled="busy" @click="print"><WorkspaceIcon name="print" />打印</button>
+      <button type="button" class="sb-btn" :disabled="busy || !targetId" @click="inbound"><WorkspaceIcon name="docs" />开具入库单</button>
+      <button type="button" class="sb-btn sb-btn--danger" :disabled="busy" @click="prepareTrash"><WorkspaceIcon name="trash" />删除所选…</button>
+      <span class="sb-end">
+        <button v-if="items.length < total" type="button" class="sb-link" :disabled="selectingAll" :aria-busy="selectingAll" @click="emit('selectAll')">全选筛选结果（{{ total }}）</button>
+        <button type="button" class="sb-x" aria-label="取消勾选" title="取消勾选" @click="emit('clear')"><WorkspaceIcon name="x" /></button>
       </span>
     </div>
     <p v-if="summaryError" class="banner banner--error" role="alert">合计未能计算：{{ summaryError }}</p>

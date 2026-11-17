@@ -1,17 +1,21 @@
 <script setup lang="ts">
 import { companySourceKey } from "../stores/companies";
-import { computed, ref, watch } from "vue";
+import { computed, inject, onBeforeUnmount, provide, ref, watch } from "vue";
+import { VIEW_ACTIVE } from "../modules";
 import { request } from "../api/client";
 import type { Company, SameNumberResult } from "../api/types";
 import type { CompareFocus } from "../compareFocus";
 import { errorText, money } from "../format";
 import CompareDrawer from "./CompareDrawer.vue";
 import CompareSources from "./CompareSources.vue";
+import CompareGallery from "./CompareGallery.vue";
 
 // WS-04 same-number check: two invoice folders without a relation (one company or two). The
 // backend lists the invoice numbers found on both sides and says whether each is a possible
 // duplicate or one transaction seen from both companies; the page links nothing by itself.
-const props = defineProps<{ company: Company; dirKey: string; otherCompany: Company; otherDirKey: string }>();
+const props = withDefaults(defineProps<{ company: Company; dirKey: string; otherCompany: Company; otherDirKey: string; active?: boolean }>(), { active: true });
+const parentActive = inject(VIEW_ACTIVE, ref(true));
+provide(VIEW_ACTIVE, computed(() => parentActive.value && props.active));
 const result = ref<SameNumberResult | null>(null);
 const loading = ref(false);
 const error = ref("");
@@ -23,6 +27,7 @@ let loadGeneration = 0;
 async function load(): Promise<void> {
   const mine = ++loadGeneration;
   focus.value = null;
+  result.value = null;
   loading.value = true;
   error.value = "";
   const query = new URLSearchParams({ a: props.dirKey, b: props.otherDirKey, b_company: props.otherCompany.id });
@@ -38,7 +43,8 @@ async function load(): Promise<void> {
 }
 
 // Stable source keys ignore metadata refreshes but invalidate a comparison after a mapping changes.
-watch(() => `${companySourceKey(props.company, [props.dirKey])}/${companySourceKey(props.otherCompany, [props.otherDirKey])}`, () => { result.value = null; void load(); }, { immediate: true });
+watch(() => `${companySourceKey(props.company, [props.dirKey])}/${companySourceKey(props.otherCompany, [props.otherDirKey])}/${props.company.monitored_subdir_key}/${props.company.monitored}/${props.otherCompany.monitored_subdir_key}/${props.otherCompany.monitored}`, () => { result.value = null; void load(); }, { immediate: true });
+onBeforeUnmount(() => { loadGeneration += 1; });
 </script>
 
 <template>
@@ -85,7 +91,8 @@ watch(() => `${companySourceKey(props.company, [props.dirKey])}/${companySourceK
           </tbody>
         </table>
         <p v-else class="muted">两边没有相同的发票号码。</p>
-        <CompareSources v-if="result.records" :records="result.records" :labels="labels" :focus="focus" @clear="focus = null" />
+        <CompareGallery v-if="result.records" :records="result.records" :labels="labels" :focus="focus" @detail="focus = $event" />
+        <CompareSources v-if="result.records" :records="result.records" :labels="labels" :focus="focus" @clear="focus = null" @detail="focus = $event" />
         <CompareDrawer v-if="focus" :focus="focus" :labels="labels" @close="focus = null" />
       </template>
     </template>

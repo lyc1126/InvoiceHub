@@ -71,6 +71,7 @@ describe("company setup and mapping", () => {
     await wrapper.get('[aria-label="公司名称"]').setValue(JOB.name);
     await wrapper.get('[aria-label="上级文件夹"]').setValue("/合成父目录");
     await wrapper.get('[aria-label="成本发票 子目录"]').setValue("财务/进项");
+    await wrapper.get('input[value="later"]').setValue(true);
     await wrapper.get("form").trigger("submit");
     await flushPromises();
     expect(calls).toHaveLength(1);
@@ -94,6 +95,7 @@ describe("company setup and mapping", () => {
     }));
     const wrapper = mount(CompanyCreateForm, { global: setup() });
     await wrapper.findAll("button").find((button) => button.text() === "新建工作区")!.trigger("click");
+    await wrapper.get('input[value="later"]').setValue(true);
     await wrapper.get("form").trigger("submit");
     await flushPromises();
     await wrapper.findAll("button").find((button) => button.text() === "确认创建并登记")!.trigger("click");

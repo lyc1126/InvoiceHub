@@ -18,6 +18,8 @@ export interface NewCompany {
   root_dir: string;
   taxpayer_periods: TaxpayerPeriod[];
   subdirs?: Record<string, string>;
+  create_missing?: string[];
+  plan_hash?: string;
 }
 
 export interface CompanyPatch {
@@ -41,22 +43,26 @@ export const useCompaniesStore = defineStore("companies", () => {
   const selectedId = ref<string | null>(null);
   const loading = ref(false);
   const error = ref("");
+  let generation = 0;
 
   const companies = computed<Company[]>(() => list.value?.companies ?? []);
   const selected = computed(() => companies.value.find((item) => item.id === selectedId.value) ?? null);
 
   async function load(): Promise<void> {
+    const turn = ++generation;
     loading.value = true;
     error.value = "";
     try {
-      list.value = await request<CompanyListPayload>("/api/v1/companies");
+      const next = await request<CompanyListPayload>("/api/v1/companies");
+      if (turn !== generation) return;
+      list.value = next;
       if (selectedId.value && !companies.value.some((item) => item.id === selectedId.value)) selectedId.value = null;
       if (!selectedId.value) selectedId.value = list.value.monitored_company_id ?? companies.value[0]?.id ?? null;
     } catch (cause) {
       // Keep the last good list visible; only the banner changes.
-      error.value = cause instanceof Error ? cause.message : String(cause);
+      if (turn === generation) error.value = cause instanceof Error ? cause.message : String(cause);
     } finally {
-      loading.value = false;
+      if (turn === generation) loading.value = false;
     }
   }
 
@@ -77,6 +83,7 @@ export const useCompaniesStore = defineStore("companies", () => {
     const result = await write((revision) =>
       request<CompanyPayload>("/api/v1/companies", { method: "POST", body: { ...input, revision } }),
     );
+    if (!result.company) throw new Error("登记结果待核对，请读取执行结果。");
     selectedId.value = result.company.id;
     await load();
     return result;

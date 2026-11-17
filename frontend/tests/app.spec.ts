@@ -62,12 +62,12 @@ function stubBackend({ fail = false, companies = [COMPANY, OTHER] } = {}) {
   );
 }
 
-async function mountApp(path = "/") {
+async function mountApp(path = "/", attach = true) {
   const pinia = createPinia();
   setActivePinia(pinia);
   const router = createAppRouter(createMemoryHistory());
   await router.push(path);
-  const wrapper = mount(App, { global: { plugins: [pinia, router] }, attachTo: document.body });
+  const wrapper = mount(App, { global: { plugins: [pinia, router] }, ...(attach ? { attachTo: document.body } : {}) });
   await flushPromises();
   return { wrapper, router };
 }
@@ -78,6 +78,7 @@ const sidebarButton = (wrapper: Awaited<ReturnType<typeof mountApp>>["wrapper"],
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
   document.body.innerHTML = "";
   localStorage.clear();
 });
@@ -97,11 +98,55 @@ describe("workspace shell", () => {
     expect(router.currentRoute.value.name).toBe("home");
   });
 
-  it("links modules that are not migrated yet to their classic pages", async () => {
+  it("opens all cached modules and the temporary view through workspace routes", async () => {
     stubBackend();
     const { wrapper } = await mountApp();
     const hrefs = wrapper.findAll(".rail a").map((item) => item.attributes("href"));
-    expect(hrefs).toEqual(expect.arrayContaining(["/costs", "/documents", "/bookkeeping", "/ocr", "/consistency", "/settings", "/"]));
+    expect(hrefs).toEqual(expect.arrayContaining(["/temporary", "/costs", "/documents", "/bookkeeping", "/ocr", "/consistency", "/settings", "/"]));
+  });
+
+  it.each(["/companies", "/directory", "/unknown/path"])("preserves skin recovery through %s and every module link", async (path) => {
+    stubBackend();
+    const { wrapper, router } = await mountApp(`${path}?no_skin=YES`);
+    expect(router.currentRoute.value.query.no_skin).toBe("YES");
+    expect(wrapper.get(".appearance-toggle").attributes("disabled")).toBeDefined();
+    for (const link of wrapper.findAll(".rail a")) expect(link.attributes("href")).toContain("no_skin=1");
+    wrapper.unmount();
+  });
+
+  it("keeps an unsaved company form and cached tabs when changing appearance", async () => {
+    stubBackend();
+    const append = document.head.appendChild.bind(document.head);
+    vi.spyOn(document.head, "appendChild").mockImplementation(<T extends Node>(node: T): T => {
+      if (node instanceof HTMLLinkElement) node.removeAttribute("rel");
+      return append(node);
+    });
+    const previousFetch = fetch;
+    const dark = { id: "website-dark", stylesheet_url: "/api/v1/skins/website-dark/files/skin.css?v=test" };
+    vi.stubGlobal("fetch", vi.fn(async (url: string, options?: RequestInit) => {
+      if (url.startsWith("/api/v1/skins")) return new Response(JSON.stringify({ ok: true, skins: [dark], enabled_skin_id: options?.method === "POST" ? dark.id : null, active_skin: options?.method === "POST" ? dark : null }));
+      return previousFetch(url, options);
+    }));
+    const { wrapper } = await mountApp();
+    await wrapper.get("#company-tab-settings").trigger("click");
+    const input = wrapper.get('[aria-label="公司设置"] input');
+    await input.setValue("尚未保存的合成名称");
+    const element = input.element;
+    const count = calls.length;
+    await wrapper.get(".appearance-toggle").trigger("click");
+    await flushPromises();
+    document.querySelector('link[data-workspace-appearance="pending"]')!.dispatchEvent(new Event("load"));
+    await flushPromises();
+    expect(wrapper.get('[aria-label="公司设置"] input').element).toBe(element);
+    expect((element as HTMLInputElement).value).toBe("尚未保存的合成名称");
+    expect(tabTitles(wrapper)).toEqual(["甲公司"]);
+    expect(calls).toHaveLength(count);
+    wrapper.unmount();
+    document.getElementById("activeSkinStylesheet")?.remove();
+    delete document.documentElement.dataset.activeSkin;
+    document.body.classList.remove("skin-website-dark");
+    delete document.body.dataset.skinClass;
+    delete document.body.dataset.activeSkin;
   });
 
   it("keeps the last good snapshot when a refresh fails", async () => {
@@ -112,6 +157,27 @@ describe("workspace shell", () => {
     await flushPromises();
     expect(wrapper.get('[role="alert"]').text()).toBe("服务暂不可用");
     expect(wrapper.text()).toContain("0.3.0-alpha.2");
+  });
+
+  it("caches home and each module, hands off a new batch, and refreshes only the active view", async () => {
+    stubBackend();
+    const { wrapper, router } = await mountApp("/", false);
+    await wrapper.get("#company-tab-settings").trigger("click");
+    const input = wrapper.get('[aria-label="公司设置"] input'); await input.setValue("未保存公司草稿");
+    await router.push("/costs"); await flushPromises(); const cost = wrapper.get('iframe[title="成本分析"]').element;
+    expect((wrapper.get(".ws-home").element as HTMLElement).style.display).toBe("none");
+    await router.push("/ocr"); await flushPromises(); const ocr = wrapper.get('iframe[title="OCR"]').element;
+    expect(wrapper.get('iframe[title="成本分析"]').element).toBe(cost);
+    await wrapper.get(".rail .brand").trigger("dblclick"); await flushPromises();
+    expect(wrapper.get('iframe[title="OCR"]').element).not.toBe(ocr); expect(wrapper.get('iframe[title="成本分析"]').element).toBe(cost);
+    window.dispatchEvent(new CustomEvent("workspace:navigate", { detail: { path: "/documents?batch=inbound&batch_token=synthetic", refresh: true } }));
+    await flushPromises(); expect(router.currentRoute.value.name).toBe("documents");
+    expect(wrapper.get('iframe[title="单据"]').attributes("src")).toContain("batch_token=synthetic");
+    await router.push("/"); await flushPromises();
+    expect(wrapper.get('[aria-label="公司设置"] input').element).toBe(input.element);
+    expect((input.element as HTMLInputElement).value).toBe("未保存公司草稿");
+    expect(wrapper.get(".ws-status").text()).toContain("当前监控目录");
+    expect(wrapper.get(".ws-status").text()).not.toContain("实时监控中"); wrapper.unmount();
   });
 });
 
@@ -142,10 +208,11 @@ describe("workspace home", () => {
     expect(wrapper.find(".ws-tab").exists()).toBe(false);
   });
 
-  it("loads projects only when a company is expanded and opens a project tab", async () => {
+  it("loads sidebar projects only when expanded, independently of the overview", async () => {
     stubBackend();
     const { wrapper } = await mountApp();
-    expect(calls.some((url) => url.includes("/projects"))).toBe(false);
+    expect(calls.some((url) => url.includes("/projects?granularity=year"))).toBe(false);
+    expect(calls.some((url) => url.includes("/projects?granularity=month"))).toBe(true);
     await wrapper.get('.ws-toggle[aria-label="展开 甲公司"]').trigger("click");
     await flushPromises();
     await sidebarButton(wrapper, "项目 滨江一期").trigger("click");
@@ -174,7 +241,7 @@ describe("workspace home", () => {
     await wrapper.get('.ws-toggle[aria-label^="展开 乙公司"]').trigger("click");
     await flushPromises();
     const rows = wrapper.findAll(".ws-children .ws-node");
-    const cost = rows.find((item) => item.attributes("aria-label") === "成本发票（监控中）")!;
+    const cost = rows.find((item) => item.attributes("aria-label") === "成本发票（当前监控目录）")!;
     await cost.trigger("contextmenu");
     await wrapper.findAll('.ws-sidebar [role="menu"] button').find((item) => item.text() === "选择以进行比较")!.trigger("click");
     expect(wrapper.get(".ws-compare-hint").text()).toContain("成本发票");
@@ -211,7 +278,7 @@ describe("workspace home", () => {
     await wrapper.get('.ws-toggle[aria-label="展开 甲公司"]').trigger("click");
     await wrapper.get('.ws-toggle[aria-label^="展开 乙公司"]').trigger("click");
     await flushPromises();
-    const cost = wrapper.findAll(".ws-children .ws-node").find((item) => item.attributes("aria-label") === "成本发票（监控中）")!;
+    const cost = wrapper.findAll(".ws-children .ws-node").find((item) => item.attributes("aria-label") === "成本发票（当前监控目录）")!;
     await cost.trigger("contextmenu");
     await wrapper.findAll('.ws-sidebar [role="menu"] button').find((item) => item.text() === "选择以进行比较")!.trigger("click");
     const otherIssuedRow = wrapper.findAll(".ws-children .ws-row").filter((item) => item.find('.ws-node[aria-label="开具发票"]').exists())[1]!;

@@ -1,4 +1,4 @@
-import type { RecordIds } from "../compareFocus";
+import type { CompareFocus, RecordIds } from "../compareFocus";
 // Subsets of /api/v1 payloads consumed by the workspace shell. Field names follow
 // AppState.health() and AppState.settings(); extend here before using a new field.
 export interface HealthPayload {
@@ -39,7 +39,7 @@ export interface Company {
   name: string;
   root_dir: string;
   root_path: string;
-  root_status: "present" | "missing" | "not_directory";
+  root_status: "present" | "missing" | "not_directory" | "outside_root" | "unreadable";
   subdirs: CompanySubdir[];
   missing_subdir_count: number;
   taxpayer_periods: TaxpayerPeriod[];
@@ -179,6 +179,8 @@ export interface InvoiceRow {
   status: string;
 }
 
+export interface InvoiceListStats { total: number; recognized: number; needs_review: number; duplicates: number; total_amount: string | number; total_amount_valid_count?: number; total_amount_missing_count?: number; total_amount_conflict_count?: number }
+
 export interface DirectoryInvoicesPayload {
   ok: boolean;
   count: number;
@@ -188,6 +190,8 @@ export interface DirectoryInvoicesPayload {
   read_only: boolean;
   directory: CompanyDirectory;
   tags_error?: string;
+  /** Full-folder and fully filtered statistics, including tags, before pagination. */
+  stats?: { all?: InvoiceListStats; filtered?: InvoiceListStats };
   /** A first, still-building result: rows may move, so nothing can be selected (classic homepage rule). */
   snapshot?: { provisional?: boolean; revision?: string };
 }
@@ -389,12 +393,20 @@ export interface SettlementParty {
 
 /** One row of a side-by-side source list (WS-04): an invoice, a statement row or a list row. */
 // Monitored folder only (WS-04): the homepage identities preview-jobs re-validates.
-export interface PreviewRef {
+export interface InvoicePreviewRef {
   target_id: string;
   items: { invoice_key: string; source_path: string }[];
 }
 
+export interface ReceiptPreviewRef {
+  kind: "receipt"; company_id: string; receipt_id: string; token: string; page: number;
+}
+export type PreviewRef = InvoicePreviewRef | ReceiptPreviewRef;
+
 export interface CompareRecord {
+  flow_match?: "matched" | "unmatched" | null;
+  project?: string | null;
+  project_source?: "remark" | "manual" | null;
   id: string;
   preview?: PreviewRef;
   invoice_number: string;
@@ -403,6 +415,7 @@ export interface CompareRecord {
   amount: string;
   source_file: string;
   details?: string;
+  detail?: CompareFocus;
 }
 
 // WS-04 same-number check: two invoice folders without a relation, possibly of two companies.
@@ -453,6 +466,8 @@ export interface CompareResult {
   excluded?: { direction: "input" | "output"; invoice_number: string; invoice_date: string; name: string; spec: string; unit: string; quantity: string; amount: string; source_file: string; reason: string }[];
   totals?: { open_amount?: string; in_amount?: string; cost?: string; end_amount?: string; opening?: string; invoiced?: string; settled?: string; closing?: string };
   // settlement
+  summary_details?: (CompareFocus & { value: string })[];
+  receipts?: CompareRecord[];
   side?: "payable" | "receivable";
   side_label?: string;
   parties?: SettlementParty[];
@@ -506,6 +521,9 @@ export interface InvoiceTag {
 }
 
 export interface InvoiceTagDefinitions {
+  usage?: Record<string, number>;
+  usage_unavailable?: { id: string; name: string }[];
+  usage_complete?: boolean;
   ok: boolean;
   revision: number;
   tags: InvoiceTag[];
@@ -517,4 +535,23 @@ export interface InvoiceTagMarks {
   ok: boolean;
   revision: number;
   invoices: Record<string, string[]>;
+}
+
+// Appearance is shared with the classic pages; the workspace stores no separate preference.
+export interface Skin {
+  id: string;
+  stylesheet_url: string;
+}
+
+export interface SkinsPayload {
+  ok: boolean;
+  enabled_skin_id: string | null;
+  active_skin: Skin | null;
+  skins: Skin[];
+}
+
+export interface CompanyDetection {
+  root_status: SubdirStatus;
+  subdirs: { key: string; label: string; relative_path: string; status: SubdirStatus; path: string; file_count: number | null; suggested_action: string }[];
+  plan_hash: string;
 }

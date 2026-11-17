@@ -1,8 +1,11 @@
 <script setup lang="ts">
-import { computed, reactive, ref, watch } from "vue";
+import WsModal from "./WsModal.vue";
+import { useModulesStore } from "../stores/modules";
+import { computed, onBeforeUnmount, reactive, ref, watch } from "vue";
 import { ApiError, request } from "../api/client";
 import type { Company } from "../api/types";
 import { errorText, money } from "../format";
+import MonthPicker from "./MonthPicker.vue";
 
 // Voucher drafts (WS-05 stage 1): the CLI's review workbook in 做账草稿/, edited cell by cell.
 // The page only shows a live debit/credit total while typing; the backend re-checks every
@@ -20,7 +23,10 @@ interface DraftVoucher {
   errors: string[]; warnings: string[]; lines: DraftLine[]; source_documents?: SourceDocument[];
 }
 interface DraftSheet { name: string; columns: (string | number)[]; rows: (string | number)[][]; truncated: boolean }
+interface MonthStat { month: string; vouchers: number; approved: number; blocked: number; exported: number }
+interface ExportPreview { format: string; columns: string[]; unmatched: string[]; sample_rows: (string | number | null)[][]; months: { month: string; approved: number; blocked_reason: string }[] }
 interface DraftPayload {
+  months?: MonthStat[];
   name: string; revision: string; books_error: string; vouchers: DraftVoucher[]; approved: number; blocked: number;
   sheets?: DraftSheet[]; current_month?: string;
   periods_revision?: number | null; periods_error?: string; cross_period_hint?: string;
@@ -41,9 +47,11 @@ interface ExportResult {
 }
 type Editable = "summary" | "code" | "debit" | "credit" | "supplier";
 
-const props = defineProps<{ company: Company }>();
+const props = withDefaults(defineProps<{ company: Company; layout?: "cards" | "split" }>(), { layout: "cards" });
+const selectedVoucher = ref("");
 const base = computed(() => `/api/v1/companies/${encodeURIComponent(props.company.id)}/voucher-drafts`);
-const files = ref<{ name: string }[] | null>(null);
+const files = ref<{ name: string; months?: MonthStat[] }[] | null>(null);
+const monthIndex = ref<MonthStat[]>([]);
 // Generate (stage 2): voucher_cli draft from the page, with only the read-backs the backend listed.
 const inputs = ref<DraftInputs | null>(null);
 // Export formats (BK-01): built-in profiles plus the user's templates in 做账草稿/导出模板/.
@@ -76,11 +84,34 @@ const preparer = ref("");
 // v-model on a number input yields a number once typed, "" when cleared.
 const afterNumbers = reactive<Record<string, string | number>>({});
 const exportResult = ref<ExportResult | null>(null);
-const approvedByMonth = computed(() => {
-  const counts: Record<string, number> = {};
-  for (const voucher of draft.value?.vouchers ?? []) if (voucher.approval === "通过") counts[voucher.month] = (counts[voucher.month] ?? 0) + 1;
-  return Object.entries(counts).sort(([a], [b]) => a.localeCompare(b));
+const exportJob = ref<{ url: string; token: string } | null>(null);
+const approvedByMonth = computed(() => (draft.value?.months ?? []).filter(item => item.approved > 0 && (!month.value || item.month === month.value)).map(item => [item.month, item.approved] as const));
+const preview = ref<ExportPreview | null>(null);
+const previewing = ref(false);
+let previewGeneration = 0;
+let previewTimer: ReturnType<typeof setTimeout> | undefined;
+const previewInput = () => JSON.stringify([exportOpen.value, draft.value?.name, draft.value?.revision, preparer.value, exportFormat.value, afterNumbers, month.value]);
+function afterInput(): Record<string, number> {
+  return Object.fromEntries(Object.entries(afterNumbers).filter(([, value]) => String(value ?? "").trim() !== "").map(([month, value]) => [month, Number(value)]));
+}
+watch(previewInput, () => {
+  const mine = ++previewGeneration;
+  clearTimeout(previewTimer);
+  preview.value = null;
+  previewing.value = false;
+  if (!exportOpen.value || !draft.value || !preparer.value.trim()) return;
+  previewing.value = true;
+  previewTimer = setTimeout(async () => {
+    try {
+      const result = await request<ExportPreview>(`${base.value}/${encodeURIComponent(draft.value!.name)}/export`, {
+        method: "POST", body: { revision: draft.value!.revision, preparer: preparer.value, after: afterInput(), format: exportFormat.value, month: month.value, dry_run: true },
+      });
+      if (mine === previewGeneration) preview.value = result;
+    } catch (cause) { if (mine === previewGeneration) error.value = errorText(cause); }
+    finally { if (mine === previewGeneration) previewing.value = false; }
+  }, 300);
 });
+onBeforeUnmount(() => { clearTimeout(previewTimer); previewGeneration += 1; filesGeneration += 1; draftGeneration += 1; });
 // 改记入期 (stage 2a): corrects generated data only; the invoice file stays where it is.
 const REBOOK_REASONS = ["次月到票", "补记漏记", "月末暂估", "开票日期有误", "其他"];
 const rebooking = ref<{ key: string; number: string; issueMonth: string; month: string; reason: string; override: boolean } | null>(null);
@@ -89,7 +120,7 @@ const numberFormat = new Intl.NumberFormat("zh-CN", { maximumFractionDigits: 3 }
 const cellText = (value: string | number) => (typeof value === "number" ? numberFormat.format(value) : value);
 
 const keyOf = (voucher: DraftVoucher) => `${voucher.month}#${voucher.number}`;
-const months = computed(() => [...new Set((draft.value?.vouchers ?? []).map((item) => item.month))]);
+const months = computed(() => monthIndex.value.map(item => item.month));
 const shown = computed(() =>
   (draft.value?.vouchers ?? []).filter((item) => (!month.value || item.month === month.value) && (!onlyProblems.value || item.errors.length || refused.value[keyOf(item)])),
 );
@@ -97,6 +128,25 @@ const dirtyCount = computed(() => {
   const keys = new Set([...Object.keys(approvals), ...Object.keys(periods)]);
   for (const voucher of draft.value?.vouchers ?? []) if (voucher.lines.some((line) => edits[line.row])) keys.add(keyOf(voucher));
   return keys.size;
+});
+// Split layout lives under the bookkeeping page head; mirror month / export state into the
+// shared module store so the head can drive them (prototype bkView head).
+const modulesStore = useModulesStore();
+function bookEntry() {
+  if (props.layout !== "split") return null;
+  return (modulesStore.book[props.company.id] ??= { month: "", months: [], approved: 0, exportable: false, exportTick: 0 });
+}
+watch(() => [props.company.id, months.value.join(","), month.value, draft.value?.months, dirtyCount.value, exporting.value, exportJob.value, loading.value] as const, () => {
+  const state = bookEntry();
+  if (!state) return;
+  // Head count = approved but not yet exported (backend month index); exported ones would be skipped.
+  state.months = months.value; state.month = month.value;
+  state.approved = (draft.value?.months ?? []).filter(item => !month.value || item.month === month.value).reduce((sum, item) => sum + Math.max(0, item.approved - item.exported), 0);
+  state.exportable = state.approved > 0 && dirtyCount.value === 0 && !exporting.value && !exportJob.value && !loading.value;
+}, { immediate: true });
+watch(() => props.layout === "split" ? modulesStore.book[props.company.id]?.month : undefined, value => { if (value !== undefined && value !== month.value) month.value = value; });
+watch(() => props.layout === "split" ? modulesStore.book[props.company.id]?.exportTick : undefined, (tick, old) => {
+  if (tick && tick !== old && bookEntry()?.exportable) { exportOpen.value = true; exportResult.value = null; }
 });
 
 function value(line: DraftLine, field: Editable): string {
@@ -157,37 +207,49 @@ function setPeriod(voucher: DraftVoucher, field: "month" | "date", value: string
   else periods[keyOf(voucher)] = next;
 }
 
+let filesGeneration = 0;
+let draftGeneration = 0;
 async function loadFiles(): Promise<void> {
+  const mine = ++filesGeneration;
   error.value = "";
   try {
-    const listing = await request<{ drafts: { name: string }[]; inputs: DraftInputs; formats?: ExportFormat[]; template_folder?: string }>(base.value);
+    const listing = await request<{ drafts: { name: string; months?: MonthStat[] }[]; months?: MonthStat[]; index_errors?: { name: string; message: string }[]; inputs: DraftInputs; formats?: ExportFormat[]; template_folder?: string }>(base.value);
+    if (mine !== filesGeneration) return;
     files.value = listing.drafts;
+    monthIndex.value = listing.months ?? [];
+    if (listing.index_errors?.length) error.value = listing.index_errors.map(item => `${item.name}：${item.message}`).join("；");
     inputs.value = listing.inputs;
     formats.value = listing.formats ?? [];
     templateFolder.value = listing.template_folder ?? "";
     if (!formats.value.some((item) => item.key === exportFormat.value)) exportFormat.value = "jierui";
     if (!files.value.some((item) => item.name === selectedFile.value)) selectedFile.value = files.value.at(-1)?.name ?? "";
   } catch (cause) {
-    error.value = errorText(cause);
+    if (mine === filesGeneration) error.value = errorText(cause);
   }
 }
 
 async function loadDraft(): Promise<void> {
+  const mine = ++draftGeneration;
   if (!selectedFile.value) {
     draft.value = null;
     return;
   }
   loading.value = true;
+  if (draft.value?.name !== selectedFile.value) draft.value = null;
   error.value = "";
   try {
-    draft.value = await request<DraftPayload>(`${base.value}/${encodeURIComponent(selectedFile.value)}`);
+    const result = await request<DraftPayload>(`${base.value}/${encodeURIComponent(selectedFile.value)}`);
+    if (mine !== draftGeneration) return;
+    draft.value = result;
+    const file = files.value?.find(item => item.name === draft.value?.name);
+    if (file && draft.value.months) file.months = draft.value.months;
     resetEdits();
     refused.value = {};
     if (month.value && !months.value.includes(month.value)) month.value = "";
   } catch (cause) {
-    error.value = errorText(cause);
+    if (mine === draftGeneration) error.value = errorText(cause);
   } finally {
-    loading.value = false;
+    if (mine === draftGeneration) loading.value = false;
   }
 }
 
@@ -214,6 +276,7 @@ async function save(): Promise<void> {
       { method: "PUT", body: { revision: draft.value.revision, vouchers: changes } },
     );
     draft.value = saved;
+    await loadFiles();
     resetEdits();
     refused.value = {};
     const movedAll = saved.moved ?? [];
@@ -309,32 +372,68 @@ async function runRebook(back = false): Promise<void> {
 }
 
 async function runExport(): Promise<void> {
-  if (!draft.value) return;
+  if (!draft.value || !preview.value || previewing.value || exportJob.value || loading.value || draft.value.name !== selectedFile.value) return;
   exporting.value = true;
   error.value = "";
   exportResult.value = null;
   const after = Object.fromEntries(Object.entries(afterNumbers).filter(([, value]) => String(value ?? "").trim() !== "").map(([month, value]) => [month, Number(value)]));
+  const token = crypto.randomUUID();
+  const url = `${base.value}/${encodeURIComponent(draft.value.name)}`;
+  exportJob.value = { url, token };
   try {
     exportResult.value = await request<ExportResult>(`${base.value}/${encodeURIComponent(draft.value.name)}/export`, {
-      method: "POST", body: { revision: draft.value.revision, preparer: preparer.value, after, format: exportFormat.value, confirm: true }, timeoutMs: 60_000,
+      method: "POST", body: { revision: draft.value.revision, preparer: preparer.value, after, format: exportFormat.value, month: month.value, request_id: token, confirm: true }, timeoutMs: 60_000,
     });
+    exportJob.value = null;
     exportOpen.value = false;
+    await loadFiles();
+    await loadDraft();
   } catch (cause) {
     if (cause instanceof ApiError && cause.code === "VOUCHER_DRAFT_CONFLICT") {
       await loadDraft();
       error.value = "审核表已在别处修改（或重新生成），已刷新，请重新核对后再导出。";
+      exportJob.value = null;
     } else {
       error.value = errorText(cause);
+      // One GET, never a re-POST: a receipt the server marked "rejected" proves nothing was
+      // written and releases the button; unknown/unreachable keeps the query-only state.
+      exporting.value = false;
+      await readExportResult(true);
     }
   } finally {
     exporting.value = false;
   }
 }
 
+async function readExportResult(quiet = false): Promise<void> {
+  if (!exportJob.value || exporting.value) return;
+  exporting.value = true;
+  try {
+    const result = await request<ExportResult & { state: string; message: string }>(`${exportJob.value.url}/export-jobs/${exportJob.value.token}`);
+    if (result.state === "completed") {
+      exportResult.value = result;
+      exportJob.value = null;
+      exportOpen.value = false;
+      await loadFiles();
+      await loadDraft();
+    } else if (result.state === "rejected") {
+      exportJob.value = null;
+      error.value = result.message;
+    } else if (!quiet) error.value = result.message;
+  } catch (cause) { if (!quiet) error.value = errorText(cause); }
+  finally { exporting.value = false; }
+}
+
 watch(selectedFile, () => void loadDraft());
+watch(month, value => {
+  if (!value || dirtyCount.value || files.value?.find(item => item.name === selectedFile.value)?.months?.some(item => item.month === value)) return;
+  const file = files.value?.find(item => item.months?.some(item => item.month === value));
+  if (file) selectedFile.value = file.name;
+});
 watch(
   () => props.company.id,
   () => {
+    filesGeneration += 1; draftGeneration += 1;
     files.value = null;
     selectedFile.value = "";
     draft.value = null;
@@ -347,20 +446,21 @@ watch(
 <template>
   <section aria-label="凭证草稿">
     <div class="toolbar">
-      <select v-model="selectedFile" aria-label="审核表" :disabled="!files?.length">
+      <select v-if="files?.length" v-model="selectedFile" aria-label="审核表">
         <option v-for="file in files ?? []" :key="file.name" :value="file.name">{{ file.name }}</option>
       </select>
       <select v-if="months.length > 1" v-model="month" aria-label="月份">
         <option value="">全部月份</option>
         <option v-for="item in months" :key="item" :value="item">{{ item }}</option>
       </select>
-      <label class="nowrap"><input v-model="onlyProblems" type="checkbox"> 只看有问题的</label>
+      <label v-if="files?.length" class="nowrap"><input v-model="onlyProblems" type="checkbox"> 只看有问题的</label>
       <button type="button" :disabled="loading" @click="loadFiles().then(loadDraft)">重新读取</button>
-      <button type="button" class="primary" :disabled="saving || !dirtyCount" :aria-busy="saving" @click="save">
+      <button v-if="files?.length" type="button" class="primary" :disabled="saving || !dirtyCount" :aria-busy="saving" @click="save">
         {{ saving ? "保存中…" : `保存（${dirtyCount} 张）` }}
       </button>
-      <button type="button" :disabled="!inputs || generating || dirtyCount > 0" :title="dirtyCount ? '先保存改动再生成' : ''" @click="openGenerate">生成草稿…</button>
+      <button v-if="files?.length" type="button" :disabled="!inputs || generating || dirtyCount > 0" :title="dirtyCount ? '先保存改动再生成' : ''" @click="openGenerate">生成草稿…</button>
       <button
+        v-if="files?.length"
         type="button"
         :disabled="!draft || !draft.approved || dirtyCount > 0 || exporting"
         :title="dirtyCount ? '先保存改动再导出' : !draft?.approved ? '还没有审核通过的凭证' : ''"
@@ -417,12 +517,14 @@ watch(
         </details>
       </template>
     </section>
-    <section v-if="exportOpen && draft" class="panel" role="group" aria-label="导出已审核凭证">
+    <!-- Prototype openExport(): a wide dialog; the confirm / unknown-result rules are unchanged. -->
+    <WsModal v-if="exportOpen && draft" title="导出凭证" subtitle="只导出审核通过的凭证，写到公司资料夹 做账草稿/，不连接账套。" :wide="true" @close="exportOpen = false">
+    <section role="group" aria-label="导出已审核凭证">
       <p>
-        将审核为“通过”的 {{ draft.approved }} 张凭证导出为{{ chosenFormat?.label ?? "账套" }}导入文件，写到公司资料夹 做账草稿/，由会计人员在账套中手工导入（不连接账套）。
+        将 {{ month || "本审核表全部月份" }} 中审核为“通过”的凭证导出为{{ chosenFormat?.label ?? "账套" }}导入文件，写到公司资料夹 做账草稿/，由会计人员在账套中手工导入（不连接账套）。
         某月有凭证校验不通过时该月整月不导出；已导出过的凭证会跳过，不会重复导出。
       </p>
-      <table class="grid">
+      <div class="overview-table-wrap export-setup-table"><table class="grid">
         <thead><tr><th>月份</th><th class="num">通过</th><th>账套该月已用到的凭证号（没有可空）</th></tr></thead>
         <tbody>
           <tr v-for="[month, count] in approvedByMonth" :key="month">
@@ -431,7 +533,7 @@ watch(
             <td><input v-model="afterNumbers[month]" type="number" min="0" max="999" inputmode="numeric" :aria-label="`${month} 账套已用到的凭证号`"></td>
           </tr>
         </tbody>
-      </table>
+      </table></div>
       <div v-if="formats.length" class="toolbar">
         <label class="nowrap">导出格式
           <select v-model="exportFormat" aria-label="导出格式">
@@ -447,12 +549,25 @@ watch(
         <template v-if="chosenFormat.unmatched?.length">对不上、将留空的列：{{ chosenFormat.unmatched.join("、") }}。</template>
         请先只把一张凭证标“通过”导入核对。
       </p>
+      <p v-if="previewing" class="muted" aria-busy="true">正在预览导出…</p>
+      <section v-if="preview" aria-label="导出预览">
+        <div class="export-cols"><span v-for="column in preview.columns" :key="column" class="tag">{{ column }}</span></div>
+        <p v-if="preview.unmatched.length" class="muted">未匹配列（留空）：{{ preview.unmatched.join('、') }}</p>
+        <p v-for="item in preview.months.filter(item => item.blocked_reason)" :key="item.month" class="banner banner--error">{{ item.month }} 整月阻断：{{ item.blocked_reason }}</p>
+        <div class="overview-table-wrap"><table class="grid"><thead><tr><th v-for="(column, index) in preview.columns" :key="index">{{ column }}</th></tr></thead>
+          <tbody><tr v-for="(row, index) in preview.sample_rows" :key="index"><td v-for="(cell, col) in row" :key="col">{{ cell ?? '' }}</td></tr></tbody>
+        </table></div>
+        <p class="muted">最多预览 5 行，不写文件、不标记已导出；确认时重新校验。</p>
+      </section>
+      <p v-if="exportJob" role="status">导出请求已发出；响应未知时只读取结果，不能再次提交。</p>
       <div class="toolbar">
+        <button v-if="exportJob" type="button" :disabled="exporting" @click="readExportResult()">读取导出结果</button>
         <label class="nowrap">制单人 <input v-model="preparer" maxlength="20" aria-label="制单人" placeholder="与账套里的制单人一致"></label>
-        <button type="button" class="primary" :disabled="exporting || !preparer.trim()" :aria-busy="exporting" @click="runExport">{{ exporting ? "导出中…" : "确认导出" }}</button>
-        <button type="button" @click="exportOpen = false">取消</button>
+        <button type="button" class="primary" :disabled="exporting || !!exportJob || !preparer.trim() || !preview || previewing" :aria-busy="exporting" @click="runExport">{{ exporting ? "导出中…" : "确认导出" }}</button>
+        <button type="button" class="ghost" @click="exportOpen = false">取消</button>
       </div>
     </section>
+    </WsModal>
     <section v-if="exportResult" class="panel" role="status" aria-label="导出结果">
       <p :class="{ 'check--failed': exportResult.blocked_months.length }">
         已导出 {{ exportResult.exported }} 张，未导出 {{ exportResult.skipped }} 张<template v-if="exportResult.learned">；记住科目习惯 {{ exportResult.learned }} 条</template>。
@@ -473,9 +588,11 @@ watch(
     </section>
     <p v-if="error" class="banner banner--error" role="alert">{{ error }}</p>
     <p v-if="notice" class="banner banner--ok" role="status">{{ notice }}</p>
-    <p v-if="files && !files.length" class="muted">
-      公司资料夹 做账草稿/ 里还没有凭证审核表。点“生成草稿…”生成，再在这里审核和修改。
-    </p>
+    <div v-if="files && !files.length" class="empty-state">
+      <b>还没有凭证草稿</b>
+      <span>公司资料夹 做账草稿/ 里还没有凭证审核表。点“生成草稿…”生成，再在这里审核和修改。</span>
+      <button type="button" class="primary" :disabled="!inputs || generating" @click="openGenerate">生成草稿…</button>
+    </div>
     <template v-if="draft">
       <p class="banner banner--note">
         参考凭证需人工审核。共 {{ draft.vouchers.length }} 张，已通过 {{ draft.approved }} 张，有问题 {{ draft.blocked }} 张。
@@ -495,8 +612,18 @@ watch(
         </table>
       </details>
 
+      <div :class="{ 'voucher-workbench': layout === 'split' }">
+      <nav v-if="layout === 'split'" class="voucher-list" aria-label="选择凭证草稿">
+        <button v-for="voucher in shown" :key="keyOf(voucher)" type="button" :aria-pressed="keyOf(voucher) === (shown.some(item => keyOf(item) === selectedVoucher) ? selectedVoucher : shown[0] && keyOf(shown[0]))" @click="selectedVoucher = keyOf(voucher)">
+          <span class="voucher-list__number">记-{{ voucher.number }}</span><strong>{{ voucher.lines[0]?.summary || '凭证草稿' }}</strong>
+          <span class="tag" :class="voucher.errors.length ? 'tag--danger' : approvalOf(voucher) === '通过' ? 'pill-ok' : 'pill-warn'">{{ voucher.errors.length ? '阻断' : approvalOf(voucher) === '通过' ? '已通过' : '待审核' }}</span>
+          <small>{{ voucher.month }} · {{ money(voucher.debit_total) }}</small>
+        </button>
+      </nav>
+      <div class="voucher-editor">
       <article
         v-for="voucher in shown"
+        v-show="layout !== 'split' || keyOf(voucher) === (shown.some(item => keyOf(item) === selectedVoucher) ? selectedVoucher : shown[0] && keyOf(shown[0]))"
         :key="keyOf(voucher)"
         class="voucher"
         :class="{ 'voucher--failed': voucher.errors.length || refused[keyOf(voucher)] }"
@@ -505,13 +632,12 @@ watch(
         <header class="voucher__head">
           <strong>{{ voucher.month }} · 记-{{ voucher.number }}</strong>
           <label class="nowrap">所属期
-            <input
-              type="month"
-              :value="periodOf(voucher).month"
+            <MonthPicker
+              :model-value="periodOf(voucher).month"
               :max="draft.current_month"
-              :aria-label="`${voucher.month} 第 ${voucher.number} 号凭证所属期`"
-              @change="setPeriod(voucher, 'month', ($event.target as HTMLInputElement).value)"
-            >
+              :label="`${voucher.month} 第 ${voucher.number} 号凭证所属期`"
+              @update:model-value="setPeriod(voucher, 'month', $event)"
+            />
           </label>
           <label class="nowrap">记账日期
             <input
@@ -581,7 +707,14 @@ watch(
           </tbody>
         </table>
       </article>
+      </div>
+      </div>
       <p v-if="!shown.length" class="muted">没有符合条件的凭证。</p>
     </template>
   </section>
 </template>
+
+<style scoped>
+.export-setup-table .grid { min-width: 500px; }
+.export-cols { display: flex; flex-wrap: wrap; gap: 6px; margin-block: 10px; }
+</style>
