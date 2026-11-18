@@ -320,3 +320,29 @@ def test_preview_refuses_linked_draft_folder(tmp_path):
     (root / '做账草稿').symlink_to(outside / '做账草稿', target_is_directory=True)
     with pytest.raises(VoucherDraftError):
         export_draft(root, NAME, {'dry_run': True, 'preparer': '合成'})
+
+
+def test_review_checks_codes_against_the_chart_the_draft_was_generated_with(tmp_path: Path):
+    root = _company_folder(tmp_path / "甲公司")
+    readback = root / "做账草稿" / "账套读回"
+    readback.mkdir()
+    # The books added 140502 after collection: only the read-back snapshot has it.
+    snapshot = {"accounts": LEDGER["accounts"] + [{"code": "140502", "name": "盘螺", "is_leaf": True}]}
+    (readback / "科目表_2026-11-17.json").write_text(json.dumps(snapshot, ensure_ascii=False), encoding="utf-8")
+    revision = read_draft(root, NAME)["revision"]
+    saved = save_draft(root, NAME, {"revision": revision, "vouchers": [{"month": "2026-06", "number": "001", "lines": [{"row": 2, "code": "140502"}]}]})
+    # A table made on the command line (no remembered parameters) uses the newest snapshot, like 改记入期.
+    assert saved["books_source"] == "做账草稿/账套读回/科目表_2026-11-17.json"
+    assert _voucher(saved, "001")["errors"] == [] and _voucher(saved, "001")["lines"][0]["name"] == "库存商品_盘螺"
+
+    # Generated from 凭证/科目表.json: that chart is checked, so the new code is not usable there.
+    params = root / "做账草稿" / "草稿生成参数.json"
+    params.write_text(json.dumps({NAME: {"from": "2026-06", "to": "2026-06", "ledger": None}}), encoding="utf-8")
+    payload = read_draft(root, NAME)
+    assert payload["books_source"] == "凭证/科目表.json" and _voucher(payload, "001")["errors"]
+
+    # A remembered snapshot that is gone fails closed instead of falling back to another chart.
+    params.write_text(json.dumps({NAME: {"from": "2026-06", "to": "2026-06", "ledger": "科目表_2026-10-01.json"}}), encoding="utf-8")
+    payload = read_draft(root, NAME)
+    assert "科目表_2026-10-01.json" in payload["books_error"]
+    assert all(voucher["errors"] for voucher in payload["vouchers"])

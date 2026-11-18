@@ -27,7 +27,7 @@ interface MonthStat { month: string; vouchers: number; approved: number; blocked
 interface ExportPreview { format: string; columns: string[]; unmatched: string[]; sample_rows: (string | number | null)[][]; months: { month: string; approved: number; blocked_reason: string }[] }
 interface DraftPayload {
   months?: MonthStat[];
-  name: string; revision: string; books_error: string; vouchers: DraftVoucher[]; approved: number; blocked: number;
+  name: string; revision: string; books_error: string; books_source?: string; vouchers: DraftVoucher[]; approved: number; blocked: number;
   sheets?: DraftSheet[]; current_month?: string;
   periods_revision?: number | null; periods_error?: string; cross_period_hint?: string;
 }
@@ -643,6 +643,7 @@ watch(
       <p class="banner banner--note">
         参考凭证需人工审核。共 {{ draft.vouchers.length }} 张，已通过 {{ draft.approved }} 张，有问题 {{ draft.blocked }} 张。
         改动过的凭证（含所属期、记账日期）要重新审核；借贷不平、科目不可用或记账日期不在所属期内时不能审核通过。保存只写这份审核表，导出只写 做账草稿/，都不写 凭证/、不连接账套。
+        <template v-if="draft.books_source">科目按生成时用的 {{ draft.books_source }} 校验。</template>
       </p>
       <p v-if="draft.books_error" class="banner banner--error" role="alert">{{ draft.books_error }}</p>
       <p v-if="draft.periods_error" class="banner banner--error" role="alert">{{ draft.periods_error }}</p>

@@ -4,7 +4,9 @@ Inputs are the last cost projections (``成本发票明细.csv`` line items and 
 company's 成本发票 and 开具发票 folders, read through ``CostProjectionService.read_only_inputs``,
 so nothing is rebuilt or written. Line names go through the company's item catalog (品目表, kept
 with the 成本发票 folder) to 标准名称, specs only have width and whitespace unified, and non-goods
-items drop out.
+items drop out. Goods the drafts book outside 库存商品 (``bank.vouchers.purchase_family_treatment``:
+fuel as an expense, an elevator without a stock detail as a fixed asset) are listed as excluded
+with their reason and never enter a category.
 
 Stock is computed per category (user decision 2026-11-11): ``bank.vouchers.goods_family`` of the
 标准名称 plus the unit, the same 库存商品 detail the books and the bookkeeping drafts keep, so the
@@ -29,7 +31,17 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 from invoice_hub.bank.ledger import Ledger
-from invoice_hub.bank.vouchers import P_INVENTORY, BookedLine, cost_of_sales, goods_family, load_booked, stock_opening
+from invoice_hub.bank.vouchers import (
+    EXPENSE,
+    P_INVENTORY,
+    STOCK,
+    BookedLine,
+    cost_of_sales,
+    goods_family,
+    load_booked,
+    purchase_family_treatment,
+    stock_opening,
+)
 from invoice_hub.projections.cost_analysis import (
     INPUT_TAX_NON_DEDUCTIBLE,
     INPUT_TAX_PENDING,
@@ -40,13 +52,13 @@ from invoice_hub.projections.cost_analysis import (
 )
 from invoice_hub.services.company_bank import _months_between
 from invoice_hub.services.company_ledger import _money, invoice_month
+from invoice_hub.services.company_vouchers import ledger_location, newest_ledger_snapshot
 
 ZERO = Decimal("0")
 KEY_SEPARATOR = "\x1f"
 # The voucher CLI's read-back layout (DATA_AND_ALGORITHMS §4.7); both live in the company folder.
 BOOK_READBACK_DIR = ("做账草稿", "账套读回")
 BOOK_READBACK_GLOB = "序时账_*.txt"
-LEDGER_PATH = ("凭证", "科目表.json")
 
 
 @dataclass
@@ -57,28 +69,38 @@ class BookInputs:
     ledger: Ledger | None = None
     files: list[str] = field(default_factory=list)
     error: str = ""
+    ledger_source: str = ""
 
 
 def read_book_inputs(root: Path) -> BookInputs:
-    """Read-only. A broken file disables the ledger opening with a message; it never stops the check."""
+    """Read-only. A broken file disables the ledger opening with a message; it never stops the check.
+
+    The 科目表 is the newest 做账草稿/账套读回/科目表_*.json snapshot (the generate panel's default), else
+    凭证/科目表.json: accounts added in the books after collection only exist in the snapshot. It is read
+    even without a 序时账, because it also says whether an elevator is stock (``purchase_family_treatment``).
+    """
     folder = root.joinpath(*BOOK_READBACK_DIR)
     paths = sorted(path for path in folder.glob(BOOK_READBACK_GLOB) if path.is_file()) if folder.is_dir() else []
     files = [path.name for path in paths]
+    snapshot = newest_ledger_snapshot(root)
+    ledger_path, label = ledger_location(root, snapshot)
+    ledger, ledger_error = None, ""
+    if ledger_path is not None and ledger_path.is_file():
+        try:
+            ledger = Ledger.load(ledger_path)
+        except (OSError, UnicodeDecodeError, ValueError, KeyError, TypeError) as exc:
+            message = "格式不对" if isinstance(exc, json.JSONDecodeError) else str(exc)
+            ledger_error = f"{label} 无法读取：{message}"
+    elif paths:
+        ledger_error = f"缺少 {label}，无法确定哪些科目是库存商品。"
+    source = label if ledger is not None else ""
     if not paths:
-        return BookInputs()
+        return BookInputs(ledger=ledger, error=ledger_error, ledger_source=source)
     try:
         booked = load_booked(paths)
     except (OSError, UnicodeDecodeError, ValueError) as exc:
-        return BookInputs(files=files, error=f"序时账读回无法读取：{exc}")
-    ledger_path = root.joinpath(*LEDGER_PATH)
-    if not ledger_path.is_file():
-        return BookInputs(booked, None, files, "缺少 凭证/科目表.json，无法确定哪些科目是库存商品。")
-    try:
-        ledger = Ledger.load(ledger_path)
-    except (OSError, UnicodeDecodeError, ValueError, KeyError, TypeError) as exc:
-        message = "格式不对" if isinstance(exc, json.JSONDecodeError) else str(exc)
-        return BookInputs(booked, None, files, f"凭证/科目表.json 无法读取：{message}")
-    return BookInputs(booked, ledger, files)
+        return BookInputs(ledger=ledger, files=files, error=f"序时账读回无法读取：{exc}", ledger_source=source)
+    return BookInputs(booked, ledger, files, ledger_error, source)
 
 
 def _decimal(value: object) -> Decimal | None:
@@ -180,12 +202,19 @@ def _month_steps(item) -> list[str]:
     return steps
 
 
+def _stock_account(ledger: Ledger | None, family: str) -> str:
+    """The 库存商品 detail the drafts debit for this family (an elevator goes to the detail that contains 电梯)."""
+    if ledger is None:
+        return ""
+    return ledger.find(f"{P_INVENTORY}/{family}") or (ledger.find_child_containing(P_INVENTORY, family) if family == "电梯" else "")
+
+
 def _book_opening(book: BookInputs, before: str, family_units: dict[str, set[str]]) -> dict:
     """Book 库存商品 balances before ``before``, put on category rows; anything that cannot be placed is listed."""
     parent = book.ledger.find_node(P_INVENTORY) if book.ledger else ""
     months = sorted({line.month for line in book.booked if line.month < before})
     info = {"source": "zero", "month": before, "read_months": months, "files": book.files, "items": [], "unassigned": [],
-            "error": book.error}
+            "error": book.error, "ledger": book.ledger_source}
     if book.error or not book.booked:
         return info
     if not parent:
@@ -231,9 +260,22 @@ def build_inventory_check(
     excluded: list[dict] = []
     pending_sources: set[str] = set()
     taxed_lines = 0
+    ledger = book.ledger if book is not None else None
+    non_stock: dict[str, list] = {}  # family -> [lines, 不含税金额 of the input lines]
 
     for direction, rows in (("input", purchase_rows), ("output", sale_rows)):
         for row in canonical_reference_rows(rows, item_catalog):
+            family = goods_family(str(row.get("内部项目名称") or "").strip())
+            treatment = purchase_family_treatment(family, ledger)
+            if treatment != STOCK:
+                # Booked outside 库存商品 by the drafts (fuel as an expense, an elevator without a stock
+                # detail as a fixed asset): counting it here would add stock the books never hold (BUG-05).
+                kind = "费用" if treatment == EXPENSE else "固定资产"
+                excluded.append(_line_ref(row, direction, f"{family}：做账记{kind}，不计入库存"))
+                entry = non_stock.setdefault(family, [0, ZERO])
+                entry[0] += 1
+                entry[1] += (_decimal(row.get("金额(除税)")) or ZERO) if direction == "input" else ZERO
+                continue
             month = invoice_month(row.get("开票日期"))
             quantity = _decimal(row.get("数量"))
             amount = _decimal(row.get("金额(除税)"))
@@ -244,7 +286,7 @@ def build_inventory_check(
             if quantity is None or quantity == 0 or not unit:
                 excluded.append(_line_ref(row, direction, "数量或单位未识别"))
                 continue
-            category = _category_key(goods_family(str(row.get("内部项目名称") or "").strip()), unit)
+            category = _category_key(family, unit)
             record_id = _record_id(row, direction)
             invoice_refs.setdefault(record_id, _invoice_ref(row, direction, record_id, month))
             if direction == "output":
@@ -279,7 +321,8 @@ def build_inventory_check(
     # every earlier invoice the books recorded, so those lines leave the roll instead of counting twice.
     opening_month = start or (invoice_months[0] if invoice_months else "")
     opening = (_book_opening(book, opening_month, family_units) if book is not None and opening_month
-               else {"source": "zero", "month": opening_month, "read_months": [], "files": [], "items": [], "unassigned": [], "error": ""})
+               else {"source": "zero", "month": opening_month, "read_months": [], "files": [], "items": [], "unassigned": [], "error": "",
+                     "ledger": book.ledger_source if book is not None else ""})
     use_book = opening["source"] == "ledger"
     before_opening = 0
     if use_book:
@@ -310,7 +353,6 @@ def build_inventory_check(
 
     stock: dict[str, list] = {}
     account_codes: dict[str, str] = {}
-    ledger = book.ledger if book is not None else None
     for entry in opening["items"]:
         key = _category_key(entry["family"], entry["unit"])
         item = stock.setdefault(key, [entry["family"], entry["unit"], ZERO, ZERO])
@@ -378,7 +420,7 @@ def build_inventory_check(
         item = {
             "key": key,
             **label,
-            "account_code": account_codes.get(key) or (ledger.find(f"{P_INVENTORY}/{label['name']}") if ledger else ""),
+            "account_code": account_codes.get(key) or _stock_account(ledger, label["name"]),
             "open_qty": first["open_qty"], "open_amount": first["open_amount"],
             "in_qty": _qty(sum((Decimal(row["in_qty"]) for row in monthly), ZERO)),
             "in_amount": _money(sum((Decimal(row["in_amount"]) for row in monthly), ZERO)),
@@ -431,6 +473,11 @@ def build_inventory_check(
         warnings.append({"code": "sold_never_bought", "message": f"{len(never)} 个销项品类在进项和期初中都找不到；若只是叫法不同，可在成本页的品目表里合并。"})
     if oversold:
         warnings.append({"code": "oversold", "message": f"{len(oversold)} 个品类月份卖超（销售数量大于期初 + 购入），缺进货发票或期初库存。"})
+    if non_stock:
+        detail = "、".join(f"{family} {count} 行" for family, (count, _amount) in sorted(non_stock.items()))
+        amount = _money(sum((entry[1] for entry in non_stock.values()), ZERO))
+        warnings.append({"code": "non_stock", "message": (
+            f"{detail}按做账口径记费用或固定资产，不计入库存（进项不含税 {amount}），见“未计入的明细行”。")})
     if pending_sources:
         warnings.append({"code": "pending_classification", "message": f"{len(pending_sources)} 张进项发票类型待核对，暂按不含税计成本。"})
     for entry in opening["items"] + opening["unassigned"]:

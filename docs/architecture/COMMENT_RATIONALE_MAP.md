@@ -201,6 +201,9 @@
 - `projections/costs.py::read_only_inputs`：比较的两个目录多半不是监控目录，`snapshot` 会刷新 schema、重写工作簿，读取就会改动用户目录。守护：`test_compare_api_reads_both_projections_without_writing`（前后文件 mtime 不变）。
 - `_qty`：`cost_of_sales` 的零值带两位小数，数量直接 `str` 会变成“5.00 吨”；数量要保留自己的精度（2.345 吨），不能按金额格式化。
 - `CompanyInventoryResult.vue` 的逐月明细放在品目下方整行展开：嵌在“说明”格里的子表在窄屏会被截断。
+- 2026-11-17 `bank.vouchers.purchase_family_treatment`：进销存与做账草稿共用同一判断，燃油、无库存明细的电梯不进库存品类而列入 excluded；只靠提示会让期末库存虚增（BUG-05）。销项同一品类也排除，否则会变成“进项中找不到”的假卖超。守护：`test_goods_booked_outside_stock_are_listed_not_counted`。
+- 2026-11-17 `read_book_inputs` 取最新 `科目表_*.json` 快照：账套建账后新增的库存科目只在读回快照里，读 `凭证/科目表.json` 会让 `account_code` 为空、电梯被误判为固定资产。没有序时账也读科目表。守护：`test_newest_books_snapshot_names_the_accounts_and_keeps_project_elevators_in_stock`。
+- 2026-11-17 `company_vouchers._books(root, name)` 用该草稿生成时的科目表（`草稿生成参数.json` 的 `ledger`，命令行生成的表按最新快照）：审核、保存、导出与生成必须是同一份科目，否则新科目在页面上不可用、旧科目在导出时才报错；记录的快照不在时拒绝审核，不换用别的科目表。守护：`test_review_checks_codes_against_the_chart_the_draft_was_generated_with`。
 
 ## 2026-11-11 抵扣核对（WS-07 第 4 步）
 

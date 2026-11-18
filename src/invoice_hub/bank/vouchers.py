@@ -336,6 +336,23 @@ def goods_family(item: str) -> str:
     return item or "未命名商品"
 
 
+STOCK, EXPENSE, FIXED_ASSET = "stock", "expense", "fixed_asset"
+
+
+def purchase_family_treatment(family: str, ledger: "Ledger | None") -> str:
+    """Where a purchase family goes without a confirmed mapping rule: 库存商品, an expense or a fixed asset.
+
+    Shared by the voucher drafts (which line they debit) and the company 进销存 check (which lines enter
+    stock), so the two can never value different goods: fuel is an expense; an elevator is stock only
+    when the books keep an elevator detail under 库存商品, otherwise a fixed asset.
+    """
+    if family == "燃油":
+        return EXPENSE
+    if family == "电梯" and not (ledger and ledger.find_child_containing(P_INVENTORY, "电梯")):
+        return FIXED_ASSET
+    return STOCK
+
+
 # ---------------------------------------------------------------- 库存与销售成本
 
 
@@ -755,11 +772,11 @@ def build_drafts(
                 code = str(rule["debit_account_code"])
                 lines.append(DraftLine("借", code, ledger.full_name(code), money(amount), slot=slot))
                 basis.append(f"{family}：沿用已确认映射规则")
-            elif family == "燃油":
+            elif purchase_family_treatment(family, ledger) == EXPENSE:
                 lines.append(b.line("借", "管理费用/交通费", amount, slot=slot))
                 basis.append("燃油：暂记管理费用—交通费，若为送货车辆可改销售费用—运输费")
                 confidence = "中"
-            elif family == "电梯" and not ledger.find_child_containing(P_INVENTORY, "电梯"):
+            elif family == "电梯" and purchase_family_treatment(family, ledger) == FIXED_ASSET:
                 lines.append(b.line("借", "固定资产", amount, slot=slot))
                 todo.append("确认电梯用途：自用记固定资产并按月折旧；为工程转售则记库存商品并确认收入")
                 confidence = "低"

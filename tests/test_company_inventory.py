@@ -263,3 +263,41 @@ def test_categories_point_at_their_invoices_and_explain_the_month():
     assert "加权单价 =（0.00 + 61000.00）÷（0 + 15）= 4066.67" in steps
     assert "销售成本 = 12 × 61000.00 ÷ 15 = 48800.00（按未舍入单价计算）" in steps
     assert steps[-1] == "期末 = 15 − 12 = 3 吨；61000.00 − 48800.00 = 12200.00"
+
+
+def test_goods_booked_outside_stock_are_listed_not_counted():
+    # BUG-05: fuel is an expense in the drafts, an elevator without a stock detail a fixed asset.
+    purchases = [line("1", "2026-06-03", "螺纹钢", "10", "40000.00"),
+                 line("2", "2026-06-05", "92号汽油", "50", "380.00", unit="升"),
+                 line("3", "2026-06-06", "电梯", "1", "90000.00", unit="台")]
+    sales = [line("9", "2026-06-20", "螺纹钢", "4", "18000.00"), line("8", "2026-06-21", "电梯", "1", "100000.00", unit="台")]
+    result = _ok(build_inventory_check(purchases, [check(n) for n in "123"], sales, item_catalog=CATALOG, tax_profile=GENERAL))
+    assert [item["name"] for item in result["items"]] == ["螺纹钢"]
+    assert (_item(result)["in_qty"], _item(result)["end_amount"]) == ("10", "24000.00")
+    assert result["totals"]["end_amount"] == "24000.00"
+    reasons = sorted((item["direction"], item["reason"]) for item in result["excluded"])
+    assert reasons == [("input", "燃油：做账记费用，不计入库存"), ("input", "电梯：做账记固定资产，不计入库存"),
+                       ("output", "电梯：做账记固定资产，不计入库存")]
+    (warning,) = [item for item in result["warnings"] if item["code"] == "non_stock"]
+    assert "燃油 1 行" in warning["message"] and "电梯 2 行" in warning["message"] and "90380.00" in warning["message"]
+
+
+def test_newest_books_snapshot_names_the_accounts_and_keeps_project_elevators_in_stock(tmp_path: Path):
+    root = tmp_path / "甲公司"
+    (root / "凭证").mkdir(parents=True)
+    (root / "凭证" / "科目表.json").write_text(json.dumps(LEDGER, ensure_ascii=False), encoding="utf-8")
+    readback = root / "做账草稿" / "账套读回"
+    readback.mkdir(parents=True)
+    newer = {"accounts": LEDGER["accounts"] + [{"code": "140503", "name": "角钢", "is_leaf": True},
+                                               {"code": "140504", "name": "项目电梯", "is_leaf": True}]}
+    (readback / "科目表_2026-10-01.json").write_text(json.dumps(LEDGER, ensure_ascii=False), encoding="utf-8")
+    (readback / "科目表_2026-11-17.json").write_text(json.dumps(newer, ensure_ascii=False), encoding="utf-8")
+    # No 序时账: the opening stays zero, but the chart is still read.
+    book = read_book_inputs(root)
+    assert book.booked == [] and book.error == "" and book.ledger_source == "做账草稿/账套读回/科目表_2026-11-17.json"
+    purchases = [line("1", "2026-06-03", "角钢", "2", "8000.00"), line("2", "2026-06-06", "电梯", "1", "90000.00", unit="台")]
+    result = _ok(build_inventory_check(purchases, [check("1"), check("2")], [], item_catalog=CATALOG, tax_profile=GENERAL, book=book))
+    # 角钢 only exists in the newer snapshot; the elevator is stock because the books keep 项目电梯 under 库存商品.
+    assert {item["name"]: item["account_code"] for item in result["items"]} == {"角钢": "140503", "电梯": "140504"}
+    assert result["excluded"] == [] and result["opening"]["ledger"] == book.ledger_source
+    assert result["opening"]["source"] == "zero"

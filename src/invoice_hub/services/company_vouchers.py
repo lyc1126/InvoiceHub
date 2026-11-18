@@ -79,17 +79,48 @@ class _Books:
     ledger: Ledger | None
     aux: dict[str, set[str]]
     error: str
+    source: str = ""
 
 
-def _books(root: Path) -> _Books:
-    ledger_path = root / "凭证" / "科目表.json"
-    if not ledger_path.is_file():
-        return _Books(None, {}, "缺少 凭证/科目表.json，无法校验科目；不能审核通过。")
+def ledger_location(root: Path, snapshot: str | None) -> tuple[Path | None, str]:
+    """(path, label) of the 科目表 to use: a listed 做账草稿/账套读回/ snapshot, else 凭证/科目表.json.
+
+    A snapshot that is no longer listed (deleted, renamed, a link) is returned as missing, never
+    swapped for another file (path ``None``), so validation fails closed instead of using a different chart.
+    """
+    if snapshot:
+        label = f"{DRAFT_DIR}/{READBACK_DIR}/{snapshot}"
+        if snapshot in _readback_files(root, "科目表_*.json"):
+            return root / DRAFT_DIR / READBACK_DIR / snapshot, label
+        return None, label
+    return root / "凭证" / "科目表.json", "凭证/科目表.json"
+
+
+def newest_ledger_snapshot(root: Path) -> str | None:
+    """The newest books read-back chart, the default the generate panel and 改记入期 use."""
+    ledgers = _readback_files(root, "科目表_*.json")
+    return ledgers[-1] if ledgers else None
+
+
+def _draft_ledger(root: Path, name: str) -> str | None:
+    """The 科目表 snapshot a draft was generated with, so review and export check the codes it was made from."""
+    try:
+        params, _remembered = _generation_for(root, name)
+    except VoucherDraftError:
+        return newest_ledger_snapshot(root)
+    ledger = params.get("ledger")
+    return ledger if isinstance(ledger, str) and ledger else None
+
+
+def _books(root: Path, name: str) -> _Books:
+    ledger_path, label = ledger_location(root, _draft_ledger(root, name))
+    if ledger_path is None or not ledger_path.is_file():
+        return _Books(None, {}, f"缺少 {label}，无法校验科目；不能审核通过。", label)
     try:
         aux_path = root / "凭证" / "辅助核算档案.json"
-        return _Books(Ledger.load(ledger_path), load_aux_values(aux_path) if aux_path.is_file() else {}, "")
+        return _Books(Ledger.load(ledger_path), load_aux_values(aux_path) if aux_path.is_file() else {}, "", label)
     except (OSError, ValueError, KeyError, TypeError) as exc:
-        return _Books(None, {}, f"凭证/科目表.json 无法读取：{exc}")
+        return _Books(None, {}, f"{label} 无法读取：{exc}", label)
 
 
 def _draft_path(root: Path, name: str) -> Path:
@@ -147,7 +178,7 @@ def draft_months(root: Path, name: str) -> list[dict]:
     path = _draft_path(root, name)
     before = _revision(path)
     vouchers = read_review_xlsx(path)
-    books = _books(root)
+    books = _books(root, name)
     history = load_json(root / DRAFT_DIR / jierui.EXPORTED_FILE, {"vouchers": {}})
     counts: dict[str, dict] = {}
     seen: dict[str, int] = defaultdict(int)
@@ -279,7 +310,7 @@ def read_draft(root: Path, name: str) -> dict:
         sheets = _check_sheets(path)
     except (ValueError, KeyError) as exc:
         raise VoucherDraftError("VOUCHER_DRAFT_UNREADABLE", f"{name} 无法读取：{exc}") from exc
-    books = _books(root)
+    books = _books(root, name)
     dates = _invoice_dates(root)
     try:
         periods = _overrides_state(root)
@@ -309,7 +340,8 @@ def read_draft(root: Path, name: str) -> dict:
                 "basis": display.get(line["row"], {}).get("依据", ""),
             } for line in voucher.lines],
         })
-    return {"name": name, "revision": revision, "months": draft_months(root, name), "books_error": books.error, "vouchers": items, "sheets": sheets,
+    return {"name": name, "revision": revision, "months": draft_months(root, name), "books_error": books.error,
+            "books_source": books.source, "vouchers": items, "sheets": sheets,
             "current_month": date.today().strftime("%Y-%m"),
             "periods_revision": periods["revision"], "periods_error": periods.get("error", ""), "cross_period_hint": CROSS_PERIOD_HINT,
             "approved": sum(1 for item in items if item["approval"] == APPROVE),
@@ -426,7 +458,7 @@ def _save_draft(root: Path, name: str, body: dict) -> dict:
         taken.setdefault(move["month"], set()).add(int(move["number"]))
         voucher.month, voucher.number, voucher.voucher_date = move["month"], move["number"], move["date"]
 
-    books = _books(root)
+    books = _books(root, name)
     refused = []
     for key, approval in approvals.items():
         if approval != APPROVE:
@@ -559,7 +591,7 @@ def export_draft(root: Path, name: str, body: dict) -> dict:
             raise VoucherDraftError("VOUCHER_DRAFT_INVALID", f"账套已用到的凭证号须为 0—999 的整数（{month}）。")
         if number:
             after[str(month)] = number
-    books = _books(root)
+    books = _books(root, name)
     if books.ledger is None:
         raise VoucherDraftError("VOUCHER_DRAFT_BOOKS_UNAVAILABLE", books.error, status_code=409)
     with _EXPORT_LOCK:
@@ -688,7 +720,7 @@ def _generation_for(root: Path, name: str) -> tuple[dict, bool]:
         raise VoucherDraftError("VOUCHER_DRAFT_INVALID", "无法从文件名确定这份审核表的起止月份。")
     inputs = draft_inputs(root)
     return {"from": match.group(1), "to": match.group(2), "month_end": True, "booked": inputs["booked"],
-            "ledger": inputs["ledgers"][-1] if inputs["ledgers"] else None}, False
+            "ledger": newest_ledger_snapshot(root)}, False
 
 
 def rebook_invoice(root: Path, name: str, body: dict, *, bank_dir: Path | None = None) -> dict:
