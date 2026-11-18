@@ -245,6 +245,8 @@
 
 - `company_export_jobs.py::_REJECTED_BEFORE_WRITE`：只有 `export_draft` 在调用 `export()` 前自查抛出的错误码记 `rejected`，页面据此放开按钮；`VOUCHER_DRAFT_UNREADABLE` 包住 `export()` 本身，可能已写一半，必须保持 `unknown` 只查询。两种状态下同 token 都不重放。守护：`test_export_pre_write_refusal_records_rejected_receipt`、`test_export_mid_write_error_stays_unknown`。
 - `company_detection.py::register` 的 `failed` 分支：`failed` 只在写公司清单之前记录，同一计划可再执行；旧记录改名保留，不覆盖。守护：`test_failed_registration_before_registry_write_can_run_again`。
+- `services/costs.py::cost_view` 临时快照与 `page-costs.js::costSyncCount`：首次构建 / 空快照没有完整投影，待核对与未解析明细数未知，后端发 null，页面显示“待统计”；只有非负整数才显示为张数，避免把未知写成 0 或 undefined（BUG-03）。守护：`test_failed_cost_build_never_promotes_partial_rows_to_editable` 与 Node 用例 “cost sync banner shows unknown counts…”。
+- `scripts/dev/workspace_p3_e2e.mjs` 的就绪探测走浏览器：本机 Agent 沙箱拦截 Node 进程连接回环端口（CDP 端口除外），而浏览器能访问夹具；CDP 模式只关闭自建 context，不关外部浏览器。
 - `page-costs.js::renderTaxProfile`：工作区内只锁纳税人身份（以公司清单为准），销项税率保持可改，依据用户 2026-11-10 的决定；后端 `save_reference_status` 拒绝与公司身份不一致的类型。守护：`workspace-p1.spec.ts` 的 B6 用例。
 
 ## 2026-11-10 公司清单（WS-07 第 1 步）

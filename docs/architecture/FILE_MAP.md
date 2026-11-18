@@ -8,7 +8,7 @@
 | `src/invoice_hub/services/company_voucher_rows.py` | 已有凭证内分录增删、保留来源与其它表、清理新增行的旧槽位；公式/合并审核表拒绝结构编辑 |
 | `src/invoice_hub/services/company_tax_rules.py` | 附加税/印花税候选来源与 Decimal 独立审查样例；未签署、不接实时金额计算 |
 | `scripts/dev/workspace_p3_fixture.py` | 临时合成公司、独立配置与真实 FastAPI，不读本机配置；关闭后清理 |
-| `scripts/dev/workspace_p3_e2e.mjs` | 独立 Chromium 的映射保存/断链、凭证增删保存重读、税费展开、浅深窄屏与恢复入口，关闭浏览器和夹具 |
+| `scripts/dev/workspace_p3_e2e.mjs` | 本机启动 Chrome 或经 `P3_E2E_CDP` 连接外部 Chrome，跑映射保存/断链、凭证增删保存重读、税费展开、浅深窄屏与恢复入口，关闭浏览器和夹具 |
 | `tests/test_workspace_p3.py` | 银行账号/页脚/缓存/上限/CLI与自定义映射、结构编辑原子拒绝/证据、税务签署门禁 |
 | `frontend/tests/workspace-p3.spec.ts` | 固定账号重验、结构保存未知结果锁定、库存/社保/税费消费 |
 

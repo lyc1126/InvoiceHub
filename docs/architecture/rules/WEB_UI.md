@@ -128,4 +128,4 @@
 
 银行只让未识别文件打开映射；pending/回单/内置/确认状态不冒充空文件。改映射或账号后须再校验。凭证输入时合计仅为即时展示，保存后的后端校验才决定审核；未知保存锁定结构/字段/导出/生成按钮，只有成功读回才能解除，查询失败不重发。库存精简视图保留卖超等异常与明细入口，社保只按所选属期高亮，不计算工资。经典做账 frame 首次实际访问才挂载，随后常驻保留状态，避免纯公司草稿/税费页触发无关 active-target 请求。
 
-`scripts/dev/workspace_p3_e2e.mjs` 使用临时合成目录+真FastAPI/Chromium验收映射、结构保存和税费，不mock HTTP；默认产物位于 output/playwright/workspace-p3，收尾清理。浅/深/390px/no_skin检查不能代替真实默认配置、Windows BAT、正式入口前台、系统原生选择器或成品验收；工作区两款隔离皮肤不因本轮重新启用。
+`scripts/dev/workspace_p3_e2e.mjs` 使用临时合成目录+真FastAPI/Chromium验收映射、结构保存和税费，不mock HTTP；可本机启动 Chrome，也可用 `P3_E2E_CDP` 连接外部 Chrome（只关闭自己的 context），两种方式的断言相同；默认产物位于 output/playwright/workspace-p3，收尾清理。浅/深/390px/no_skin检查不能代替真实默认配置、Windows BAT、正式入口前台、系统原生选择器或成品验收；工作区两款隔离皮肤不因本轮重新启用。

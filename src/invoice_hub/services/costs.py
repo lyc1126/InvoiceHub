@@ -139,8 +139,11 @@ class CostService:
                         output_detail_csv_path=str(service.detail_csv), output_summary_xlsx_path=str(service.summary_xlsx),
                         reference_status_path=str(service.status_json), reference_markup_rate=rate,
                         detail_count=counts["details"], reference_status_stats={},
+                        # Review / not-parsed counts only exist after a complete projection; null tells
+                        # page-costs "not yet counted" instead of a fabricated 0 (BUG-03).
                         sync={"sync_state": "pending", "source_invoice_count": partial.get("total", 0),
-                              "parsed_invoice_count": partial.get("processed", 0), "pending_count": max(0, partial.get("total", 0) - partial.get("processed", 0))},
+                              "parsed_invoice_count": partial.get("processed", 0), "pending_count": max(0, partial.get("total", 0) - partial.get("processed", 0)),
+                              "review_count": None, "not_parsed_count": None},
                         revision=partial.get("revision", "pending"), progress=partial, provisional=True,
                         updating=not acquired, editable=False, counts=counts, count=counts[view])
             # A released writer lock is not proof of a successful projection: failed

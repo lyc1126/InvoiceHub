@@ -2,6 +2,15 @@
 
 ## 未发布
 
+### 2026-11-17 P3 收口：E2E 双浏览器模式、BUG-02/03
+
+- 需求与起点：用户确认 P3 检查后的下一步建议，要求 ENG-05 真实浏览器测试支持两种方式：用本机默认浏览器测试，或交给 Codex 自行启动 Chrome。起点 `codex/workspace-p3@6d7e325`，保留无关 `pelican-bicycle.html` 与既有 ignored 状态；不切换分支、不推送；按用户要求作为一个本地提交。
+- ENG-05：`workspace_p3_e2e.mjs` 新增 `P3_E2E_CDP=<地址>`，连接外部已运行的 Chrome，只关闭本脚本创建的 context，不关闭外部浏览器；未设置时仍 `launch` 本机 Chrome（Codex/普通终端）。就绪探测改由浏览器访问 `/api/v1/health`：本机 Agent 沙箱禁止 Node 进程连接 127.0.0.1 上除 CDP 外的端口（`Operation not permitted`，脱离沙箱亦同），浏览器则可访问。
+- BUG-02：复核 `bank/jierui.py` 已于 `4d7af81` 用 `TYPE_CHECKING` 导入 `export_profiles`，`ruff check src tests scripts` 全部通过，登记改为已解决，本轮未改代码。
+- BUG-03：成本页首次构建 / 空快照的 `sync` 原先缺 `review_count`、`not_parsed_count`，页面显示“undefined 张”，且 `review_count || 0` 把未知写成 0。后端临时快照改为显式 `null`，`page-costs.js` 新增 `costSyncText`：只有非负整数显示“N 张”，其余显示“待统计”；完整投影的合法 0 不变。
+- 验证：后端全量 pytest（绝对 PYTHONPATH）通过；Ruff（src/tests/scripts）、`node --test tests/*.test.cjs` 38/38、Vue 类型检查、Vitest 107、Vite 构建（产物无漂移）通过。ENG-05 经 CDP 连接本机专用 Chrome 全流程通过，11 张截图、零控制台错误；合成空目录成本页 1280 / 390px 横幅显示“待统计”，无 undefined、无控制台错误。
+- 未覆盖：`launch` 模式本轮未在本机重跑（本机进程树禁止直接启动 Chrome，留给 Codex 或普通终端）；BUG-03 未在真实默认配置、Windows BAT 与打包成品上复验；ENG-05 的 CI、旧首页与局部刷新回归仍在待办。
+
 ### 2026-11-17 工作区 P3 第 1—6 项
 
 - 需求与起点：用户确认完成第 1—6 项，增量缓存与服务器链接 WS-08/09 另做。从 `codex/workspace-p2@36f8dfa` 在同目录进入 `codex/workspace-p3`，保留无关 HTML 和既有 ignored 配置/资料；不推送、不合并、不打包、不操作真实账套。

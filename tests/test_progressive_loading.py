@@ -158,6 +158,8 @@ def test_failed_cost_build_never_promotes_partial_rows_to_editable(tmp_path, mon
         assert result["progress"]["state"] == "failed"
         assert result["counts"]["details"] == 1
         assert not result["invoice_reference"]
+        # BUG-03: counts a partial build cannot know are explicit nulls, never missing keys or fake zeros.
+        assert result["sync"]["review_count"] is None and result["sync"]["not_parsed_count"] is None
 
 
 def test_outbound_partial_preview_and_status_reuse(tmp_path, monkeypatch):

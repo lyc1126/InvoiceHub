@@ -429,6 +429,18 @@ function setHtml(el, html) {
   }
 }
 
+function costSyncCount(value) {
+  // The provisional (first build / empty) snapshot cannot know review or not-parsed counts and sends
+  // null; only a real integer may read as a count, so unknown never turns into a fake 0 or "undefined".
+  return Number.isInteger(value) && value >= 0 ? `${value} 张` : "待统计";
+}
+
+function costSyncText(sync) {
+  const item = (label, key) => `${label} ${costSyncCount(sync?.[key])}`;
+  return [item("发票池", "source_invoice_count"), item("成本已纳入", "parsed_invoice_count"), item("待同步", "pending_count"),
+    item("待核对", "review_count"), item("已校验但未解析明细", "not_parsed_count")].join("，");
+}
+
 function renderCostChrome() {
   // Everything above the sheets: path, sync banner, stat cards and the two context panels.
   const payload = state.payload;
@@ -436,7 +448,7 @@ function renderCostChrome() {
   setText(refs.path, `当前发票目录：${payload.watch_dir} | 生成文件：${payload.output_summary_xlsx_path}`);
   refs.path.title = refs.path.textContent;
   renderRecentWatchDirs(payload.recent_watch_dirs || []);
-  let syncText = `发票池 ${payload.sync.source_invoice_count} 张，成本已纳入 ${payload.sync.parsed_invoice_count} 张，待同步 ${payload.sync.pending_count} 张，待核对 ${payload.sync.review_count || 0} 张，已校验但未解析明细 ${payload.sync.not_parsed_count} 张`;
+  let syncText = costSyncText(payload.sync);
   if (payload.provisional) {
     const stopped = ["failed", "interrupted"].includes(payload.progress?.state) || !payload.updating;
     syncText += stopped

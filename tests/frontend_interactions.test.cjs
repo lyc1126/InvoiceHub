@@ -468,3 +468,13 @@ test("accepted shutdown closes SSE and suppresses false reconnect warnings", () 
   source.onerror();
   assert.match(label.textContent, /关闭中/);
 });
+
+test("cost sync banner shows unknown counts as pending instead of undefined or a fake zero", () => {
+  const costsSource = fs.readFileSync(path.join(root, "web/static/js/page-costs.js"), "utf8");
+  const context = vm.createContext({});
+  vm.runInContext(costsSource.slice(costsSource.indexOf("function costSyncCount("), costsSource.indexOf("function renderCostChrome(")), context);
+  const provisional = context.costSyncText({source_invoice_count: 3, parsed_invoice_count: 1, pending_count: 2, review_count: null, not_parsed_count: null});
+  assert.equal(provisional, "发票池 3 张，成本已纳入 1 张，待同步 2 张，待核对 待统计，已校验但未解析明细 待统计");
+  assert.doesNotMatch(context.costSyncText({}), /undefined|null|NaN/);
+  assert.match(context.costSyncText({source_invoice_count: 0, parsed_invoice_count: 0, pending_count: 0, review_count: 0, not_parsed_count: 0}), /已校验但未解析明细 0 张$/);
+});
