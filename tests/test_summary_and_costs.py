@@ -1741,3 +1741,207 @@ def test_company_outbound_mapping_invalidates_previous_source_cache(tmp_path):
     assert all(not row['outbound_quantity'] for row in service.snapshot().invoice_reference)
     expected[0] = ''  # registered but linked/offline: never use the legacy cache
     assert service._outbound_items() == {}
+
+
+# Desensitized copies of real layouts (2026-11 BUG-04): line order matches what PyMuPDF emits for a
+# fuel e-invoice and a power-utility e-invoice; every name, ID, number and amount is synthetic.
+_SPLIT_PARTY_BLOCK = [
+    "购", "买", "方", "信", "息", "名称:示例建材有限公司", "统一社会信用代码/纳税人识别号:91320000MA00000001",
+    "销", "售", "方", "信", "息", "名称:示例供电有限公司示例分公司", "统一社会信用代码/纳税人识别号:91320000MA00000002",
+]
+_UTILITY_SPECIAL_TEXT = [
+    "发票号码:10000000000000000031", "开票日期:2026年11月11日", "电子发票（增值税专用发票）",
+    "规格型号", "单   位", "数   量", "单   价", "金   额", "税率/征收率", "税   额",
+    "*供电*售电", "千瓦时", "1000 0.5", "500.00", "13%", "65.00",
+    "合", "计", "¥500.00", "¥65.00", "价税合计（大写）", "（小写）¥565.00", "开票人:示例",
+    *_SPLIT_PARTY_BLOCK, "项目名称", "伍佰陆拾伍圆整", "备", "注", "户号：0000、合计电量：1000、合计电费：565.00",
+]
+_UTILITY_UNTAXED_TEXT = [
+    "发票号码:10000000000000000032", "开票日期:2026年11月11日", "电子发票（普通发票）",
+    "规格型号", "单   位", "数   量", "单   价", "金   额", "税率/征收率", "税   额",
+    "*代收政府性基金*示例基金", "千瓦时", "1000 0.01", "10.00", "不征税",
+    "*代收政府性基金*示例附加", "千瓦时", "1000 0.02", "20.00", "不征税",
+    "合", "计", "¥30.00", "价税合计（大写）", "（小写）¥30.00", "开票人:示例",
+    *_SPLIT_PARTY_BLOCK, "项目名称", "叁拾圆整", "备", "注", "户号：0000、合计电量：1000、合计电费：565.00",
+]
+_FUEL_SPECIAL_TEXT = [
+    "开票人: 示例", "成品油", "电子发票（增值税专用发票）", "发票号码：10000000000000000033", "开票日期：2026年07月29日",
+    "购", "买", "方", "信", "息", "名称：示例建材有限公司", "统一社会信用代码/纳税人识别号：91320000MA00000001",
+    "销", "售", "方", "信", "息", "名称：示例石油销售有限公司示例分公司", "统一社会信用代码/纳税人识别号：91320000MA00000003",
+    "项目名称 ", "规格型号", "单  位", "数  量", "单  价", "金  额", "税率/征收率", "税  额 ",
+    "*汽油*92号车用汽油（国92号", "升", "100.00", "7.00", "700.00", "13%", "91.00", "Ⅵ）",
+    "*柴油*0号车用柴油（国", "0号", "升", "50.00", "6.00", "300.00", "13%", "39.00", "Ⅵ）",
+    "合        计 ", "¥1000.00", "¥130.00", "价税合计（大写）", "壹仟壹佰叁拾圆整", "（小写）¥1130.00", "备", "注",
+]
+
+
+@pytest.mark.parametrize(
+    ("lines", "seller", "expected"),
+    [
+        (_UTILITY_SPECIAL_TEXT, "示例供电有限公司示例分公司", ("500.00", "65.00", "565.00", "13%")),
+        (_UTILITY_UNTAXED_TEXT, "示例供电有限公司示例分公司", ("30.00", "0.00", "30.00", "")),
+        (_FUEL_SPECIAL_TEXT, "示例石油销售有限公司示例分公司", ("1000.00", "130.00", "1130.00", "13%")),
+    ],
+)
+def test_split_label_parties_and_total_row_amounts(monkeypatch, tmp_path: Path, lines, seller, expected) -> None:
+    from invoice_hub.extraction import extract_invoice_record
+    import invoice_hub.extraction.parsers as parsers
+
+    invoice = tmp_path / "synthetic.pdf"
+    invoice.write_bytes(b"%PDF")
+    monkeypatch.setattr(parsers, "_text_from_pdf", lambda _path: "\n".join(lines))
+    record = extract_invoice_record(invoice)
+    assert (record.buyer, record.seller) == ("示例建材有限公司", seller)
+    assert (record.pretax_amount, record.tax_amount, record.amount, record.tax_rate) == expected
+
+
+def test_split_labels_listed_before_values_do_not_pair_names() -> None:
+    import invoice_hub.extraction.parsers as parsers
+
+    text = "\n".join(["购", "买", "方", "信", "息", "销", "售", "方", "信", "息", "名称:示例甲有限公司", "名称:示例乙有限公司"])
+    assert parsers._extract_split_label_parties(text) == ("", "")
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # Embedded 合计 words (remarks, 金额合计) are not the total row.
+        "合计电费：\n¥100.00\n¥13.00\n价税合计（小写）\n¥113.00",
+        "金额合计\n¥100.00\n¥13.00\n价税合计（小写）\n¥113.00",
+        # Total row whose pair does not add up to the grand total.
+        "合\n计\n¥100.00\n¥13.00\n价税合计（大写）\n（小写）¥120.00",
+    ],
+)
+def test_total_row_anchor_still_requires_a_unique_consistent_triple(text: str) -> None:
+    import invoice_hub.extraction.parsers as parsers
+
+    assert parsers._extract_pdf_amount_triple(text) == {}
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "不征税\n合\n计\n¥30.00\n价税合计（大写）\n（小写）¥30.00\n13%",  # a percentage rate exists
+        "合\n计\n¥30.00\n价税合计（大写）\n（小写）¥30.00",  # no 不征税/免税 evidence
+        "不征税\n合\n计\n¥30.00\n价税合计（大写）\n（小写）¥31.00",  # row and total differ
+        "不征税\n合\n计\n¥30.00\n价税合计（大写）\n（小写）¥30.00\n备注 ¥5.00",  # extra amount in window
+    ],
+)
+def test_untaxed_pair_rejects_rates_missing_evidence_or_extra_amounts(text: str) -> None:
+    import invoice_hub.extraction.parsers as parsers
+
+    assert parsers._extract_pdf_untaxed_pair(text) == {}
+
+
+# Desensitized OFD geometry (2026-11 BUG-04): label boxes in the template and value boxes on the page
+# follow a real digital-invoice OFD; all names, IDs and amounts are synthetic.
+_OFD_TEMPLATE = [
+    ("购", 5.5, 32.5, 3.9, 3.5), ("销", 106.0, 32.5, 3.8, 3.5),
+    ("名称：", 11.0, 33.5, 16.0, 3.3), ("名称：", 111.5, 33.5, 16.0, 3.3),
+    ("合", 20.0, 112.0, 4.6, 3.5), ("计", 36.0, 112.0, 4.3, 3.5),
+    ("价税合计（大写）", 16.5, 118.5, 27.1, 3.5), ("（小写）", 143.0, 118.5, 19.0, 3.5), ("税率/征收率", 157.0, 53.0, 20.0, 3.0),
+]
+_OFD_PARTIES = [("示例建材有限公司", 20.0, 33.8, 84.0, 10.8), ("示例供电有限公司示例分公司", 120.0, 33.8, 84.0, 10.8)]
+
+
+def _write_layout_ofd(
+    path: Path, custom: dict[str, str], page: list[tuple[str, float, float, float, float]],
+    *extra_pages: list[tuple[str, float, float, float, float]],
+) -> None:
+    def objects(items, start):
+        return "".join(
+            f'<ofd:TextObject ID="{start + index}" Boundary="{x} {y} {w} {h}"><ofd:TextCode>{text}</ofd:TextCode></ofd:TextObject>'
+            for index, (text, x, y, w, h) in enumerate(items)
+        )
+    custom_items, custom_objects = [], []
+    for index, (field_path, value) in enumerate(custom.items()):
+        object_id = 9000 + index
+        open_tags = "".join(f"<ofd:{part}>" for part in field_path.split("/"))
+        close_tags = "".join(f"</ofd:{part}>" for part in reversed(field_path.split("/")))
+        custom_items.append(f"{open_tags}<ofd:ObjectRef>{object_id}</ofd:ObjectRef>{close_tags}")
+        custom_objects.append(f'<ofd:TextObject ID="{object_id}" Boundary="171 10 30 4"><ofd:TextCode>{value}</ofd:TextCode></ofd:TextObject>')
+    ns = 'xmlns:ofd="http://www.ofdspec.org/2016"'
+    with zipfile.ZipFile(path, "w") as archive:
+        if custom:
+            archive.writestr("Doc_0/Tags/CustomTag.xml", f"<ofd:root {ns}>{''.join(custom_items)}</ofd:root>")
+        archive.writestr("Doc_0/Tpls/Tpl_0/Content.xml", f"<ofd:Page {ns}><ofd:Content>{objects(_OFD_TEMPLATE, 100)}</ofd:Content></ofd:Page>")
+        for index, items in enumerate((page, *extra_pages)):
+            custom_text = "".join(custom_objects) if index == 0 else ""
+            archive.writestr(f"Doc_0/Pages/Page_{index}/Content.xml",
+                             f"<ofd:Page {ns}><ofd:Content>{custom_text}{objects(items, 500 + 1000 * index)}</ofd:Content></ofd:Page>")
+
+
+_OFD_SPECIAL_PAGE = [*_OFD_PARTIES, ("13%", 154.0, 56.1, 10.0, 4.0),
+                     ("¥", 127.5, 109.5, 25.5, 5.3), ("500.00", 127.5, 109.5, 25.5, 5.3),
+                     ("¥", 179.5, 109.5, 26.0, 5.3), ("65.00", 179.5, 109.5, 26.0, 5.3),
+                     ("伍佰陆拾伍圆整", 62.9, 116.0, 60.0, 7.7), ("¥", 157.7, 116.0, 46.3, 7.7), ("565.00", 157.7, 116.0, 46.3, 7.7)]
+_OFD_UNTAXED_PAGE = [*_OFD_PARTIES, ("不征税", 154.0, 56.1, 10.0, 4.0),
+                     ("¥", 127.5, 109.5, 25.5, 5.3), ("30.00", 127.5, 109.5, 25.5, 5.3),
+                     ("叁拾圆整", 62.9, 116.0, 60.0, 7.7), ("¥", 157.7, 116.0, 46.3, 7.7), ("30.00", 157.7, 116.0, 46.3, 7.7)]
+_OFD_BASE_TAGS = {"InvoiceNo": "10000000000000000041", "IssueDate": "2026-11-11", "Buyer/BuyerName": "示例建材有限公司"}
+
+
+@pytest.mark.parametrize(
+    ("custom", "page", "expected"),
+    [
+        (_OFD_BASE_TAGS, _OFD_SPECIAL_PAGE, ("500.00", "65.00", "565.00")),  # CustomTag lacks seller and amounts
+        (_OFD_BASE_TAGS, _OFD_UNTAXED_PAGE, ("30.00", "0.00", "30.00")),
+        ({}, _OFD_SPECIAL_PAGE, ("500.00", "65.00", "565.00")),  # no CustomTag at all
+    ],
+)
+def test_ofd_layout_fills_only_missing_parties_and_amounts(tmp_path: Path, custom, page, expected) -> None:
+    from invoice_hub.extraction import extract_invoice_record
+
+    path = tmp_path / "synthetic.ofd"
+    _write_layout_ofd(path, custom, page)
+    record = extract_invoice_record(path)
+    assert (record.buyer, record.seller) == ("示例建材有限公司", "示例供电有限公司示例分公司")
+    assert (record.pretax_amount, record.tax_amount, record.amount) == expected
+
+
+def test_ofd_layout_never_overrides_or_mixes_with_structured_values(tmp_path: Path) -> None:
+    from invoice_hub.extraction import extract_invoice_record
+
+    path = tmp_path / "synthetic.ofd"
+    tags = {**_OFD_BASE_TAGS, "Seller/SellerName": "示例结构化销售有限公司", "TaxInclusiveTotalAmount": "999.00"}
+    _write_layout_ofd(path, tags, _OFD_SPECIAL_PAGE)
+    record = extract_invoice_record(path)
+    assert record.seller == "示例结构化销售有限公司"
+    # The structured total disagrees with the layout triple, so no layout amount is mixed in.
+    assert (record.amount, record.pretax_amount, record.tax_amount) == ("999.00", "", "")
+
+
+def test_ofd_layout_does_not_mix_values_from_different_pages(tmp_path: Path) -> None:
+    from invoice_hub.extraction import extract_invoice_record
+
+    path = tmp_path / "synthetic.ofd"
+    # Page 0 holds the buyer and 合计 row; page 1 holds the seller and 小写 total.
+    page_one = [_OFD_PARTIES[0], *_OFD_SPECIAL_PAGE[2:7]]
+    page_two = [_OFD_PARTIES[1], *_OFD_SPECIAL_PAGE[7:]]
+    _write_layout_ofd(path, _OFD_BASE_TAGS, page_one, page_two)
+    record = extract_invoice_record(path)
+    assert record.invoice_number == _OFD_BASE_TAGS["InvoiceNo"]
+    assert record.buyer == _OFD_BASE_TAGS["Buyer/BuyerName"]
+    assert (record.seller, record.pretax_amount, record.tax_amount, record.amount) == ("", "", "", "")
+
+
+@pytest.mark.parametrize(
+    "page",
+    [
+        [item for item in _OFD_SPECIAL_PAGE if item[0] != "65.00"],  # one row value that is not the total
+        [*_OFD_UNTAXED_PAGE, ("13%", 154.0, 60.0, 10.0, 4.0)],  # a rate exists, so no zero-tax inference
+    ],
+)
+def test_ofd_layout_amounts_reject_incomplete_or_rated_rows(page) -> None:
+    import invoice_hub.extraction.parsers as parsers
+
+    objects = [{"text": t, "x": x, "y": y, "width": w, "height": h} for t, x, y, w, h in [*_OFD_TEMPLATE, *page]]
+    assert parsers._ofd_layout_amounts(objects) == {}
+
+
+def test_ofd_layout_parties_need_both_sides() -> None:
+    import invoice_hub.extraction.parsers as parsers
+
+    template = [item for item in _OFD_TEMPLATE if item[0] != "销"]
+    objects = [{"text": t, "x": x, "y": y, "width": w, "height": h} for t, x, y, w, h in [*template, *_OFD_PARTIES]]
+    assert parsers._ofd_layout_parties(objects) == ("", "")

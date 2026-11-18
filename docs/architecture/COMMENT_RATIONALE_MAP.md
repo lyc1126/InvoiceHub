@@ -472,7 +472,8 @@ Windows验包测试中的假凭据在运行时拼接：保持生成文件的扫�
 | 文件与符号 | 应说明的原因 | 不能破坏的不变量 | 守护测试 |
 |---|---|---|---|
 | `extraction/parsers.py::_normalize_money` | 8-20 位纯数字高度可能是发票号/对象号；上限用于阻止编号污染 | 不把号码片段当金额；合法小数/货币格式仍可用 | 三个金额防污染/合法金额测试 |
-| `_extract_pdf_amount_triple/_text_from_pdf` | 票面汇总金额可能早于身份值，购销方后又有重复明细金额；拼接页文本会制造跨页伪证据 | 保留 `\f` 页边界；只收锚点有限窗口内带货币符号的有序候选；唯一且差额不超过 `0.02`；总额来自票面 | 三元组安全边界与真实 48 票影子对照 |
+| `_extract_pdf_amount_triple/_text_from_pdf` | 票面汇总金额可能早于身份值，购销方后又有重复明细金额；拼接页文本会制造跨页伪证据 | 保留 `\f` 页边界；只收锚点有限窗口内带货币符号的有序候选；唯一且差额不超过 `0.02`；总额来自票面 | 三元组安全边界与真实 48 票影子对照；2026-11-17 增合计行锚点、不征税对与逐字分行购销方，真实 53 票影子对照只有 3 张空值补齐 |
+| `_ofd_positioned_text_objects/_fill_from_ofd_layout` | OFD 标签框与值可能重叠；不同页面的坐标重用，拼接会误把不同页的购销方或金额视为同一组 | 单页且同一文档最多一个模板才补空；一购一销且不同名；合计行与小写各唯一、算术成立；结构化金额与坐标不一致时整组不补 | `test_ofd_layout_fills_only_missing_parties_and_amounts`、`test_ofd_layout_never_overrides_or_mixes_with_structured_values`、`test_ofd_layout_does_not_mix_values_from_different_pages`、`test_ofd_layout_amounts_reject_incomplete_or_rated_rows`、`test_ofd_layout_parties_need_both_sides` |
 | `_first_money_near` | 160 字符窗口会跨票头、汇总和明细区域，把首个无关金额当标签值 | 只读标签同行或下一非空行的独立货币值；不恢复全文最大数 | 同行/紧邻/跨逻辑区域金额测试 |
 | `_extract_einvoice_value_sequence` | 某些电子票按“所有标签后集中输出值”，但主体后的数值也可能只是单价和明细金额 | 必须先锁定 20 位号和日期，只接受两个主体；金额交给独立证据链 | digital invoice value sequence 与两个明细小数拒绝测试 |
 | `_clean_company_candidate/_party_value_is_suspicious` | 大写金额、数字对象、地址/项目/标签常被误当主体 | 宁空勿脏；短个人主体仍允许 | 个人销售方与可疑主体纠偏测试 |
