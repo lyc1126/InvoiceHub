@@ -65,6 +65,28 @@ def _by_key(payload: dict) -> dict[str, dict]:
     return {item["key"]: item for item in payload["directories"]}
 
 
+def test_voucher_invoice_source_uses_complete_generation(app, client, tmp_path, monkeypatch):
+    root = tmp_path / '合成公司'
+    cost = root / '成本发票'
+    cost.mkdir(parents=True)
+    (root / '银行流水').mkdir()
+    _invoice(cost, 'a.xml', '10000000000000000001')
+    cid = _company(client, root)
+    _sync(app, cost)
+    (root / '成本发票明细.csv').write_text('legacy stale copy')
+    (cost / '成本发票明细.csv').write_text('export copy not authoritative')
+    seen = []
+    def generate(folder, body, *, bank_dir=None, invoice_csv=None):
+        seen.append(invoice_csv)
+        assert 'projection-generations' in invoice_csv.parts
+        assert '10000000000000000001' in invoice_csv.read_text(encoding='utf-8-sig')
+        return {'name': 'synthetic'}
+    monkeypatch.setattr('invoice_hub.services.company_vouchers.generate_draft', generate)
+    response = client.post(f'/api/v1/companies/{cid}/voucher-drafts', json={'confirm': True})
+    assert response.status_code == 200, response.text
+    assert len(seen) == 1
+
+
 @pytest.fixture
 def company_root(tmp_path) -> Path:
     root = tmp_path / "客户" / "甲公司"
@@ -210,7 +232,8 @@ def test_company_taxpayer_lookup_follows_folder_and_month(app, tmp_path):
     ])
     assert company_taxpayer_for(config, root / "成本发票", "2026-06")["taxpayer_type"] == "small_scale"
     assert company_taxpayer_for(config, root / "成本发票", "2026-07") == {
-        "company_id": "co_1", "company_name": "甲公司", "taxpayer_type": "general", "month": "2026-07"
+        "company_id": "co_1", "company_name": "甲公司", "taxpayer_type": "general", "month": "2026-07",
+        "periods": [{"effective_from": "2024-01", "taxpayer_type": "small_scale"}, {"effective_from": "2026-07", "taxpayer_type": "general"}]
     }
     assert company_taxpayer_for(config, root / "成本发票", "2023-12") is None
     assert company_taxpayer_for(config, tmp_path / "别处", "2026-07") is None

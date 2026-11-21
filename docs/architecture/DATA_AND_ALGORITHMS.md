@@ -1,5 +1,75 @@
 # InvoiceHub 数据结构与算法
 
+## 2026-11-21 库存基线、留痕与分析数据
+
+- 三份人工状态均在公司根目录，2 MiB 有界、拒绝重复键/未来 version/跨公司复制，确认后原子替换与读回，不归入投影或 SQLite 发票主存储。`库存科目对照.json={version:1,revision,company_id,ledger_hash,setup}`，`setup={mappings:{name:account_code},opening:null|{month,items:[{account_code,unit,quantity,amount}]},covered_months:[YYYY-MM],source}`。最多2000映射/期初行、1200月份；期初同科目唯一，单位必填，数量为有界带符号十进制字符串、金额最多2位小数；月份无0000年。来源必填（全空配置除外），绑定当前账套启用的末级库存科目及其语义 hash，品目别名在预览中展开。
+- V2、进销存与凭证草稿共用 `resolve_stock`：明确对照优先，否则保留 `goods_family`，同一已映射科目归到同一品类全名，库存仍按科目品类+单位，规格不分摊。确认期初为发票预期滚动的统一起点，早前发票不重复计入，草稿不再用历史发票总量自动纠正该期初；库存滚动上限100年并覆盖无购销月份。
+- 账面结存=确认期初+基线月至所选月的序时账借贷/数量变动，差额=账面−发票滚动。必须月末、每月同时有用户完整声明和实际读回行、来源完整、科目唯一映射/单位一致、无卖超/排除。无基线不是零基线；缺月、重复库存行、数量方向不明或单位冲突为 needs_review，不猜覆盖或去重。未匹配非零账面科目单列 unassigned。
+- `成本报价记录.json={version:1,revision,company_id,records:{id:record}}`，最多200条及文件容量上限，不自动轮换/覆盖。record含 id/created_at/request_hash/content_hash/content；content冻结 kind、计划日期、原请求（含市场来源/日期）、结果、成本/规则修订、所选成本行、来源与口径。内容 hash 用于完整性校验，不代表签名；读历史同时校验结构。显式归档才写，同ID同请求返回旧回执，异内容409；源目录移走仍可读/导出原结果，导出不重算当前价格。
+- `服务成本归集.json={version:1,revision,company_id,costs:{id:{month,project,amount,source}}}`，最多1000条，非负金额最多2位小数、项目可空≤60字、来源必填≤200字；不读取工资/社保推算，不自动分摊，不代表已入账。全量候选通过 preview_hash/记录与来源版本确认保存，原文件坏则保留拒写。
+- 实际毛利收入取销项除税金额，销售成本取原 `cost_of_sales` 品类月结果；按累计数量比例四舍五入到分再作差，分摊到客户/项目，避免每行独立舍入丢分。各维成本总额必须等于品类月成本；零数量且非零成本、缺数量、卖超/排除/不完整来源使成本与毛利未知，不补零。项目复用人工归属优先于唯一备注项目，未归属保持空；非货物收入明确排除，人工服务成本按月份/项目单列，不扣入货物利润或冒充净利润。
+- 实际分析拒未来月份，当前月截到今天并标 provisional；采购监控取截至该日最近两次采购日期（不限分析起月），同日多价不任选，票面税率建议仅用最近销项一致税率，与设置不同才提示。无自动行情/税率政策核验或自动改价；统一加价率/疑似同物异名与服务收入匹配尚待后续。
+- 归档 XLSX 由冻结结果生成，所有金额和用户文字写为文本，未知为空；防公式前缀执行并保留超过Excel数值精度的十进制原文。规则试算归档不保存候选规则到当前规则文件，也不改 v1 已开快照/工作簿。
+
+## 2026-11-20 第二批定价规则与输入依据
+
+- 独立规则文件仍为 version=1。kind 增加 `tiered` / `market`；旧四类规范化结果不变。tiered 不含顶层 value，而含 `tier_basis=quantity|amount`、`tiers:[{from,kind,value,price_basis?}]`，1—50 档从零严格递增；档位区间 [from,next.from)，最后无上限。每档仅四种基础规则，禁止递归/市场档位；数量、金额精度沿用十进制字符串限制，未知字段不忽略。
+- 阶梯是整行单价制，不按超额累进。amount 取请求行 tier_amount 的显式除税基准金额，不以最终报价、成本×数量或整单其它行金额反推；未提供即 needs_review。命中后继承外层税率、有效期、取整及最低毛利提示；固定价档位允许成本未知，毛利保持 null。
+- market 的 value 为最低加价百分数。当前请求市场依据须具备 unit_price、price_basis、observed_on、valid_to、source；按计划日检查含首尾的有效期，来源非空且至多 200 字，日期反转/非法值拒绝。无需可信外部行情的假设；只反映用户明确输入，不抓取 URL，不归档至规则。
+- 除税市场价与 cost×(1+value/100) 取最大；成本未知不出价。含税市场价胜出时沿用含税金额权威；取整及到分舍入后再次检查底线，不足则按权威口径向上到分，最低加价优先于尾数并写解释。minimum_margin_percent 依旧仅警告，不与底线混用。
+- preview_hash 已绑定完整 lines、before/after，因此数量、金额阈值依据或市场来源/日期/单价变化必须重新试算。市场依据与单次报价不持久化，后续依据/试算归档见 COST-06；不改变库存算法、投影代际、SQLite、旧已开快照或 v1 金额。
+
+## 2026-11-19 公司成本 V2 与独立定价规则
+
+- `CostProjectionService.read_pricing_inputs(on)` 在一个完整代际内只读取明细、校验、品目、历史税务设置与旧行快照；日期晚于计划日的行不参与。非有限/超限数值拒绝并保留原投影，缺数量/金额/日期由库存算法列明排除；不执行 schema 修复或写回。
+- `CompanyCostService` 两侧来源来自同一登记公司，按品目归一后复用 `build_inventory_check → cost_of_sales`；进项不可抵扣税按逐票月份身份计入，历史身份未知不套当前身份。库存为品类 + 单位，不按规格分摊期初/成本；每品目行的 closing_* 引用其品类，不能把各规格 closing_amount 相加。
+- 正结存且无历史卖超、相关排除、来源过期或不完整时，结存单价=结存金额/数量（Decimal 50 位计算）；否则 null。历史均价与最近进价独立对照；同一最新日期多个不同价返回 null，不根据文件顺序任选。账套读回缺失按现有零期初提示，科目未映射明确标记，不代表连续账面库存。实际销项和手填快照分开，issued 优先 actual_issued，禁止相加。
+- `成本定价规则.json` 独立于投影：`{version:1,revision:int,pricing:{company_id,rules:{id:rule}}}`。最多 1000 条，ID 为 1—64 位字母/数字/下划线/短横线；坏 schema、重复键、未来 version、跨公司复制拒绝。rule 必须有 `scope/kind/value`，其余可选：`customer/item_key/valid_from/valid_to/price_basis/output_tax_rate_percent/minimum_margin_percent/rounding/tax_method`。scope 为 company/item/customer/customer_item/line；customer 精确匹配（空白归一），item_key 为兼容 SHA1 参考行键，禁止保存已不存在/已移除的行。
+- `kind` 四种：markup 成本×(1+value/100)、gross_margin 成本÷(1−value/100)、fixed_addition 成本+value、fixed_price 固定除税/含税价。值须非负十进制字符串（15 位整数/8 位小数），税率/目标毛利/最低毛利小于 100%；输出金额 ROUND_HALF_UP 到分，数量保留精度。未知成本只有固定价能给价，毛利仍 null；特殊计税仅 needs_review。最低毛利只警告不抬价。
+- 优先级：临时单行 > 已保存 V2 line > v1 人工行 > customer_item > customer > item > company > 8% fallback（旧公司默认存在时用旧值）。旧人工行以保存时间、锁定或非默认率识别，生成的默认单元格不迁移成覆盖。有效期按计划日含首尾，同层同对象不允许重叠。
+- rounding 为 `{increment,ending,mode,basis}`，步长至少 0.01、尾数小于步长，均精确到分；mode=ceil/floor/half_up，basis=net/gross。含税合同价/含税取整以已舍入含税总额为权威，再除以 (1+税率) 得到除税总额，税额=差额，避免单价往返多一分；展示除税单价×数量可与按含税总额反算有分差，amount_basis 明确权威口径。
+- revision 为公司清单、目录身份、两侧投影/新鲜度、账套读回与独立规则的 SHA-256 依赖指纹；preview_hash 绑定公司/日期/客户/数量/规则和 before/after。保存同进程锁内重算、替换前复核、原子写入并读回；无变化不写盘，旧 revision 不重放。不新增 SQLite 发票主数据，不承诺外部编辑器跨进程 CAS。
+
+## 2026-11-19 反馈任务与中转回执
+
+本机 `runtime/local_state/feedback.sqlite3.feedback_jobs`：`id/fingerprint/receipt/state/number/created/relay`；独立服务器 `submissions`：`id/receipt_hash/payload_hash/state/number/created/client_hash`。均只存任务/回执，不存标题/正文或发票主数据。环境仅 version/platform/architecture/package_type，默认不发送；receipt 不进浏览器/API/log。
+
+首次预留在 `BEGIN IMMEDIATE` 内先于网络提交；同 ID 不同内容拒绝、相同内容已成功返回原结果，有未知本机任务时不新发。sending 对外 unknown；终态 submitted（有正整数 Issue 编号）或 rejected，网络/崩溃/查不到等维持 unknown。中转晚到成功落盘，本机重启后继续查原中转。限流为来源 HMAC 每日换代、每小时最多 5、全局 UTC 日最多 50；配额在同一预留事务核对。完整约束与未覆盖见[反馈设计](../FEEDBACK_DESIGN.md)。
+
+## 2026-11-19 明确工资表与工资计提
+
+`申报数据.json.工资明细` 按严格 `YYYY-MM` 索引；每项为 `{schema_version:1, source, source_file, source_sha256, rows, totals}`。source_file 为公司根内相对路径，SHA-256 绑定原 `.xlsx/.xlsm`；rows 包含 `name / id_number / gross / deductions / net / social / fund / tax / other / expense_path`。金额存到分非负字符串，扣款分项未知为 null，不能补零；应发与实发必需，须明确扣款合计或完整四项扣款，逐行应发−扣款=实发，已知分项不得超过合计，完整分项须与合计相等。姓名/证件身份同月重复拒绝；汇总由明细复算，不信任前端合计。
+
+只认明确表头及期间列/表内唯一年月标题，不从文件名猜月。公式不执行，要求另存仅值表；工作簿最多 30 sheet、每 sheet 6000 行/100 列、ZIP 2000 项/30 MiB 解包、每月 1—5000 人。合计行核对，小计不重复累加；一个工作簿内多 sheet 同月合并后仍查重，跨文件同月仅显式选择一个候选。候选 ID 绑定公司根/工资目录身份、相对文件、SHA 与月份，source_revision 绑定完整本次扫描 hash。
+
+确认后按明确 expense_path 汇总应发工资，借费用/成本、贷 `应付职工薪酬/应付职工工资`；科目不存在列待补，不能审核通过。不从工资表生成实发支付、个税缴纳或社保个人代扣分录；社保仍沿用独立明确应缴记录，已读回入账月份跳过月末计提。坏嵌套工资结构会使工资/社保保存及 CLI 读取失败，不能按空对象覆盖；共享 JSON 最多 2 MiB。此数据不代表自动税务政策或正式记账。
+
+## 2026-11-19 期初、原始缓存与完整代际
+
+`做账草稿/账套读回/期初余额.json` v1 必须恰含 `version/month/accounts/parties`，month 为快照月月初。accounts 每行 `code/name/debit/credit`；parties 每行 `side/name/debit/credit`，side 为 payable/receivable。金额为非负最多两位小数字符串，借贷不能同时非零；科目编码、同方向归一单位唯一。科目余额借正贷负，应付余额取相反数、应收保持借正。2 MiB/10,000 行有界无链接读取；missing/unreadable/outside_coverage 不等于零。只累计覆盖月之后已提供序时账，不能推断完整连续账套。
+
+往来快照之前发票/流水排除以免重复。确定性一对一/组合匹配只能使用流水发生日或之前开具的发票；预付仍影响往来余额，但不造未来票级关联。原型 stockRoll 的纯数量逐月对照；原型忽略普通票税金及卖超负库存金额，生产保留不可抵扣税金进成本、成本最多结转全部账面金额两项既有规则，并用独立 Decimal 重算验证差异。
+
+公司完整 `taxpayer_periods` 加入成本依赖键，`purchase_taxpayer_type` 按每行开票月份选身份；小规模购入税金计成本，一般按票种/可抵扣证据。历史未覆盖使成本单价未知，库存该行单列待核对，不能套今天身份。当前销项率仍来自保存设置，不自动推定政策率。monitor 无源变化也检查 `cost-tax-dependency.json`，身份到期更新工作簿不重提取原票。
+
+`parse-cache.sqlite3/raw` 仅存 key(kind+源路径)、五元元数据(dev/inode/size/mtime_ns/ctime_ns)、digest、parser version、原始 JSON、verified 时间。未变复用；变更或每日/显式 verify 重新 hash；full 强制 parse；坏库隔离重建、坏条目重取。同票纠偏和人工覆盖在复制原始结果之后执行，不污染 raw。删除退出新投影，不删除原票或人工 JSON。
+
+`projection-manifest.json` v1 记录 source、root_identity、generation、files SHA256、last_complete_at、scan_complete、coverage。完整扫描/生成/源与人工版本复核后，仅原子替换 manifest；`projection-generations/<generation>/` 保存完整普通 CSV/XLSX 与成本 CSV/XLSX/状态（可缺首次状态）。source 按解析后的规范路径存储/比较，兼容旧清单的系统别名，不同根仍拒绝；目录设备/inode 保护保持独立。单次读取绑定同一 manifest，缺失/损坏不回退混合副本。固定文件只作导出，`projection-export-receipt.json` 证明已成功的导出版本；中断后未知手改拒绝覆盖。人工保存按变化类别复制未变投影后发布新代际。原始缓存可丢弃；人工字段、期初与已开快照不可按缓存清理。
+
+SourceProfile 与 TargetProfile 独立：source_id/entry_id 为不透明 32 位 hex；profile 含协议/主机/根/已确认指纹/预算/显式公司角色绑定/revision/epoch，snapshot 含完整条目清单与已下载副本索引。连接、同步和快照状态分开，重启 running 变 interrupted/unknown。每源单任务、全局 2，30 秒无进展超时，取消/断连 epoch 拒绝迟到提交。磁盘提交先于内存快照/汇总指针。
+
+目录读取按完整子树统计 `scope.files/bytes/readable_files`；可读扩展名与受限 renderer 共用 PDF、OFD、XML 与图片集合，计数不受分页/关键词影响，不代表文件内容一定有效。不支持格式仍有元信息；失败/未完成清单不能视为空子树。
+
+服务器私有目录 `server-sources/<source_id>/objects/<sha256>/<原始文件名>` 只收完整校验副本；单文件 64 MiB，默认 1 GiB 原始副本预算。summary-generations 的 view.json 保存该来源完整只读票面/成本投影，不进入公司模块。标准 SFTP v3 仅 size/mtime 弱版本加客户端 hash，无可靠 cursor/稳定远端 file ID，不承诺远端原子快照。两次完整枚举之间任何可见版本变化拒绝发布；失败不是空目录或删除。历史代际/解析缓存自动容量治理另见 ENG-09。
+
+## 2026-11-19 社保确认与手工留抵链
+
+社保确认仅接受精确且非零年份的 `YYYY-MM`；金额为非负十进制字符串 / 整数，最多两位小数且小于 10^16，拒绝布尔、浮点、指数与非有限数；人数为非负整数，费率范围 0—100%，允许百分数字符串。单方不适用可空，但每个险种至少一方应缴须已知，不将无法解析的值保存成零。核对不成立仍按原规则显示、保留用户确认的原数，不自动凑平。
+
+`申报数据.json` 仍保留全部其它键，旧的仅含单位 / 个人合计的社保记录兼容；已有 `社保明细` 必须是按有效月份索引的对象，合计必须为合法非负数，若含险种明细则逐行验证。读入有界且拒绝链接，写前 SHA 和目录身份复核，原子替换复用 `company_files`，与草稿共用进程内写锁；坏状态不退回空对象。
+
+VAT 计算记录连续前期是否未解：有 assessment 但无法产出 closing_credit 时标为未解，连续后续 assessment 退出小计并返回 `TAX_CARRY_UNRESOLVED`。查询从连续段起点重放此状态，修正前期后重新算出快照 / trace；缺少 assessment 的断档终止该连续段，不能据此补零或推定抵扣。仅为显式手工算术保护，不解锁政策自动计算。
+
 ## 2026-11-17 P3 数据与算法
 
 `银行版式.json.layouts[指纹]` 增可选 `account_fixed`（旧档案缺省空字符串），非空为 1—64 位字母/数字/短横线，trim 后保留前导零；有账号列须全行非空且唯一，并与固定账号一致。档案不再可分享。简单“合计/总计/本期合计”整表双金额页脚独立核对；多个小计、单金额页脚或不符拒绝。源读取为同一有界字节快照，CSV/XLSX/PDF共用，CLI/页面共用枚举上限（2000文件/2秒），拒绝部分目录。识别缓存含公司/根/目录 dev/ino、文件 mtime/size/ctime/dev/ino 与档案字节哈希；最多4096项，pending 不缓存。

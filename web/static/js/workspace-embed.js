@@ -95,6 +95,11 @@
     if (!link || event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey || link.hasAttribute("download") || (link.target && link.target !== "_self")) return;
     const url = new URL(link.href, location.href);
     if (url.origin !== origin || url.username || url.password) return;
+    if (link.id === "settingsAboutFeedbackLink" && url.pathname === "/workspace/settings") {
+      event.preventDefault(); event.stopImmediatePropagation();
+      post("navigate", { href: "/settings?feedback=1#about" });
+      return;
+    }
     if (modules.has(url.pathname)) {
       event.preventDefault(); event.stopImmediatePropagation();
       url.searchParams.delete("workspace_embed");

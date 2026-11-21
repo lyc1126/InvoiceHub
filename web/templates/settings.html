@@ -457,7 +457,7 @@
         <section id="settingsPanelAbout" class="settings-section" role="tabpanel" aria-labelledby="settingsTabAbout" data-settings-panel="about" hidden>
           <div class="settings-section-head">
             <h3>关于</h3>
-            <p>查看版本、发行身份和更新状态。更新由用户决定，不会强制安装。</p>
+            <p>查看版本、运行平台和更新状态。更新由用户决定，不会强制安装。</p>
           </div>
           <article class="about-product-card">
             <div class="about-product-identity">
@@ -474,9 +474,14 @@
               <a id="settingsAboutWebsiteLink" class="btn btn--ghost" href="/website/">官方网站</a>
               <a id="settingsAboutGithubLink" class="btn btn--ghost" href="#" target="_blank" rel="noopener noreferrer">GitHub</a>
               <a id="settingsAboutChangelogLink" class="btn btn--ghost" href="#" target="_blank" rel="noopener noreferrer">更新日志</a>
+              <a id="settingsAboutFeedbackLink" class="btn btn--ghost" href="/workspace/settings?feedback=1#about">建议与反馈</a>
             </div>
           </article>
           <div id="settingsAboutIdentityList" class="settings-kv"></div>
+          <details class="settings-edit-card" id="settingsAboutTechnicalDetails">
+            <summary>技术详情</summary>
+            <div id="settingsAboutTechnicalList" class="settings-kv"></div>
+          </details>
           <article class="settings-edit-card about-update-card" aria-labelledby="settingsUpdateStatusTitle">
             <div class="settings-edit-card__head">
               <div>
@@ -498,7 +503,7 @@
   {{system_controls}}
   <script src="/static/js/common.js?v=20261114-workspace-skin-isolation-1"></script>
   <script src="/static/js/system-controls.js?v=20260907-desktop-integrated-2"></script>
-  <script src="/static/js/page-settings.js?v=20260907-desktop-integrated-2"></script>
+  <script src="/static/js/page-settings.js?v=20261119-feedback-1"></script>
   <script src="/static/js/temporary-recognition.js?v=20261009-temporary-8"></script>
 </body>
 </html>

@@ -8,6 +8,7 @@ from starlette.concurrency import run_in_threadpool
 from invoice_hub.api.common import _require_same_origin_write, _state
 from invoice_hub.api.routes.companies import _error_response, _json_body
 from invoice_hub.services.company_registry import CompanyRegistryError
+from invoice_hub.services.company_salary import CompanySalaryService
 
 
 async def _call(action):
@@ -28,6 +29,16 @@ async def _body(request):
 
 def router() -> APIRouter:
     routes = APIRouter()
+
+    @routes.get("/api/v1/companies/{company_id}/salary")
+    async def salary(request: Request, company_id: str, reveal: bool = Query(False)):
+        return await _call(lambda: CompanySalaryService(_state(request).companies).read(company_id, reveal=reveal))
+
+    @routes.put("/api/v1/companies/{company_id}/salary")
+    async def save_salary(request: Request, company_id: str):
+        _require_same_origin_write(request)
+        body = await _body(request)
+        return await _call(lambda: CompanySalaryService(_state(request).companies).save(company_id, body))
 
     @routes.get("/api/v1/companies/{company_id}/bank-layouts")
     async def layouts(request: Request, company_id: str, files: bool = Query(False)):

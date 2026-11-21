@@ -16,7 +16,7 @@ import { SIDEBAR_DEFAULT, clampSidebar, useWorkspaceStore } from "../stores/work
 // Workspace sidebar (WS-01): 置顶 and 公司 › 项目 / 目录. Clicking a node opens it as a home tab;
 // right click, the row's ⋯ button or Shift+F10 opens the same menu (pin, pick for a comparison).
 // Opening a directory never changes the monitored folder; that stays an explicit action.
-const emit = defineEmits<{ opened: [] }>();
+const emit = defineEmits<{ opened: []; server: [] }>();
 const companies = useCompaniesStore();
 const system = useSystemStore();
 const workspace = useWorkspaceStore();
@@ -322,6 +322,7 @@ onBeforeUnmount(() => {
     </div>
     <label v-if="searchOpen" class="ws-search"><WorkspaceIcon name="search" /><input v-model="search" aria-label="搜索公司、项目或目录" placeholder="搜索公司、项目或目录"></label>
     <button type="button" class="ws-add" aria-haspopup="dialog" @click="workspace.createOpen = true; emit('opened')"><WorkspaceIcon name="building" />添加公司资料夹</button>
+    <button type="button" class="ws-add" @click="emit('server')"><svg class="hub-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="12" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M12 15v4m-6 2h12M4 18h3m10 0h3" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>服务器链接（试验版）</button>
     <p v-if="workspace.compareBase" class="ws-compare-hint" role="status">
       已选择 {{ nodesById.get(`dir:${workspace.compareBase.companyId}:${workspace.compareBase.dirKey}`)?.label ?? "目录" }} 进行比较：在另一个目录上选“与已选项进行比较”：同一公司有勾稽关系的做核对，发票目录之间做同号检查。
       <button type="button" class="link" @click="workspace.compareBase = null">取消</button>

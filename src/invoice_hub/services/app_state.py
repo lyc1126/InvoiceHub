@@ -88,7 +88,7 @@ class AppState:
             lock=self._lock,
             active_profile=lambda: self.active_profile,
             list_invoices=lambda: self.invoices.list_invoices(),
-            cost_detail_csv=lambda: self.costs.cost_service().detail_csv,
+            cost_detail_csv=lambda: self.costs.cost_service().read_detail_path(),
         )
         self.preview_print = InvoicePreviewPrintService(
             lock=self._lock,
@@ -105,7 +105,7 @@ class AppState:
             inbound_details=self._inbound_details,
             defaults_path=layout.runtime_dir / "local_state" / "documents" / "defaults.json",
             active_profile=lambda: self.active_profile,
-            cost_detail_csv=lambda: self.costs.cost_service().detail_csv,
+            cost_detail_csv=lambda: self.costs.cost_service().read_detail_path(),
             outbound_dir=lambda: self.settings.outbound_invoice_dir_text(),
             recent_outbound_dirs=lambda: self.settings.recent_outbound_invoice_dirs(),
             selection=self.selection,
@@ -150,7 +150,7 @@ class AppState:
             config=lambda: self.config,
             active_profile=lambda: self.active_profile,
             company_dir=lambda: self.dossier.business_dossier_root(),
-            cost_detail_csv=lambda: self.costs.cost_service().detail_csv,
+            cost_detail_csv=lambda: self.costs.cost_service().read_detail_path(),
         )
         self.rename = InvoiceRenameService(
             lock=self._lock,

@@ -27,6 +27,7 @@ import calendar
 from datetime import date
 
 import itertools
+import re
 from collections import defaultdict
 from decimal import Decimal
 
@@ -62,10 +63,14 @@ def _party_index(names: dict[str, str]):
 
 
 def build_settlement_check(invoice_items: list[dict], bank: WorkpaperInput, *, side: str,
-                           own_names: set[str] | None = None, start: str = "", end: str = "") -> dict:
+                           own_names: set[str] | None = None, start: str = "", end: str = "", opening: dict | None = None) -> dict:
     if side not in SIDES:
         raise ValueError("side 只能是 payable 或 receivable")
     spec = SIDES[side]
+    opening = opening or {"state": "missing", "month": "", "parties": [], "message": "未提供往来期初。"}
+    use_opening = opening["state"] == "ok" and not (start and start < opening["month"]) and not (end and end < opening["month"])
+    baseline = opening["month"] if use_opening else ""
+    initial = {normalize_party(row["name"]): row for row in opening["parties"] if row["side"] == side} if use_opening else {}
     own_field = "buyer" if side == "payable" else "seller"
     # Transfers between the company's own accounts are not settlements of any invoice.
     own = {normalize_party(name) for name in (own_names or set()) if name}
@@ -74,7 +79,7 @@ def build_settlement_check(invoice_items: list[dict], bank: WorkpaperInput, *, s
     own.discard("")
 
     def before_end(month: str | None) -> bool:
-        return month is not None and not (end and month > end)
+        return month is not None and not (end and month > end) and not (baseline and month < baseline)
 
     def in_range(month: str | None) -> bool:
         return before_end(month) and not (start and month < start)
@@ -82,7 +87,7 @@ def build_settlement_check(invoice_items: list[dict], bank: WorkpaperInput, *, s
     # --- invoices: one per family, amounts must be recognised (same rule as the ledger) ---
     invoices: list[dict] = []
     excluded: list[dict] = []
-    party_names: dict[str, str] = {}
+    party_names: dict[str, str] = {key: row["name"] for key, row in initial.items()}
     for family_key, family in _families(invoice_items).items():
         amounts, reason = _family_amounts(family)
         month, _ = _single({value for item in family if (value := invoice_month(item.get("invoice_date")))})
@@ -144,6 +149,15 @@ def build_settlement_check(invoice_items: list[dict], bank: WorkpaperInput, *, s
     matches: list[dict] = []
     matched_flow_ids: set[str] = set()
 
+    def issued_before(invoice, flow):
+        match = re.match(r"(\d{4})\s*[-/.年]\s*(\d{1,2})\s*[-/.月]\s*(\d{1,2})", invoice["invoice_date"])
+        if not match:
+            return False
+        try:
+            return date(*map(int, match.groups())).isoformat() <= flow["date"]
+        except ValueError:
+            return False
+
     def take(party: str, chosen: list[dict]) -> None:
         for invoice in chosen:
             open_invoices[party].remove(invoice)
@@ -151,7 +165,9 @@ def build_settlement_check(invoice_items: list[dict], bank: WorkpaperInput, *, s
     for flow in flows:  # pass 1: one flow = one invoice
         if not flow["primary"] or flow["amount"] <= 0:
             continue
-        same = [item for item in open_invoices[flow["party_key"]] if item["total"] == flow["amount"]]
+        # A prepayment cannot be represented as settlement of a future invoice.
+        # Keep it in the party balance without inventing an invoice-level association.
+        same = [item for item in open_invoices[flow["party_key"]] if item["total"] == flow["amount"] and issued_before(item, flow)]
         if same:
             take(flow["party_key"], [same[0]])
             matched_flow_ids.add(flow["row_id"])
@@ -160,7 +176,7 @@ def build_settlement_check(invoice_items: list[dict], bank: WorkpaperInput, *, s
     for flow in flows:  # pass 2: one flow = a unique set of 2–3 invoices
         if flow["row_id"] in matched_flow_ids or not flow["primary"] or flow["amount"] <= 0:
             continue
-        pool = open_invoices[flow["party_key"]][:MAX_COMBINATION_POOL]
+        pool = [item for item in open_invoices[flow["party_key"]] if issued_before(item, flow)][:MAX_COMBINATION_POOL]
         found = [combo for size in (2, 3) for combo in itertools.combinations(pool, size)
                  if sum((item["total"] for item in combo), ZERO) == flow["amount"]]
         if len(found) == 1:
@@ -173,7 +189,7 @@ def build_settlement_check(invoice_items: list[dict], bank: WorkpaperInput, *, s
     # --- per party balances: opening before start, movement in range ---
     parties: dict[str, dict] = {}
     for key, name in party_names.items():
-        parties[key] = {"name": name, "opening": ZERO, "invoiced": ZERO, "settled": ZERO,
+        parties[key] = {"name": name, "opening": Decimal(initial[key]["balance"]) if key in initial else ZERO, "invoiced": ZERO, "settled": ZERO,
                         "invoice_count": 0, "flow_count": 0, "unpaid": [], "unallocated": []}
     for invoice in invoices:
         party = parties[invoice["party_key"]]
@@ -223,7 +239,7 @@ def build_settlement_check(invoice_items: list[dict], bank: WorkpaperInput, *, s
             "unallocated": [public_flow(item) for item in party["unallocated"]],
             "record_ids": {"a": [invoice_id(item) for item in invoices if item["party_key"] == key and in_range(item["month"])],
                            "b": [flow_id(item) for item in flows if item["party_key"] == key and in_range(item["month"])]},
-            "steps": [f"期初 {_money(party['opening'])}（{start or '最早'} 之前的发票 − {spec['verb']}）",
+            "steps": [f"期初 {_money(party['opening'])}（{'显式期初 + ' if use_opening else ''}{start or '最早'} 之前的发票 − {spec['verb']}）",
                       f"期初 {_money(party['opening'])} + 本期发票 {_money(party['invoiced'])}（{party['invoice_count']} 张）"
                       f" − 本期{spec['verb']} {_money(party['settled'])}（{party['flow_count']} 笔）= 期末 {_money(closing)}"],
         })
@@ -237,9 +253,9 @@ def build_settlement_check(invoice_items: list[dict], bank: WorkpaperInput, *, s
     checks = []
     total_closing = sum((Decimal(item["closing"]) for item in party_rows), ZERO)
     # Recomputed from the raw lists, not from the party rows: nothing may fall between them.
-    expected = sum((item["total"] for item in invoices), ZERO) - sum((item["amount"] for item in flows), ZERO)
+    expected = sum((Decimal(row["balance"]) for row in initial.values()), ZERO) + sum((item["total"] for item in invoices), ZERO) - sum((item["amount"] for item in flows), ZERO)
     checks.append({"code": "party_balance", "ok": total_closing == expected,
-                   "message": f"各往来单位期末合计 {_money(total_closing)} = 截至期末全部发票 − 全部{spec['verb']} {_money(expected)}"})
+                   "message": f"各往来单位期末合计 {_money(total_closing)} = 显式期初 + 覆盖期内发票 − 全部{spec['verb']} {_money(expected)}"})
     rows_in_range = sum(1 for statement in bank.statements for row in statement.rows if in_range(f"{row.booking_date:%Y-%m}"))
     classified = len(in_range_matches) + unallocated_count + len(listed_non_invoice) + len(listed_ambiguous)
     checks.append({"code": "flow_accounting", "ok": classified == rows_in_range,
@@ -276,8 +292,12 @@ def build_settlement_check(invoice_items: list[dict], bank: WorkpaperInput, *, s
 
     warnings = []
     first = min([item["month"] for item in invoices] + [item["month"] for item in flows], default=None)
-    if first:
+    if use_opening:
+        warnings.append({"code": "opening_snapshot", "message": f"往来期初取 {baseline} 月初显式快照；此前发票和流水不重复计入。期初不拆成虚拟发票，逐票未付不代表往来余额。"})
+    elif first:
         warnings.append({"code": "opening_zero", "message": f"往来期初按 0 起算（从 {first} 起），未含此前发票与收付款及账套期初。"})
+    if opening["state"] == "unreadable" or (opening["state"] == "ok" and not use_opening):
+        warnings.append({"code": "opening_unavailable", "message": opening["message"] if opening["state"] == "unreadable" else "所选期间早于期初覆盖，未倒推期初。"})
     prefix = sum(1 for item in in_range_flows if item["name_match"] == "prefix")
     if prefix:
         warnings.append({"code": "name_prefix", "message": f"{prefix} 笔流水的户名在对账单里被截断，按唯一前缀归到往来单位。"})
@@ -292,6 +312,7 @@ def build_settlement_check(invoice_items: list[dict], bank: WorkpaperInput, *, s
         "relation": "settlement",
         "side": side,
         "side_label": spec["label"],
+        "opening_source": {"state": "ok" if use_opening else "outside_coverage" if opening["state"] == "ok" else opening["state"], "month": baseline, "source": opening.get("source", "")},
         "basis_label": f"往来口径（{spec['label']}）：价税合计对银行{spec['verb']}；只按金额与户名确定性对应，对不上的不猜。",
         "parties": party_rows,
         "matches": [{"kind": item["kind"], "basis": item["basis"], "flow": public_flow(item["flow"]),

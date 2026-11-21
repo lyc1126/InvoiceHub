@@ -95,7 +95,8 @@ class DocumentService:
         defaults = self.document_defaults()
         outbound_dir = self._outbound_dir()
         profile = self.active_profile.model_copy(deep=True)
-        detail = Path(profile.watch_dir) / "成本发票明细.csv"
+        from invoice_hub.storage.generations import resolve
+        detail = resolve(Path(profile.workspace_dir), Path(profile.watch_dir), "成本发票明细.csv")
         # A homepage selection already identifies its invoices. Do not start an
         # unrelated outbound scan merely to obtain defaults and directory identity.
         catalog = ({"index": {"state": "idle"}, "inbound_invoices": [], "outbound_invoices": []}

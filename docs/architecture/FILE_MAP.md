@@ -1,5 +1,91 @@
 # InvoiceHub 完整文件地图
 
+## 2026-11-21 成本核对、归档与分析
+
+| 文件 | 职责与联动 |
+|---|---|
+| `src/invoice_hub/bank/stock_mapping.py` | 显式库存对照/期初/读回声明校验、账套语义绑定、科目解析与账面余额；V2、进销存、CLI/草稿共用。 |
+| `src/invoice_hub/services/cost_inventory.py` | 设置读取、预览确认保存与月末差额；配置写入与草稿共锁，缺覆盖/基线/单位或重复分录待核对。 |
+| `src/invoice_hub/services/cost_records.py` | 报价/试算快照预览、确认归档、分页/详情、原请求重放与公司绑定；历史读取不依赖实时来源。 |
+| `src/invoice_hub/services/cost_service_costs.py` | 用户明确月份/项目/金额/来源的服务成本校验及预览确认保存，不推算工资或自动分摊。 |
+| `src/invoice_hub/services/cost_reports.py` | 货物毛利四维汇总、累计分位分摊与来源追溯，服务成本单列；价格波动/低毛利/成本与票面税率设置诊断。 |
+| `src/invoice_hub/services/cost_export.py` | 已确认归档的内存 XLSX，报价/规则/市场依据/版本/试算对照，以文本保留金额并防公式注入。 |
+| `tests/test_cost_v2_extensions.py` | 合成 HTTP 及共享草稿核心：差额/覆盖/重叠/重绑、归档重放/坏文件/并发、服务成本、分位守恒、暂计日期与 XLSX。 |
+
+联动原 `company_costs.py`、`company_inventory.py`、`company_views.py`、`bank/vouchers.py`、`api/routes/costs.py`；人工文件 `库存科目对照.json`、`成本报价记录.json`、`服务成本归集.json` 仅存公司根目录，不进入公开树、monitor 代际或 SQLite 发票库。旧 v1 工作簿不改版，历史日期段落保留当时状态。
+
+## 2026-11-20 成本 V2 第二批规则
+
+沿用下方四个工程入口及两项测试模块，未增删文件。`cost_pricing.py` 负责六类规则（含分档校验、市场依据/日期、取整底线），`company_costs.py` 将报价上下文交给同一纯引擎，原 preview/save 保护继续覆盖新增输入。市场依据没有独立文件或网络采集器；归档与前端仍见 COST-06。
+
+## 2026-11-19 成本 V2 首批后端
+
+| 文件 | 职责与边界 |
+|---|---|
+| `src/invoice_hub/services/cost_pricing.py` | 无 I/O 的 Decimal 规则校验、优先级/期间选择、四类报价、取整/毛利提示与解释。 |
+| `src/invoice_hub/services/company_costs.py` | 登记公司双侧完整投影、品类库存成本、最近/历史进价、只读试算与独立人工规则的版本/确认保存；不改 v1 工作簿/快照。 |
+| `src/invoice_hub/api/routes/costs.py` | 保留旧成本接口，新增公司 V2 GET/quote/rules preview/PUT；线程池、有界同源 JSON 与错误响应。 |
+| `src/invoice_hub/projections/costs.py` | 新增 read_pricing_inputs 绑定同一代际并只读兼容状态，其余原契约保留。 |
+| `tests/test_cost_pricing.py`、`tests/test_company_costs.py` | 手算、期间与层级、历史税务、低价/高价滚动、旧快照、无写入、并发/重放/坏文件/目录/链接/来源变化及 v1 相邻回归。 |
+
+用户人工规则仅在本公司成本目录的 `成本定价规则.json`，不进入公开树、运行态 SQLite 或 monitor 代际。设计当前实现/后续页面范围见 [V2 设计](../COST_ANALYSIS_V2_DESIGN.md)；接口、数据与最低测试见相应地图。
+
+## 2026-11-19 应用内反馈与技术详情
+
+| 文件 | 职责与联动 |
+| --- | --- |
+| `src/invoice_hub/services/feedback.py` | 环境白名单、私有反馈回执任务、HTTPS 中转、重复保护与未知只查询 |
+| `src/invoice_hub/api/routes/feedback.py` | 本机反馈配置 / 有界同源提交 / 回执查询，由 app 工厂独立组装 |
+| `frontend/src/components/FeedbackDialog.vue` | WsModal 表单、预览、公开确认、缺配置与未知结果、复制及草稿保留 |
+| `frontend/tests/feedback.spec.ts` | 反馈表单、隐私选项、拒绝恢复、未知查询和草稿回归 |
+| `tests/test_feedback.py` | 合成本机—中转—模拟 GitHub 协议、持久回执、隐私、重复/并发/限流与 API |
+| `integrations/feedback-relay/relay.py` | 独立部署的 GitHub Issue 中转，固定仓库、服务端凭据、持久幂等回执与有界限流；不随产品启动 |
+| `integrations/feedback-relay/requirements.txt` | 独立中转所用的精确 Python 依赖 |
+| `integrations/feedback-relay/README.md` | HTTPS / secret / 数据库 / 代理与上线说明 |
+| `docs/FEEDBACK_DESIGN.md` | 反馈范围、接口、隐私、失败恢复、部署边界与验收 |
+
+现有 App 通过受校验的设置 frame 导航打开反馈对话框；`page-settings.js` 将四项构建身份移入默认折叠的技术详情，`workspace-embed.js` 只交接打开动作。构建产物仍由 Vite 生成，无业务资料或凭据进入前端。
+
+## 2026-11-19 WS-02 候选选择与 WS-05 工资计提
+
+| 文件 | 职责 |
+| --- | --- |
+| `src/invoice_hub/bank/salary.py` | 有界只值工资表解析、明确期间/扣款核对、已确认工资结构与科目分组合计；不猜费率或执行公式 |
+| `src/invoice_hub/services/company_salary.py` | 公司工资候选、默认脱敏、来源身份与 SHA 确认、共享 revision/CAS、取消及生成前原表复核 |
+| `frontend/src/components/CompanySalary.vue` | 工资来源选择、50 行分页、脱敏/显式显示、费用科目确认、取消与未知保存查询；由 CompanyPayroll 组合 |
+| `tests/test_company_salary.py` | 合成工资解析、来源失效、并发 CAS、同源、坏数据保留及页面/CLI 计提一致性 |
+| `frontend/tests/company-salary.spec.ts` | 候选确认、冲突/未知结果、公司切换、共享 revision、分页与未来月保护 |
+
+`company_detection.py` 与 `CompanyCreateForm.vue` 扩展既有登记检测表，展示安全直接子目录候选，选择纳入原 plan_hash；`company_workspace.py` 增工资 GET/PUT，`bank/vouchers.py` 共用工资确认数据生成应发计提。
+
+## 2026-11-19 WS-06—09 文件与职责
+
+| 文件 | 职责 |
+| --- | --- |
+| `src/invoice_hub/services/company_opening.py` | 严格只读科目/往来期初及科目发生额，不写账套 |
+| `src/invoice_hub/storage/parse_cache.py` | 原始解析 SQLite、元数据/强 hash/版本失效、损坏重建及完整扫描 |
+| `src/invoice_hub/storage/generations.py` | 普通+成本完整代际、manifest、兼容导出回执与中断恢复 |
+| `src/invoice_hub/projections/incremental.py` | 源/手改前后复核，组合 summary/cost 候选后发布 |
+| `src/invoice_hub/storage/source_adapters/__init__.py` | 只读挂载共享适配及可移植路径/文件边界 |
+| `src/invoice_hub/storage/source_adapters/sftp.py` | 固定 OpenSSH SFTP v3 wire、指纹及只读操作 |
+| `src/invoice_hub/storage/source_cache.py` | 原始副本预算、hash 校验、完整 part 原子提交 |
+| `src/invoice_hub/services/source_worker.py` | spawn 来源 I/O、下载与已有解析器的只读汇总 |
+| `src/invoice_hub/services/sources.py` | 独立 SourceProfile、任务取消/epoch、清单代际、来源预览租约 |
+| `src/invoice_hub/api/routes/sources.py` | 来源 API、同源写入与原生 picker 门禁，不透明条目授权 |
+| `frontend/src/components/ServerSourcesPanel.vue` | 收藏/指纹、目录与文件右栏、范围汇总及离线预览 |
+| `frontend/tests/server-sources.spec.ts` | 来源面板状态、只读边界与预览释放 |
+| `tests/test_company_opening.py` | 期初结构、损坏保留、历史购入身份与预付款边界 |
+| `tests/test_workspace_prototype_ledger.py` | 直接执行原型纯生成器，逐月票面/流水/抵扣及库存对照 |
+| `tests/test_incremental_projections.py` | 10,000 文件差分、强校验、失败代际、导出恢复 |
+| `tests/test_server_sources.py` | 挂载合成源、取消/重启、隔离/预览/HTTP、失败不发布 |
+| `tests/test_sftp_source.py` | SFTP 合成 wire、只读标志、固定命令、坏包与源版本边界 |
+
+已有 `DirectoryInvoices.vue` 扩展非监控勾选；`CompanyLedger.vue` 消费显式科目期初；App/WorkspaceSidebar 挂载右栏；`web/static/app/` 仅 Vite 生成。monitor 与手动重建共用 incremental；invoice_list/costs/documents/company_views/company_vouchers/app_state 读取完整代际，`file_preview.release_job` 仅释放对应 job。离线 CLI 显式 CSV 和 dossier 的兼容产物索引不扩展任意路径权限。
+
+## 2026-11-19 WS 后端收尾衔接
+
+`services/company_files.py` 增共享 `DRAFT_WRITE_LOCK`，由 `company_payroll.save_confirmed` 与 `company_vouchers` 共用；社保申报文件读写复用同文件的 `read_relative/write_state`，守护仍在 `tests/test_company_payroll.py`（含并发 / 嵌套损坏 / 路径 / 原子拒绝）。`company_tax.get` 的连续未解状态及查询窗口不变性由 `tests/test_workspace_p2.py` 覆盖。本轮没有新增、移动或删除工程文件。
+
 ## 2026-11-17 P3 文件与衔接
 
 | 文件 | 职责与联动 |
@@ -246,6 +332,7 @@
 - `scripts/windows`：正式 Windows 用户入口
 - `macos/InvoiceHubMac`：macOS SwiftUI/WKWebView 本地壳与 SwiftPM 工程，负责 macOS 窗口、菜单、目录选择和本地后端进程控制；不得承载发票解析主逻辑
 - `scripts/dev`：开发、Docker、门禁脚本
+- `integrations`：可选独立服务的源码与部署说明，不由桌面入口启动，不存凭据或运行态；反馈中转见本页同日文件表
 - `tests`：自动化测试与黄金样本
 - `runtime`、`运行状态`、`dist`：本地运行态和发布产物，必须 ignored
 - 根目录允许保留 `启动一站式发票汇总系统.bat`、`停止一站式发票汇总系统.bat`、`停止一站式发票汇总系统并停止监控.bat` 和本机生成的 `启动一站式发票汇总系统.lnk`，作为用户第一视图入口；`.lnk` 不纳入 Git。
@@ -344,7 +431,7 @@
 | `docs/MAC_WINDOWS_WORKFLOW.md` | Mac 开发与 Windows 正式验收分工。 | 与 Docker、PowerShell、正式 BAT 和发布验收相关。 |
 | `docs/MIGRATION_GAP_CHECKLIST.md` | 旧能力迁移缺口和验收状态。 | 功能迁移、验收口径和开发交接能力变化时更新。 |
 | `docs/PRODUCT_BACKLOG.md` | 未来工作总览：设计稿与原型索引、已确认但未排期的优化与新功能、待修复缺陷，含编号、优先级、状态、证据、方案、验收标准与影响范围。 | 发现值得做但本轮不做的改进时登记；排期、完成或放弃时更新状态并链接 CHANGELOG；证据不得含真实业务数据。 |
-| `docs/COST_ANALYSIS_V2_DESIGN.md` | 成本分析 v2 设计提案：已确认决策、公司级品目表（别名、库存科目、类型、税率）、成本基数（进项税是否计入、结存加权单价）、销项税率与计税方式、灵活定价规则（加价率 / 目标毛利 / 固定加价 / 合同价 / 阶梯 / 市场价底线）与 4 层优先级、页面结构、兼容迁移与落地顺序。 | 未实现；现行规则以 COST_ANALYSIS 规则页为准；落地拆分见 PRODUCT_BACKLOG 的 COST-06、COST-01—05 与 BUG-01。 |
+| `docs/COST_ANALYSIS_V2_DESIGN.md` | 成本分析 v2 设计提案：已确认决策、公司级品目表（别名、库存科目、类型、税率）、成本基数（进项税是否计入、结存加权单价）、销项税率与计税方式、灵活定价规则（加价率 / 目标毛利 / 固定加价 / 合同价 / 阶梯 / 市场价底线）与 4 层优先级、页面结构、兼容迁移与落地顺序。 | 首批成本/定价后端已实现；前端、工作簿与后续规则仍待实施，当前边界见设计首节与 COST-06。 |
 | `docs/AGENT_ACCESS_DESIGN.md` | Agent 接入设计提案：参照 Vibe Island 接入形态，MCP 主通道与命令行兜底、本机 socket / 命名管道与配对令牌、L0—L2 能力分级与禁止项、灵活控制模型（预设 / 询问卡片 / 规则表）、辅助导入（Agent 起草版式档案或逐格更正、软件校验、暂存确认）、应用内审批与活动面板、一键安装适配器、分阶段与验收要点。 | 未实现；2026-11-09 确认先只读、WorkBuddy 优先；现行接口以 INTERFACES_AND_FLOWS 为准；落地拆分见 PRODUCT_BACKLOG 的 AGENT-01—04。 |
 | `docs/MONITORING_AND_LOGGING.md` | monitor 状态、日志和诊断说明。 | 与 `monitoring/*`、MonitorBridge 和设置页运行状态联动。 |
 | `docs/release/HISTORY_SANITIZATION_EXECUTION.md` | 公开历史净化、私有备份、候选内容审计、全 ref 验证和托管面复核的执行记录。 | 公开 Git 图、发布资产、仓库可见性或 Tauri 开发线变化前必须更新。 |

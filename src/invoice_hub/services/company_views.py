@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Callable
 
 from invoice_hub.domain.models import TargetProfile
+from invoice_hub.storage import generations
 from invoice_hub.extraction.parsers import SUPPORTED_EXTS
 from invoice_hub.monitoring.state import PROCESSED_FILE_NAME, canonical_path as monitor_path_key
 from invoice_hub.projections.cost_analysis import COST_DETAIL_CSV_NAME
@@ -44,6 +45,7 @@ from invoice_hub.services.company_settlement import build_settlement_check
 from invoice_hub.services import company_vouchers
 from invoice_hub.services.invoice_tags import TAG_DEFINITIONS_NAME, InvoiceTagStore
 from invoice_hub.services.company_ledger import build_invoice_ledger
+from invoice_hub.services.company_opening import account_ledger, read_opening
 from invoice_hub.services.company_registry import CompanyRegistryError, CompanyRegistryService
 from invoice_hub.services.file_preview import FilePreviewError, MAX_PREVIEW_SELECTION_RECORDS
 from invoice_hub.services.invoice_selection import selection_family_key
@@ -138,7 +140,7 @@ def _scan_signatures(directory: Path) -> tuple[dict[str, tuple[int, int]], bool,
 def directory_freshness(directory: Path, profile: TargetProfile) -> dict:
     """Compare the folder with the signatures its last projection was built from."""
     result = {"state": "unknown", "added": 0, "updated": 0, "deleted": 0, "scanned_entries": 0, "complete": False}
-    summary_exists = (Path(profile.workspace_dir) / "发票汇总.csv").exists()
+    summary_exists = generations.resolve(Path(profile.workspace_dir), Path(profile.watch_dir), "发票汇总.csv").exists()
     processed = _read_processed(Path(profile.state_dir))
     current, complete, scanned = _scan_signatures(directory)
     result.update(scanned_entries=scanned, complete=complete, source_file_count=len(current))
@@ -213,8 +215,9 @@ class CompanyViewService:
         return subdir, target_profile_for(self.config, Path(subdir["path"]))
 
     def _directory_view(self, subdir: dict, profile: TargetProfile, active_id: str, *, check_freshness: bool) -> dict:
-        summary_csv = Path(profile.workspace_dir) / "发票汇总.csv"
-        cost_csv = Path(subdir["path"]) / COST_DETAIL_CSV_NAME
+        manifest = generations.current(Path(profile.workspace_dir), Path(profile.watch_dir))
+        summary_csv = generations.resolve(Path(profile.workspace_dir), Path(profile.watch_dir), "发票汇总.csv", manifest)
+        cost_csv = generations.resolve(Path(profile.workspace_dir), Path(profile.watch_dir), COST_DETAIL_CSV_NAME, manifest)
         active = profile.id == active_id
         view = {
             **subdir,
@@ -341,7 +344,11 @@ class CompanyViewService:
                 ledger["warnings"].insert(0, {"code": f"source_{state}", "direction": direction,
                                               "message": f"{label}：{sources[direction]['freshness']['message']}"})
         bank = self._bank_ledger(company, granularity=granularity, start=start, end=end) if include_bank else None
-        return {"ok": True, "revision": payload["revision"], "company": company, "sources": sources, **ledger, "bank": bank}
+        from invoice_hub.services.company_inventory import read_book_inputs
+        root = self._company_root(company)
+        book = read_book_inputs(root)
+        accounts = account_ledger(read_opening(root), book.booked, start=start, end=end, error=book.error)
+        return {"ok": True, "revision": payload["revision"], "company": company, "sources": sources, **ledger, "bank": bank, "accounts": accounts}
 
     def compare(self, company_id: str, a: str, b: str, *, start: str = "", end: str = "") -> dict:
         """Compare two folders of one company by their relation (WS-07 step 4).
@@ -492,12 +499,17 @@ class CompanyViewService:
         sales = self._cost_service(sale_profile).read_only_inputs()
         # The opening comes from the books' 序时账 read-back in the company folder (read-only, request time);
         # without one the check starts from zero and says so.
-        book = read_book_inputs(Path(company["root_path"])) if company.get("root_status") == "present" else None
-        # The item catalog and taxpayer type belong to the purchase side (the 成本发票 folder).
-        result = build_inventory_check(
-            purchases["detail_rows"], purchases["check_rows"], sales["detail_rows"],
-            item_catalog=purchases["item_catalog"], tax_profile=purchases["tax_profile"], book=book, start=start, end=end,
-        )
+        try:
+            book = read_book_inputs(Path(company["root_path"]), company["id"]) if company.get("root_status") == "present" else None
+            # The item catalog and taxpayer type belong to the purchase side (the 成本发票 folder).
+            result = build_inventory_check(
+                purchases["detail_rows"], purchases["check_rows"], sales["detail_rows"],
+                item_catalog=purchases["item_catalog"], tax_profile=purchases["tax_profile"], book=book, start=start, end=end,
+            )
+        except (ValueError, OSError) as exc:
+            # A stale confirmed account binding cannot silently return a legacy
+            # stock category; the comparison must give the same repair signal as V2.
+            raise CompanyRegistryError("COMPANY_STOCK_INVALID", str(exc), status_code=409) from exc
         self._freshness_warnings(result, {"cost_invoice_dir": cost_view, "issued_invoice_dir": sale_view},
                                  {"cost_invoice_dir": "成本发票", "issued_invoice_dir": "开具发票"})
         if not purchases["detail_rows"] and not sales["detail_rows"]:
@@ -520,7 +532,8 @@ class CompanyViewService:
         if read:
             sources["bank_flow_dir"].update(file_count=read.file_count, cached=read.cached)
         data = read.data if read and read.data else WorkpaperInput([], [], [], [])
-        result = build_settlement_check(items, data, side=side, own_names={company["name"]}, start=start, end=end)
+        result = build_settlement_check(items, data, side=side, own_names={company["name"]}, start=start, end=end,
+                                        opening=read_opening(self._company_root(company)))
         self._freshness_warnings(result, {key: invoice_view}, {key: label})
         try:
             manual = self._projects.load(self._company_root(company))["invoices"]
@@ -614,7 +627,7 @@ class CompanyViewService:
 
         company = self._registry.get_company(company_id)["company"]
         subdir, profile = self._directory(company, "cost_invoice_dir")
-        status_path = Path(profile.watch_dir) / "成本开票状态.json"
+        status_path = generations.resolve(Path(profile.workspace_dir), Path(profile.watch_dir), "成本开票状态.json")
         # A read-only identity lookup must not adopt another company's status through a
         # replaced directory or state-file link. The registry's availability is authoritative.
         if subdir["status"] != "present" or status_path.is_symlink():
@@ -647,23 +660,35 @@ class CompanyViewService:
             raise company_vouchers.VoucherDraftError("VOUCHER_DRAFT_INVALID", "银行流水目录不可用，请核对公司目录映射。")
         return Path(subdir["path"])
 
+    def _voucher_invoice_csv(self, company: dict) -> Path | None:
+        subdir, profile = self._directory(company, "cost_invoice_dir")
+        if subdir["status"] != "present":
+            return None
+        workspace, source = Path(profile.workspace_dir), Path(profile.watch_dir)
+        manifest = generations.current(workspace, source)
+        path = generations.resolve(workspace, source, "成本发票明细.csv", manifest)
+        # Workspace drafts bind to the same immutable projection as company views.
+        # Only pre-generation companies retain the CLI's legacy root CSV fallback.
+        return path if manifest or path.is_file() else None
+
     def generate_voucher_draft(self, company_id: str, body: object) -> dict:
         # Only on the user's confirm: writes 做账草稿/ the way `voucher_cli draft` does, backing up an existing table.
         company = self._registry.get_company(company_id)["company"]
         if not isinstance(body, dict):
             raise company_vouchers.VoucherDraftError("VOUCHER_DRAFT_INVALID", "请求格式不对。")
-        return {"ok": True, **company_vouchers.generate_draft(self._company_root(company), body, bank_dir=self._voucher_bank_dir(company))}
+        return {"ok": True, **company_vouchers.generate_draft(self._company_root(company), body, bank_dir=self._voucher_bank_dir(company),
+                                                            invoice_csv=self._voucher_invoice_csv(company))}
 
     def voucher_draft(self, company_id: str, name: str) -> dict:
         company = self._registry.get_company(company_id)["company"]
-        return {"ok": True, **company_vouchers.read_draft(self._company_root(company), name)}
+        return {"ok": True, **company_vouchers.read_draft(self._company_root(company), name, invoice_csv=self._voucher_invoice_csv(company))}
 
     def save_voucher_draft(self, company_id: str, name: str, body: object) -> dict:
         # Written only on the user's explicit save, into the workbook the export command reads.
         company = self._registry.get_company(company_id)["company"]
         if not isinstance(body, dict):
             raise company_vouchers.VoucherDraftError("VOUCHER_DRAFT_INVALID", "请求格式不对。")
-        return {"ok": True, **company_vouchers.save_draft(self._company_root(company), name, body)}
+        return {"ok": True, **company_vouchers.save_draft(self._company_root(company), name, body, invoice_csv=self._voucher_invoice_csv(company))}
 
     # ---- 工资社保 (WS-05 stage 3): read-only parsing; 申报数据.json is written only on the user's confirm.
     def payroll(self, company_id: str, *, reveal: bool = False) -> dict:
@@ -717,7 +742,8 @@ class CompanyViewService:
         company = self._registry.get_company(company_id)["company"]
         if not isinstance(body, dict):
             raise company_vouchers.VoucherDraftError("VOUCHER_DRAFT_INVALID", "请求格式不对。")
-        return {"ok": True, **company_vouchers.rebook_invoice(self._company_root(company), name, body, bank_dir=self._voucher_bank_dir(company))}
+        return {"ok": True, **company_vouchers.rebook_invoice(self._company_root(company), name, body, bank_dir=self._voucher_bank_dir(company),
+                                                            invoice_csv=self._voucher_invoice_csv(company))}
 
     def export_voucher_draft(self, company_id: str, name: str, body: object) -> dict:
         # Only on the user's confirm; files go to the company folder's 做账草稿/, for manual import into the books.

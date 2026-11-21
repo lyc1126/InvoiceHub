@@ -657,6 +657,10 @@ class FilePreviewService:
             current_entry.text = text
         return text
 
+    def release_job(self, job_id: str) -> None:
+        with self._lock:
+            self._mark_expired_locked(job_id, time.monotonic())
+
     def clear(self) -> None:
         with self._lock:
             self._jobs.clear()

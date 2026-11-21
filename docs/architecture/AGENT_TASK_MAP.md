@@ -1,5 +1,44 @@
 # InvoiceHub Agent 工程任务导航
 
+## 2026-11-21 成本 V2 核对、归档与分析
+
+成本任务扩展到共享 `bank/stock_mapping.py` 及独立 `cost_inventory/cost_records/cost_service_costs/cost_reports/cost_export` 服务，路由仍在成本领域。先读[成本规则](rules/COST_ANALYSIS.md)、[做账规则](rules/BOOKKEEPING.md)、[V2 当前实现](../COST_ANALYSIS_V2_DESIGN.md)和下方成本/公司/做账任务行；接口、数据、文件、注释原因分别查对应地图。下方日期是历史阶段状态。
+
+最低测试在首批清单上增加 `test_cost_v2_extensions`、`test_bank_vouchers`：必须覆盖账面少出库 N/金额差、无基线/缺月/重复读回/单位冲突不冒零、科目变更显式重绑、比较与草稿同源、原请求归档重放及变更拒绝、源移走后查历史、归档版导出/公式文本、服务成本来源与并发修订、跨客户/项目分位守恒、当前月暂计和未来期间拒绝。前端/工作簿迁移及真实/双平台验收仍待单独完成，不将本地后端视为 V2 全量交付。
+
+## 2026-11-20 成本 V2 第二批定价规则
+
+在下方首批入口增加 `cost_pricing._normalize_tiers/normalize_market_reference` 与 `company_costs._quote` 的 tier_amount/market_reference。完整读取[成本规则](rules/COST_ANALYSIS.md)、[V2 当前实现](../COST_ANALYSIS_V2_DESIGN.md)与本页成本任务行。最低测试沿用首批列表，额外覆盖数量/金额阶梯边界、嵌套/非法档位、人工行情有效期、未知成本、取整后最低加价、含税守恒，以及上下文变化拒存/规则读回/只读/v1 保留。无前端改动，不把六类后端完成当 V2 页面或完整分析完成。
+
+## 2026-11-19 成本 V2 首批后端
+
+命中公司定价、结存成本、规则试算/保存时，完整读取[成本规则](rules/COST_ANALYSIS.md)和 [V2 当前实现](../COST_ANALYSIS_V2_DESIGN.md)，并按下方成本/公司/监控任务行联动。入口为 `cost_pricing.py`、`company_costs.py`、`api/routes/costs.py` 与 `CostProjectionService.read_pricing_inputs`；库存仍复用 `company_inventory → bank.vouchers.cost_of_sales`，不在 V2 另写库存算法。
+
+最低验收：`test_cost_pricing`、`test_company_costs`、`test_summary_and_costs`、`test_company_inventory`、`test_company_views`、`test_api_companies`、`test_api_contract`、`test_incremental_projections`、`test_progressive_loading` 与文档契约；覆盖 Decimal 手算/税额守恒、规则期间与优先级、历史身份、同代际/只读、快照保留、来源/目录替换、公司隔离与同进程并发冲突。前端/工作簿未切到 V2，真实默认配置、Windows BAT、正式前台/原生/打包另验。
+
+## 2026-11-19 应用内建议与反馈
+
+命中反馈按钮、Issue、中转或 About 技术详情时，完整读取[页面规则](rules/WEB_UI.md)和[反馈设计](../FEEDBACK_DESIGN.md)。入口为 `services/feedback.py`、`api/routes/feedback.py`、FeedbackDialog、App navigate、设置模板/脚本与 `integrations/feedback-relay/`；不触碰 update/install，也不把反馈服务当业务云部署。
+
+最低验收：`test_feedback.py`、前端反馈组件与 App/modules 回归、关于/工作区/API/文档契约、Node bridge/交互、Vue typecheck/test/build、Ruff/Python 编译；跨模块完整 pytest。隔离浏览器核对按钮位置、技术详情默认折叠与展开、实际提交/未知只查询、草稿、浅深/390/no_skin 与已服务的新资源。公网/真实 GitHub、真实默认配置、Windows BAT、原生/前台及成品另验；未部署不得声称渠道已开通。
+
+## 2026-11-19 WS-01—05 功能补齐
+
+候选目录和工资计提完整读取[做账规则](rules/BOOKKEEPING.md)与[页面规则](rules/WEB_UI.md)，并读下方公司清单/银行任务行。WS-01、03、04 的既定核心范围已实现，皮肤重新启用、非监控原票操作、OCR 与完整税务引擎仍遵守各自边界。
+
+| 问题 | 入口与联动 | 最低验收 |
+| --- | --- | --- |
+| WS-02 同类候选选择 | company_registry.detect_subdir_options → company_detection → CompanyCreateForm；沿用登记与创建计划 | test_api_companies 多候选不猜/标准目录/候选替换/只读；company-setup.spec.ts 部分选择/迟到响应；目录保护和 setup 相邻回归 |
+| WS-05 工资表与应发计提 | bank/salary → company_salary → company_workspace → CompanySalary/CompanyPayroll；bank/vouchers.prepare/build_drafts 与 CLI | test_company_salary 解析/坏值/同月多源/来源与目录失效/CAS/同源/并发/缺科目/已入账跳过/社保不双扣/CLI一致；company-salary.spec.ts 断网查询/冲突/隐私/分页/来源切换；工资社保、草稿、导出、公司/API 相邻回归 |
+
+前端 typecheck/test/build、后端全量 pytest、Ruff/编译、Node、文档契约与链接检查；合成浏览器点击登记→工资确认→生成/读取凭证，浅/深/390/no_skin。真实默认配置、正式 Windows BAT、浏览器前台拉起、原生选择器、Tauri/打包成品均另验。
+
+## 2026-11-19 WS 现有后端收尾入口
+
+社保确认 / 草稿衔接完整读取[做账规则](rules/BOOKKEEPING.md)，留抵链完整读取[税务规则](rules/TAX_WORKBENCH.md)；接口与数据地图同日小节定义当前保护。入口是 `company_payroll.py`、`company_files.DRAFT_WRITE_LOCK`、`company_vouchers.py` 与 `company_tax.py`。
+
+最低回归：`test_company_payroll.py` 的坏状态保留 / 非法数值 / 同源拒绝 / 整批不写 / 并发 CAS / 与生成共锁 / 路径替换；`test_workspace_p2.py` 的连续留抵异常、缩小窗口、修正后恢复与断档；相邻 `test_company_vouchers.py`、`test_company_voucher_generate.py`、`test_bank_vouchers.py`、P3 与公司 / API 契约，文档链接和 Python 编译。完整 pytest 的源码导入若依赖 `PYTHONPATH`，使用 `PYTHONPATH="$PWD/src"`；相对 `src` 在 daemon 改 cwd 后无法定位当前源码。真实 / Windows / 原生 / 成品验收仍独立。
+
 ## 2026-11-17 P3 第 1—6 项任务入口
 
 | 问题 | 入口与联动 | 最低验收 |
@@ -27,9 +66,20 @@
 | 公司成本只读口径 B6 | `targets/companies.py`、所有 CostProjectionService/MonitorSynchronizer 构造、company_views/routes、page-costs；完整读取成本与监控规则 | company_views/summary_and_costs/API与monitor相邻回归；来源缓存失效、身份期间/回退、Vue只读显示；合成双外观 |
 
 
-## 未来任务：服务器链接与增量汇总
+<a id="task-source-cache"></a>
 
-遇到 SMB/SFTP/SSH、服务器文件列表/右栏控件、跨模块来源绑定、远程预览/断连缓存或“刷新不重做全部汇总”，先读 [WS-08](../PRODUCT_BACKLOG.md#ws-08)、[WS-09](../PRODUCT_BACKLOG.md#ws-09) 与[设计](../SERVER_CONNECTION_AND_CACHE_DESIGN.md)，再读监控/页面/提取规则和本页目录、监控、预览任务行；涉及成本再读成本规则，正式连接器还需平台/宿主规则。当前只改原型：JS 语法、文档契约/本地链接、离线 DOM 验来源隔离/目录下拉与范围统计/空内容/本机状态保留/游标回退/两种面板边界；真实浏览器桌面/窄屏、侧栏拖宽与实际边界另验。生产实现最低验收以设计 §10 为准，不可把合成连接状态当真实服务通过。
+## 服务器链接、增量汇总与期初（2026-11-19）
+
+遇到 SMB/SFTP/SSH、服务器文件右栏、远程预览、断连缓存或增量汇总，先读 [WS-08](../PRODUCT_BACKLOG.md#ws-08)、[WS-09](../PRODUCT_BACKLOG.md#ws-09) 与[设计当前实现 §0](../SERVER_CONNECTION_AND_CACHE_DESIGN.md)，完整读取监控/页面/提取/成本规则及本页目录、监控、预览任务行；平台能力变更再读宿主/Windows 规则。原型不再代表生产连接器的实现状态，真实服务器验收不能由合成协议测试替代。
+
+| 问题 | 入口与联动 | 最低验收 |
+| --- | --- | --- |
+| WS-06 非监控批量标签 | DirectoryInvoices、invoice_tags、公司目录列表；做账/页面规则 | directory-preview.spec.ts、invoice_tags/company_views；跨页/全选/清单刷新，源文件动作仍禁用；真实点击/键盘打开菜单，选择条不得遮挡，窗口边界可达 |
+| WS-07 期初、历史身份和确定性匹配 | company_opening、company_views/settlement/inventory、targets/companies、cost_analysis/costs；做账/成本规则 | test_company_opening、workspace_prototype_ledger、company_ledger/settlement/inventory/views、summary_and_costs；坏文件保留、覆盖期、历史未知、预付款及身份到期 |
+| WS-08 原始解析与完整代际 | parse_cache、generations、incremental → monitor/手动重建 → invoice_list/costs/documents/company_views/company_vouchers | test_incremental_projections、monitoring、progressive_loading、summary_and_costs、documents、selection_workflow、company_voucher_generate/API；10,000 文件、增删改与全量一致、路径别名与异根拒绝、失败/手改/导出恢复/迟到结果 |
+| WS-09 来源与隔离预览 | source_adapters/source_cache、source_worker/SourceService、api/routes/sources → ServerSourcesPanel | test_server_sources、test_sftp_source、server-sources.spec.ts、file_preview/API；源隔离、取消/超时/重启、无号票、坏包/版本/指纹、失败先落盘、租约与只读边界 |
+
+跨模块收尾跑绝对 `PYTHONPATH="$PWD/src"` 的完整 pytest、Ruff、Python 编译、Vue typecheck/test/build、Node 交互、文档契约/本地链接与 diff 检查。隔离合成 localhost 的真实浏览器核对浅/深/390px/no_skin、非监控标签、来源目录/汇总/预览、侧栏拖宽与两种面板边界、控制台及迟到响应；不读取真实默认配置。真实 SMB/SFTP/SSH Agent、Windows BAT、正式前台拉起、原生选择器、Tauri/打包成品分别记录，未执行不得宣称通过。可靠游标、公司模块消费和历史缓存容量治理仍见后续待办。
 
 <a id="quick-lookup"></a>
 
@@ -39,6 +89,7 @@
 
 | 问题/改动关键词 | 必须读取的功能规则 | 代码、联动与验收入口 |
 |---|---|---|
+| 建议与反馈、Issue、中转、About 技术详情 | [页面](rules/WEB_UI.md)、[反馈设计](../FEEDBACK_DESIGN.md) | 本页“2026-11-19 应用内建议与反馈” |
 | 税务计算器、公司绑定、规则包、政策来源、征期与申报表映射、D0—D5 | [税务设计](rules/TAX_WORKBENCH.md) | [税务计算器与公司资料设计入口（2026-09-11）](#task-tax) |
 | PDF/OFD/XML/OCR、金额异常、购销方错位 | [提取与分类](rules/INVOICE_EXTRACTION.md) | [3. 发票提取与金额准确性](#task-extraction) |
 | 票种、大类、业务样式、同票格式冲突 | [提取与分类](rules/INVOICE_EXTRACTION.md) | [4. 发票分类与同票家族](#task-classification) |
@@ -171,6 +222,8 @@ flowchart TD
 <a id="task-costs"></a>
 
 ## 5. 成本明细、均价和开票参考
+
+2026-11-21 公司 V2：在下表 v1 入口外定位 `company_costs/cost_pricing/cost_inventory/cost_records/cost_service_costs/cost_reports/cost_export`、`bank.stock_mapping` 与成本路由；联动 `company_inventory/company_views/bank.vouchers`。读本页顶部最新 V2 条目及成本/做账规则，最低增加 `test_cost_v2_extensions/test_company_costs/test_cost_pricing/test_company_inventory/test_bank_vouchers`，保留下表 v1 与完整代际相邻回归。
 
 2026-10-09 分页/渐进读取：同时定位 `storage/read_views.py`、`services/costs.py::CostService.cost_view`、`CostProjectionService.cache_snapshot`、`MonitorState.try_sync_write_lock` 与 page-costs；最低增加 `tests/test_progressive_loading.py` 和 Node 交互回归，真实验收跨页草稿、完整 TSV、旧完整快照与首次临时结果的只读边界。
 

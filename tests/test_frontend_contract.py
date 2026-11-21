@@ -1324,7 +1324,15 @@ def test_settings_page_contract() -> None:
     assert "app.css?v=20261116-project-column" in html
     assert "settings-actions.css?v=20260907-desktop-integrated-2" in html
     assert "common.js?v=20261114-workspace-skin-isolation-1" in html
-    assert "page-settings.js?v=20260907-desktop-integrated-2" in html
+    assert "page-settings.js?v=20261119-feedback-1" in html
+    assert 'id="settingsAboutFeedbackLink"' in html
+    assert '<details class="settings-edit-card" id="settingsAboutTechnicalDetails">' in html
+    assert 'id="settingsAboutTechnicalList"' in html
+    identity = js.split("renderRows(refs.identityList, [", 1)[1].split("]);", 1)[0]
+    technical = js.split("renderRows(refs.technicalList, [", 1)[1].split("]);", 1)[0]
+    assert "平台与架构" in identity
+    for label in ("包类型", "Package ID", "核心 Build ID", "API 契约"):
+        assert label in technical and label not in identity
     assert 'id="settingsAboutWebsiteLink" class="btn btn--ghost" href="/website/"' in html
     assert 'refs.website.href = safeWebsiteHref(payload?.links?.website)' in js
     assert "可选择桌面窗口或系统默认浏览器；下次启动生效。" in js

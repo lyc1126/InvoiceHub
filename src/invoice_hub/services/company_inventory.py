@@ -31,6 +31,7 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 from invoice_hub.bank.ledger import Ledger
+from invoice_hub.bank.stock_mapping import journal_stock, read_setup, resolve_stock
 from invoice_hub.bank.vouchers import (
     EXPENSE,
     P_INVENTORY,
@@ -49,6 +50,7 @@ from invoice_hub.projections.cost_analysis import (
     ReferenceTaxProfile,
     canonical_reference_rows,
     input_tax_index,
+    purchase_taxpayer_type,
 )
 from invoice_hub.services.company_bank import _months_between
 from invoice_hub.services.company_ledger import _money, invoice_month
@@ -70,9 +72,10 @@ class BookInputs:
     files: list[str] = field(default_factory=list)
     error: str = ""
     ledger_source: str = ""
+    mapping: dict | None = None
 
 
-def read_book_inputs(root: Path) -> BookInputs:
+def read_book_inputs(root: Path, company_id: str = "", *, include_mapping: bool = True) -> BookInputs:
     """Read-only. A broken file disables the ledger opening with a message; it never stops the check.
 
     The 科目表 is the newest 做账草稿/账套读回/科目表_*.json snapshot (the generate panel's default), else
@@ -94,13 +97,14 @@ def read_book_inputs(root: Path) -> BookInputs:
     elif paths:
         ledger_error = f"缺少 {label}，无法确定哪些科目是库存商品。"
     source = label if ledger is not None else ""
+    mapping = read_setup(root, ledger, company_id) if include_mapping else None
     if not paths:
-        return BookInputs(ledger=ledger, error=ledger_error, ledger_source=source)
+        return BookInputs(ledger=ledger, error=ledger_error, ledger_source=source, mapping=mapping)
     try:
         booked = load_booked(paths)
     except (OSError, UnicodeDecodeError, ValueError) as exc:
-        return BookInputs(ledger=ledger, files=files, error=f"序时账读回无法读取：{exc}", ledger_source=source)
-    return BookInputs(booked, ledger, files, ledger_error, source)
+        return BookInputs(ledger=ledger, files=files, error=f"序时账读回无法读取：{exc}", ledger_source=source, mapping=mapping)
+    return BookInputs(booked, ledger, files, ledger_error, source, mapping)
 
 
 def _decimal(value: object) -> Decimal | None:
@@ -108,7 +112,8 @@ def _decimal(value: object) -> Decimal | None:
     if not text:
         return None
     try:
-        return Decimal(text)
+        number = Decimal(text)
+        return number if number.is_finite() else None
     except InvalidOperation:
         return None
 
@@ -215,6 +220,14 @@ def _book_opening(book: BookInputs, before: str, family_units: dict[str, set[str
     months = sorted({line.month for line in book.booked if line.month < before})
     info = {"source": "zero", "month": before, "read_months": months, "files": book.files, "items": [], "unassigned": [],
             "error": book.error, "ledger": book.ledger_source}
+    if book.mapping and book.mapping["setup"]["opening"] is not None:
+        stock = journal_stock(book.mapping, [], book.ledger, before)
+        info.update(source="confirmed_snapshot", read_months=[], error="")
+        info["items"] = [{"code": code, "account": name,
+                          "family": name if code in book.mapping["setup"]["mappings"].values() else goods_family(book.ledger.by_code[code].name),
+                          "unit": unit, "qty": qty, "amount": amount}
+                         for code, (name, unit, qty, amount) in stock.items()]
+        return info
     if book.error or not book.booked:
         return info
     if not parent:
@@ -228,7 +241,8 @@ def _book_opening(book: BookInputs, before: str, family_units: dict[str, set[str
         if not qty and not amount:
             continue
         account = book.ledger.by_code.get(code)
-        family = goods_family(account.name if account else str(name).split("_")[-1])
+        mapped = book.mapping and code in book.mapping["setup"]["mappings"].values()
+        family = book.ledger.full_name(code) if mapped else goods_family(account.name if account else str(name).split("_")[-1])
         entry = {"code": code, "account": book.ledger.full_name(code) if account else str(name), "family": family,
                  "unit": unit, "qty": qty, "amount": amount}
         if not unit:
@@ -261,12 +275,16 @@ def build_inventory_check(
     pending_sources: set[str] = set()
     taxed_lines = 0
     ledger = book.ledger if book is not None else None
+    mapping = book.mapping if book else None
+    mapped_codes = {}
     non_stock: dict[str, list] = {}  # family -> [lines, 不含税金额 of the input lines]
 
     for direction, rows in (("input", purchase_rows), ("output", sale_rows)):
         for row in canonical_reference_rows(rows, item_catalog):
-            family = goods_family(str(row.get("内部项目名称") or "").strip())
-            treatment = purchase_family_treatment(family, ledger)
+            family, account_code, explicit = resolve_stock(str(row.get("内部项目名称") or "").strip(), ledger, mapping, goods_family)
+            if account_code:
+                mapped_codes[family] = account_code
+            treatment = STOCK if explicit else purchase_family_treatment(family, ledger)
             if treatment != STOCK:
                 # Booked outside 库存商品 by the drafts (fuel as an expense, an elevator without a stock
                 # detail as a fixed asset): counting it here would add stock the books never hold (BUG-05).
@@ -297,7 +315,12 @@ def build_inventory_check(
                 excluded.append(_line_ref(row, direction, "金额未识别"))
                 continue
             source = str(row.get("源文件") or "").strip()
-            status = (INPUT_TAX_NON_DEDUCTIBLE if tax_profile.taxpayer_type == TAXPAYER_SMALL_SCALE
+            taxpayer = purchase_taxpayer_type(tax_profile, row.get("开票日期"))
+            if taxpayer is None:
+                excluded.append(_line_ref(row, direction, "历史纳税人身份未覆盖，成本待核对"))
+                continue
+            # Keep comparison costs aligned with the same per-invoice history as 开票参考.
+            status = (INPUT_TAX_NON_DEDUCTIBLE if taxpayer == TAXPAYER_SMALL_SCALE
                       else deductibility.get(source, INPUT_TAX_PENDING))
             if status == INPUT_TAX_NON_DEDUCTIBLE:
                 tax = _decimal(row.get("税金"))
@@ -320,10 +343,16 @@ def build_inventory_check(
     # Opening month: the requested start, else the first invoice month. A ledger opening already contains
     # every earlier invoice the books recorded, so those lines leave the roll instead of counting twice.
     opening_month = start or (invoice_months[0] if invoice_months else "")
+    if mapping and mapping["setup"]["opening"] is not None:
+        # Both invoice roll-forward and book reconciliation begin at the confirmed
+        # baseline. Starting the expected roll at each query month would hide old differences.
+        opening_month = mapping["setup"]["opening"]["month"]
+        if end and end < opening_month:
+            raise ValueError("所选期间早于已确认库存期初，请核对期初或查询期间。")
     opening = (_book_opening(book, opening_month, family_units) if book is not None and opening_month
                else {"source": "zero", "month": opening_month, "read_months": [], "files": [], "items": [], "unassigned": [], "error": "",
                      "ledger": book.ledger_source if book is not None else ""})
-    use_book = opening["source"] == "ledger"
+    use_book = opening["source"] in {"ledger", "confirmed_snapshot"}
     before_opening = 0
     if use_book:
         before_opening = sum(1 for _d, month, *_rest in lines if month < opening_month)
@@ -363,11 +392,13 @@ def build_inventory_check(
     months = sorted(set(bought) | set(sold))
     first_month = opening_month if use_book else (months[0] if months else None)
     opening["month"] = first_month or ""
-    last_month = max(months[-1] if months else "", first_month or "")
+    last_month = max(months[-1] if months else "", first_month or "", end)
     rows_by_key: dict[str, list[dict]] = defaultdict(list)
     checks: list[dict] = []
     oversold: list[dict] = []
     if first_month and last_month:
+        if int(last_month[:4]) * 12 + int(last_month[5:]) - int(first_month[:4]) * 12 - int(first_month[5:]) > 1200:
+            raise ValueError("库存计算期间超过 100 年，请明确较近的期初。")
         # Every month from the first to the last, so stock carried through a quiet month is kept.
         for month in _months_between(first_month, last_month):
             month_bought = {key: [qty, amt] for key, (qty, amt) in bought.get(month, {}).items()}
@@ -420,7 +451,7 @@ def build_inventory_check(
         item = {
             "key": key,
             **label,
-            "account_code": account_codes.get(key) or _stock_account(ledger, label["name"]),
+            "account_code": account_codes.get(key) or mapped_codes.get(label["name"]) or _stock_account(ledger, label["name"]),
             "open_qty": first["open_qty"], "open_amount": first["open_amount"],
             "in_qty": _qty(sum((Decimal(row["in_qty"]) for row in monthly), ZERO)),
             "in_amount": _money(sum((Decimal(row["in_amount"]) for row in monthly), ZERO)),
@@ -453,7 +484,9 @@ def build_inventory_check(
                       "message": "每个品类：各规格购入数量、购入金额、销售数量之和 = 品类合计"})
 
     warnings = []
-    if use_book:
+    if opening["source"] == "confirmed_snapshot":
+        warnings.append({"code": "opening_confirmed", "message": "期初取用户明确确认的库存快照；账面核对仍须完整读回覆盖，不代表自动复核。"})
+    elif use_book:
         read = opening["read_months"]
         warnings.append({"code": "opening_ledger", "message": (
             f"期初取账套读回 {read[0]}～{read[-1]} 的库存商品分录累计（{len(opening['files'])} 个序时账文件，截至 {opening_month} 之前）；"

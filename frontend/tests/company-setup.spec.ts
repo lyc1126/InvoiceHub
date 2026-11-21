@@ -28,9 +28,59 @@ const setup = () => {
   return { plugins: [pinia] };
 };
 
-afterEach(() => { vi.unstubAllGlobals(); document.body.innerHTML = ""; });
+afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); document.body.innerHTML = ""; });
 
 describe("company setup and mapping", () => {
+  it("requires each ambiguous choice, omits empty selections and binds registration to the latest preview", async () => {
+    vi.useFakeTimers();
+    const calls: Record<string, unknown>[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init: RequestInit = {}) => {
+      const body = init.body ? JSON.parse(String(init.body)) : {};
+      calls.push(body);
+      if (url.endsWith("/detect")) return respond({ root_status: "present", plan_hash: JSON.stringify(body.subdirs),
+        subdirs: standards.map(item => {
+          const names = item.key === "cost_invoice_dir" ? ["进项甲", "进项乙"] : item.key === "payroll_social_dir" ? ["工资甲", "工资乙"] : [];
+          return { ...item, relative_path: body.subdirs?.[item.key] || item.label, status: "present", file_count: 0,
+            candidates: names, selection_required: names.length > 1 && !body.subdirs?.[item.key], suggested_action: "keep" };
+        }) });
+      return respond(url === "/api/v1/companies" && init.method === "POST" ? { company: COMPANY } : list([COMPANY]));
+    }));
+    const wrapper = mount(CompanyCreateForm, { global: setup() });
+    await wrapper.get('[aria-label="公司资料夹"]').setValue("/合成候选");
+    await wrapper.get('input[value="later"]').setValue(true);
+    await vi.advanceTimersByTimeAsync(310); await flushPromises();
+    expect(wrapper.text()).toContain("请先选择，不自动猜测");
+    await wrapper.get('[aria-label="成本发票 候选目录"]').setValue("进项乙");
+    await vi.advanceTimersByTimeAsync(1); await flushPromises();
+    expect(calls.at(-1)!.subdirs).toMatchObject({ cost_invoice_dir: "进项乙" });
+    expect(calls.at(-1)!.subdirs).not.toHaveProperty("payroll_social_dir");
+    await wrapper.get("form").trigger("submit"); await flushPromises();
+    expect(wrapper.emitted("created")).toBeUndefined();
+    await wrapper.get('[aria-label="工资社保 候选目录"]').setValue("工资乙");
+    await vi.advanceTimersByTimeAsync(1); await flushPromises();
+    await wrapper.get("form").trigger("submit"); await flushPromises();
+    expect(calls.find(call => call.plan_hash)).toMatchObject({ subdirs: { cost_invoice_dir: "进项乙", payroll_social_dir: "工资乙" } });
+    expect(wrapper.emitted("created")).toHaveLength(1);
+    wrapper.unmount();
+  });
+
+  it("drops late detection results after the root changes", async () => {
+    vi.useFakeTimers();
+    let finish!: (value: Response) => void;
+    const pending = new Promise<Response>(resolve => { finish = resolve; });
+    let calls = 0;
+    vi.stubGlobal("fetch", vi.fn(async () => ++calls === 1 ? pending : respond({ root_status: "present", plan_hash: "new", subdirs: [] })));
+    const wrapper = mount(CompanyCreateForm, { global: setup() });
+    await wrapper.get('[aria-label="公司资料夹"]').setValue("/旧根");
+    await vi.advanceTimersByTimeAsync(310);
+    await wrapper.get('[aria-label="公司资料夹"]').setValue("/新根");
+    await vi.advanceTimersByTimeAsync(310);
+    finish(respond({ root_status: "present", plan_hash: "old", subdirs: [{ key: "old", label: "迟到候选", candidates: ["甲", "乙"] }] }));
+    await flushPromises();
+    expect(wrapper.text()).not.toContain("迟到候选");
+    wrapper.unmount();
+  });
+
   it("does not save a picker result, rejects duplicate clicks and preserves a manually edited draft", async () => {
     let finish!: (value: Response) => void;
     const pending = new Promise<Response>((resolve) => { finish = resolve; });
@@ -140,7 +190,8 @@ describe("company setup and mapping", () => {
     await wrapper.setProps({ company: changedCompany() });
     await flushPromises();
     expect(wrapper.find('[aria-label="已勾选发票"]').exists()).toBe(false);
-    expect(wrapper.find('[aria-label="勾选本页"]').exists()).toBe(false);
+    expect(wrapper.find('[aria-label="勾选本页"]').exists()).toBe(true);
+    expect(wrapper.find('[aria-label="批量标签"]').exists()).toBe(false);
     wrapper.unmount();
   });
 

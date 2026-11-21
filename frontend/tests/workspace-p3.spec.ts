@@ -66,7 +66,7 @@ it("keeps backend inventory numbers and exception evidence in the compact view",
 });
 
 it("highlights the selected social-insurance period without inventing wages", async () => {
-  vi.stubGlobal("fetch", vi.fn(async () => response({ folder: "工资社保", folder_present: true, files: [], confirmed: {}, people: [], months: ["2026-05", "2026-06"].map(month => ({ month, rows: [], checks_ok: true, unit_total: "0.00", personal_total: "0.00", total: "0.00" })) })));
+  vi.stubGlobal("fetch", vi.fn(async (url: string) => response(url.includes("/salary") ? { candidates: [], confirmed: {}, files: [], tax_file: false, current_month: "2026-11" } : { folder: "工资社保", folder_present: true, files: [], confirmed: {}, people: [], months: ["2026-05", "2026-06"].map(month => ({ month, rows: [], checks_ok: true, unit_total: "0.00", personal_total: "0.00", total: "0.00" })) })));
   const wrapper = mount(CompanyPayroll, { props: { company, month: "2026-06" } }); await flushPromises();
   expect(wrapper.findAll(".payroll-current")).toHaveLength(1);
   expect(wrapper.get(".payroll-current").text()).toContain("2026-06");

@@ -26,9 +26,11 @@ from invoice_hub.extraction.classification import (
     INVOICE_TYPE_ORDINARY,
     INVOICE_TYPE_SPECIAL,
 )
+from invoice_hub.targets.companies import taxpayer_type_for
 
 
 COST_DETAIL_CSV_NAME = "成本发票明细.csv"
+COST_PARSER_VERSION = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
 COST_SUMMARY_XLSX_NAME = "成本发票汇总.xlsx"
 COST_REFERENCE_STATUS_NAME = "成本开票状态.json"
 DEFAULT_REFERENCE_MARKUP_RATE = Decimal("0.08")
@@ -424,6 +426,7 @@ class ReferenceTaxProfile:
     taxpayer_source: str = ""
     company_name: str = ""
     month: str = ""
+    taxpayer_periods: tuple = ()
 
     def status_payload(self) -> dict:
         return {
@@ -477,6 +480,8 @@ def effective_tax_profile(profile: ReferenceTaxProfile, company_taxpayer: dict |
     that does not fit a small-scale company is flagged by ``api_payload`` instead of guessed.
     """
     taxpayer_type = str((company_taxpayer or {}).get("taxpayer_type") or "")
+    if company_taxpayer and company_taxpayer.get("periods"):
+        profile = replace(profile, taxpayer_periods=tuple(company_taxpayer["periods"]))
     if taxpayer_type not in TAXPAYER_LABELS:
         return profile
     return replace(
@@ -485,6 +490,7 @@ def effective_tax_profile(profile: ReferenceTaxProfile, company_taxpayer: dict |
         taxpayer_source="company_registry",
         company_name=str(company_taxpayer.get("company_name") or ""),
         month=str(company_taxpayer.get("month") or ""),
+        taxpayer_periods=tuple(company_taxpayer.get("periods") or ()),
     )
 
 
@@ -527,6 +533,15 @@ def input_tax_index(check_rows: Iterable[dict] | None) -> dict[str, str]:
     }
 
 
+def purchase_taxpayer_type(tax_profile: ReferenceTaxProfile, issued: object) -> str | None:
+    """Purchase VAT follows the invoice month, including an uncovered history."""
+    if not tax_profile.taxpayer_periods:
+        return tax_profile.taxpayer_type
+    matched = re.match(r"(\d{4})\s*[-/.年]\s*(\d{1,2})", str(issued or ""))
+    month = f"{matched[1]}-{int(matched[2]):02d}" if matched and 1 <= int(matched[2]) <= 12 else ""
+    return taxpayer_type_for(list(tax_profile.taxpayer_periods), month) if month else None
+
+
 def reference_cost_basis(
     rows: list[dict],
     tax_profile: ReferenceTaxProfile,
@@ -542,6 +557,7 @@ def reference_cost_basis(
     total_quantity = Decimal("0")
     taxed_rows = 0
     pending_sources: set[str] = set()
+    unknown_identity = False
     unit_price: Decimal | None = None
     for row in rows:
         amount = _to_decimal(row.get("金额(除税)"))
@@ -550,7 +566,15 @@ def reference_cost_basis(
             total_quantity = Decimal("0")
             break
         source = _clean_text(row.get("源文件"))
-        status = INPUT_TAX_NON_DEDUCTIBLE if tax_profile.taxpayer_type == TAXPAYER_SMALL_SCALE else deductibility.get(source, INPUT_TAX_PENDING)
+        # Purchase VAT belongs to the invoice month. Today's output tax setting must not
+        # retroactively remove VAT from purchases made while the company was small-scale.
+        taxpayer = purchase_taxpayer_type(tax_profile, row.get("开票日期"))
+        if taxpayer is None:
+            # Unknown historical identity cannot be priced using today's taxpayer type.
+            unknown_identity = True
+            total_quantity = Decimal("0")
+            break
+        status = INPUT_TAX_NON_DEDUCTIBLE if taxpayer == TAXPAYER_SMALL_SCALE else deductibility.get(source, INPUT_TAX_PENDING)
         if status == INPUT_TAX_NON_DEDUCTIBLE:
             tax_amount = _to_decimal(row.get("税金"))
             if tax_amount is None or tax_amount < 0:
@@ -570,7 +594,7 @@ def reference_cost_basis(
         label = "含税"
     else:
         label = "部分含税"
-    note = f"{len(pending_sources)} 张发票类型待核对，暂按不含税计成本" if pending_sources else ""
+    note = "开票日期或历史纳税人身份未覆盖，成本单价待核对" if unknown_identity else f"{len(pending_sources)} 张发票类型待核对，暂按不含税计成本" if pending_sources else ""
     return {"unit_price": unit_price, "label": label, "note": note}
 
 
@@ -2108,7 +2132,7 @@ def _normalize_metadata_index(invoice_metadata: object) -> dict[str, dict]:
     for row in iterable or []:
         if not isinstance(row, dict):
             continue
-        path_value = row.get("文件路径") or row.get("file_path") or row.get("path")
+        path_value = row.get("文件路径") or row.get("file_path") or row.get("path") or row.get("源文件")
         key = _canonical_path(path_value)
         if key:
             index[key] = dict(row)
@@ -2337,10 +2361,13 @@ def _analysis_attempt_summary(attempts: list[dict]) -> str:
     return " / ".join(parts)
 
 
-def _select_cost_analysis(candidates: list[tuple[Path, dict]]) -> tuple[dict | None, list[dict]]:
+def _select_cost_analysis(candidates: list[tuple[Path, dict]], cache=None) -> tuple[dict | None, list[dict]]:
     attempts: list[dict] = []
     for source_path, metadata in sorted(candidates, key=lambda item: (_cost_source_priority(item[0]), str(item[0]).casefold())):
-        analysis = _finalize_cost_analysis(dict(analyze_cost_invoice(source_path, metadata=metadata)))
+        version = COST_PARSER_VERSION + hashlib.sha256(json.dumps(metadata, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
+        raw = (cache.read("cost", source_path, version, lambda: analyze_cost_invoice(source_path, metadata=metadata))
+               if cache else analyze_cost_invoice(source_path, metadata=metadata))
+        analysis = _finalize_cost_analysis(dict(raw))
         analysis["source_format"] = source_path.suffix.lower().lstrip(".")
         analysis["source_path"] = str(source_path)
         attempts.append(analysis)
@@ -2744,6 +2771,7 @@ def build_cost_analysis_outputs(
     on_rows: Callable | None = None,
     outbound_items: dict[str, dict] | None = None,
     company_taxpayer: Callable[[], dict | None] | None = None,
+    *, cache=None, source_files: list[Path] | None = None,
 ) -> dict:
     watch_folder = Path(watch_folder)
     output_folder = Path(output_folder)
@@ -2751,7 +2779,7 @@ def build_cost_analysis_outputs(
     analyses = []
     detail_rows: list[dict] = []
     all_attempts: list[dict] = []
-    source_files = _iter_cost_invoice_files(watch_folder)
+    source_files = source_files if source_files is not None else _iter_cost_invoice_files(watch_folder)
     format_counts = {
         "pdf": len([path for path in source_files if path.suffix.lower() == ".pdf"]),
         "ofd": len([path for path in source_files if path.suffix.lower() == ".ofd"]),
@@ -2769,7 +2797,7 @@ def build_cost_analysis_outputs(
     if progress:
         progress(0, total_sources)
     for index, candidates in enumerate(source_groups.values(), start=1):
-        analysis, attempts = _select_cost_analysis(candidates)
+        analysis, attempts = _select_cost_analysis(candidates, cache=cache)
         all_attempts.extend(attempts)
         if analysis is None:
             if on_rows:

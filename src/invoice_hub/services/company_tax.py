@@ -132,6 +132,7 @@ class CompanyTaxService:
         snapshot = hashlib.sha256(json.dumps({"state": state, "identity": company["taxpayer_periods"]}, sort_keys=True).encode()).hexdigest()
         rows = []
         previous_credit = None
+        carry_unresolved = False
         for month in months:
             records = state["months"].get(month, {})
             taxpayer_type = taxpayer_type_for(company["taxpayer_periods"], month)
@@ -150,6 +151,8 @@ class CompanyTaxService:
                     blockers.append({"code": "TAX_IDENTITY_UNSUPPORTED", "message": "身份未设置或非一般纳税人；当前只支持普通一般计税手工场景。"})
                 elif not assessment or any(assessment[key] is None for key in INPUTS):
                     blockers.append({"code": "TAX_EVIDENCE_MISSING", "message": "缺少普通一般计税手工假设；票面税额不自动视作抵扣或应纳。"})
+                elif carry_unresolved:
+                    blockers.append({"code": "TAX_CARRY_UNRESOLVED", "message": "连续前期的留抵尚未核对通过，请先补全或更正前期测算。"})
                 elif previous_credit is not None and Decimal(assessment["opening_credit"]) != previous_credit:
                     blockers.append({"code": "TAX_CARRY_MISMATCH", "message": "上期留抵与前月测算不一致，请核对后重算。"})
                 else:
@@ -163,7 +166,9 @@ class CompanyTaxService:
                               "net": f"{net:.2f}", "amount": estimate, "closing_credit": credit}]
                 if tax_type == "vat":
                     # Monthly liabilities never net against a later month's input tax.
-                    # Requiring the next opening to equal this closing preserves the chain.
+                    # An unresolved preceding assessment cannot certify the next opening,
+                    # even when the query only displays a later month in that same chain.
+                    carry_unresolved = bool(assessment) and credit is None
                     previous_credit = Decimal(credit) if credit is not None else None
                 if month < first:
                     continue

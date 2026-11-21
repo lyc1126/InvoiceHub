@@ -144,6 +144,14 @@ watch(
       </section>
 
       <CompanyBankLedger v-if="ledger.bank" :bank="ledger.bank" />
+      <section v-if="ledger.accounts" class="panel" aria-label="科目期初与发生额">
+        <h3>科目期初与发生额</h3>
+        <p class="muted">{{ ledger.accounts.message }} · 来源：{{ ledger.accounts.source }}</p>
+        <table v-if="ledger.accounts.items.length" class="grid">
+          <thead><tr><th>编码</th><th>科目</th><th class="num">期初（借正贷负）</th><th class="num">借方发生</th><th class="num">贷方发生</th><th class="num">期末（借正贷负）</th></tr></thead>
+          <tbody><tr v-for="row in ledger.accounts.items" :key="row.code"><td>{{ row.code }}</td><td>{{ row.name }}</td><td class="num">{{ money(row.opening) }}</td><td class="num">{{ money(row.debit) }}</td><td class="num">{{ money(row.credit) }}</td><td class="num">{{ money(row.closing) }}</td></tr></tbody>
+        </table>
+      </section>
     </template>
   </section>
 </template>

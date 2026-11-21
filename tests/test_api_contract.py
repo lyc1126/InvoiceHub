@@ -652,7 +652,7 @@ def test_bundled_website_serves_only_packaged_assets_and_keeps_settings_navigati
         response = client.get(route)
         assert response.status_code == 200
         assert 'id="settingsAboutWebsiteLink" class="btn btn--ghost" href="/website/"' in response.text
-        assert "page-settings.js?v=20260907-desktop-integrated-2" in response.text
+        assert "page-settings.js?v=20261119-feedback-1" in response.text
     assert "activeSkinStylesheet" not in client.get("/website/").text
 
 
@@ -1471,7 +1471,8 @@ def test_website_dark_persists_and_recovery_keeps_white_without_changing_saved_s
     assert 'id="activeSkinStylesheet"' not in restarted.get("/").text
 
 
-def test_reference_status_api_rejects_quantity_over_total(tmp_path: Path) -> None:
+def test_reference_status_api_rejects_quantity_over_total(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(BackgroundSyncService, "run_background_diagnostics", lambda self, trigger="startup_sync": None)
     watch = tmp_path / "发票文件"
     watch.mkdir()
     write_csv_rows(
@@ -1512,7 +1513,8 @@ def test_reference_status_api_rejects_quantity_over_total(tmp_path: Path) -> Non
     assert "已开数量不能大于数量合计" in response.json()["detail"]
 
 
-def test_reference_status_api_accepts_row_markup_rate(tmp_path: Path) -> None:
+def test_reference_status_api_accepts_row_markup_rate(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(BackgroundSyncService, "run_background_diagnostics", lambda self, trigger="startup_sync": None)
     watch = tmp_path / "发票文件"
     watch.mkdir()
     app = create_app(tmp_path)
@@ -1666,7 +1668,10 @@ def test_reference_status_api_waits_for_profile_lock_without_blocking_health(tmp
         workbook.close()
 
 
-def test_cost_analysis_project_summary_contains_tax_average_unit_price(tmp_path: Path) -> None:
+def test_cost_analysis_project_summary_contains_tax_average_unit_price(tmp_path: Path, monkeypatch) -> None:
+    # Only a projection is seeded here; startup sync would rebuild it empty
+    # without source invoices and race the read contract under test.
+    monkeypatch.setattr(BackgroundSyncService, "run_background_diagnostics", lambda *a, **kw: None)
     watch = tmp_path / "发票文件"
     watch.mkdir()
     write_csv_rows(
@@ -1704,7 +1709,8 @@ def test_cost_analysis_project_summary_contains_tax_average_unit_price(tmp_path:
     assert project["采购参考平均单价(含税)"] == 3728.89
 
 
-def test_cost_analysis_project_summary_splits_stock_and_purchase_reference_averages(tmp_path: Path) -> None:
+def test_cost_analysis_project_summary_splits_stock_and_purchase_reference_averages(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(BackgroundSyncService, "run_background_diagnostics", lambda *a, **kw: None)
     watch = tmp_path / "发票文件"
     watch.mkdir()
     rows = [
@@ -2143,7 +2149,7 @@ def test_invoice_search_scope_with_large_snapshot(tmp_path: Path, monkeypatch) -
         {"文件名": "number.pdf", "发票号码": "SYNTHETIC-123", "开票金额": "8.00"},
         {"文件名": "boundary.pdf", "销售方": "syn", "发票号码": "thetic"},
     ]
-    monkeypatch.setattr(state.invoices, "_summary_rows", lambda: rows)
+    monkeypatch.setattr(state.invoices, "_summary_rows", lambda source_path=None: rows)
     client = TestClient(app)
     invoice = client.get("/api/v1/invoices", params={"keyword": " synthetic ", "search_scope": "invoice"}).json()
     assert invoice["count"] == 2

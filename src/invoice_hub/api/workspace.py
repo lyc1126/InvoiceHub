@@ -31,6 +31,6 @@ def embed_workspace_page(text: str, request: Request) -> str:
     # keeps all business actions and their server-side confirmation/CAS contracts.
     resources = (
         '<link rel="stylesheet" href="/static/css/workspace-embed.css?v=20261116-prototype-3">'
-        '<script src="/static/js/workspace-embed.js?v=20261116-prototype-2"></script>'
+        '<script src="/static/js/workspace-embed.js?v=20261119-feedback-1"></script>'
     )
     return workspace_appearance_policy(text).replace("</head>", resources + "\n</head>", 1)

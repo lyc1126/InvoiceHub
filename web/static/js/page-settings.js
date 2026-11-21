@@ -2099,6 +2099,8 @@ app.connectEvents(settingsRefs.eventState, () => loadSettings("event"), { refres
     productName: document.getElementById("settingsAboutProductName"),
     version: document.getElementById("settingsAboutVersion"),
     identityList: document.getElementById("settingsAboutIdentityList"),
+    technicalList: document.getElementById("settingsAboutTechnicalList"),
+    feedback: document.getElementById("settingsAboutFeedbackLink"),
     website: document.getElementById("settingsAboutWebsiteLink"),
     github: document.getElementById("settingsAboutGithubLink"),
     changelog: document.getElementById("settingsAboutChangelogLink"),
@@ -2184,6 +2186,8 @@ app.connectEvents(settingsRefs.eventState, () => loadSettings("event"), { refres
     if (refs.changelog) refs.changelog.href = safeExternalHref(payload?.links?.release_notes);
     renderRows(refs.identityList, [
       { label: "平台与架构", value: `${packageInfo.platform || "--"} / ${packageInfo.architecture || "--"}` },
+    ]);
+    renderRows(refs.technicalList, [
       { label: "包类型", value: packageInfo.type || "--" },
       { label: "Package ID", value: packageInfo.id || "--" },
       { label: "核心 Build ID", html: `<code class="about-hash">${app.escapeHtml(build.id || "--")}</code>` },
@@ -2251,6 +2255,7 @@ app.connectEvents(settingsRefs.eventState, () => loadSettings("event"), { refres
   }
 
   // Remote links use the host opener; the bundled website keeps same-tab navigation.
+  if (refs.feedback && app.skinBypassRequested()) refs.feedback.href = "/workspace/settings?feedback=1&no_skin=1#about";
   refs.github?.addEventListener("click", (event) => {
     event.preventDefault();
     openAboutLink("github", refs.github);

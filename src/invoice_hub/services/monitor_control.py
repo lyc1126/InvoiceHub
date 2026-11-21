@@ -20,6 +20,7 @@ from invoice_hub.monitoring.state import MonitorState
 from invoice_hub.platform import open_local_path
 from invoice_hub.projections.costs import CostProjectionService
 from invoice_hub.projections.summary import build_summary
+from invoice_hub.projections.incremental import rebuild_generation
 from invoice_hub.services.monitor_bridge import MonitorBridge
 from invoice_hub.storage import SQLiteRepository
 from invoice_hub.targets import AppConfig
@@ -149,7 +150,9 @@ class MonitorControlService:
         empty_reason = self._watch_dir_message(validation, saved=False)
         return f"重新汇总已执行，但结果为 0 条。{empty_reason}"
 
-    def bridge_rebuild(self) -> dict:
+    def bridge_rebuild(self, mode: str = "incremental") -> dict:
+        if mode not in {"incremental", "full", "verify"}:
+            raise ValueError("重建模式无效。")
         task_id = str(uuid.uuid4())
         with self._lock:
             profile = self.active_profile.model_copy(deep=True)
@@ -176,56 +179,12 @@ class MonitorControlService:
                         company_outbound=lambda: company_outbound_for(self.config, Path(profile.watch_dir)),
                     )
                     progress.report("summary", "正在生成普通汇总", percent=0)
-                    summary = build_summary(
-                        Path(profile.watch_dir),
-                        Path(profile.workspace_dir),
-                        progress=lambda completed, total: progress.report_fraction(
-                            "summary",
-                            "正在生成普通汇总",
-                            completed,
-                            total,
-                            0,
-                            52,
-                        ),
-                    )
-                    progress.report("summary", "正在应用已保存的手工修订", percent=52)
-                    manual_applied = monitor_state.apply_manual_overrides_to_summary()
-                    progress.report("cost", "正在生成成本分析", percent=52)
-                    cost_result = cost_service.rebuild(
-                        progress=lambda completed, total: progress.report_fraction(
-                            "cost",
-                            "正在解析成本发票",
-                            completed,
-                            total,
-                            52,
-                            86,
-                        ),
-                    )
-                    # 开票参考 compares hand-entered 已开数量 with issued invoices; only this manual
-                    # rebuild re-reads the (unwatched) outbound folder, after cost rows exist for the buyer check.
-                    progress.report("cost", "正在读取开具发票", percent=86)
-                    cost_result["outbound"] = {
-                        key: value
-                        for key, value in cost_service.refresh_outbound(
-                            outbound_dir,
-                            progress=lambda completed, total: progress.report_fraction(
-                                "cost", "正在读取开具发票", completed, total, 86, 92,
-                            ),
-                        ).items()
-                        if key != "items"
-                    }
-                    progress.report("finalizing", "正在确认已处理文件", percent=92)
-                    monitor_state.save_processed(
-                        monitor_state.rebuild_processed_from_summary(
-                            progress=lambda completed, total: progress.report_fraction(
-                                "finalizing",
-                                "正在确认已处理文件",
-                                completed,
-                                total,
-                                92,
-                                99,
-                            ),
-                        )
+                    from invoice_hub.storage.generations import recover_exports
+                    recover_exports(Path(profile.workspace_dir), Path(profile.watch_dir))
+                    monitor_state.sync_excel_manual_edits()
+                    summary, cost_result, manual_applied, published = rebuild_generation(
+                        monitor_state, cost_service, build_summary, progress,
+                        full=mode == "full", verify=mode == "verify", outbound=outbound_dir,
                     )
                     monitor_state.update_status(status="idle", last_sync_at=utc_now_text(), last_trigger="manual_rebuild", last_error="")
                     monitor_state.log_event("MANUAL_REBUILD", f"summary_count={summary.get('count', 0)} cost_detail_count={cost_result.get('detail_count', 0)}")
@@ -236,7 +195,7 @@ class MonitorControlService:
                 except Exception as exc:
                     progress.fail(str(exc))
                     raise
-            detail = {"summary": summary, "cost_analysis": cost_result, "manual_applied": manual_applied}
+            detail = {"summary": summary, "cost_analysis": cost_result, "manual_applied": manual_applied, "generation": published["generation"], "cache": published["coverage"], "export_warnings": published["export_warnings"]}
             self.repo.update_task(task_id, "success", detail, completed=True)
             with self._lock:
                 applies_to_active_profile = profile_identity == _background_profile_identity(self.active_profile)

@@ -50,7 +50,7 @@ def test_classic_embedding_is_explicit_and_keeps_shared_business_controllers(tmp
     embedded = client.get(path + "?workspace_embed=1&workspace_view=synthetic&no_skin=1")
     assert embedded.status_code == 200
     assert embedded.text.count("workspace-embed.js?v=") == 1
-    assert "workspace-embed.js?v=20261116-prototype-2" in embedded.text
+    assert "workspace-embed.js?v=20261119-feedback-1" in embedded.text
     assert embedded.text.index("workspace-embed.js?v=") < embedded.text.index("</head>")
     assert 'id="activeSkinStylesheet"' not in embedded.text
     assert "workspace-embed.css?v=20261116-prototype-3" in embedded.text

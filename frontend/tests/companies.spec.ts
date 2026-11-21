@@ -117,7 +117,7 @@ describe("companies module", () => {
     await form.trigger("submit");
     await flushPromises();
     const post = calls.find((call) => call.method === "POST" && call.url === "/api/v1/companies");
-    expect(post?.body).toEqual({ name: "丙公司", root_dir: "/合成/丙", taxpayer_periods: [], revision: 3, plan_hash: "h1", create_missing: [] });
+    expect(post?.body).toEqual({ name: "丙公司", root_dir: "/合成/丙", taxpayer_periods: [], revision: 3, plan_hash: "h1", create_missing: [], subdirs: { cost_invoice_dir: "成本发票", issued_invoice_dir: "开具发票" } });
     expect(wrapper.text()).toContain("识别到 1 个已有子目录");
     // The dialog closes, the result shows as a toast and the new company opens as a tab.
     expect(document.body.querySelector('form[aria-label="新建公司"]')).toBeNull();

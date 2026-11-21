@@ -4,6 +4,7 @@ import { computed, reactive, ref, watch } from "vue";
 import { ApiError, request } from "../api/client";
 import type { Company } from "../api/types";
 import { errorText, money } from "../format";
+import CompanySalary from "./CompanySalary.vue";
 
 // 工资社保 (WS-05 stage 3), laid out like the tax bureau's 社保费应缴明细. The backend parses the
 // company's 工资社保 folder (Excel / text PDF; images are listed, not read) and computes every check;
@@ -110,6 +111,7 @@ watch(() => companySourceKey(props.company, ["payroll_social_dir"]), (_value, pr
 
 <template>
   <section aria-label="工资社保">
+    <CompanySalary :company="company" :month="month" :tax-revision="payload?.tax_revision" @saved="load" />
     <div class="toolbar">
       <button type="button" :disabled="loading" :aria-busy="loading" @click="load">{{ loading ? "读取中…" : "重新读取" }}</button>
       <button type="button" :disabled="!payload?.tax_file || !!manual" @click="startManual">手工录入一个月…</button>

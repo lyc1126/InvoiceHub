@@ -1,5 +1,58 @@
 # InvoiceHub 注释与设计原因地图
 
+## 2026-11-21 显式库存、固定归档与毛利守恒
+
+- `stock_mapping.resolve_stock/journal_stock`：上游为已确认对照/期初和账套读回，下游 V2/比较/草稿必须同科目同口径；没有期初不能假定账面为零，重叠导出无来源行ID不能猜去重，单位/数量方向不明不能建立余额。守护显式差额、缺月、重叠、共享草稿及单位冲突回归。
+- `CostInventoryService._preview/save` 与 `company_inventory`：品目别名在预览中展开，保证 CSV/CLI 原名与 V2 标准名同源；确认基线固定发票滚动起点，防查询起月变化掩盖旧差额。配置按成本锁→草稿锁保存、来源指纹复核/目录身份替换和读回；`vouchers.build_drafts` 拒绝与旧人工习惯冲突，且禁用确认期初的自动数量纠正。守护重绑、比较/草稿一致与无调整回归。
+- `CostRecordService.save/_state`：上游是一次确认的报价/试算，下游历史查询与导出要保留原价，源变化后同ID原请求只返回旧回执；独立根目录历史读取不依赖发票目录还在。内容 hash 与结构校验共同防损坏记录导致错误导出，hash 不等于签名。守护原请求重放、源移走、异内容拒绝/并发CAS、重算校验后坏结构回归。
+- `cost_reports.build_margin_report/read`：上游为原品类月销售成本，下游四维分析只分摊同一总额；累计数量到分再作差防逐行舍入丢分，不生成规格库存。当前月截今天并标暂计，服务人工成本单列，非货物收入排除，防未来销项/未知成本被当已实现利润。守护多客户/项目/规格分位守恒及当前日期回归。
+- `cost_export.quote_workbook`：只消费已确认归档，不读取当前规则重报价；所有金额/用户文字写文本，防Excel精度损失或公式前缀执行。守护试算前后、原市场来源、字面公式及导出无写盘回归。人工服务成本预览保存守护源说明/有界金额/修订失效，不读取工资推算成本。
+
+## 2026-11-20 阶梯阈值与市场底线
+
+- `cost_pricing.calculate_price`：金额阶梯由请求显式提供基准金额，不能从报价结果反推，否则折扣与档位自指，preview/save 可能不一致；从零有序半开区间确定唯一整行档位。守护数量边界、显式金额、未知成本固定档与坏档位回归。
+- 同函数市场分支：用户输入的市场价有明确来源及有效期，缺失/过期不回退猜价；最低加价是硬底线、minimum_margin 是建议提示，取整后必须再守底线，必要时优先于尾数。守护市场上下限、有效期边界、含税总额守恒、零/未知成本与取整分差回归。
+- `CompanyCostService._quote/_preview`：基准金额与市场证据通过完整 lines 进入原 preview_hash；修改证据来源即使不改变报价金额也要重新确认。证据不写入规则文件。守护 HTTP 422、证据/金额变更 409、只读和旧三件套不变测试。
+
+## 2026-11-19 成本 V2 的只读与保存保护
+
+- `CostProjectionService.read_pricing_inputs`：从完整代际读取旧行快照，不走旧页面的 schema 修复路径；日期坏行保留给库存排除，不能静默丢掉后声称完整。守护成本 V2 无写入/坏代际及库存排除回归。
+- `CompanyCostService._context/_snapshot`：活动 monitored 徽标不等于来源已同步；结存取品类月末加权，任何历史卖超/排除/过期都不可回退成历史均价冒充结存。生成的 v1 默认率不迁移成手工规则，否则客户层永远被遮蔽。守护 active/inactive 来源失效、低高价滚动、规格共享、历史身份与旧行迁移测试。
+- `CompanyCostService.save`：规则独立文件避免 monitor/v1 重建冲掉人工设置；确认后重新试算并复核目录与来源，替换时用原目录身份，读回确认结果。实际销项和手填快照不得双计，规则不得改写已开金额。守护无写入、旧快照、同进程双提交、目录晚替换/链接及旧确认重放测试；外部 CLI/编辑器不属于该锁的事务范围。
+- `cost_pricing.calculate_price/select_rule`：含税价为权威时从含税总额反算税额，避免已舍入除税单价往返多一分；旧行只读迁移优先于客户默认，显式 V2 line 可覆盖它。守护 100×3 含税合同价、分数数量、层级/生效期与特殊计税未知测试。
+
+## 2026-11-19 反馈隐私与外部写入保护
+
+- `FeedbackService.configuration/submit`：About 只取四项环境字段，默认不发送；意图先持久化，重放/重启只读回执，避免中转或 GitHub 已创建后因断线重复创建。receipt 绑定原中转，防止配置变化把旧查询秘密发给新服务。守护 `tests/test_feedback.py` 的隐私、断线/重启、重复/并发用例。
+- `integrations/feedback-relay/relay.py::Relay.submit/finish`：固定 API 接收服务端令牌，不能交给客户端；预留与限流同一 SQLite 写事务，原 HTTP 超时后的晚到成功仍可查询，重启留下的 sending 不能当未发送。匿名内容打断 @ 提及，防止反馈入口直接通知任意 GitHub 用户。守护反馈协议、限流与未知不重放测试。
+- `FeedbackDialog.submit/lookup`：未知响应锁写、只 GET 原编号；正文文本渲染，草稿只在内存，缺中转时不伪装在线成功。App `navigate` 只把受校验的设置导航变成外壳对话框，避免替换缓存 iframe 丢设置草稿。守护 `feedback.spec.ts` 与原桥接回归，真实浏览器另验。
+
+## 2026-11-19 候选与工资确认保护
+
+- `company_detection._inspect/register`：同类多候选只让用户选择；plan_hash 绑定全部候选身份及最终映射，未选不登记，同名替换不沿用旧确认。`CompanyCreateForm` 只发送非空选择，根路径改变/迟到响应不能借用旧计划。守护 `test_api_companies.py` 多候选/标准目录/同名替换与 `company-setup.spec.ts`。
+- `bank.salary` / `company_salary.save`：工资表是证据，前端脱敏行不是计提输入；保存时重解析并检查明确年月、逐行金额与合计，确认只补明确费用科目。工资/社保共用原税文件 SHA 与写锁，坏工资不能被社保保存覆盖。守护 `test_company_salary.py` 伪造行、损坏、并发/原表/目录替换与超限测试。
+- `bank.vouchers.prepare/build_drafts`：原表改变则停止生成；应发计提只借费用/成本、贷工资，不依据实发/扣款再生成付款或社保代扣，避免和已有社保个人部分分录重复。已入账月跳过，缺科目沿用审核阻断。守护工资页面/CLI一致性、入账月/社保并列与缺科目测试。
+- `CompanySalary`：未知保存只能读取结果；公司/来源切换丢弃旧响应，关闭完整显示时立即隐藏原值，即使后续请求失败也不遗留。社保/工资保存互相刷新共享 revision，409 不重放。守护 `company-salary.spec.ts`。
+
+## 2026-11-19 WS-06—09 衔接与失败保护
+
+- `parse_cache` / `summary` / `cost_analysis`：缓存的是原始解析，不是同票纠偏或手改后的最终值；在副本上纠偏，元数据、hash 和解析器版本失效后重取。守护 `test_incremental_projections.py` 的万文件差分、等长替换、坏缓存及全量一致性。
+- `incremental.rebuild_generation` / `generations`：先完整枚举，再生成普通与成本候选，复核源/人工版本后仅切 manifest，避免页面混读半份新结果。系统路径别名先规范化，兼容旧清单中的别名拼写而拒绝不同根；公司登记与 monitor 配置不能因等价路径混用产生 500。固定导出用回执恢复，未知 Excel 手改不能按旧导出覆盖。守护候选失败、迟到发布、内容损坏和导出恢复测试；读取消费者含工作区草稿，显式旧 CLI CSV 契约保留。
+- `company_opening` / `company_settlement`：往来户名必须来自显式辅助期初，不能从无辅助核算的摘要猜测；快照前来源退出余额，未知/覆盖不足不冒零。预付款仍进往来余额，但不能关联付款之后的发票。守护 `test_company_opening.py`、`test_workspace_prototype_ledger.py`。
+- `purchase_taxpayer_type` / `CostProjectionService` / `company_inventory`：购入成本取开票月身份，销项率仍取当前保存设置；历史未知不能套当前身份。完整时间线作为依赖，无新票也可刷新到期工作簿。守护历史身份与参考/库存同口径用例。
+- `source_worker` / `SourceService._run/_commit`：网络 I/O 放可终止子进程，锁只管状态；取消以 epoch 拒绝迟到结果，磁盘发布先于内存指针，失败保留完整快照。守护取消/重启、发布失败和根替换测试；标准 SFTP v3 只能标弱版本，二次枚举不能冒充服务器事务。
+- `SourceService.preview_content/release_preview` / `file_preview.release_job` / `ServerSourcesPanel`：离线需用户明确同意，租约绑定来源/revision/条目版本；关闭与切换只释放对应来源作业，不放宽本地活动目录权限。无号票使用不透明 entry_id 作为来源家族。守护 server_sources、sftp_source、server-sources.spec.ts 与原 file_preview/API 相邻回归。
+
+- `SourceService.entries` / `ServerSourcesPanel.load`：子树可读计数独立于筛选/分页，只有元信息的文件不能暗示有可读票面；收藏重开先恢复绑定/预算，避免默认值被再次保存覆盖。离线文件及标签入口明确提示副本。守护完整子树计数与 `server-sources.spec.ts` 的元信息、恢复及离线测试。
+
+- `DirectoryInvoices.focusTagMenu` / `.tag-menu`：批量选择条位于层级 20，菜单须在其上且在异步标记加载后再次约束窗口边界，否则真实指针会被选择条截获或菜单逃出窄屏；单元测试覆盖边界坐标，浏览器实际点击验证保存。
+
+## 2026-11-19 WS 后端完整性收尾
+
+- `company_files.DRAFT_WRITE_LOCK` → `company_vouchers` / `company_payroll.save_confirmed`：草稿生成读取同一个申报文件，社保确认的读取 / SHA 核对 / 替换必须共用本进程写入顺序，否则两个请求可用同一 revision 互相覆盖。守护 `test_payroll_confirmation_waits_for_draft_generation_lock`、`test_concurrent_confirmations_cannot_both_replace_one_revision`；不承诺外部编辑器跨进程事务。
+- `company_payroll._tax_state/_confirmed_details/_rows_from_body`：JSON 可解析不代表社保月份结构有效；损坏状态不能退为空，脏金额不能变为零计提。`read_relative` / `write_state` 约束目录身份和链接，替换前再看 SHA，保留观察到的外部改动。守护嵌套损坏、非法金额、链接 / 目录替换、混合批次和外部改动测试；Windows 原生竞态另验。
+- `company_tax.get`：前期无法产出 closing_credit 时，后续连续假设不能重新成为可计算月份；未解状态与查询范围无关，断档只结束该段、不推定缺月数值。守护 `test_tax_unresolved_carry_blocks_later_months_until_prior_assumptions_are_corrected` 与缺输入 / 断档测试。
+
 ## 2026-11-17 P3 保护与原因
 
 - `company_tax`：手工输入是税额，不能推导销售额计税依据；basis.amount 保持 null，税额净额只进入测算和解释。守护 `test_unsigned_taxes_never_present_vat_as_all_tax_total`。

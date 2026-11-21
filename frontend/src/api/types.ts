@@ -237,6 +237,9 @@ export interface LedgerPayload {
   checks_ok: boolean;
   sources: { input: CompanyDirectory; output: CompanyDirectory };
   bank: BankLedger | null;
+  accounts?: { state: string; source: string; month: string; message: string; items: {
+    code: string; name: string; opening: string; debit: string; credit: string; closing: string;
+  }[] };
 }
 
 export interface LedgerCheck {
@@ -552,6 +555,6 @@ export interface SkinsPayload {
 
 export interface CompanyDetection {
   root_status: SubdirStatus;
-  subdirs: { key: string; label: string; relative_path: string; status: SubdirStatus; path: string; file_count: number | null; suggested_action: string }[];
+  subdirs: { key: string; label: string; relative_path: string; status: SubdirStatus; path: string; file_count: number | null; suggested_action: string; candidates?: string[]; selection_required?: boolean }[];
   plan_hash: string;
 }

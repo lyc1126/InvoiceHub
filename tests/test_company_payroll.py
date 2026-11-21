@@ -186,3 +186,171 @@ def test_a_confirmed_month_is_accrued_by_the_generated_draft(tmp_path: Path):
     rows = [dict(zip(header, row)) for row in ws.iter_rows(min_row=2, values_only=True)]
     accrual = [row for row in rows if "社保" in str(row["摘要"] or "") and row["月份"] == "2026-08"]
     assert accrual and sum(float(row["贷方金额"] or 0) for row in accrual) == pytest.approx(1812.53)
+
+
+def _confirmation(revision, month="2026-08", due="600"):
+    return {"revision": revision, "months": {month: {"rows": [
+        {"insurance": "合成险种", "unit": {"due": due}, "personal": {"due": "200"}},
+    ]}}}
+
+
+@pytest.mark.parametrize("details", [None, [], {"2026-08": []}, {"2026-08": {"单位部分": "NaN", "个人部分": "0"}},
+                                         {"2026-08": {"单位部分": "1", "个人部分": "0", "险种明细": "损坏"}}])
+def test_nested_tax_damage_is_never_treated_as_empty(tmp_path, details):
+    root = _company_folder(tmp_path)
+    path = root / "做账草稿" / "申报数据.json"
+    original = json.dumps({"月度增值税": {}, "社保明细": details}, ensure_ascii=False).encode()
+    path.write_bytes(original)
+    for action in (lambda: read_payroll(root, None), lambda: save_confirmed(root, _confirmation("stale"))):
+        with pytest.raises(PayrollError) as error:
+            action()
+        assert error.value.code == "PAYROLL_TAX_UNREADABLE"
+        assert path.read_bytes() == original
+
+
+@pytest.mark.parametrize("value", ["NaN", "Infinity", "-1", "1e2", "1.001", "1,2", "unknown", True, 1.2, {}, "10000000000000000"])
+def test_dirty_confirmation_amounts_do_not_become_zero(tmp_path, value):
+    root = _company_folder(tmp_path)
+    path = root / "做账草稿" / "申报数据.json"
+    original = path.read_bytes()
+    revision = read_payroll(root, None)["tax_revision"]
+    with pytest.raises(PayrollError) as error:
+        save_confirmed(root, _confirmation(revision, due=value))
+    assert error.value.code == "PAYROLL_INVALID"
+    assert path.read_bytes() == original
+
+
+@pytest.mark.parametrize("month", ["0000-01", "2026-13", "2026-08\n", "202608"])
+def test_confirmation_requires_an_exact_calendar_month(tmp_path, month):
+    root = _company_folder(tmp_path)
+    revision = read_payroll(root, None)["tax_revision"]
+    with pytest.raises(PayrollError):
+        save_confirmed(root, _confirmation(revision, month=month))
+
+
+@pytest.mark.parametrize("linked", ["file", "directory"])
+def test_payroll_refuses_linked_tax_inputs_without_touching_target(tmp_path, linked):
+    root = _company_folder(tmp_path)
+    draft_dir = root / "做账草稿"
+    original = (draft_dir / "申报数据.json").read_bytes()
+    if linked == "file":
+        external = tmp_path / "external.json"
+        external.write_bytes(original)
+        (draft_dir / "申报数据.json").unlink()
+        (draft_dir / "申报数据.json").symlink_to(external)
+    else:
+        external = tmp_path / "external"
+        draft_dir.rename(external)
+        draft_dir.symlink_to(external, target_is_directory=True)
+        external = external / "申报数据.json"
+    with pytest.raises(PayrollError) as error:
+        save_confirmed(root, _confirmation("stale"))
+    assert error.value.code == "PAYROLL_TAX_UNREADABLE"
+    assert external.read_bytes() == original
+
+
+def test_payroll_confirmation_waits_for_draft_generation_lock(tmp_path, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+    from invoice_hub.services import company_payroll
+    from invoice_hub.services.company_vouchers import _EXPORT_LOCK
+
+    root = _company_folder(tmp_path)
+    revision = read_payroll(root, None)["tax_revision"]
+    entered = Event()
+    original = company_payroll._tax_state
+    def observe(directory):
+        entered.set()
+        return original(directory)
+    monkeypatch.setattr(company_payroll, "_tax_state", observe)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        with _EXPORT_LOCK:
+            future = pool.submit(save_confirmed, root, _confirmation(revision))
+            assert not entered.wait(0.1)
+            assert "社保明细" not in json.loads((root / "做账草稿" / "申报数据.json").read_text())
+        assert future.result(timeout=5)["saved"] == ["2026-08"]
+
+
+def test_concurrent_confirmations_cannot_both_replace_one_revision(tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+
+    root = _company_folder(tmp_path)
+    revision = read_payroll(root, None)["tax_revision"]
+    def confirm(month):
+        try:
+            save_confirmed(root, _confirmation(revision, month))
+            return "saved"
+        except PayrollError as error:
+            return error.code
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(confirm, ["2026-08", "2026-09"]))
+    assert sorted(results) == ["PAYROLL_CONFLICT", "saved"]
+    assert len(read_payroll(root, None)["confirmed"]) == 1
+
+
+def test_confirmation_rejects_replaced_draft_directory(tmp_path, monkeypatch):
+    from invoice_hub.services import company_payroll
+
+    root = _company_folder(tmp_path)
+    folder = root / "做账草稿"
+    original = (folder / "申报数据.json").read_bytes()
+    revision = read_payroll(root, None)["tax_revision"]
+    replace = company_payroll.write_state
+    def swap(directory, name, data, **kwargs):
+        directory.rename(root / "保留原目录")
+        directory.mkdir()
+        return replace(directory, name, data, **kwargs)
+    monkeypatch.setattr(company_payroll, "write_state", swap)
+    with pytest.raises(PayrollError) as error:
+        save_confirmed(root, _confirmation(revision))
+    assert error.value.code == "PAYROLL_CONFLICT"
+    assert not (folder / "申报数据.json").exists()
+    assert (root / "保留原目录" / "申报数据.json").read_bytes() == original
+
+
+def test_payroll_api_rejects_mixed_batch_atomically(client, tmp_path):  # noqa: F811
+    root = _company_folder(tmp_path)
+    company_id = _company(client, root)
+    base = f"/api/v1/companies/{company_id}/payroll"
+    revision = client.get(base).json()["tax_revision"]
+    before = _tree(root)
+    body = _confirmation(revision)
+    body["months"].update(_confirmation(revision, "2026-09", "NaN")["months"])
+    assert client.put(base, json=body).status_code == 422
+    assert _tree(root) == before
+    assert client.put(base, json=_confirmation(revision), headers={"Origin": "https://untrusted.example"}).status_code == 403
+    assert _tree(root) == before
+
+
+@pytest.mark.parametrize("change", [
+    {"unit": []}, {"unit": {"due": None}, "personal": {"due": None}},
+    {"unit": {"due": "600", "count": "1.5"}}, {"unit": {"due": "600", "rate": "101%"}},
+])
+def test_confirmation_refuses_unknown_totals_and_malformed_sides(tmp_path, change):
+    root = _company_folder(tmp_path)
+    before = _tree(root)
+    body = _confirmation(read_payroll(root, None)["tax_revision"])
+    body["months"]["2026-08"]["rows"][0].update(change)
+    with pytest.raises(PayrollError) as error:
+        save_confirmed(root, body)
+    assert error.value.code == "PAYROLL_INVALID"
+    assert _tree(root) == before
+
+
+def test_confirmation_preserves_an_external_edit_observed_before_replace(tmp_path, monkeypatch):
+    from invoice_hub.services import company_payroll
+
+    root = _company_folder(tmp_path)
+    path = root / "做账草稿" / "申报数据.json"
+    revision = read_payroll(root, None)["tax_revision"]
+    original = company_payroll._rows_from_body
+    external = '{"月度增值税": {"2026-08": {"状态": "外部更新"}}}'
+    def edit_after_read(month, rows):
+        parsed = original(month, rows)
+        path.write_text(external, encoding="utf-8")
+        return parsed
+    monkeypatch.setattr(company_payroll, "_rows_from_body", edit_after_read)
+    with pytest.raises(PayrollError) as error:
+        save_confirmed(root, _confirmation(revision))
+    assert error.value.code == "PAYROLL_CONFLICT"
+    assert path.read_text(encoding="utf-8") == external

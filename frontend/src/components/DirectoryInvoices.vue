@@ -48,14 +48,13 @@ let selectionGeneration = 0;
 const dateSortLabel = computed(() => dateSort.value === "asc" ? "按开票时间倒序排序" : "按开票时间正序排序");
 const formatLabel = (row: InvoiceRow) => ["PDF", "OFD", "XML"].includes(row.file_format?.toUpperCase()) ? row.file_format.toUpperCase() : "未知";
 const formatTone = (row: InvoiceRow) => formatLabel(row) === "未知" ? "unknown" : formatLabel(row).toLowerCase();
-// Selection (WS-01 stage 2) only on the monitored folder's settled list: the actions behind it
-// work on the current watch_dir, and a provisional first result has no stable row identity.
-// The invoice number rides along for batch tagging only; the selection bar and every backend
-// action still receive just `invoice_key + source_path`.
+// Settled nonmonitor lists can select for company tags. Source actions retain a separate
+// active-target gate: selecting a remote/local historical row never authorizes file operations.
 type SelectedRow = SelectedInvoice & { invoice_number: string };
 const selected = ref(new Map<string, SelectedRow>());
 const selectingAll = ref(false);
-const selectable = computed(() => !!invoices.value && !invoices.value.read_only && !invoices.value.snapshot?.provisional);
+const selectable = computed(() => !!invoices.value && !invoices.value.snapshot?.provisional);
+const sourceActions = computed(() => selectable.value && !invoices.value?.read_only);
 const selectedItems = computed(() => [...selected.value.values()].map(({ invoice_key, source_path }) => ({ invoice_key, source_path })));
 const entry = (row: InvoiceRow): SelectedRow => ({ invoice_key: row.invoice_key, source_path: row.source_path!, invoice_number: row.invoice_number ?? "" });
 const pageRows = computed(() => (invoices.value?.items ?? []).filter((row) => row.source_path));
@@ -87,7 +86,7 @@ function clearSelection(): void {
 }
 
 function previewSelected(): void {
-  if (!selectable.value || invoicesLoading.value || !selectedItems.value.length) return;
+  if (!sourceActions.value || invoicesLoading.value || !selectedItems.value.length) return;
   // Preserve every selected source format, not the family-de-duplicated amount count.
   // preview-jobs alone validates these homepage identities against the active watch_dir.
   previewing.value = { target_id: invoices.value!.directory.target_id, items: selectedItems.value.map((item) => ({ ...item })) };
@@ -121,7 +120,8 @@ async function selectAll(): Promise<void> {
         `${base()}/directories/${encodeURIComponent(props.dirKey)}/invoices?page=${page}&page_size=200${filters}`,
       );
       if (mine !== selectionGeneration) return;
-      if (payload.read_only || payload.snapshot?.provisional || payload.snapshot?.revision !== revision) {
+      if (payload.read_only !== invoices.value?.read_only || payload.directory.target_id !== invoices.value?.directory.target_id ||
+          payload.snapshot?.provisional || payload.snapshot?.revision !== revision) {
         throw new Error("目录或汇总已变化，请刷新后重新勾选。");
       }
       for (const row of payload.items) {
@@ -163,8 +163,9 @@ async function loadInvoices(page = 1): Promise<void> {
     if (mine !== listGeneration) return;
     // Pagination/sorting keep stable identities; a new projection or a monitor switch does not.
     // Dropping its selection also closes preview so old source paths cannot survive the change.
-    if (payload.read_only || payload.snapshot?.provisional ||
-        (invoices.value && invoices.value.snapshot?.revision !== payload.snapshot?.revision)) clearSelection();
+    if (payload.snapshot?.provisional || (invoices.value &&
+        (invoices.value.snapshot?.revision !== payload.snapshot?.revision ||
+         invoices.value.read_only !== payload.read_only || invoices.value.directory.target_id !== payload.directory.target_id))) clearSelection();
     invoices.value = payload;
     invoicesPage.value = payload.page ?? page;
   } catch (cause) {
@@ -175,6 +176,19 @@ async function loadInvoices(page = 1): Promise<void> {
 }
 
 const pageCount = () => Math.max(1, Math.ceil((invoices.value?.count ?? 0) / PAGE_SIZE));
+
+function focusTagMenu(): void {
+  void nextTick(() => {
+    const menu = tagMenu.value, element = tagMenuEl.value;
+    if (!menu || !element) return;
+    // Async marks change menu height; keep mouse and keyboard menus reachable
+    // at the window edge after either the initial render or the loaded marks.
+    const box = element.getBoundingClientRect();
+    menu.x = Math.max(8, Math.min(menu.x, window.innerWidth - box.width - 8));
+    menu.y = Math.max(8, Math.min(menu.y, window.innerHeight - box.height - 8));
+    element.querySelector<HTMLElement>("input, button")?.focus();
+  });
+}
 
 function openTagMenu(row: InvoiceRow, event: MouseEvent | KeyboardEvent): void {
   const target = event.currentTarget as HTMLElement;
@@ -192,7 +206,7 @@ function openTagMenu(row: InvoiceRow, event: MouseEvent | KeyboardEvent): void {
   tagMenu.value = { row, ...point, origin: target, batch };
   if (batch) void loadBatchMarks();
   // Keyboard users land in the menu; Escape returns them to the row they came from.
-  void nextTick(() => tagMenuEl.value?.querySelector<HTMLElement>("input, button")?.focus());
+  focusTagMenu();
 }
 
 async function loadBatchMarks(): Promise<void> {
@@ -203,7 +217,7 @@ async function loadBatchMarks(): Promise<void> {
     if (tagMenu.value !== menu) return; // closed or reopened meanwhile
     menu.batch.revision = marks.revision;
     menu.batch.invoices = marks.invoices;
-    void nextTick(() => tagMenuEl.value?.querySelector<HTMLElement>("input, button")?.focus());
+    focusTagMenu();
   } catch (cause) {
     error.value = errorText(cause);
     closeTagMenu();
@@ -341,7 +355,7 @@ onBeforeUnmount(() => { clearTimeout(keywordTimer); listGeneration += 1; selecti
           <p>可直接打开本地文件或进入详情手工修订。{{ selectable ? "勾选后底部出现合计与批量操作；" : "" }}右键一行（或 Shift+F10）可以打标签{{ selectable ? "，在已勾选的行上右键给全部勾选的发票打标签" : "" }}。</p>
         </div>
       </div>
-      <p v-if="invoices.read_only" class="muted">非监控目录只能查看；预览、打印、改名或删除请先设为监控目录。</p>
+      <p v-if="invoices.read_only" class="muted">非监控目录可勾选并批量打标签；预览、打印、改名或删除请先设为监控目录。</p>
       <p v-if="!invoices.directory.projection.summary_exists" class="muted">这个目录还没有汇总过。</p>
       <p v-if="invoices.tags_error" class="banner banner--error" role="alert">标签读取失败，未显示：{{ invoices.tags_error }}</p>
       <div class="filters">
@@ -466,7 +480,7 @@ onBeforeUnmount(() => { clearTimeout(keywordTimer); listGeneration += 1; selecti
       </div>
       <p v-if="invoices.snapshot?.provisional" class="muted">正在整理的临时结果，整理完成后才能勾选。</p>
       <DirectorySelectionBar
-        v-if="selectable && selected.size"
+        v-if="sourceActions && selected.size"
         :items="selectedItems"
         :target-id="invoices.directory.target_id"
         :total="invoices.count"
@@ -476,7 +490,13 @@ onBeforeUnmount(() => { clearTimeout(keywordTimer); listGeneration += 1; selecti
         @select-all="selectAll"
         @changed="afterChange"
       />
-      <SourcePreview v-if="previewing && selectable" label="已勾选发票" :preview="previewing" @close="previewing = null" />
+      <div v-if="selectable && !sourceActions && selected.size" class="selection-bar" role="region" aria-label="批量标签">
+        <strong>已勾选 {{ selected.size }} 张</strong>
+        <span>在勾选行上右键或按 Shift+F10 批量打标签</span>
+        <button type="button" :disabled="selectingAll || invoicesLoading" @click="selectAll">全选筛选结果</button>
+        <button type="button" aria-label="清除勾选" @click="clearSelection">×</button>
+      </div>
+      <SourcePreview v-if="previewing && sourceActions" label="已勾选发票" :preview="previewing" @close="previewing = null" />
     </section>
   </div>
 </template>

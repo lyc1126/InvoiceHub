@@ -25,9 +25,15 @@ const detection = ref<CompanyDetection | null>(null);
 const detecting = ref(false);
 const createMissing = ref<string[]>([]);
 const registrationHash = ref("");
+const existingSubdirs = reactive<Record<string, string>>({});
+const chosenSubdirs = () => Object.fromEntries(Object.entries(existingSubdirs).filter(([, value]) => value));
+const needsSelection = computed(() => detection.value?.subdirs.some(item => item.selection_required) ?? false);
 let detectGeneration = 0;
 let detectTimer: ReturnType<typeof setTimeout> | undefined;
-watch(() => `${mode.value}:${form.root_dir}`, () => detect());
+watch(() => `${mode.value}:${form.root_dir}`, () => {
+  for (const key of Object.keys(existingSubdirs)) delete existingSubdirs[key];
+  detect();
+});
 // Also run by "重新检测": a stale plan (409) or failed registration leaves the same path, so
 // the watch alone could not produce the fresh plan_hash the next registration needs.
 function detect(delay = 300): void {
@@ -41,8 +47,11 @@ function detect(delay = 300): void {
   detecting.value = true;
   detectTimer = setTimeout(async () => {
     try {
-      const result = await request<CompanyDetection>("/api/v1/companies/detect", { method: "POST", body: { root_dir: form.root_dir } });
-      if (!disposed && mine === detectGeneration) detection.value = result;
+      const result = await request<CompanyDetection>("/api/v1/companies/detect", { method: "POST", body: { root_dir: form.root_dir, subdirs: chosenSubdirs() } });
+      if (!disposed && mine === detectGeneration) {
+        detection.value = result;
+        for (const item of result.subdirs) existingSubdirs[item.key] = item.selection_required ? "" : item.relative_path;
+      }
     } catch (cause) {
       if (!disposed && mine === detectGeneration) error.value = errorText(cause);
     } finally {
@@ -115,7 +124,7 @@ async function pick(): Promise<void> {
 
 async function submit(): Promise<void> {
   if (busy.value || picking.value || plan.value || registrationHash.value || !taxpayerChoice.value) return;
-  if (mode.value === "existing" && (!detection.value || detection.value.root_status !== "present")) return;
+  if (mode.value === "existing" && (!detection.value || detection.value.root_status !== "present" || needsSelection.value)) return;
   error.value = "";
   notice.value = "";
   if (form.taxpayer_type && !form.effective_from) {
@@ -128,6 +137,7 @@ async function submit(): Promise<void> {
       registrationHash.value = detection.value!.plan_hash;
       const result = await companies.create({ name: form.name, root_dir: form.root_dir,
         create_missing: [...createMissing.value], plan_hash: registrationHash.value,
+        subdirs: chosenSubdirs(),
         // Empty stays 未设置; no taxpayer type is assumed.
         taxpayer_periods: form.taxpayer_type ? [{ effective_from: form.effective_from, taxpayer_type: form.taxpayer_type }] : [] });
       if (!disposed && result.company) emit("created", result.subdir_sources ?? {});
@@ -240,9 +250,16 @@ onBeforeUnmount(() => {
           <div class="overview-table-wrap"><table class="grid">
             <thead><tr><th>子目录</th><th>检测</th><th>处理</th></tr></thead>
             <tbody><tr v-for="item in detection.subdirs" :key="item.key">
-              <td>{{ item.label }}<small v-if="item.relative_path !== item.label" class="mono"> · {{ item.relative_path }}</small></td>
+              <td>{{ item.label }}
+                <select v-if="(item.candidates?.length ?? 0) > 1" v-model="existingSubdirs[item.key]" class="wz-candidate" :aria-label="`${item.label} 候选目录`" :disabled="busy || detecting || !!registrationHash" @change="detect(0)">
+                  <option v-if="item.selection_required" value="">多个候选，请选择</option>
+                  <option v-for="candidate in item.candidates" :key="candidate" :value="candidate">{{ candidate }}</option>
+                  <option v-if="!item.candidates?.includes(item.label)" :value="item.label">使用标准目录 {{ item.label }}（可另行补建）</option>
+                </select>
+                <small v-else-if="item.relative_path !== item.label" class="mono"> · {{ item.relative_path }}</small>
+              </td>
               <td>{{ item.status === 'present' ? `找到 · ${item.file_count === null ? '文件数待核对' : item.file_count + ' 个文件'}` : SUBDIR_STATUS_LABELS[item.status] }}</td>
-              <td><label v-if="item.suggested_action === 'create'"><input v-model="createMissing" type="checkbox" :value="item.key" :disabled="busy || !!registrationHash">创建空文件夹</label><span v-else>保留原状</span></td>
+              <td><span v-if="item.selection_required">请先选择，不自动猜测</span><label v-else-if="item.suggested_action === 'create'"><input v-model="createMissing" type="checkbox" :value="item.key" :disabled="busy || !!registrationHash">创建空文件夹</label><span v-else>保留原状</span></td>
             </tr></tbody>
           </table></div>
           <p v-if="createMissing.length" class="overview-notice">点击“登记”即确认创建勾选的 {{ createMissing.length }} 类空目录；不会移动、改名或覆盖文件。</p>
@@ -286,10 +303,14 @@ onBeforeUnmount(() => {
     <p v-if="error" class="banner banner--error" role="alert">{{ error }}</p>
     <p v-if="notice" class="banner banner--note" role="status">{{ notice }}</p>
     <div v-if="!plan || submitted" class="actions">
-      <button v-if="!plan" type="submit" class="primary" :disabled="busy || picking || !taxpayerChoice || !!registrationHash || (mode === 'existing' && (detecting || !detection || detection.root_status !== 'present'))" :aria-busy="busy">{{ busy ? '处理中…' : mode === 'existing' ? '登记' : '预览创建计划' }}</button>
+      <button v-if="!plan" type="submit" class="primary" :disabled="busy || picking || !taxpayerChoice || !!registrationHash || (mode === 'existing' && (detecting || !detection || detection.root_status !== 'present' || needsSelection))" :aria-busy="busy">{{ busy ? '处理中…' : mode === 'existing' ? '登记' : '预览创建计划' }}</button>
       <button v-if="registrationHash" type="button" :disabled="busy" @click="readRegistration">读取登记结果</button>
       <button type="button" class="ghost" :disabled="busy" @click="emit('cancel')">{{ submitted ? '关闭' : '取消' }}</button>
       <span v-if="!plan && !taxpayerChoice" class="muted">先选纳税人身份</span>
     </div>
   </form>
 </template>
+
+<style scoped>
+.wz-candidate { display: block; max-width: 240px; margin-top: 4px; }
+</style>

@@ -16,6 +16,8 @@ import { useWorkspaceStore } from "./stores/workspace";
 import WsModal from "./components/WsModal.vue";
 import ShutdownDialog from "./components/ShutdownDialog.vue";
 import CompanyCreateForm from "./components/CompanyCreateForm.vue";
+import ServerSourcesPanel from "./components/ServerSourcesPanel.vue";
+import FeedbackDialog from "./components/FeedbackDialog.vue";
 import { toast } from "./toast";
 import { toastMessage } from "./toast";
 
@@ -38,6 +40,15 @@ const moduleDimmed = computed(() => classic.value && modules.modals[shown.value 
 const appearance = ref<InstanceType<typeof AppearanceToggle>>();
 const eventError = ref(false);
 const sidebarOpen = ref(false);
+const feedbackOpen = ref(false);
+const feedbackVisited = ref(false);
+function openFeedback(): void { feedbackVisited.value = true; feedbackOpen.value = true; }
+watch(() => route.query.feedback, (value) => { if (value === "1") openFeedback(); }, { immediate: true });
+function closeFeedback(): void {
+  feedbackOpen.value = false;
+  if (route.query.feedback) { const query = { ...route.query }; delete query.feedback; void router.replace({ query }); }
+}
+const serverOpen = ref(false);
 const scroll: Record<string, number> = {};
 let previous = "";
 let navigation = 0;
@@ -52,7 +63,7 @@ watch(() => route.fullPath, async () => {
   const item = MODULES.find((entry) => entry.id === name);
   if (item && (route.hash || Object.keys(route.query).some((key) => key !== "no_skin"))) {
     const url = new URL(item.path, location.origin);
-    for (const [key, value] of Object.entries(route.query)) if (typeof value === "string") url.searchParams.set(key, value);
+    for (const [key, value] of Object.entries(route.query)) if (typeof value === "string" && key !== "feedback") url.searchParams.set(key, value);
     url.hash = route.hash;
     modules.open(item.id, `${url.pathname}${url.search}${url.hash}`);
   }
@@ -65,6 +76,8 @@ function navigate(path: string, force = false): void {
   const destination = workspaceDestination(path);
   if (destination === null) return;
   const url = new URL(destination, location.origin);
+  // The authenticated settings frame requests an outer modal; do not replace its document/drafts.
+  if (url.pathname === "/settings" && url.searchParams.get("feedback") === "1") { openFeedback(); return; }
   if (recovery.value) url.searchParams.set("no_skin", "1");
   const item = moduleForPath(url.pathname);
   if (item && force) {
@@ -143,7 +156,7 @@ function showShutdown(): void { shutdownOpen.value = true; }
       <a class="rail-link rail-link--classic" :href="classicHref('/')" title="返回经典界面">经典界面</a>
       <button class="rail-power" type="button" aria-label="关闭系统" title="关闭系统" @click="showShutdown"><WorkspaceIcon name="power" /></button>
     </nav>
-    <WorkspaceSidebar @opened="sidebarOpen = false" @keydown.escape="sidebarOpen = false" />
+    <WorkspaceSidebar @opened="sidebarOpen = false" @server="serverOpen = true; sidebarOpen = false" @keydown.escape="sidebarOpen = false" />
     <div v-if="sidebarOpen" class="ws-backdrop" aria-hidden="true" @click="sidebarOpen = false" />
     <!-- Matches the active classic dialog's in-frame backdrop; the frame itself sits above it. -->
     <div v-if="classic && moduleDimmed" class="ws-module-scrim" aria-hidden="true" @click="focusModalFrame" />
@@ -161,8 +174,10 @@ function showShutdown(): void { shutdownOpen.value = true; }
       <template v-for="item in MODULES" :key="item.id">
         <WorkspaceModule v-if="modules.visits.has(item.id)" v-show="shown === item.id" :module="item.id" :path="item.path" :label="item.label" :active="shown === item.id" :recovery="recovery" @navigate="navigate" @appearance="appearance?.syncFromServer()" @state-changed="refreshData" />
       </template>
+      <ServerSourcesPanel :open="serverOpen" @close="serverOpen = false" />
     </main>
     <ShutdownDialog v-if="shutdownOpen" @close="shutdownOpen = false" />
+    <FeedbackDialog v-if="feedbackVisited" :open="feedbackOpen" @close="closeFeedback" />
     <WsModal v-if="workspace.createOpen" title="添加公司资料夹" subtitle="登记已有公司资料夹，或在空位置新建标准工作区。" @close="workspace.createOpen = false">
       <CompanyCreateForm @created="onCompanyCreated" @cancel="workspace.createOpen = false" />
     </WsModal>

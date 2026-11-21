@@ -18,9 +18,10 @@ from openpyxl import load_workbook
 
 from invoice_hub.domain import TargetProfile
 from invoice_hub.domain.models import utc_now_text
-from invoice_hub.extraction.parsers import SUPPORTED_EXTS, supported_invoice_files
+from invoice_hub.extraction.parsers import SUPPORTED_EXTS
 from invoice_hub.projections.summary import SUMMARY_HEADERS, write_summary_xlsx
 from invoice_hub.storage.files import atomic_write_json, read_csv_rows, read_json_object, write_csv_rows
+from invoice_hub.storage.parse_cache import scan_files
 
 STOP_FLAG_NAME = ".invoice_stop"
 LOCK_FILE_NAME = ".invoice_monitor.lock"
@@ -535,7 +536,7 @@ class MonitorState:
 
     def source_snapshot(self, progress: Callable[[int, int], None] | None = None) -> dict[str, dict]:
         result: dict[str, dict] = {}
-        files = supported_invoice_files(self.watch_dir)
+        files = scan_files(self.watch_dir)
         total = len(files)
         if progress:
             progress(0, total)

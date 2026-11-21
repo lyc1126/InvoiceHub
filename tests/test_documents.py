@@ -510,6 +510,8 @@ def _batch_selection_client(tmp_path: Path, monkeypatch):
 def test_inbound_selection_deduplicates_families_and_reports_missing_details(tmp_path: Path, monkeypatch) -> None:
     client, state, watch, selection = _batch_selection_client(tmp_path, monkeypatch)
     write_csv_rows(watch / "成本发票明细.csv", DETAIL_HEADERS, [_detail_row()])
+    from invoice_hub.storage.generations import publish_exports
+    publish_exports(Path(state.active_profile.workspace_dir), watch)
     before = (watch / "成本发票明细.csv").read_bytes()
     response = client.post("/api/v1/documents/inbound/selection", json=selection)
     assert response.status_code == 200
@@ -524,9 +526,11 @@ def test_inbound_selection_deduplicates_families_and_reports_missing_details(tmp
 
 
 def test_inbound_duplicate_sources_preserve_real_lines_and_block_conflicts(tmp_path: Path, monkeypatch) -> None:
-    client, _state, watch, selection = _batch_selection_client(tmp_path, monkeypatch)
+    client, state, watch, selection = _batch_selection_client(tmp_path, monkeypatch)
     rows = [_detail_row(源文件=source) for source in ("a.xml", "a.xml", "a-copy.xml", "a-copy.xml")]
     write_csv_rows(watch / "成本发票明细.csv", DETAIL_HEADERS, rows)
+    from invoice_hub.storage.generations import publish_exports
+    publish_exports(Path(state.active_profile.workspace_dir), watch)
     result = client.post("/api/v1/documents/inbound/selection", json=selection).json()
     entry = next(item for item in result["items"] if item["ready"])
     assert entry["row_count"] == 2 and entry["total_with_tax"] == "452.00"
@@ -534,6 +538,7 @@ def test_inbound_duplicate_sources_preserve_real_lines_and_block_conflicts(tmp_p
     assert preview["row_count"] == 2
     rows[-1]["数量"] = "99"
     write_csv_rows(watch / "成本发票明细.csv", DETAIL_HEADERS, rows)
+    publish_exports(Path(state.active_profile.workspace_dir), watch)
     result = client.post("/api/v1/documents/inbound/selection", json=selection).json()
     assert not any(item["ready"] for item in result["items"])
     response = client.post("/api/v1/documents/inbound/export", json={"invoice_number": entry["invoice_number"], "selection": entry["selection"], "mode": "skip_existing"})

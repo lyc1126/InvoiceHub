@@ -20,7 +20,8 @@ import re
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from pathlib import Path
 
-from invoice_hub.bank.jierui import _atomic
+from invoice_hub.services.company_directory_guard import subdir_snapshot
+from invoice_hub.services.company_files import DRAFT_WRITE_LOCK, read_relative, write_state
 from invoice_hub.services.company_registry import CompanyRegistryError
 
 CENT = Decimal("0.01")
@@ -52,6 +53,8 @@ def _number(value: object) -> Decimal | None:
     try:
         number = Decimal(text.rstrip("%"))
     except InvalidOperation:
+        return None
+    if not number.is_finite() or abs(number) >= Decimal("1e16"):
         return None
     return number / 100 if percent else number
 
@@ -241,17 +244,43 @@ def _tax_path(root: Path) -> Path:
 
 
 def _tax_state(root: Path) -> tuple[dict | None, str | None]:
-    path = _tax_path(root)
-    if not path.exists():
-        return None, None
-    raw = path.read_bytes()
     try:
+        snapshot = subdir_snapshot(root, "做账草稿")
+        if snapshot["."][0] != "present" or snapshot["做账草稿"][0] not in {"present", "missing"}:
+            raise ValueError("目录不可用或包含链接")
+        if snapshot["做账草稿"][0] == "missing":
+            return None, None
+        raw = read_relative(root, f"做账草稿/{TAX_FILE}", 2 * 1024 * 1024)
         data = json.loads(raw.decode("utf-8"))
-    except (UnicodeDecodeError, ValueError) as exc:
-        raise PayrollError(f"{TAX_FILE} 无法读取，未改动：{exc}", code="PAYROLL_TAX_UNREADABLE", status_code=409) from exc
-    if not isinstance(data, dict):
-        raise PayrollError(f"{TAX_FILE} 结构不对，未改动。", code="PAYROLL_TAX_UNREADABLE", status_code=409)
+        if not isinstance(data, dict):
+            raise ValueError("结构无效")
+        _confirmed_details(data)
+        from invoice_hub.bank.salary import confirmed_details
+        confirmed_details(data)
+    except FileNotFoundError:
+        return None, None
+    except (UnicodeError, ValueError, OSError, PayrollError) as exc:
+        raise PayrollError(f"{TAX_FILE} 无法读取或结构损坏，已保留原文件。", code="PAYROLL_TAX_UNREADABLE", status_code=409) from exc
     return data, hashlib.sha256(raw).hexdigest()
+
+
+def _confirmed_details(tax: dict) -> dict:
+    details = tax.get("社保明细", {})
+    if not isinstance(details, dict):
+        raise ValueError("社保明细须为对象")
+    for month, entry in details.items():
+        if not _valid_saved_month(month) or not isinstance(entry, dict):
+            raise ValueError("社保月份结构无效")
+        for key in ("单位部分", "个人部分"):
+            if key not in entry or _number(entry[key]) is None or _number(entry[key]) < 0:
+                raise ValueError("已确认社保金额无效")
+        if "险种明细" in entry:
+            _rows_from_body(month, entry["险种明细"])
+    return details
+
+
+def _valid_saved_month(month: object) -> bool:
+    return isinstance(month, str) and re.fullmatch(r"[0-9]{4}-(0[1-9]|1[0-2])", month) is not None and month[:4] != "0000"
 
 
 def read_payroll(root: Path, folder: Path | None, *, reveal: bool = False) -> dict:
@@ -292,8 +321,7 @@ def read_payroll(root: Path, folder: Path | None, *, reveal: bool = False) -> di
                 entry.update(status="error", message="没有找到“险种 / 单位部分 / 个人部分”表格（版式未识别，没有猜测）。")
             files.append(entry)
     tax, revision = _tax_state(root)
-    raw_confirmed = (tax or {}).get("社保明细")
-    confirmed: dict = raw_confirmed if isinstance(raw_confirmed, dict) else {}
+    confirmed = _confirmed_details(tax or {})
     for month, entry in confirmed.items():
         if month not in months and isinstance(entry, dict) and isinstance(entry.get("险种明细"), list):
             # Confirmed by hand (no file for that month): shown from what was saved.
@@ -321,25 +349,48 @@ def _rows_from_body(month: str, items: object) -> list[dict]:
         if not isinstance(item, dict) or not _text(item.get("insurance")):
             raise PayrollError(f"{month} 的险种明细格式不对。")
         unit, personal = item.get("unit"), item.get("personal")
-        rows.append(_row(month, _text(item["insurance"])[:30], item.get("total"),
-                         unit if isinstance(unit, dict) else {}, personal if isinstance(personal, dict) else {}))
+        if not isinstance(unit, dict) or not isinstance(personal, dict):
+            raise PayrollError(f"{month} 的单位与个人明细须为对象。")
+        values = [("total", item.get("total"))] + [(field, part.get(field)) for part in (unit, personal) for field in FIELDS]
+        for field, raw in values:
+            if raw is None or (isinstance(raw, str) and raw.strip() in {"", "--", "-", "—"}):
+                continue
+            text = str(raw).strip()
+            number = _number(raw)
+            if (type(raw) not in (str, int) or not re.fullmatch(r"(?:[0-9]+|[0-9]{1,3}(?:,[0-9]{3})+)(?:\.[0-9]+)?%?", text)
+                    or number is None or number < 0 or (field != "rate" and text.endswith("%"))
+                    or (field == "rate" and number > 1)
+                    or (field == "count" and number != number.to_integral_value())
+                    or (field not in {"count", "rate"} and number != number.quantize(CENT))):
+                raise PayrollError(f"{month} 的金额、人数或费率无效；请填写非负十进制数，金额最多两位小数。")
+        row = _row(month, _text(item["insurance"])[:30], item.get("total"), unit, personal)
+        if all(row[side]["due"] is None for side in SIDES):
+            raise PayrollError(f"{month} 每个险种至少须确认一方的应缴金额，未知不能按零保存。")
+        rows.append(row)
     return rows
 
 
 def save_confirmed(root: Path, body: dict) -> dict:
     """`{revision, months: {YYYY-MM: {rows: [...], source} | null}}` -> 申报数据.json 社保明细, other keys kept."""
+    # Generation consumes this file under the same lock. Keep read/CAS/write together
+    # so two confirmations cannot both replace the same revision with different months.
+    with DRAFT_WRITE_LOCK:
+        return _save_confirmed(root, body)
+
+
+def _save_confirmed(root: Path, body: dict) -> dict:
     months = body.get("months")
     if not isinstance(months, dict) or not months:
         raise PayrollError("没有要保存的月份。")
+    identity = subdir_snapshot(root, "做账草稿")
     tax, revision = _tax_state(root)
     if tax is None:
         raise PayrollError(f"还没有 {TAX_FILE}：先在“凭证草稿”生成一次草稿（会写出模板），再确认社保。", code="PAYROLL_TAX_MISSING", status_code=409)
     if body.get("revision") != revision:
         raise PayrollError(f"{TAX_FILE} 已在别处修改，已刷新，请重新确认。", code="PAYROLL_CONFLICT", status_code=409)
-    raw_details = tax.get("社保明细")
-    details: dict = raw_details if isinstance(raw_details, dict) else {}
+    details = dict(_confirmed_details(tax))
     for month, entry in months.items():
-        if not _MONTH.match(str(month)) or "-" not in str(month):
+        if not _valid_saved_month(month):
             raise PayrollError("月份须为 YYYY-MM。")
         if entry is None:
             details.pop(month, None)
@@ -355,5 +406,14 @@ def save_confirmed(root: Path, body: dict) -> dict:
                                         **{side: {field: (None if row[side][field] is None else str(row[side][field])) for field in FIELDS}
                                            for side in SIDES}} for row in rows]}
     tax["社保明细"] = details
-    _atomic(_tax_path(root), lambda tmp: tmp.write_text(json.dumps(tax, ensure_ascii=False, indent=2), encoding="utf-8"))
+    # Salary and social confirmation share one bounded JSON file. Never publish a
+    # record that the next salary/social read would reject as oversized.
+    if len(json.dumps(tax, ensure_ascii=False, indent=2).encode("utf-8")) > 2 * 1024 * 1024:
+        raise PayrollError("确认后的申报数据超过 2 MiB 读取上限，未写入。")
+    try:
+        if subdir_snapshot(root, "做账草稿") != identity or _tax_state(root)[1] != revision:
+            raise ValueError("来源目录已变化")
+        write_state(_tax_path(root).parent, TAX_FILE, tax, expected_identity=identity["做账草稿"])
+    except (ValueError, OSError) as exc:
+        raise PayrollError("申报数据保存失败或目录已变化，请重新读取核对；未自动重放。", code="PAYROLL_CONFLICT", status_code=409) from exc
     return {"saved": sorted(months), "tax_revision": _tax_state(root)[1]}

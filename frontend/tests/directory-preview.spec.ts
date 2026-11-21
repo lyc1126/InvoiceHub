@@ -143,7 +143,42 @@ describe("directory invoice list and shared source preview", () => {
     await wrapper.setProps({ company: { ...company, monitored: false, monitored_subdir_key: null } });
     await flushPromises();
     expect(wrapper.find('[aria-label="已勾选发票"]').exists()).toBe(false);
-    expect(wrapper.find('[aria-label="勾选本页"]').exists()).toBe(false);
+    expect(wrapper.find('[aria-label="勾选本页"]').exists()).toBe(true);
+    expect(wrapper.find('[aria-label="批量标签"]').exists()).toBe(false);
+    wrapper.unmount();
+  });
+
+  it("tags a nonmonitored selection across pages without exposing source actions", async () => {
+    const tag = { id: "tag_12345678", name: "待审", color: "#123456", meaning: "" };
+    const saves: unknown[] = [];
+    const other = { ...rows[1]!, invoice_key: "other", invoice_number: "2".repeat(20) };
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init: RequestInit = {}) => {
+      if (url === "/api/v1/invoice-tags") return response({ revision: 1, tags: [tag] });
+      if (url.endsWith("/invoice-tags")) {
+        if (init.method === "PUT") saves.push(JSON.parse(String(init.body)));
+        return response({ revision: 4, invoices: { [rows[0]!.invoice_number]: [tag.id] } });
+      }
+      const items = url.includes("page=2") ? [other] : rows;
+      return response({ ...payload(items), read_only: true, count: 51, page: url.includes("page=2") ? 2 : 1 });
+    }));
+    const wrapper = mount(DirectoryInvoices, { props: { company: { ...company, monitored: false }, dirKey: "cost_invoice_dir" }, global: { plugins: [createPinia()] } });
+    await flushPromises();
+    await wrapper.get('[aria-label="勾选本页"]').setValue(true);
+    await wrapper.findAll("button").find((b) => b.text() === "下一页")!.trigger("click");
+    await flushPromises();
+    await wrapper.get('[aria-label="勾选本页"]').setValue(true);
+    expect(wrapper.get('[aria-label="批量标签"]').text()).toContain("已勾选 3 张");
+    expect(wrapper.find('[aria-label="已勾选发票"]').exists()).toBe(false);
+    const rect = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({ width: 200, height: 180 } as DOMRect);
+    await wrapper.get("tbody tr").trigger("contextmenu", { clientX: window.innerWidth, clientY: window.innerHeight });
+    await flushPromises();
+    expect((wrapper.get('[role="menu"]').element as HTMLElement).style.left).toBe(`${window.innerWidth - 208}px`);
+    expect((wrapper.get('[role="menu"]').element as HTMLElement).style.top).toBe(`${window.innerHeight - 188}px`);
+    rect.mockRestore();
+    expect(wrapper.get('[role="menuitemcheckbox"]').attributes("aria-checked")).toBe("mixed");
+    await wrapper.get('[role="menuitemcheckbox"] input').setValue(true);
+    await flushPromises();
+    expect(saves).toEqual([{ revision: 4, changes: { [other.invoice_number]: [tag.id] } }]);
     wrapper.unmount();
   });
 });

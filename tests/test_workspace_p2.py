@@ -250,6 +250,48 @@ def test_tax_month_liability_never_quarter_nets_and_carry_is_query_independent(e
     assert march["estimate"]["blockers"][0]["code"] == "TAX_CARRY_MISMATCH"
 
 
+def test_tax_unresolved_carry_blocks_later_months_until_prior_assumptions_are_corrected(env):
+    _, client, company, _, _ = env
+    base = f"/api/v1/companies/{company}/vat-filing"
+    changes = {month: {"vat": {"assessment": assumption}} for month, assumption in [
+        ("2026-01", _assumption("0", "10", "0")),
+        ("2026-02", _assumption("5", "0", "9")),
+        ("2026-03", _assumption("8", "0", "0")),
+    ]}
+    assert client.put(base, json={"revision": 0, "months": changes}).status_code == 200
+    full = client.get(base + "?start=2026-01&end=2026-03").json()
+    march = client.get(base + "?start=2026-03&end=2026-03").json()
+    assert full["rows"][6]["estimate"]["blockers"][0]["code"] == "TAX_CARRY_MISMATCH"
+    assert march["rows"][0] == full["rows"][12]
+    assert march["totals"]["estimated"] is None
+    assert march["rows"][0]["estimate"]["blockers"][0]["code"] == "TAX_CARRY_UNRESOLVED"
+    changes["2026-02"]["vat"]["assessment"] = _assumption("5", "0", "10")
+    changes["2026-03"]["vat"]["assessment"] = _assumption("8", "0", "5")
+    assert client.put(base, json={"revision": 1, "months": changes}).status_code == 200
+    corrected = client.get(base + "?start=2026-03&end=2026-03").json()
+    assert corrected["totals"]["estimated"] == "3.00"
+    assert corrected["snapshot_id"] != march["snapshot_id"]
+
+
+@pytest.mark.parametrize("gap", [False, True])
+def test_tax_missing_assumption_input_propagates_only_within_a_continuous_segment(env, gap):
+    _, client, company, _, _ = env
+    base = f"/api/v1/companies/{company}/vat-filing"
+    first = _assumption("0", "10", "0")
+    first["input_tax"] = None
+    month = "2026-03" if gap else "2026-02"
+    changes = {"2026-01": {"vat": {"assessment": first}}, month: {"vat": {"assessment": _assumption("8", "0", "0")}}}
+    assert client.put(base, json={"revision": 0, "months": changes}).status_code == 200
+    full = client.get(base + f"?start=2026-01&end={month}").json()
+    window = client.get(base + f"?start={month}&end={month}").json()
+    assert full["rows"][-6] == window["rows"][0]
+    estimate = window["rows"][0]["estimate"]
+    if gap:
+        assert estimate["amount"] == "8.00"  # New segment uses its explicitly supplied opening.
+    else:
+        assert estimate["amount"] is None and estimate["blockers"][0]["code"] == "TAX_CARRY_UNRESOLVED"
+
+
 def test_tax_explicit_zero_requires_source_and_other_taxes_stay_independent(env):
     _, client, company, _, _ = env
     base = f"/api/v1/companies/{company}/vat-filing"

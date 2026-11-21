@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import hashlib
+import copy
 import re
+from functools import wraps
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from invoice_hub.storage.read_views import ReadViews, ProgressiveRows, file_signature
+from invoice_hub.storage import generations
 from typing import Any, Callable
 
 from invoice_hub.domain import CostAnalysisSnapshot, CostSyncStatus
@@ -316,6 +319,26 @@ def _reference_sources(rows: list[dict]) -> list[dict]:
     ]
 
 
+def _complete_read(method):
+    @wraps(method)
+    def read(self, *args, **kwargs):
+        manifest = generations.current(self.workspace_dir, self.watch_dir)
+        if not manifest or getattr(self, "_generation_bound", False):
+            return method(self, *args, **kwargs)
+        view = copy.copy(self)
+        view._generation_bound = True
+        for attr, name in (("detail_csv", COST_DETAIL_CSV_NAME), ("summary_xlsx", COST_SUMMARY_XLSX_NAME),
+                           ("status_json", COST_REFERENCE_STATUS_NAME), ("summary_csv", "发票汇总.csv"), ("outbound_summary_json", OUTBOUND_SUMMARY_NAME)):
+            setattr(view, attr, generations.resolve(self.workspace_dir, self.watch_dir, name, manifest))
+        result = method(view, *args, **kwargs)
+        if isinstance(result, CostAnalysisSnapshot):
+            result.output_detail_csv_path = str(self.detail_csv)
+            result.output_summary_xlsx_path = str(self.summary_xlsx)
+            result.reference_status_path = str(self.status_json)
+        return result
+    return read
+
+
 class CostProjectionService:
     def __init__(
         self,
@@ -326,6 +349,7 @@ class CostProjectionService:
         *,
         company_taxpayer: Callable[[], dict | None] | None = None,
         company_outbound: Callable[[], str | None] | None = None,
+        output_dir: Path | None = None,
     ):
         self.watch_dir = Path(watch_dir)
         # Registry lookup (targets.companies.company_taxpayer_for) supplied by every caller —
@@ -336,34 +360,43 @@ class CostProjectionService:
         self.workspace_dir = Path(workspace_dir)
         self.target_id = target_id
         self.reference_markup_rate = reference_markup_rate
-        self.detail_csv = self.watch_dir / COST_DETAIL_CSV_NAME
-        self.summary_xlsx = self.watch_dir / COST_SUMMARY_XLSX_NAME
-        self.status_json = self.watch_dir / COST_REFERENCE_STATUS_NAME
+        self.output_dir = Path(output_dir) if output_dir is not None else self.watch_dir
+        self.detail_csv = self.output_dir / COST_DETAIL_CSV_NAME
+        self.summary_xlsx = self.output_dir / COST_SUMMARY_XLSX_NAME
+        self.status_json = self.output_dir / COST_REFERENCE_STATUS_NAME
         self.summary_csv = self.workspace_dir / "发票汇总.csv"
         self.outbound_summary_json = self.workspace_dir / OUTBOUND_SUMMARY_NAME
 
-    def rebuild(self, progress: Callable[[int, int], None] | None = None) -> dict:
+    def rebuild(self, progress: Callable[[int, int], None] | None = None, *, cache=None, source_files=None, preview_workspace=None) -> dict:
         # Retain a consistent complete generation before replacing any projection.
         # Read-only pages can use it while the monitor owns the write lock.
         if self.detail_csv.exists():
             self.cache_snapshot()
-        with ProgressiveRows(self.workspace_dir, "costs") as preview:
+        with ProgressiveRows(preview_workspace or self.workspace_dir, "costs") as preview:
             result = build_cost_analysis_outputs(
                 self.watch_dir,
-                self.watch_dir,
+                self.output_dir,
                 invoice_metadata=self._summary_metadata(),
                 reference_markup_rate=self._markup_meta()["rate"],
                 progress=progress,
                 on_rows=preview.add,
                 outbound_items=self._outbound_items(),
                 company_taxpayer=self.company_taxpayer,
+                cache=cache, source_files=source_files,
             )
         self.cache_snapshot()
+        self._save_tax_dependency()
+        if self.output_dir == self.watch_dir:
+            generations.publish_exports(self.workspace_dir, self.watch_dir)
         return result
 
     def company_taxpayer(self) -> dict | None:
         return self._company_taxpayer() if self._company_taxpayer else None
 
+    def read_detail_path(self) -> Path:
+        return generations.resolve(self.workspace_dir, self.watch_dir, COST_DETAIL_CSV_NAME)
+
+    @_complete_read
     def read_fingerprint(self):
         # The registry taxpayer type changes prices without touching any projection file, so it
         # is part of the read generation; otherwise the paged view keeps serving old prices.
@@ -390,7 +423,7 @@ class CostProjectionService:
         }
 
     def _outbound_summary(self) -> dict:
-        summary = load_outbound_summary(self.workspace_dir)
+        summary = load_outbound_summary(self.outbound_summary_json.parent)
         expected = self._company_outbound() if self._company_outbound else None
         # Registry mapping is authoritative. A cached global/previous source must never
         # leak into the company's page or workbook while waiting for manual rebuild.
@@ -408,6 +441,8 @@ class CostProjectionService:
         Monitor-driven rebuilds reuse the last saved summary, so the outbound folder is never
         watched and a stale summary is shown with its read time rather than silently dropped.
         """
+        if self.output_dir == self.watch_dir and not getattr(self, "_generation_bound", False):
+            generations.recover_exports(self.workspace_dir, self.watch_dir)
         try:
             summary = read_outbound_summary(outbound_dir, self.watch_dir, read_csv_rows(self.detail_csv), self.workspace_dir, progress)
         except Exception as exc:
@@ -469,6 +504,7 @@ class CostProjectionService:
     def _item_catalog(self) -> dict[str, dict]:
         return item_catalog_from_status(_read_reference_status_payload(self.status_json))
 
+    @_complete_read
     def read_only_inputs(self) -> dict:
         """Detail rows, 发票校验 rows, item catalog and tax profile of the last projection, nothing else.
 
@@ -482,6 +518,36 @@ class CostProjectionService:
             "tax_profile": self._tax_profile(),
         }
 
+    @_complete_read
+    def read_pricing_inputs(self, on: str) -> dict:
+        """V2 reads one complete generation, including v1 manual-price snapshots, without repairs."""
+        from datetime import date
+
+        inputs = self.read_only_inputs()
+        rows = []
+        for row in inputs["detail_rows"]:
+            try:
+                invoice_date = date.fromisoformat(str(row.get("开票日期") or "").strip()).isoformat()
+            except ValueError:
+                # Keep unreadable dates visible for the inventory check's exclusions;
+                # silently dropping them would make a partial cost look complete.
+                invoice_date = ""
+            if not invoice_date or invoice_date <= on:
+                for field in ("数量", "金额(除税)", "税金", "价税合计"):
+                    text = str(row.get(field) or "").replace(",", "").strip()
+                    if text:
+                        try:
+                            number = Decimal(text)
+                            if not number.is_finite() or abs(number) >= Decimal("1e15") or number.as_tuple().exponent < -8:
+                                raise InvalidOperation
+                        except InvalidOperation as exc:
+                            raise ValueError("成本投影包含无效或超限数值，请核对来源后重新汇总；未改写投影。") from exc
+                rows.append(row)
+        references = self._build_reference_rows(rows, check_rows=inputs["check_rows"],
+                                                tax_profile=inputs["tax_profile"], item_catalog=inputs["item_catalog"])
+        return {**inputs, "detail_rows": rows, "references": references, "reference_exclusions": self._exclusions(),
+                "reference_statuses": self._reference_statuses, "default_markup_percent": self._markup_meta()["percent"]}
+
     def _tax_profile(self) -> ReferenceTaxProfile:
         return effective_tax_profile(
             reference_tax_profile_from_status(_read_reference_status_payload(self.status_json)), self.company_taxpayer()
@@ -489,10 +555,20 @@ class CostProjectionService:
 
     def refresh_workbook_tax_profile(self) -> bool:
         """Rewrite the workbook after the registry changed this company's taxpayer type."""
+        if self.output_dir == self.watch_dir and not getattr(self, "_generation_bound", False):
+            generations.recover_exports(self.workspace_dir, self.watch_dir)
         if not self.detail_csv.exists():
             return False
         self._refresh_workbook_from_current_detail(self._markup_meta()["rate"])
+        self._save_tax_dependency()
         return True
+
+    def needs_tax_profile_refresh(self) -> bool:
+        saved = read_json_object(self.workspace_dir / "cost-tax-dependency.json", {})
+        return saved.get("company") != self.company_taxpayer()
+
+    def _save_tax_dependency(self) -> None:
+        atomic_write_json(self.workspace_dir / "cost-tax-dependency.json", {"company": self.company_taxpayer()})
 
     def _summary_metadata(self) -> list[dict]:
         rows = []
@@ -531,6 +607,8 @@ class CostProjectionService:
             item_catalog=self._item_catalog(),
             exclusions=self._exclusions(),
         )
+        if self.output_dir == self.watch_dir:
+            generations.publish_exports(self.workspace_dir, self.watch_dir)
 
     def _read_csv_headers(self) -> list[str]:
         if not self.detail_csv.exists():
@@ -580,6 +658,8 @@ class CostProjectionService:
         return False
 
     def refresh_schema_from_current_detail(self) -> bool:
+        if self.output_dir == self.watch_dir and not getattr(self, "_generation_bound", False):
+            generations.recover_exports(self.workspace_dir, self.watch_dir)
         if not self.detail_csv.exists():
             return False
         detail_rows = read_csv_rows(self.detail_csv)
@@ -607,10 +687,13 @@ class CostProjectionService:
             item_catalog=self._item_catalog(),
             exclusions=self._exclusions(),
         )
+        if self.output_dir == self.watch_dir and not getattr(self, "_generation_bound", False):
+            generations.publish_exports(self.workspace_dir, self.watch_dir)
         return True
 
+    @_complete_read
     def snapshot(self, from_cache: bool = False) -> CostAnalysisSnapshot:
-        if self.needs_schema_refresh():
+        if not getattr(self, "_generation_bound", False) and self.needs_schema_refresh():
             try:
                 self.refresh_schema_from_current_detail()
             except OSError:
@@ -655,6 +738,8 @@ class CostProjectionService:
         return self._read_workbook_sheet("项目规格汇总", PROJECT_SPEC_SUMMARY_HEADERS)
 
     def save_reference_status(self, payload: dict) -> dict:
+        if self.output_dir == self.watch_dir and not getattr(self, "_generation_bound", False):
+            generations.recover_exports(self.workspace_dir, self.watch_dir)
         current = _read_reference_status(self.status_json)
         fallback_markup = self._markup_meta()
         # Unconsumed workbook read kept as-is until ENG-02 decides whether save should

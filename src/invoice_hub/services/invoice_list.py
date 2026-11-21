@@ -37,6 +37,7 @@ from invoice_hub.services.invoice_selection import (
     file_format_from_source, invoice_number_from_filename, selection_family_key, selection_money_value,
 )
 from invoice_hub.storage import SQLiteRepository, atomic_write_json, read_csv_rows, read_json_object, write_csv_rows
+from invoice_hub.storage import generations
 from invoice_hub.storage.read_views import ReadViews, file_signature
 from invoice_hub.targets.paths import profile_identity as _profile_identity
 
@@ -69,10 +70,10 @@ class InvoiceListService:
         return self.repo.append_event(event_type, payload=payload, error=error, task_id=task_id)
 
     def invoice_summary_csv(self) -> Path:
-        return Path(self.active_profile.workspace_dir) / "发票汇总.csv"
+        return generations.resolve(Path(self.active_profile.workspace_dir), Path(self.active_profile.watch_dir), "发票汇总.csv")
 
     def invoice_summary_xlsx(self) -> Path:
-        return Path(self.active_profile.workspace_dir) / "发票汇总.xlsx"
+        return generations.resolve(Path(self.active_profile.workspace_dir), Path(self.active_profile.watch_dir), "发票汇总.xlsx")
 
     def manual_overrides_path(self) -> Path:
         return Path(self.active_profile.state_dir) / "manual_overrides.json"
@@ -81,8 +82,8 @@ class InvoiceListService:
         self._invoice_cache_key = None
         self._invoice_cache_rows = []
 
-    def _summary_rows(self) -> list[dict[str, str]]:
-        path = self.invoice_summary_csv()
+    def _summary_rows(self, path=None) -> list[dict[str, str]]:
+        path = path or self.invoice_summary_csv()
         if not path.exists():
             self.clear_invoice_cache()
             return []
@@ -94,8 +95,10 @@ class InvoiceListService:
         return [dict(row) for row in self._invoice_cache_rows]
 
     def _write_summary_rows(self, rows: list[dict[str, str]]) -> None:
-        write_csv_rows(self.invoice_summary_csv(), SUMMARY_HEADERS, rows)
-        write_summary_xlsx(self.invoice_summary_xlsx(), rows)
+        workspace, source = Path(self.active_profile.workspace_dir), Path(self.active_profile.watch_dir)
+        write_csv_rows(workspace / "发票汇总.csv", SUMMARY_HEADERS, rows)
+        write_summary_xlsx(workspace / "发票汇总.xlsx", rows)
+        generations.publish_exports(workspace, source, generations.SUMMARY)
         self.clear_invoice_cache()
 
     def _manual_override_items(self) -> dict:
@@ -310,16 +313,17 @@ class InvoiceListService:
     def list_invoices(self, filters: dict | None = None) -> dict:
         filters = filters or {}
         with self._lock:
-            key = [self.active_profile.id, str(self.invoice_summary_csv()), file_signature(self.invoice_summary_csv()),
+            path = self.invoice_summary_csv()
+            key = [self.active_profile.id, str(path), file_signature(path),
                    file_signature(self.manual_overrides_path())]
             if key != self._invoice_payload_key:
-                self._invoice_payload = self._build_invoice_payload()
+                self._invoice_payload = self._build_invoice_payload(rows=self._summary_rows(path), source_path=path)
                 self._invoice_payload_key = key
             payload = dict(self._invoice_payload)
             snapshot = dict(payload["snapshot"], revision=hashlib.sha256(json.dumps(key).encode()).hexdigest()[:20], provisional=False)
             # Only the paged browsing surface may consume unfinished rows. Selection,
             # detail, print and export continue to use the finalized CSV identities.
-            if "page" in filters and not self.invoice_summary_csv().exists():
+            if "page" in filters and not path.exists():
                 meta, rows = ReadViews(self.active_profile.workspace_dir).read("partial:invoices", page_size=None)
                 if meta:
                     if meta.get("state") == "running" and not is_pid_alive(meta.get("pid")):
@@ -342,7 +346,8 @@ class InvoiceListService:
                 payload.update(page=page, page_size=page_size, items=items[(page - 1) * page_size:page * page_size])
             return payload
 
-    def _build_invoice_payload(self, filters=None, rows=None) -> dict:
+    def _build_invoice_payload(self, filters=None, rows=None, source_path=None) -> dict:
+        summary_path = Path(source_path or self.invoice_summary_csv())
         rows = self._apply_manual_overrides(self._summary_rows() if rows is None else rows)
         items = []
         seen_numbers: dict[str, int] = {}
@@ -402,9 +407,9 @@ class InvoiceListService:
             "items": filtered,
             "stats": {"all": self._invoice_stats(items), "filtered": self._invoice_stats(filtered)},
             "snapshot": {
-                "source_path": str(self.invoice_summary_csv()),
+                "source_path": str(summary_path),
                 "source_label": "活动档案汇总",
-                "source_exists": self.invoice_summary_csv().exists(),
+                "source_exists": summary_path.exists(),
                 "target_id": self.active_profile.id,
                 "from_cache": False,
             },
@@ -442,7 +447,7 @@ class InvoiceListService:
             }
         )
         cost_breakdown = invoice_cost_breakdown(
-            read_csv_rows(self.cost_service().detail_csv),
+            read_csv_rows(self.cost_service().read_detail_path()),
             invoice_number=item.get("invoice_number", ""),
             source_path=item.get("file_path", ""),
             source_file=item.get("source_file", ""),
@@ -479,7 +484,7 @@ class InvoiceListService:
             profile_identity = _profile_identity(profile)
         monitor_state = MonitorState(profile, self._db_path, sync_interval_seconds=60)
         with monitor_state.sync_write_lock():
-            rows = read_csv_rows(monitor_state.summary_csv)
+            rows = read_csv_rows(generations.resolve(Path(profile.workspace_dir), Path(profile.watch_dir), "发票汇总.csv"))
             try:
                 index = int(invoice_key)
                 row = rows[index]
@@ -504,6 +509,7 @@ class InvoiceListService:
             atomic_write_json(monitor_state.manual_overrides_file, overrides)
             write_csv_rows(monitor_state.summary_csv, SUMMARY_HEADERS, rows)
             write_summary_xlsx(monitor_state.summary_xlsx, rows)
+            generations.publish_exports(Path(profile.workspace_dir), Path(profile.watch_dir), generations.SUMMARY)
         with self._lock:
             if profile_identity == _profile_identity(self.active_profile):
                 self.clear_invoice_cache()

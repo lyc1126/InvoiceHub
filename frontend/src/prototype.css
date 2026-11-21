@@ -31,7 +31,7 @@ input, select, textarea { border-color:var(--line-strong); border-radius:4px; pa
 .rail-sep { flex:none; width:32px; height:1px; margin:5px 0; background:var(--line); }
 .rail-link--update.router-link-exact-active { background:var(--ws-success-bg); color:var(--green); font-weight:400; }
 .appearance-toggle { margin-top:auto; }
-.content, .content--home, .content--module { min-height:0; padding:0; overflow:auto; }
+.content, .content--home, .content--module { position:relative; min-height:0; padding:0; overflow:auto; }
 .content--module { overflow:hidden; }
 .content > .banner { margin:8px 16px; }
 .ws-sidebar { position:relative; top:auto; height:100%; min-height:0; gap:0; padding:0; }

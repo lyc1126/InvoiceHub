@@ -102,6 +102,7 @@ def company_taxpayer_for(config: AppConfig, directory: Path, month: str | None =
         "company_name": str(company.get("name") or ""),
         "taxpayer_type": taxpayer_type,
         "month": month,
+        "periods": sorted(periods, key=lambda item: item["effective_from"]),
     }
 
 

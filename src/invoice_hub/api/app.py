@@ -16,6 +16,11 @@ from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
 
 from invoice_hub.api.temporary_recognition import router as temporary_router
+from invoice_hub.api.routes.sources import router as sources_router
+from invoice_hub.services.sources import SourceService
+from invoice_hub.api.routes.feedback import router as feedback_router
+from invoice_hub.services.feedback import FeedbackService
+from invoice_hub.services.file_preview import FilePreviewService
 from invoice_hub.api.workspace import embed_workspace_page, workspace_appearance_policy, workspace_skin_isolated
 from invoice_hub.services.temporary_recognition import TemporaryRecognitionService
 from invoice_hub.platform import host_rpc
@@ -122,16 +127,25 @@ def create_app(
         web_dir = WEB_DIR
     # Share the bounded rendering pool; temporary source authorization remains in its own service.
     temporary = TemporaryRecognitionService(state.layout.runtime_dir / "local_state" / "temporary-recognition", root, previews=state._file_preview_service)
+    # Separate job namespace prevents old local preview/open-file routes from accepting
+    # source-bound jobs. Both pools reuse the same renderer implementation and limits.
+    sources = SourceService(state.layout.runtime_dir / "local_state" / "server-sources", previews=FilePreviewService(), companies=state.companies)
     @asynccontextmanager
     async def lifespan(_app):
         try:
             yield
         finally:
+            await run_in_threadpool(sources.close)
             await run_in_threadpool(temporary.close)
             await run_in_threadpool(state._document_index.close)
 
     app = FastAPI(title="一站式发票汇总系统", version=PRODUCT_VERSION, lifespan=lifespan)
     app.include_router(temporary_router(temporary, _require_same_origin_write, _require_native_picker_origin))
+    app.include_router(sources_router(sources, _require_same_origin_write, _require_native_picker_origin))
+    feedback = FeedbackService(state.layout.runtime_dir / "local_state" / "feedback.sqlite3", os.environ.get("INVOICE_HUB_FEEDBACK_URL", ""), state.about.about)
+    app.include_router(feedback_router(feedback))
+    app.state.feedback = feedback
+    app.state.server_sources = sources
     app.state.temporary_recognition = temporary
     app.state.invoice_hub = state
     app.state.desktop_host_secret = desktop_host_secret
@@ -146,7 +160,7 @@ def create_app(
         response = await call_next(request)
         version = str(request.query_params.get("v") or "").strip()
         path = request.url.path
-        if path.startswith(("/api/v1/temporary-recognition/", "/api/v1/invoices/trash-jobs")) or request.query_params.get("workspace_embed") == "1":
+        if path.startswith(("/api/v1/temporary-recognition/", "/api/v1/sources", "/api/v1/invoices/trash-jobs")) or request.query_params.get("workspace_embed") == "1":
             response.headers["Cache-Control"] = "private, no-store"
         is_static_asset = path.startswith("/static/")
         is_skin_asset = path.startswith("/api/v1/skins/") and "/files/" in path

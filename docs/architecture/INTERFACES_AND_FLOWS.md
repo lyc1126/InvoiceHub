@@ -1,5 +1,105 @@
 # InvoiceHub 接口与运行流程
 
+## 2026-11-21 成本核对、归档与分析接口
+
+全部由 `api/routes/costs.py` 在线程池调用独立服务；JSON 写入/预览/导出沿用 2 MiB、重复键拒绝与同源保护。GET/报价/预览不写盘；只有明确确认保存的独立人工状态文件写盘，不触发 monitor/汇总或改旧工作簿。
+
+| 方法与路径 | 契约 |
+|---|---|
+| GET `/api/v1/companies/{company_id}/cost-analysis/v2/inventory-setup` | revision 为来源指纹，返回 config_revision、ledger_hash、binding_state、setup、可用库存科目与 book_error；旧绑定变化仍可查看并重新确认。 |
+| POST `/api/v1/companies/{company_id}/cost-analysis/v2/inventory-setup/preview` | `{revision,setup}`，规范化并展开品目别名，返回 before/after/preview_hash。 |
+| PUT `/api/v1/companies/{company_id}/cost-analysis/v2/inventory-setup` | 原预览请求加 `{preview_hash,confirm:true}`；成本锁后取草稿锁、重核来源、原子替换与读回。旧确认/来源变化 409，非法科目等 422。 |
+| GET `/api/v1/companies/{company_id}/cost-analysis/v2/records` | page≥1、page_size=1…100，返回记录库 revision、count 和元数据；历史读取不依赖发票目录仍在。 |
+| POST `/api/v1/companies/{company_id}/cost-analysis/v2/records/preview` | `{kind:quote|simulation,records_revision:int,request:{既有 quote 或 rules/preview 请求}}`；冻结输入、成本行、来源、规则版本和结果，返回 content/preview_hash，不归档。 |
+| GET `/api/v1/companies/{company_id}/cost-analysis/v2/records/{record_id}` | 返回原归档内容/校验与记录库 revision；不存在 404，坏结构/校验或跨公司文件 422，保留原文件。 |
+| PUT `/api/v1/companies/{company_id}/cost-analysis/v2/records/{record_id}` | 原预览体加 `{preview_hash,confirm:true}`；同 ID 同原请求返回原回执 changed=false，即使来源变化；同 ID 异内容、旧记录库版本或来源指纹变化 409，不覆盖记录。 |
+| POST `/api/v1/companies/{company_id}/cost-analysis/v2/records/{record_id}/export` | 必须 `{confirm:true,content_hash}` 对应归档版本；返回内存 XLSX/no-store 附件，不写磁盘。未确认/版本不符 422；报价、成本规则、市场依据、版本与口径、试算前后对照。 |
+| GET `/api/v1/companies/{company_id}/cost-analysis/v2/service-costs` | 返回 revision、source_revision、costs 与人工口径说明。 |
+| POST `/api/v1/companies/{company_id}/cost-analysis/v2/service-costs/preview` | `{revision,source_revision,costs:{id:{month,project,amount,source}}}`；明确月份/非负金额/来源、项目可空，返回 before/after/preview_hash。 |
+| PUT `/api/v1/companies/{company_id}/cost-analysis/v2/service-costs` | 原体加 `{preview_hash,confirm:true}`，重核修订/来源、原子替换并读回，无变化不写；旧确认 409。 |
+| GET `/api/v1/companies/{company_id}/cost-analysis/v2/analysis` | 可选 start/end=YYYY-MM，缺 end 用本月，缺 start 用库存首月；拒未来月份/超过 100 年。返回 dimensions（month/item/customer/project）、收入/成本/毛利/来源、excluded、单列 service_costs、complete、as_of/period_state；当前月只到今天且 provisional，未知成本/毛利 null。item 是品类+单位，不是规格库存。 |
+| GET `/api/v1/companies/{company_id}/cost-analysis/v2/price-monitor` | 同期间参数与非负十进制 price_change_percent（默认30）、minimum_margin_percent（默认0且<100）；返回成本异常、最近采购波动、实际低毛利、票面税率设置差异和 tax_suggestions，仅供核对。 |
+
+原 GET V2 增加 `book_reconciliation`：state=matched/different/needs_review，差额=账面期末−发票滚动期末，未知保留 null；需明确期初、对照、逐月完整声明及实际读回，非月末/缺月/单位冲突/重叠分录不冒零。查询早于确认期初拒绝。公司进销存/草稿共用映射，比较遇坏/过期绑定返回 `COMPANY_STOCK_INVALID` 409；无配置保留原品类算法与提示。
+
+来源/目录/账套/品目/人工成本与项目归属的变化使确认失效；归档文件独立修订，不改变报价成本版本。进程内锁不承诺外部编辑器/CLI 跨进程事务。旧 v1、已开快照及工作簿不切换；下方日期为当时状态，普通 quote 不自动归档。
+
+## 2026-11-20 成本 V2 阶梯与市场参照
+
+沿用下方四个 V2 接口；quote、rules/preview 与 PUT rules 的 `lines[]` 新增可选 `tier_amount` 和 `market_reference`。前者为用户明确输入的单行本次除税基准金额（不等于结果金额），后者为 `{unit_price,price_basis:net|gross,observed_on,valid_to,source}`；数值均须十进制字符串，缺省省略字段，显式 null/坏结构为 422。市场依据只用于当前请求，服务不会联网或持久化它。
+
+规则新增 tiered/market，结构见[数据地图](DATA_AND_ALGORITHMS.md)。阶梯响应增加 `tier={basis,metric,from,to,kind,value,price_basis}`，to=null 表示末档；市场响应增加 `market_reference` 与已出价时的 `minimum_net_unit_price`。缺少金额档位依据、市场缺失/过期/尚未生效或依赖成本的规则遇到未知成本时保留 needs_review/null，不自动改用低优先级规则；固定价档位仍可给价但毛利未知。取整触及底线在 steps 中解释，最低毛利仍仅警告。
+
+用户更改数量、tier_amount 或任一市场依据字段后必须重新试算；这些输入均已包含在 preview_hash，PUT 同内容核对失败 409、原文件不变。保存仅写规则；GET/quote/preview 不写投影、v1 状态或工作簿。现有前端尚未消费 V2，当前契约由纯引擎/公司 HTTP 回归锁定。
+
+## 2026-11-19 公司成本 V2 首批后端
+
+前缀 `/api/v1/companies/{company_id}/cost-analysis/v2`，由 `api/routes/costs.py → CompanyCostService` 在线程池执行；不新增 AppState 存储，不切活动目录或触发监控。旧成本四接口保留。
+
+| 方法 / 后缀 | 请求与返回 |
+|---|---|
+| GET 空后缀 | 可选 `pricing_date=YYYY-MM-DD`，默认本机今天；返回 schema_version=2、company_id、pricing_date、revision、rules_revision、rules、items、inventory、sources、complete、warnings。数量/金额/价格为十进制字符串，未知为 null。items 保留 v1 SHA1 key，含品类结存成本、历史均价、最近价、税率与分开的 actual_issued/manual_issued_snapshot。 |
+| POST `/api/v1/companies/{company_id}/cost-analysis/v2/quote` | `{revision, pricing_date?, customer?, lines:[{key,quantity,rule?,output_tax_rate_percent?}]}`；1—500 行不重复 key，数量须正数字符串。返回命中 rule、overridden_rules、解释 steps、价税金额、毛利/加价率与 warnings；特殊计税和未知成本返回 needs_review。 |
+| POST `/api/v1/companies/{company_id}/cost-analysis/v2/rules/preview` | quote 公共字段 + `{rules_revision,rules}`，lines 可省略时默认全部品目数量 1；超过 500 个品目须显式选择。返回规范 rules、before/after 与 preview_hash；无品目时两组为空。 |
+| PUT `/api/v1/companies/{company_id}/cost-analysis/v2/rules` | 同一 preview 请求 + `{preview_hash,confirm:true}`；重新试算和核对，保存后读回 rules_revision/rules。规范内容未变返回 changed=false，不写盘/增加版本。 |
+
+示例流程：GET 获取 revision/rules_revision 与品目 key → quote 按客户/日期/数量查看当前规则 → preview 提交完整候选规则集 → 用户明确确认后 PUT 相同请求并附 preview_hash/confirm。`rules` 以规则 ID 为键；字段、算法与文件结构见[数据地图](DATA_AND_ALGORITHMS.md)。PUT 是完整替换规则集，不是局部 patch。
+
+POST/PUT 同源、流式请求最多 2 MiB，顶层对象和字段严格校验、重复 JSON 键拒绝；不存在公司 404、非法日期/结构/规则/坏投影 422、内容超限 413、跨源 403。revision、试算内容、目录或来源冲突为 409 `COST_V2_CONFLICT`；文件 I/O 失败 409 `COST_V2_INVALID`，未知保存结果重新 GET，不自动重放。GET/quote/preview 不写成本文件或目标缓存；只读上次完整代际，不保证源票实时重新提取。
+
+规则保存只改本公司成本目录中的独立规则文件；不修改旧状态/工作簿或执行真实记账。预览与保存由进程锁串行，前后校验公司/目录身份、完整代际、来源新鲜度、账套读回和规则指纹；无跨进程事务承诺。V2 前端/工作簿、后续规则与完整分析仍见 [COST-06](../PRODUCT_BACKLOG.md#cost-06)。
+
+## 2026-11-19 应用内反馈（未部署）
+
+`GET /api/v1/feedback` 只读本地配置/环境白名单/未确认任务；`POST /api/v1/feedback` 接收 UUID、类型、标题、描述、环境选择与公开确认，同源与 32 KiB 限制后交独立 FeedbackService；`GET /api/v1/feedback/{request_id}` 只查询原中转回执，不重发。服务在 app 工厂独立接线，不新增 AppState 编排方法。GET About/打开表单不联网。
+
+设置关于新增“建议与反馈” → 已校验 frame/token 的 navigate → App/WsModal，设置草稿保留；独立经典页进入 Vue 深链接，no_skin 保留。蓝框四项身份收进默认关闭的技术详情；平台架构不隐藏，更新流程/API 不变。
+
+提交先写私有意图 → 单次 HTTPS 中转 → 中转先写回执 → 固定仓库 GitHub Issue；submitted 必须有 Issue 编号，未知只 GET 查询，网络/坏响应不冒充未发送。中转源码独立、不随产品启动，本轮无公网部署或真实 Issue。字段、secret、限流与恢复见[反馈设计](../FEEDBACK_DESIGN.md)。
+
+## 2026-11-19 WS-02 候选目录与 WS-05 工资确认
+
+- `POST /api/v1/companies/detect` 可带部分 `subdirs` 选择，返回各类 `candidates[] / selection_required`。同类多个非标准候选时必须明确选择，不能按首项猜；可显式选择标准名并另行勾选补建。仅接受本次候选/标准建议，plan_hash 同时绑定所选映射、选中目录及全部候选的身份。登记重检，未选 422，旧计划/同名替换 409；检测不写源目录。
+- `GET /api/v1/companies/{company_id}/salary?reveal=true` 请求时读取登记工资目录内 `.xlsx/.xlsm`，返回 `files / candidates / confirmed / source_revision / tax_revision / current_month`。候选有不透明 `candidate_id`、明确月份、人员行、后端合计与费用科目分组；默认姓名/证件号脱敏，reveal 才返回原值。目录上限 100 文件/30 MiB、单文件 5 MiB，文件错误脱敏披露；同月多文件不合并择一。
+- `PUT /api/v1/companies/{company_id}/salary` 同源写，携带 `{revision, month, source_revision, candidate_id, expense_path}`；服务端重新解析原表，忽略 UI rows。只补未指定行的明确费用科目路径；写入 `做账草稿/申报数据.json` 的工资明细，保留其他键。`{revision, month, remove:true}` 取消该月确认。无税文件/坏文件 409，来源或 revision 冲突 409 `SALARY_CONFLICT`，非法月份/金额/科目 422，未来月拒绝。未知写结果只重新 GET，不自动重发。
+- 工资/社保与草稿生成共用 `DRAFT_WRITE_LOCK`；写前核对公司/映射、目录身份、文件 SHA 和税文件 revision。`prepare` 对未入账月份复核已确认原表；变更/缺失拒绝生成并保留旧审核表。页面与 CLI 共用应发工资计提：借明确费用/成本科目，贷应付职工工资；不生成发薪/扣税、不再次扣记社保个人部分。重生成沿用原有备份/审核保护。
+
+## 2026-11-19 WS-06—09 接口与完整投影
+
+公司目录列表的跨页勾选与批量标签允许非监控目录，标签仍携带标记文件 revision；预览、打印、改名和删除继续只接受活动监控目录。`GET /api/v1/companies/{id}/ledger` 增 `accounts`，只读显式期初与已提供序时账；往来核对消费同一份期初，未知与零分开，付款不得匹配未来开具的发票。
+
+手动 `POST /api/v1/bridge/rebuild` 支持查询参数 `mode=incremental|full|verify`；daemon 与它共用候选生成及 manifest 发布。普通列表、成本、公司视图、单据与工作区草稿读取完整代际，固定 CSV/XLSX 仅作兼容导出。候选失败、来源/人工版本变化或迟到结果不推进 manifest；导出失败保留已发布结果，后续按导出回执恢复，不能覆盖未知手改。
+
+`/api/v1/sources` 是独立只读来源域，不把服务器 URI 传入 watch_dir，不切换 TargetProfile 或 monitor。以下相对路由均以该前缀组合；写请求走现有同源门禁，picker 另走原生选择门禁。
+
+| 方法与路由 | 请求 / 返回与边界 |
+| --- | --- |
+| `GET /api/v1/sources` | 收藏、连接/同步/快照状态和协议能力；password、remote_write、change_cursor 均为 false |
+| `POST /api/v1/sources` | 名称、mounted 或 sftp 配置；只登记，不连接、不建立公司统计归属 |
+| `POST /api/v1/sources/pick` | 原生选择已挂载共享目录，只返回路径草稿；不可用返回脱敏 503 |
+| `GET /api/v1/sources/{sid}` | 查询状态、任务阶段/真实计数、代际、时效、覆盖能力与未接入模块 |
+| `PATCH /api/v1/sources/{sid}` | 带 revision 保存预算及显式公司/进销项角色上下文；运行中或版本变化拒绝 |
+| `DELETE /api/v1/sources/{sid}` | 带 revision 忘记来源；运行中或活动预览租约阻断，仅清本机来源缓存 |
+| `POST /api/v1/sources/{sid}/fingerprint` | 带 revision 显式确认已读取的主机指纹；候选变化拒绝 |
+| `POST /api/v1/sources/{sid}/tasks` | probe/scan/download/summary，download 只接受 entry_id；full/verify 控制解析/内容核验 |
+| `POST /api/v1/sources/{sid}/cancel` | 请求取消独立 worker，保留完整快照和已完成副本 |
+| `POST /api/v1/sources/{sid}/disconnect` | 取消并切离线，epoch 拒绝迟到提交，不删除完整结果 |
+| `GET /api/v1/sources/{sid}/entries` | parent_id、keyword、page；200 项分页，返回面包屑及当前目录含子目录的 `scope.files/bytes/readable_files`；可读数含受支持预览格式、与筛选和分页无关，不支持文件仍列元信息 |
+| `GET /api/v1/sources/{sid}/summary` | parent_id 限定完整汇总的票面记录/账簿；标注完整时间和 stale，不冒充已接入公司模块 |
+| `DELETE /api/v1/sources/{sid}/cache` | 显式清本机原始副本；任务和活动预览租约存在时拒绝，不改源文件或人工状态 |
+| `POST /api/v1/sources/{sid}/previews` | entry_id、allow_stale；只接受完整校验副本，离线须明确同意，返回来源绑定租约 |
+| `GET /api/v1/sources/{sid}/previews/{job_id}/text` | XML 安全纯文本，拒绝来源/revision/条目版本失效及其它来源作业 |
+| `GET /api/v1/sources/{sid}/previews/{job_id}/pages/{page}` | 受限 PNG renderer，private/no-store，不开放本机路径 |
+| `DELETE /api/v1/sources/{sid}/previews/{job_id}` | 关闭/切换释放对应租约，不能释放本地或其它来源作业 |
+
+每来源一个任务、全局最多两个，网络 I/O 在可终止 spawn worker；30 秒无进展超时，health/cancel 不等待网络。完整枚举失败不是空目录或删除，来源发布先落盘再提升内存指针；重启中断显式未知。SFTP 仅系统 SSH Agent 和核对后的主机密钥，标准 v3 弱版本不能证明远端原子快照。公司绑定仅身份上下文，公司/成本/做账/税费模块仍未消费该来源；真实服务器、平台及成品另验。
+
+## 2026-11-19 WS 既有后端保护
+
+- `PUT /api/v1/companies/{id}/payroll` 仍为显式确认接口。社保保存与草稿生成 / 编辑 / 导出共用进程内写锁；在锁内核对 SHA，并在原子替换前重读 SHA 与目录身份。非法数值、人数、费率、月份或整批任一行格式不合法返回 422 `PAYROLL_INVALID`，不写任何月份；至少一方应缴金额须已知，显式零有效，另一方不适用可空。
+- GET / PUT payroll 的申报文件读取上限 2 MiB，拒绝根 / 草稿目录 / 文件链接；`社保明细` 或其中月份 / 金额 / 险种结构损坏返回 409 `PAYROLL_TAX_UNREADABLE` 并保留原文件。目录替换、revision 变化或保存失败返回 409 `PAYROLL_CONFLICT`，仅重新查询，不自动重放；未承诺外部 CLI / 编辑器的跨进程事务。
+- `GET .../vat-filing` 的连续前期若有未通过的手工测算，后续月份的 estimate 保持 `needs_review / null`，blocker 为 `TAX_CARRY_UNRESOLVED`；起始异常仍返回原 `TAX_CARRY_MISMATCH` / `TAX_EVIDENCE_MISSING` 等原因。只查询后续月也不能跳过前期。无连续手工假设的断档不推断留抵，下一段仍需用户显式确认 opening_credit。
+
 ## 2026-11-17 P3 接口与流程
 
 - `GET /api/v1/companies/{id}/bank-layouts?files=1` 每文件增 `recognition:{kind,rows,chain_ok,breaks,footer:{ok,message},message}`，kind 为 builtin/confirmed/unrecognized/receipt/unavailable；返回 `recognition_complete`。32 个冷文件/5 秒后返回待核对，刷新继续；目录列不全整体拒绝。识别后复核公司根、目录、文件签名和档案哈希，变化 409。只有未识别文件有映射按钮。
@@ -1021,4 +1121,4 @@ Actions artifact；发布到 GitHub Release 仍须单独授权。
 
 ## 2026-11-16 设计提案与原型（非生产能力）
 
-未来远程连接与增量流程见[WS-08/09 设计](../SERVER_CONNECTION_AND_CACHE_DESIGN.md) §5—9；均未接入生产 API。连接在线、同步状态与快照新鲜度分离；旧完整代际继续读，完成后原子切换，远程预览另建 source-bound 会话，不扩大现有本地接口。“打开服务器文件列表”只开右侧面板，目录名标签下拉选择子目录，面包屑返回祖先，统计取当前目录及子目录的缓存；空内容显示“无可读取的文件”，错误/无缓存不当空目录。移除独立服务器公司栏及全屏，两种面板宽度均限于主内容区，本机模块上下文保留。跨模块 SourceBinding 与完整 generation、首次清单/后续可靠 cursor/失效核对协议见设计 §11—12；标准 SMB/SFTP 不承诺断线重连免枚举。
+历史设计阶段的远程连接与增量流程见[WS-08/09 设计](../SERVER_CONNECTION_AND_CACHE_DESIGN.md) §5—9；当时尚未接入生产 API，当前只读试验版以本页顶部及设计 §0 为准。连接在线、同步状态与快照新鲜度分离；旧完整代际继续读，完成后原子切换，远程预览另建 source-bound 会话，不扩大现有本地接口。“打开服务器文件列表”只开右侧面板，目录名标签下拉选择子目录，面包屑返回祖先，统计取当前目录及子目录的缓存；空内容显示“无可读取的文件”，错误/无缓存不当空目录。移除独立服务器公司栏及全屏，两种面板宽度均限于主内容区，本机模块上下文保留。跨模块 SourceBinding 与完整 generation、首次清单/后续可靠 cursor/失效核对协议见设计 §11—12；标准 SMB/SFTP 不承诺断线重连免枚举。

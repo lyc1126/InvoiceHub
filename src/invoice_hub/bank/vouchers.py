@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any
 
 from .ledger import Ledger, load_aux_values, load_mapping_rules
+from .stock_mapping import journal_stock, read_setup, resolve_stock
 from .models import StatementRow, money
 from .workpaper import Analysis, BuildOptions, WorkpaperInput, analyze, discover, load_directory, parties_from_invoice_csv
 
@@ -496,6 +497,10 @@ def load_period_overrides(out_dir: Path) -> dict[str, dict]:
 
 def load_tax_file(path: Path) -> dict:
     data = json.loads(path.read_text(encoding="utf-8"))
+    from invoice_hub.bank.salary import confirmed_details
+    if not isinstance(data, dict):
+        raise ValueError(f"{path.name} 须为对象")
+    confirmed_details(data)
     for key in ("月度增值税", "季度税费", "已抵扣进项发票"):
         if not isinstance(data.get(key, {}), dict):
             raise ValueError(f"{path.name} 的 {key} 必须是对象")
@@ -651,6 +656,7 @@ def build_drafts(
     sources: SourceIndex | None = None,
     month_end_dates: bool = False,
     period_overrides: dict[str, dict] | None = None,
+    stock_setup: dict | None = None,
 ) -> DraftResult:
     own = {s.account_name for s in data.statements}
     months = _months(month_from, month_to)
@@ -661,6 +667,10 @@ def build_drafts(
     booked_months = {line.month for line in booked}
     read_months = {line.month for line in booked_all}
     b = DraftBuilder(ledger, aux, rules, habits, own)
+    def stock_resolution(name):
+        return resolve_stock(name, ledger, stock_setup, goods_family)
+    from invoice_hub.bank.salary import confirmed_details, summarize
+    salaries = confirmed_details(tax_data)
 
     # 发票是否已入账：按税额在读回的进项/待认证（借）与销项（贷）分录中逐一消耗匹配。
     # 读回了但范围之前的月份（如已结账的 6 月）里没入账的发票，补记到范围首月，并在待处理中说明。
@@ -726,7 +736,7 @@ def build_drafts(
     for inv in sales:
         output_tax[book_month[inv.number]] += inv.tax
         for item in inv.items:
-            code = ledger.find(f"{P_INVENTORY}/{goods_family(item['item'])}")
+            _family, code, _explicit = stock_resolution(item["item"])
             if code and item["qty"] is not None:
                 sold[book_month[inv.number]][code] += item["qty"]
             else:
@@ -759,7 +769,7 @@ def build_drafts(
         groups: dict[str, Decimal] = defaultdict(lambda: ZERO)
         quantities: dict[str, tuple[Decimal | None, str]] = {}
         for item in inv.items:
-            family = goods_family(item["item"])
+            family, _code, _explicit = stock_resolution(item["item"])
             groups[family] += item["net"]
             qty, unit = quantities.get(family, (ZERO, item["unit"]))
             # 同一品类单位一致时才累计数量；缺数量或单位不一致就留空，让人工按入库单填，不拼凑。
@@ -768,7 +778,17 @@ def build_drafts(
         for family, amount in groups.items():
             rule = next((r for r in rules if r.get("match_seller") == inv.seller and r.get("match_internal_project") == family), None)
             slot = f"inv-goods:{inv.seller}:{family}"
-            if rule and ledger.is_usable(str(rule.get("debit_account_code", ""))) and slot not in habits:
+            explicit_code = next((stock_resolution(i["item"])[1] for i in inv.items
+                                  if stock_resolution(i["item"])[0] == family and stock_resolution(i["item"])[2]), "")
+            if explicit_code:
+                # Pricing, the stock comparison and drafts consume the same confirmed
+                # account. A conflicting manual habit/rule must be resolved, never silently replaced.
+                if (slot in habits and habits[slot].get("code") != explicit_code
+                        or rule and rule.get("debit_account_code") != explicit_code):
+                    raise ValueError("库存科目对照与已保存做账习惯/映射冲突，请人工核对。")
+                lines.append(DraftLine("借", explicit_code, ledger.full_name(explicit_code), money(amount), slot=slot))
+                basis.append(f"{family}：使用已确认库存科目对照")
+            elif rule and ledger.is_usable(str(rule.get("debit_account_code", ""))) and slot not in habits:
                 code = str(rule["debit_account_code"])
                 lines.append(DraftLine("借", code, ledger.full_name(code), money(amount), slot=slot))
                 basis.append(f"{family}：沿用已确认映射规则")
@@ -807,7 +827,7 @@ def build_drafts(
                 deduct_month or next((m for m in months if month_status.get(m) != "已申报" and m not in booked_months), ""))
             if target:
                 pending_by_month[target].append(inv)
-        fuel_only = any(goods_family(i["item"]) == "燃油" for i in inv.items) and len(groups) == 1
+        fuel_only = any(stock_resolution(i["item"])[0] == "燃油" for i in inv.items) and len(groups) == 1
         if fuel_only:
             lines.append(b.line("贷", "预付账款", inv.gross, slot=f"inv-ap:{inv.seller}"))
             basis.append("油卡加油发票：冲减预付油卡款")
@@ -836,6 +856,14 @@ def build_drafts(
     stock_rows: list[StockRow] = []
     if inventory:
         stock = stock_opening(booked_all, inventory, month_from)
+        if stock_setup and stock_setup["setup"]["opening"] is not None:
+            from invoice_hub.services.company_bank import _months_between
+            baseline = stock_setup["setup"]["opening"]["month"]
+            required = set(_months_between(baseline, month_from)) - {month_from}
+            covered = set(stock_setup["setup"]["covered_months"])
+            if not required <= covered or not required <= {line.month for line in booked_all}:
+                raise ValueError("库存期初到草稿首月之间的完整序时账覆盖不足。")
+            stock = journal_stock(stock_setup, booked_all, ledger, month_from)
         # 以前月份出库数量若与发票不符（如账套 6 月按购入数量而非销售数量出库），在首月按发票更正：
         # 应有数量 = 首月之前全部进项发票数量 − 销项发票数量；账面数量 = 账套期初 + 补记到首月的旧进项发票数量。
         by_invoice: dict[str, Decimal] = defaultdict(lambda: ZERO)
@@ -845,7 +873,7 @@ def build_drafts(
                 continue
             sign = -1 if inv.seller in own else 1
             for item in inv.items:
-                code = ledger.find(f"{P_INVENTORY}/{goods_family(item['item'])}")
+                _family, code, _explicit = stock_resolution(item["item"])
                 if code and item["qty"] is not None:
                     by_invoice[code] += sign * item["qty"]
                     # 范围前开票、却记入本草稿某月的票（补记到首月或人工调整记入期），其数量在当月购销里计算，
@@ -855,6 +883,10 @@ def build_drafts(
         opening_fix = {code: by_invoice[code] - stock.get(code, [None, None, ZERO])[2] - carried[code]
                        for code in by_invoice}
         opening_fix = {code: qty for code, qty in opening_fix.items() if abs(qty) > Decimal("0.01")}
+        if stock_setup and stock_setup["setup"]["opening"] is not None:
+            # A confirmed opening is authoritative. Historical invoice totals do not
+            # prove that baseline wrong and must not generate an automatic correction.
+            opening_fix = {}
         for month in months:
             if month in booked_months:
                 continue
@@ -977,6 +1009,26 @@ def build_drafts(
             [b.line("借", "财务费用/银行手续费", total), b.line("贷", P_BANK, total)],
             ["本月手续费按月汇总：" + "、".join(f"{r.booking_date:%m-%d} {r.amount}" for r in items)], [], order=ORDER_FEE,
             statement_ref=st_ref, bank_rows=[r.row_id for r in items],
+        ))
+
+    # Confirmed gross wages accrue once by explicit cost/expense paths. Deductions
+    # remain evidence only: social insurance already has its own personal-part entry
+    # below, and a payroll sheet alone is not proof of payment or tax remittance.
+    for month in months:
+        if month not in salaries or month in booked_months:
+            continue
+        info = salaries[month]
+        summary = summarize(info["rows"])
+        total = Decimal(summary["totals"]["gross"])
+        if not total:
+            continue
+        lines = [b.line("借", part["expense_path"], Decimal(part["amount"])) for part in summary["allocations"] if Decimal(part["amount"])]
+        lines.append(b.line("贷", P_WAGES, total))
+        b.add(DraftVoucher(
+            month_end(month), f"计提{_m(month)}工资", "工资计提", "高", lines,
+            [f"已确认工资表：{summary['headcount']}人，应发 {total:,.2f}；来源 {info['source']}"],
+            ["仅计提应发工资；扣款用于核对，不据工资表生成付款或重复扣记社保个人部分"], order=ORDER_SOCIAL,
+            evidence_ref=SourceRef(info["source"], sources.company / info["source_file"] if sources.company else None),
         ))
 
     # 4b. 社保计提：按缴费明细（申报数据“社保明细”）把当月缴款拆成单位与个人部分，冲平应付社会保险费。
@@ -1165,6 +1217,8 @@ def prepare(paths: CompanyPaths, out_dir: Path, month_from: str, month_to: str, 
         raise ValueError("缺少 凭证/科目表.json：请先从捷锐采集科目表")
     if not paths.invoice_csv.exists():
         raise ValueError("缺少 成本发票明细.csv")
+    ledger = Ledger.load(paths.ledger)
+    stock_setup = read_setup(paths.company, ledger)
     from invoice_hub.services.company_bank_layouts import company_profiles
 
     # The explicit company is the same profile boundary as the workspace reader;
@@ -1184,12 +1238,16 @@ def prepare(paths: CompanyPaths, out_dir: Path, month_from: str, month_to: str, 
         tax_path.write_text(json.dumps(tax_template(data, analysis, _months(month_from, month_to)), ensure_ascii=False, indent=2), encoding="utf-8")
         created = True
     tax_data = load_tax_file(tax_path)
+    from invoice_hub.bank.salary import confirmed_details
+    from invoice_hub.services.company_salary import verify_sources
+    booked = load_booked(booked_paths or [])
+    verify_sources(paths.company, confirmed_details(tax_data), set(_months(month_from, month_to)) - {line.month for line in booked})
     period_overrides = load_period_overrides(out_dir)
     result = build_drafts(
         data=data, analysis=analysis, invoices=load_invoices(paths.invoice_csv), tax_data=tax_data,
-        ledger=Ledger.load(paths.ledger), aux=load_aux_values(paths.aux), rules=load_mapping_rules(paths.rules),
+        ledger=ledger, aux=load_aux_values(paths.aux), rules=load_mapping_rules(paths.rules),
         habits=habits, month_from=month_from, month_to=month_to,
-        booked=load_booked(booked_paths or []), sources=SourceIndex(data, paths.company), month_end_dates=month_end_dates,
-        period_overrides=period_overrides,
+        booked=booked, sources=SourceIndex(data, paths.company), month_end_dates=month_end_dates,
+        period_overrides=period_overrides, stock_setup=stock_setup,
     )
     return data, analysis, result, tax_path, created

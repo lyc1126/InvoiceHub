@@ -322,6 +322,52 @@ def test_detect_is_read_only_and_registration_only_creates_selected(client, tmp_
     assert client.get(f"/api/v1/companies/registration-jobs/{detected['plan_hash']}").json()['state'] == 'completed'
 
 
+def test_detect_candidates_require_explicit_choice_and_bind_every_candidate(client, tmp_path):
+    root = tmp_path / '多候选公司'
+    for name in ('进项发票2025', '进项发票2026', '工资2025', '工资2026', '开票资料与抵扣'):
+        (root / name).mkdir(parents=True)
+    before = {str(path.relative_to(root)) for path in root.rglob('*')}
+    detect = lambda **choices: client.post('/api/v1/companies/detect', json={'root_dir': str(root), 'subdirs': choices})
+    initial = detect().json()
+    rows = {item['key']: item for item in initial['subdirs']}
+    assert rows['cost_invoice_dir']['candidates'] == ['进项发票2025', '进项发票2026']
+    assert rows['cost_invoice_dir']['selection_required'] and rows['payroll_social_dir']['selection_required']
+    assert not rows['issued_invoice_dir']['candidates']
+    body = {'name': '多候选公司', 'root_dir': str(root), 'revision': 0, 'plan_hash': initial['plan_hash']}
+    assert client.post('/api/v1/companies', json=body).status_code == 422
+    choices = {'cost_invoice_dir': '进项发票2026', 'payroll_social_dir': '工资2026'}
+    picked = detect(**choices).json()
+    assert all(not item['selection_required'] for item in picked['subdirs'])
+    assert picked['plan_hash'] != initial['plan_hash']
+    # Even an unselected offered candidate is part of the user's observed plan.
+    (root / '进项发票2025').rename(root / '旧目录')
+    (root / '进项发票2025').mkdir()
+    body.update(subdirs=choices, plan_hash=picked['plan_hash'])
+    assert client.post('/api/v1/companies', json=body).status_code == 409
+    body['plan_hash'] = detect(**choices).json()['plan_hash']
+    result = client.post('/api/v1/companies', json=body)
+    assert result.status_code == 200, result.text
+    mapping = {item['key']: item['relative_path'] for item in result.json()['company']['subdirs']}
+    assert all(mapping[key] == value for key, value in choices.items())
+    assert before | {'旧目录'} == {str(path.relative_to(root)) for path in root.rglob('*')}
+
+
+def test_detect_explicit_standard_directory_and_invalid_choices(client, tmp_path):
+    root = tmp_path / '标准候选公司'
+    for name in ('进项发票甲', '进项发票乙'):
+        (root / name).mkdir(parents=True)
+    for bad in ([], None, {'cost_invoice_dir': '任意目录'}, {'cost_invoice_dir': '../outside'}):
+        response = client.post('/api/v1/companies/detect', json={'root_dir': str(root), 'subdirs': bad})
+        assert response.status_code == 422
+    selected = {'cost_invoice_dir': '成本发票'}
+    detected = client.post('/api/v1/companies/detect', json={'root_dir': str(root), 'subdirs': selected}).json()
+    assert not detected['subdirs'][0]['selection_required'] and detected['subdirs'][0]['status'] == 'missing'
+    result = client.post('/api/v1/companies', json={'name': '标准候选公司', 'root_dir': str(root), 'revision': 0,
+        'subdirs': selected, 'plan_hash': detected['plan_hash'], 'create_missing': ['cost_invoice_dir']})
+    assert result.status_code == 200, result.text
+    assert (root / '成本发票').is_dir() and not list((root / '成本发票').iterdir())
+
+
 def test_failed_registration_before_registry_write_can_run_again(client, tmp_path, monkeypatch):
     import invoice_hub.services.company_detection as detection
     root = tmp_path / '检测公司'

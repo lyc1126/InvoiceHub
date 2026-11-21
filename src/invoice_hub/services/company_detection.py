@@ -9,7 +9,7 @@ import time
 from pathlib import Path
 
 from invoice_hub.services.company_directory_guard import create_empty_subdir, directory_entry, subdir_snapshot
-from invoice_hub.services.company_registry import STANDARD_SUBDIRS, CompanyRegistryError, detect_subdirs
+from invoice_hub.services.company_registry import STANDARD_SUBDIRS, CompanyRegistryError, detect_subdir_options
 from invoice_hub.storage import atomic_write_json
 
 
@@ -49,20 +49,34 @@ class CompanyDetectionService:
             raise _error("请选择已存在的公司资料夹。")
         root = self.registry._registered_root(payload["root_dir"].strip().strip('"').strip("'"))
         root_status = directory_entry(root)[0]
-        detected = detect_subdirs(root) if root_status == "present" else {key: (label, "default") for key, (label, _) in STANDARD_SUBDIRS.items()}
+        detected, candidates = (detect_subdir_options(root) if root_status == "present" else
+                                ({key: (label, "default") for key, (label, _) in STANDARD_SUBDIRS.items()}, {}))
+        chosen = payload.get("subdirs", {})
+        if not isinstance(chosen, dict):
+            raise _error("子目录映射须为对象。")
+        mappings = self.registry._clean_subdirs(chosen, {key: value[0] for key, value in detected.items()})
+        for key, relative in mappings.items():
+            if relative not in {detected[key][0], *candidates.get(key, [])}:
+                raise _error("请选择本次检测列出的候选目录；其他路径请在登记后编辑映射。")
+            detected[key] = (relative, "user" if key in chosen else detected[key][1])
         snapshots = {key: subdir_snapshot(root, value[0]) for key, value in detected.items()}
+        candidate_ids = {key: {name: subdir_snapshot(root, name) for name in names} for key, names in candidates.items()}
         subdirs = []
         for key, (label, _) in STANDARD_SUBDIRS.items():
             relative = detected[key][0]
             status = next(reversed(snapshots[key].values()))[0]
             count = _file_count(root / relative) if status == "present" else None
             subdirs.append({"key": key, "label": label, "relative_path": relative, "path": str(root / relative),
-                            "status": status, "file_count": count,
+                            "status": status, "file_count": count, "candidates": candidates.get(key, []),
+                            "selection_required": len(candidates.get(key, [])) > 1 and detected[key][1] == "default",
                             "suggested_action": {"present": "keep", "missing": "create"}.get(status, "blocked")})
-        if snapshots != {key: subdir_snapshot(root, value[0]) for key, value in detected.items()}:
+        if (snapshots != {key: subdir_snapshot(root, value[0]) for key, value in detected.items()}
+                or candidate_ids != {key: {name: subdir_snapshot(root, name) for name in names} for key, names in candidates.items()}):
             raise _error("检测期间目录已变化，请重新检测。", "COMPANY_PLAN_STALE", 409)
         # Bind identities, not just names. Counts are informational and never authorize mkdir.
-        binding = {"root": str(root), "subdirs": {key: value[0] for key, value in detected.items()}, "identities": snapshots}
+        # The user's choice and every offered candidate bind the plan. A same-name
+        # replacement must invalidate registration rather than silently select new data.
+        binding = {"root": str(root), "subdirs": mappings, "identities": snapshots, "candidates": candidate_ids}
         plan_hash = hashlib.sha256(json.dumps(binding, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
         return {"ok": True, "root_status": root_status, "subdirs": subdirs, "plan_hash": plan_hash}, binding
 
@@ -132,14 +146,14 @@ class CompanyDetectionService:
             preview, binding = self._inspect(payload)
             if plan_hash != preview["plan_hash"] or preview["root_status"] != "present":
                 raise _error("目录状态已变化，请重新检测后确认。", "COMPANY_PLAN_STALE", 409)
+            if any(item["selection_required"] for item in preview["subdirs"]):
+                raise _error("同类目录有多个候选，请先明确选择，再登记。")
             keys = payload.get("create_missing", [])
             if not isinstance(keys, list) or any(not isinstance(key, str) or key not in STANDARD_SUBDIRS for key in keys) or len(set(keys)) != len(keys):
                 raise _error("补建目录列表无效。")
             available = {item["key"] for item in preview["subdirs"] if item["suggested_action"] == "create"}
             if not set(keys) <= available:
                 raise _error("只允许勾选检测为缺失的目录。")
-            if payload.get("subdirs") is not None and payload["subdirs"] != binding["subdirs"]:
-                raise _error("目录映射已变化，请重新检测。", "COMPANY_PLAN_STALE", 409)
             # Validate all registration fields before the first filesystem effect.
             self.registry._clean_name(payload.get("name"), registry, None)
             self.registry._clean_root(payload["root_dir"], registry, None)

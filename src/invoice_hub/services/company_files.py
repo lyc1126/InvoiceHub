@@ -5,10 +5,15 @@ import json
 import os
 import secrets
 import stat
+import threading
 from pathlib import Path
 
 from invoice_hub.services.company_directory_guard import directory_entry, subdir_snapshot
 from invoice_hub.services.company_registry import CompanyRegistryError
+
+# Payroll confirmation rewrites the tax input consumed by draft generation.
+# Keep its revision check and replacement in the same process-wide write order.
+DRAFT_WRITE_LOCK = threading.Lock()
 
 
 def read_relative(root: Path, relative: str, limit: int = 20 * 1024 * 1024) -> bytes:

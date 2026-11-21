@@ -34,7 +34,6 @@ from __future__ import annotations
 import hashlib
 import re
 import shutil
-import threading
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -46,6 +45,7 @@ from invoice_hub.bank import jierui
 from invoice_hub.bank.jierui import APPROVE, REJECT, REVIEW_COLUMNS, REVIEW_SHEET, _atomic, export, read_review_xlsx, validate
 from invoice_hub.bank.ledger import Ledger, load_aux_values
 from invoice_hub.bank.models import money
+from invoice_hub.services.company_files import DRAFT_WRITE_LOCK as _EXPORT_LOCK
 from invoice_hub.services.company_registry import CompanyRegistryError
 
 DRAFT_DIR = "做账草稿"
@@ -62,8 +62,7 @@ _MONTH = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
 MAX_PREPARER = 20
 READBACK_DIR = "账套读回"
 HISTORY_DIR = "历史"
-# One export or generation at a time per process: both rewrite files in 做账草稿/.
-_EXPORT_LOCK = threading.Lock()
+# The shared lock also orders payroll confirmation of 做账草稿/申报数据.json.
 
 
 class VoucherDraftError(CompanyRegistryError):
@@ -255,10 +254,10 @@ def _check_sheets(path: Path) -> list[dict]:
     return out
 
 
-def _invoice_dates(root: Path) -> dict[str, date]:
+def _invoice_dates(root: Path, invoice_csv: Path | None = None) -> dict[str, date]:
     from invoice_hub.bank.vouchers import load_invoices
 
-    csv_path = root / "成本发票明细.csv"
+    csv_path = invoice_csv if invoice_csv is not None else root / "成本发票明细.csv"
     try:
         return {invoice.number: invoice.issue_date for invoice in load_invoices(csv_path)} if csv_path.is_file() else {}
     except (ValueError, KeyError, InvalidOperation):
@@ -301,7 +300,7 @@ def _overrides_state(root: Path) -> dict:
         raise VoucherDraftError("VOUCHER_PERIODS_UNREADABLE", f"{PERIOD_OVERRIDES_FILE} 无法读取，未改动：{exc}", status_code=409) from exc
 
 
-def read_draft(root: Path, name: str) -> dict:
+def read_draft(root: Path, name: str, *, invoice_csv: Path | None = None) -> dict:
     path = _draft_path(root, name)
     revision = _revision(path)
     try:
@@ -311,7 +310,7 @@ def read_draft(root: Path, name: str) -> dict:
     except (ValueError, KeyError) as exc:
         raise VoucherDraftError("VOUCHER_DRAFT_UNREADABLE", f"{name} 无法读取：{exc}") from exc
     books = _books(root, name)
-    dates = _invoice_dates(root)
+    dates = _invoice_dates(root, invoice_csv)
     try:
         periods = _overrides_state(root)
     except VoucherDraftError as exc:
@@ -361,13 +360,13 @@ def _amount(value: object, where: str) -> Decimal | None:
     return amount
 
 
-def save_draft(root: Path, name: str, body: dict) -> dict:
+def save_draft(root: Path, name: str, body: dict, *, invoice_csv: Path | None = None) -> dict:
     # Saving and exporting must never race over different versions of the same draft.
     with _EXPORT_LOCK:
-        return _save_draft(root, name, body)
+        return _save_draft(root, name, body, invoice_csv=invoice_csv)
 
 
-def _save_draft(root: Path, name: str, body: dict) -> dict:
+def _save_draft(root: Path, name: str, body: dict, *, invoice_csv: Path | None = None) -> dict:
     """Apply `{revision, vouchers: [{month, number, approval?, move_month?, date?, lines?: [{row, summary?, code?, debit?, credit?, supplier?}]}]}`."""
     path = _draft_path(root, name)
     if body.get("revision") != _revision(path):
@@ -518,7 +517,7 @@ def _save_draft(root: Path, name: str, body: dict) -> dict:
              for key, move in moves.items()]
     added_count = sum(sum(line["row"] < 0 for line in voucher.lines) for voucher in current.values())
     deleted_count = sum(len(rows) - sum(line["row"] > 0 for line in current[key].lines) for key, rows in originals.items())
-    return {**read_draft(root, name), "saved_rows": len(edits) + added_count + deleted_count,
+    return {**read_draft(root, name, invoice_csv=invoice_csv), "saved_rows": len(edits) + added_count + deleted_count,
             "added_rows": added_count, "deleted_rows": deleted_count, "saved_approvals": len(approvals), "moved": moved}
 
 
@@ -723,7 +722,7 @@ def _generation_for(root: Path, name: str) -> tuple[dict, bool]:
             "ledger": newest_ledger_snapshot(root)}, False
 
 
-def rebook_invoice(root: Path, name: str, body: dict, *, bank_dir: Path | None = None) -> dict:
+def rebook_invoice(root: Path, name: str, body: dict, *, bank_dir: Path | None = None, invoice_csv: Path | None = None) -> dict:
     """`{revision, number, month ('' = back to the issue month), reason}`: correct where an invoice is booked, then regenerate."""
     import json
     from invoice_hub.bank.vouchers import PERIOD_OVERRIDES_FILE
@@ -732,7 +731,8 @@ def rebook_invoice(root: Path, name: str, body: dict, *, bank_dir: Path | None =
     number = _text(body.get("number")).strip()
     month = _text(body.get("month")).strip()
     reason = _text(body.get("reason")).strip()[:40]
-    if number not in _invoice_dates(root):
+    dates = _invoice_dates(root, invoice_csv)
+    if number not in dates:
         raise VoucherDraftError("VOUCHER_DRAFT_INVALID", f"成本发票明细里没有发票 {number}。")
     if month and (not _MONTH.match(month) or month > date.today().strftime("%Y-%m")):
         raise VoucherDraftError("VOUCHER_DRAFT_INVALID", "记入期须为不晚于本月的 YYYY-MM。")
@@ -741,7 +741,7 @@ def rebook_invoice(root: Path, name: str, body: dict, *, bank_dir: Path | None =
         state = _overrides_state(root)
         if body.get("revision") != state["revision"]:
             raise VoucherDraftError("VOUCHER_PERIODS_CONFLICT", "记入期调整已在别处修改，已刷新，请重新操作。", status_code=409)
-        issue_month = _invoice_dates(root)[number].strftime("%Y-%m")
+        issue_month = dates[number].strftime("%Y-%m")
         if month and month != issue_month:
             state["invoices"][number] = {"month": month, "reason": reason, "updated_at": datetime.now().isoformat(timespec="seconds")}
         else:
@@ -750,12 +750,12 @@ def rebook_invoice(root: Path, name: str, body: dict, *, bank_dir: Path | None =
         (root / DRAFT_DIR).mkdir(exist_ok=True)
         _atomic(root / DRAFT_DIR / PERIOD_OVERRIDES_FILE,
                 lambda tmp: tmp.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8"))
-    generated = generate_draft(root, {**params, "confirm": True}, bank_dir=bank_dir)
+    generated = generate_draft(root, {**params, "confirm": True}, bank_dir=bank_dir, invoice_csv=invoice_csv)
     return {"periods_revision": state["revision"], "generation_remembered": remembered,
             "out_of_range": bool(month) and not params["from"] <= month <= params["to"], "generated": generated}
 
 
-def generate_draft(root: Path, body: dict, *, bank_dir: Path | None = None) -> dict:
+def generate_draft(root: Path, body: dict, *, bank_dir: Path | None = None, invoice_csv: Path | None = None) -> dict:
     """`{from, to, month_end?: true, booked?: [序时账_*.txt], ledger?: 科目表_*.json, confirm: true}` -> the CLI's draft."""
     from invoice_hub.bank.vouchers import CompanyPaths, prepare
     from invoice_hub.bank.voucher_cli import NOTES
@@ -783,6 +783,8 @@ def generate_draft(root: Path, body: dict, *, bank_dir: Path | None = None) -> d
     with _EXPORT_LOCK:
         try:
             paths = CompanyPaths.discover(root, bank_dir=bank_dir)
+            if invoice_csv is not None:
+                paths.invoice_csv = invoice_csv
             if ledger:
                 # A read-back snapshot only replaces where accounts come from; 凭证/科目表.json is not touched.
                 paths.ledger = readback / ledger

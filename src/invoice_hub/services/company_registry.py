@@ -116,7 +116,7 @@ def clean_taxpayer_periods(raw: object) -> list[dict[str, str]]:
     return [{"effective_from": month, "taxpayer_type": periods[month]} for month in sorted(periods)]
 
 
-def detect_subdirs(root: Path) -> dict[str, tuple[str, str]]:
+def detect_subdir_options(root: Path) -> tuple[dict[str, tuple[str, str]], dict[str, list[str]]]:
     """Propose a folder for each standard key from the root's direct children.
 
     Returns key -> (relative path, source). The exact standard name wins; otherwise one
@@ -145,7 +145,12 @@ def detect_subdirs(root: Path) -> dict[str, tuple[str, str]]:
             proposal[key] = (matches[key][0], "detected")
         else:
             proposal[key] = (standard, "default")
-    return proposal
+    return proposal, {key: sorted(set(names + ([STANDARD_SUBDIRS[key][0]] if STANDARD_SUBDIRS[key][0] in children else [])), key=str.casefold)
+                      for key, names in matches.items()}
+
+
+def detect_subdirs(root: Path) -> dict[str, tuple[str, str]]:
+    return detect_subdir_options(root)[0]
 
 
 class CompanyRegistryService:
@@ -231,12 +236,12 @@ class CompanyRegistryService:
         registry["revision"] = int(registry["revision"]) + 1
         atomic_write_json(self.registry_path, registry)
 
-    def _active_taxpayer(self) -> str | None:
-        # Only the type changes prices; a renamed company keeps the workbook as it is.
+    def _active_taxpayer(self) -> tuple | None:
+        # Historical purchases depend on the entire timeline, not only today's identity.
         found = company_taxpayer_for(self.config, Path(self.active_profile.watch_dir))
-        return found["taxpayer_type"] if found else None
+        return (found["taxpayer_type"], found.get("periods")) if found else None
 
-    def _after_write(self, result: dict, taxpayer_before: str | None) -> dict:
+    def _after_write(self, result: dict, taxpayer_before: tuple | None) -> dict:
         # Called after the registry lock is released: the refresh takes the monitor's
         # projection lock and must not hold AppState's lock while waiting for it.
         if self._on_active_taxpayer_change and self._active_taxpayer() != taxpayer_before:

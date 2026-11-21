@@ -5,7 +5,7 @@ this router at the position the routes originally occupied, so matching order is
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import Response
 
 from invoice_hub.api.common import (
@@ -35,8 +35,10 @@ def router() -> APIRouter:
         return _state(request).monitor.bridge_health_check()
 
     @routes.post("/api/v1/bridge/rebuild")
-    def bridge_rebuild(request: Request) -> dict:
-        return _state(request).monitor.bridge_rebuild()
+    def bridge_rebuild(request: Request, mode: str = "incremental") -> dict:
+        if mode not in {"incremental", "full", "verify"}:
+            raise HTTPException(status_code=422, detail="mode 只能是 incremental/full/verify。")
+        return _state(request).monitor.bridge_rebuild() if mode == "incremental" else _state(request).monitor.bridge_rebuild(mode)
 
     @routes.post("/api/v1/bridge/start")
     def bridge_start(request: Request) -> Response:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 from collections import defaultdict
 from pathlib import Path
 from typing import Callable
@@ -11,6 +12,10 @@ from invoice_hub.domain import InvoiceRecord
 from invoice_hub.extraction import apply_invoice_family_corrections, extract_invoice_record, supported_invoice_files
 from invoice_hub.storage.files import write_csv_rows
 from invoice_hub.storage.read_views import ProgressiveRows
+from invoice_hub.storage.parse_cache import scan_files
+
+PARSER_VERSION = "invoice-raw-1:" + hashlib.sha256((Path(__file__).parents[1] / "extraction/parsers.py").read_bytes() +
+                                                        (Path(__file__).parents[1] / "extraction/classification.py").read_bytes()).hexdigest()
 
 SUMMARY_HEADERS = [
     "文件名",
@@ -110,15 +115,17 @@ def build_summary(
     watch_dir: Path,
     workspace_dir: Path,
     progress: Callable[[int, int], None] | None = None,
+    *, cache=None, files: list[Path] | None = None, preview_workspace: Path | None = None,
 ) -> dict:
-    files = supported_invoice_files(watch_dir)
+    files = files if files is not None else (scan_files(watch_dir) if cache else supported_invoice_files(watch_dir))
     total = len(files)
     if progress:
         progress(0, total)
     records = []
-    with ProgressiveRows(workspace_dir, "invoices") as preview:
+    with ProgressiveRows(preview_workspace or workspace_dir, "invoices") as preview:
         for index, path in enumerate(files, start=1):
-            record = extract_invoice_record(path)
+            record = (InvoiceRecord.model_validate(cache.read("invoice", path, PARSER_VERSION, lambda: extract_invoice_record(path).model_dump(), validate=InvoiceRecord.model_validate))
+                      if cache else extract_invoice_record(path))
             records.append(record)
             # Raw rows are browse-only; family corrections and manual overrides
             # still precede the final CSV/XLSX used by selection/export consumers.

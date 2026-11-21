@@ -226,6 +226,15 @@ def test_confirmed_trash_flows_into_existing_projection_sync_and_keeps_manual_fi
     from invoice_hub.monitoring.sync import MonitorSynchronizer
     from invoice_hub.storage import read_csv_rows
     client, state, paths, moved, prepare = selection_env
+    # This test reaches real projection rebuilding; its sources must be parseable.
+    # Other trash-only tests intentionally use arbitrary bytes to isolate recycling.
+    import fitz
+    from test_monitoring import _sample_xml
+    for path in (paths[0], paths[2]):
+        path.write_text(_sample_xml())
+    with fitz.open() as pdf:
+        pdf.new_page().insert_text((50, 50), 'Synthetic invoice')
+        paths[1].write_bytes(pdf.tobytes())
     monitor = MonitorState(state.active_profile, state.layout.db_path)
     monitor.save_processed(monitor.source_snapshot())
     monitor.save_manual_overrides({str(paths[2]): {"source_path": str(paths[2]), "fields": {"销售方": "人工保留销售方"}}})

@@ -1,5 +1,25 @@
 # InvoiceHub 开发架构与工程导航
 
+## 2026-11-21 成本 V2 核对、归档与分析
+
+当前开发线增加 `bank/stock_mapping.py` 共享显式库存对照和期初，独立 `cost_inventory/cost_records/cost_service_costs/cost_reports/cost_export` 服务经成本路由接入，不扩展 AppState 或发票主存储。V2、公司进销存与草稿复用科目解析及原月末成本；归档/服务成本写本公司根目录，查询与预览无写入。报价导出消费固定归档，货物毛利按品类月成本分摊到客户/项目且金额守恒，服务成本单列。结构、接口、文件协议和最低测试见五张地图及 [V2 当前实现](COST_ANALYSIS_V2_DESIGN.md)；旧 v1/工作簿/已开快照未切换，稳定 main 与发布基线未改变。下方日期保留当时状态。
+
+## 2026-11-20 成本 V2 第二批规则
+
+`cost_pricing` 增加阶梯与人工市场参照，`company_costs._quote` 传递单行基准金额和带来源/有效期的市场依据；仍使用既有四个 V2 接口、独立规则文件和同一库存算法，不新增行情服务。试算上下文绑定确认，市场底线优先于取整；入口与保护见五张地图和 [V2 设计](COST_ANALYSIS_V2_DESIGN.md)。六类规则后端已实现，前端/工作簿、完整分析及依据归档仍待做；稳定 main 与发布基线未改变。
+
+## 2026-11-19 成本 V2 首批后端
+
+当前获授权的 `codex/workspace-p3` 开发线新增独立 `services/cost_pricing.py` 与 `services/company_costs.py`，通过既有成本路由提供公司级 V2 读取、报价、规则试算及确认保存。共享 `company_inventory → cost_of_sales` 的品类 + 单位月末加权，不按规格重建库存；旧 `/costs`、v1 API、工作簿和已开快照保持原契约。规则另存公司成本目录，不随 monitor 投影重建而改写。当前实现/剩余前端、分析页、科目映射与第二批规则见 [V2 设计](COST_ANALYSIS_V2_DESIGN.md)及 COST-06；详细契约、算法、保护与测试入口同步五张架构地图。未提交、未合并或发布，不改变稳定 main 和成品基线。
+
+## 2026-11-19 可选产品反馈
+
+用户授权沿 `codex/workspace-p3` 既有开发线局部增加 About 反馈入口与默认折叠技术详情。Vue FeedbackDialog 复用 WsModal；本机独立 `services/feedback.py` 与 `api/routes/feedback.py` 由工厂接线。独立 `integrations/feedback-relay/` 只承担用户同意公开的反馈到 GitHub，不消费业务文件，不由桌面启动，不改变 localhost 主产品边界。接口、任务/回执与外部写入保护见对应地图及[反馈设计](FEEDBACK_DESIGN.md)。本轮只做代码与本机合成验收，不部署、不真实写 Issue、不进入稳定 main 或已发布成品。
+
+## 2026-11-19 WS-02/05 补齐
+
+当前 `codex/workspace-p3` 本地开发线新增 `bank/salary.py` 明确工资表核心与独立 `services/company_salary.py`；复用 `company_workspace.py` 线程池/同源路由，未扩 AppState。Vue `CompanySalary` 组合进工资社保页，工资/社保只在明确确认时写同一税文件；页面和 CLI 共用 `vouchers.prepare/build_drafts` 的应发计提，原表 SHA/目录身份失效、坏状态保留和共享 CAS 见接口/数据地图。WS-02 沿原检测/登记链增加候选选择，不增加监控目标、不移动候选目录。稳定 main 与发布基线未变，不把本地功能补齐当作平台或真实业务验收。
+
 ## 2026-11-17 工作区 P3 第 1—6 项
 
 开发现场 `codex/workspace-p3`，起点与稳定 main 见 [分支状态](BRANCH_STATUS.md)，尚未集成或发布。银行 `workpaper.discover(profiles=...)` 统一页面、显式公司 CLI 与草稿生成；`company_bank_recognition.py` 提供可终止、有界的请求时识别。`company_voucher_rows.py` 负责审核表结构编辑，仍以导出同一 validator 为准；Vue 库存/社保只消费后端值。税费 `company_tax_rules.py` 只提供未签署候选和审查样例，实时 API 不调用候选算术；完整合计维持 needs_review。合成真后端/Chromium 验收脚本见文件地图与任务导航。WS-08/09 不在本轮范围。
@@ -19,9 +39,9 @@ B3 标签使用计数、B5 凭证墙对流水/项目字段、B7 公司版式映�
 
 经典项目列经 `CompanyViewService.active_project_fields` 分页后只读附加；比较解释在 `company_compare_details.py` 从算法结果生成。`company_receipts.py` 独立签发公司 / 目录 / 文件版本绑定凭据，复用受限 PNG renderer；Vue 凭证墙每组六项并随标签可见性启停续租。接口、数据与新增文件见对应地图。当前开发范围完成，37 项真实 / 平台验收仍待执行。
 
-## 未来架构设计入口（未实施）
+## 连接与缓存架构入口（2026-11-19 已有首版实现）
 
-[服务器链接与目录增量缓存](SERVER_CONNECTION_AND_CACHE_DESIGN.md)对应 WS-08/09，2026-11-16 新增设计及现有原型演示，并补充右栏开关/主内容区内放大、当前目录标签下拉与范围统计；最新修订移除全屏及独立服务器公司树，跨模块 SourceBinding 与可靠游标重连仍为未来设计；拟议 SourceProfile、远程输出路径与代际提交均不属于当前产品实现，正式开发先评审本地/远程路径和预览权限边界。现有实现基线继续见下文。
+[服务器链接与目录增量缓存](SERVER_CONNECTION_AND_CACHE_DESIGN.md)对应 WS-08/09：现已实现原始解析缓存、完整投影代际、本机独立 SourceProfile、挂载共享/SFTP 只读浏览汇总及隔离预览。monitor 与手动重建共用 `projections/incremental.py`，普通/成本消费者绑定 manifest；固定路径仅兼容导出。服务器连接由可终止 worker 执行，API 锁不覆盖网络 I/O；Vue 右栏边界固定在主内容区。可靠游标、公司模块消费与系统密码凭据引用仍为未来范围。WS-07 的显式期初及历史购入身份与该链同步，入口和最低测试见[任务导航](architecture/AGENT_TASK_MAP.md#task-source-cache)。当前为未发布开发实现，不改变稳定 main 基线。
 
 ## 2026-11-14 WS 当前开发范围
 
