@@ -18,6 +18,8 @@ test("seven thousand invoices mount at most one hundred rows and preserve full-l
   const nodes = new Map();
   const context = vm.createContext({state, refs, URLSearchParams, isCurrentRefresh: () => true, updateSelectionControls() {}, app: { setBusy() {}, api: async () => ({ items, snapshot: { revision: "r1" } }) }, document: {getElementById(id) { if (!nodes.has(id)) nodes.set(id, {}); return nodes.get(id); }},
     sortedInvoiceItems: items => items, updateDateSortControl() {}, updateSelectedInvoiceTotal() {},
+    reconcileInvoiceRows(items) { refs.invoiceBody.innerHTML = items.map(context.rowHtml).join(""); },
+    syncVisibleInvoiceSelection() {},
     rowHtml: item => `<tr data-key="${item.invoice_key}"></tr>`, invoiceSelectionRecord: item => item});
   vm.runInContext(indexSource.slice(indexSource.indexOf("function renderInvoiceRows()"), indexSource.indexOf("function selectionDetailNumber(")), context);
   context.renderInvoiceRows();
@@ -54,6 +56,31 @@ test("late broad-search response cannot replace the current invoice-only results
   assert.equal((await old).status, "stale");
   assert.equal(state.invoiceItems.length, 1);
   assert.equal(state.invoiceItems[0].seller, "synthetic");
+});
+
+test("a recovered refresh clears its failure notice without discarding an unsaved directory", async () => {
+  const state = { refreshGeneration: 0, watchDirDirty: true, pendingWatchDir: "synthetic draft" };
+  const banners = [];
+  let failed = true;
+  const context = vm.createContext({ state, refs: { banner: {} },
+    app: { setBanner: (_element, tone, message) => banners.push({ tone, message }) },
+    isCurrentRefresh: generation => generation === state.refreshGeneration,
+    loadSettings: async () => ({ status: "ok" }),
+    loadInvoices: async () => { if (failed) throw Error("synthetic unavailable"); return { status: "ok" }; },
+    renderInvoiceRefreshFailure: () => "读取失败，保留旧列表",
+    loadBusinessDossierSafely: async () => ({ status: "ok" }),
+  });
+  vm.runInContext(indexSource.slice(indexSource.indexOf("async function refreshAll("),
+    indexSource.indexOf("async function runAction(")), context);
+  assert.equal((await context.refreshAll("invoice.changed")).status, "primary_failure");
+  assert.equal(banners.at(-1).tone, "warning");
+  failed = false;
+  assert.equal((await context.refreshAll("invoice.changed")).status, "ok");
+  assert.match(banners.at(-1).message, /已恢复读取.*待保存目录尚未生效/);
+  assert.equal(state.pendingWatchDir, "synthetic draft");
+  assert.equal(state.watchDirDirty, true);
+  await context.refreshAll("invoice.changed");
+  assert.equal(banners.length, 2, "Routine refresh must still leave directory-draft notices alone");
 });
 
 function documentHarness(api) {

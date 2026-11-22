@@ -523,7 +523,7 @@ def test_main_pages_keep_user_visible_controls() -> None:
     assert "app.css?v=20261116-project-column" in index
     assert "settings-actions.css?v=20260907-desktop-integrated-2" in index
     assert "common.js?v=20261114-workspace-skin-isolation-1" in index
-    assert "page-index.js?v=20261116-workspace-projects" in index
+    assert "page-index.js?v=20261122-invoice-row-refresh-2" in index
     assert 'select name="search_scope"' in index
     assert '<option value="invoice" selected>销售方 / 发票号</option>' in index
     assert 'select name="invoice_type"' in index
@@ -948,7 +948,7 @@ def test_selected_invoice_summary_frontend_contract() -> None:
     for template_name in ("backend.html", "base_head.html", "consistency.html", "costs.html", "detail.html", "documents.html", "index.html", "ocr.html", "settings.html", "skins.html"):
         template = (ROOT / "web" / "templates" / template_name).read_text(encoding="utf-8")
         assert "app.css?v=20261116-project-column" in template
-    assert "page-index.js?v=20261116-workspace-projects" in index
+    assert "page-index.js?v=20261122-invoice-row-refresh-2" in index
 
 
 def test_consistency_page_is_user_facing_not_raw_json() -> None:
@@ -1850,7 +1850,7 @@ def test_home_invoice_list_centers_content_and_uses_one_status_badge() -> None:
         assert "app.css?v=20260727-invoice-list-status-layout" not in html
         assert "app.css?v=20260726-invoice-taxonomy" not in html
     index = (templates_dir / "index.html").read_text(encoding="utf-8")
-    assert "page-index.js?v=20261116-workspace-projects" in index
+    assert "page-index.js?v=20261122-invoice-row-refresh-2" in index
 
 
 def test_ink_pulse_body_page_entry_never_creates_fixed_modal_containing_block() -> None:

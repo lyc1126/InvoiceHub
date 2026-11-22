@@ -1,54 +1,18 @@
 /** Real Chromium + isolated FastAPI, synthetic sources only. No HTTP interception.
- * Run after frontend build with PLAYWRIGHT_MODULE pointing to an installed playwright module.
- * Set P3_E2E_CDP=<endpoint> to attach to an existing Chrome; otherwise Chrome is launched locally.
+ * Run after frontend install/build; PLAYWRIGHT_MODULE optionally selects another installed module.
+ * Set P3_E2E_CDP=<endpoint> to attach to an existing Chrome; otherwise the locked Chromium is launched locally.
  * Screenshots go to P3_E2E_OUTPUT (default output/playwright/workspace-p3).
  */
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
-import { createRequire } from 'node:module';
-import { mkdir, writeFile } from 'node:fs/promises';
-import { createServer } from 'node:net';
-import { resolve, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
-const repo = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
-const require = createRequire(import.meta.url);
-const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
-const output = resolve(process.env.P3_E2E_OUTPUT || 'output/playwright/workspace-p3');
-await mkdir(output, { recursive: true });
-const socket = createServer();
-await new Promise(done => socket.listen(0, '127.0.0.1', done));
-const port = socket.address().port;
-await new Promise(done => socket.close(done));
-const child = spawn(process.env.PYTHON || resolve(repo, '.venv/bin/python'), [resolve(repo, 'scripts/dev/workspace_p3_fixture.py'), '--port', String(port)], {
-  cwd: repo, env: { ...process.env, PYTHONPATH: resolve(repo, 'src'), INVOICE_HUB_DISABLE_NOTIFY: '1' }, stdio: ['ignore', 'pipe', 'pipe'],
-});
-let logs = '', browser, context;
-child.stdout.on('data', data => { logs += data; });
-child.stderr.on('data', data => { logs += data; });
-const base = `http://127.0.0.1:${port}`;
+import { writeFile } from 'node:fs/promises';
+import { resolve } from 'node:path';
+import { runBrowserScenario } from './browser_e2e_support.mjs';
+
 const issues = [], styles = [];
-try {
-  // Two browser modes: P3_E2E_CDP attaches to an externally managed Chrome (hosts that forbid launching
-  // Chrome from the agent process tree); otherwise launch a local Chrome. Under CDP only our own context
-  // is closed, so the external browser and its other tabs survive the run.
-  const cdp = process.env.P3_E2E_CDP;
-  browser = cdp
-    ? await chromium.connectOverCDP(cdp)
-    : await chromium.launch({ channel: process.env.P3_E2E_BROWSER || 'chrome', headless: !process.env.P3_E2E_HEADED });
-  context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
-  const page = await context.newPage();
-  // Probe readiness from the browser, not Node: sandboxed agent shells may block loopback connects from
-  // this process while the browser can still reach the fixture, and the browser is what the test needs.
-  let ready = false;
-  for (const deadline = Date.now() + 20000; Date.now() < deadline;) {
-    if (child.exitCode !== null) throw Error(`Fixture exited: ${logs}`);
-    try { ready = (await page.goto(`${base}/api/v1/health`, { timeout: 2000 }))?.ok() ?? false; } catch {}
-    if (ready) break;
-    await new Promise(done => setTimeout(done, 200));
-  }
-  assert(ready, `Fixture unavailable: ${logs}`);
+await runBrowserScenario({ name: 'workspace-p3', fixture: 'workspace_p3_fixture.py', prefix: 'P3_E2E',
+  run: async ({ page, base, output }) => {
   page.on('pageerror', error => issues.push(error.message));
-  page.on('response', async response => { if (response.status() >= 400) console.log('HTTP_ERROR', response.status(), response.url(), (await response.text()).slice(0, 500)); });
+  page.on('response', response => { if (response.status() >= 400) issues.push(`HTTP ${response.status()} ${response.url()}`); });
   page.on('console', message => { if (message.type() === 'error') issues.push(message.text()); });
   await page.goto(`${base}/workspace/`);
   const company = page.getByRole('button', { name: /P3 合成公司（/ });
@@ -171,11 +135,5 @@ try {
   assert.deepEqual(issues, []);
   await writeFile(resolve(output, 'result.json'), JSON.stringify({ status: 'passed', styles, consoleErrors: issues }, null, 2));
   console.log(JSON.stringify({ status: 'passed', screenshots: output, styles }));
-} finally {
-  if (context) await context.close().catch(() => {});
-  // For CDP this only disconnects; for launch it terminates the Chrome we started.
-  if (browser) await browser.close();
-  child.kill('SIGINT');
-  await Promise.race([new Promise(done => child.once('exit', done)), new Promise(done => setTimeout(done, 5000))]);
-  if (child.exitCode === null) child.kill('SIGKILL');
-}
+  },
+});

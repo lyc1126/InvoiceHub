@@ -173,6 +173,56 @@ jobs:
       - name: Run unit and contract tests
         run: cargo test --locked
 
+  browser-e2e:
+    name: Synthetic browser regressions (Linux)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      PYTHON: python
+      BROWSER_E2E_BROWSER: chromium
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14.6"
+          cache: pip
+          cache-dependency-path: requirements/browser-linux-x64-py314.lock
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "24"
+      - name: Install the hash-locked synthetic backend
+        run: >-
+          python -m pip install
+          --require-hashes
+          --only-binary=:all:
+          -r requirements/browser-linux-x64-py314.lock
+      - name: Install locked browser tools and Chromium
+        working-directory: frontend
+        run: |
+          corepack enable
+          pnpm install --frozen-lockfile
+          pnpm exec playwright install --with-deps chromium
+      - name: Rebuild and verify the committed workspace assets
+        run: |
+          pnpm --dir frontend run build
+          git status --porcelain -- web/static/app
+          test -z "$(git status --porcelain -- web/static/app)"
+      # Each iteration uses fresh synthetic sources/config and a new browser
+      # context. An injected whole-table repaint must fail the identity guard.
+      - name: Repeat real browser flows and prove the refresh guard
+        working-directory: frontend
+        run: pnpm run test:e2e --repeat 3 --verify-refresh-guard
+      - name: Keep synthetic traces, screenshots and backend diagnostics
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: synthetic-browser-e2e
+          path: output/playwright/
+          if-no-files-found: error
+          retention-days: 7
+
   frontend:
     name: Workspace frontend (Vue)
     runs-on: ubuntu-latest

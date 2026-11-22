@@ -1,5 +1,13 @@
 # InvoiceHub Agent 工程任务导航
 
+<a id="task-browser-e2e"></a>
+
+## 2026-11-22 ENG-05 合成浏览器门禁
+
+先读[页面规则](rules/WEB_UI.md)、[监控规则](rules/MONITORING.md)及[运行说明](../BROWSER_E2E.md)；成本/P3 业务变化再读所属成本/做账/税务规则。入口是 `browser_e2e.mjs`、共享 `browser_e2e_support.mjs`、三组 `*_e2e.mjs`/夹具、CI 的 browser-e2e 作业和独立 Linux x64 哈希锁。首页局部刷新联动 `page-index`、`index.html` 的资源版本与前端契约。
+
+最低运行 `test_browser_e2e`、前端/API/渐进加载/勾选相邻测试、Node 交互、Vue typecheck/test/build、Ruff/编译、文档与差异检查；`pnpm --dir frontend run test:e2e --repeat 3 --verify-refresh-guard` 须三组各自独立通过，重绘注入须失败于指定断言。检查 trace、日志与截图，确认临时根和子进程收束；默认源码 localhost 另核对实际资源与 no_skin。GitHub Linux/配套 Chromium、真实业务/Windows/原生/成品未跑须逐项披露，工作流接线不算远端连续通过。既有历史切片的“CI/旧首页待做”以本节当前进度为准。
+
 ## 2026-11-21 成本 V2 开发范围收尾
 
 服务收入/项目毛利、实际统一加价率、同物异名命中 `cost_item_types`、`cost_reports`、`CostItemTypes.vue`、`CostAnalysis.vue`；完整读取[成本规则](rules/COST_ANALYSIS.md)、[页面规则](rules/WEB_UI.md)、[监控规则](rules/MONITORING.md)与下方成本任务行。品目类型属于既有品目表，确认归类会刷新兼容工作簿，须与监控共锁；报价/分析/提示保持只读。

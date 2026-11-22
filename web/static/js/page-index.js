@@ -4,9 +4,11 @@ const state = {
   pendingWatchDir: "",
   watchDirDirty: false,
   refreshGeneration: 0,
+  refreshWarning: false,
   hasInvoiceSnapshot: false,
   selectedInvoices: new Map(),
   invoiceItems: [],
+  invoiceRows: new Map(),
   invoicePage: 1,
   invoiceCount: 0,
   invoiceRevision: "",
@@ -872,7 +874,6 @@ function rowHtml(item) {
   const invoiceKey = String(item.invoice_key ?? "");
   const amount = invoiceAmountValue(item.amount);
   const selectable = Boolean(invoiceKey && String(item.source_path || item.file_path || "").trim());
-  const selected = selectable && state.selectedInvoices.has(invoiceKey);
   const fileFormat = fileFormatLabel(item);
   const fileFormatTone = fileFormat === "未知" ? "unknown" : fileFormat.toLowerCase();
   const invoiceType = String(item.invoice_type || "").trim();
@@ -911,16 +912,49 @@ function rowHtml(item) {
         </div>
       </td>
       <td class="table__select">
-        <input class="invoice-checkbox" type="checkbox" data-invoice-select="${app.escapeHtml(invoiceKey)}" data-invoice-amount="${app.escapeHtml(amount === null ? "" : String(amount))}" aria-label="${app.escapeHtml(checkboxLabel)}"${selected ? " checked" : ""}${selectable ? "" : " disabled"}>
+        <input class="invoice-checkbox" type="checkbox" data-invoice-select="${app.escapeHtml(invoiceKey)}" data-invoice-amount="${app.escapeHtml(amount === null ? "" : String(amount))}" aria-label="${app.escapeHtml(checkboxLabel)}"${selectable ? "" : " disabled"}>
       </td>
     </tr>`;
+}
+
+function syncVisibleInvoiceSelection() {
+  refs.invoiceBody.querySelectorAll("[data-invoice-select]").forEach((input) => {
+    input.checked = state.selectedInvoices.has(input.dataset.invoiceSelect);
+  });
+  updateSelectedInvoiceTotal();
+}
+
+function reconcileInvoiceRows(items) {
+  const next = new Map();
+  // Position keys may be reused after projection rebuilds. Reuse a DOM row only
+  // for the same target AND source; unchanged SSE reads then preserve focus and
+  // table scroll, without transferring a checkbox to a different invoice.
+  for (const item of items) {
+    const identity = JSON.stringify([state.targetId, String(item.invoice_key ?? ""), item.source_path || item.file_path || ""]);
+    const html = rowHtml(item);
+    const signature = `${state.invoiceProvisional}:${html}`;
+    let entry = state.invoiceRows.get(identity);
+    if (!entry || entry.signature !== signature) {
+      const template = document.createElement("template");
+      template.innerHTML = html;
+      entry = { signature, node: template.content.firstElementChild };
+    }
+    next.set(identity, entry);
+  }
+  const wanted = new Set([...next.values()].map((entry) => entry.node));
+  for (const row of [...refs.invoiceBody.children]) if (!wanted.has(row)) row.remove();
+  let index = 0;
+  for (const { node } of next.values()) {
+    const anchor = refs.invoiceBody.children[index++] || null;
+    if (anchor !== node) refs.invoiceBody.insertBefore(node, anchor);
+  }
+  state.invoiceRows = next;
 }
 
 function renderInvoiceRows() {
   const items = sortedInvoiceItems(state.invoiceItems);
   const pages = Math.max(1, Math.ceil(state.invoiceCount / 100));
   state.invoicePage = Math.min(state.invoicePage || 1, pages);
-  const pageItems = items;
   const pager = document.getElementById("invoicePager");
   if (pager) {
     pager.hidden = state.invoiceCount <= 100;
@@ -929,12 +963,15 @@ function renderInvoiceRows() {
     document.getElementById("invoiceNextPage").disabled = state.invoicePage === pages;
   }
   updateDateSortControl();
-  refs.invoiceBody.innerHTML = items.length
-    ? pageItems.map(rowHtml).join("")
-    : `<tr><td colspan="11">${Object.entries(state.filters).some(([key, value]) => key !== "search_scope" && String(value || "").trim())
+  if (items.length) reconcileInvoiceRows(items);
+  else {
+    const html = `<tr><td colspan="11">${Object.entries(state.filters).some(([key, value]) => key !== "search_scope" && String(value || "").trim())
       ? "没有符合当前筛选条件的发票。"
       : "暂无发票。请选择目录后点击“重新汇总”。"}</td></tr>`;
-  updateSelectedInvoiceTotal();
+    if (refs.invoiceBody.innerHTML !== html) refs.invoiceBody.innerHTML = html;
+    state.invoiceRows.clear();
+  }
+  syncVisibleInvoiceSelection();
   if (state.invoiceProvisional) refs.invoiceBody.querySelectorAll("input, a, button").forEach((element) => {
     if (element.tagName === "A") element.removeAttribute("href");
     else element.disabled = true;
@@ -957,7 +994,7 @@ async function selectAllVisibleInvoices() {
     if (!key || !selected.source_path) continue;
     state.selectedInvoices.set(key, selected);
   }
-  renderInvoiceRows();
+  syncVisibleInvoiceSelection();
   } catch (error) {
     app.setBanner(refs.banner, "warning", `选择失败：${error.message}`);
   } finally {
@@ -968,7 +1005,7 @@ async function selectAllVisibleInvoices() {
 
 function clearSelectedInvoices() {
   state.selectedInvoices.clear();
-  renderInvoiceRows();
+  syncVisibleInvoiceSelection();
 }
 
 function selectionDetailNumber(value, decimals = 2) {
@@ -1839,6 +1876,7 @@ async function refreshAll(reason = "") {
   }
   if (warnings.length) {
     const message = warnings.join(" ");
+    state.refreshWarning = true;
     app.setBanner(refs.banner, "warning", message);
     return { generation, stale: false, ok: false, partial: true, status: "primary_failure", message };
   }
@@ -1847,11 +1885,18 @@ async function refreshAll(reason = "") {
   if (!isCurrentRefresh(generation)) return staleRefreshResult(generation);
   if (dossierResult.status === "partial_failure") {
     const message = dossierResult.message || "业务资料夹刷新失败，发票列表仍可使用。";
+    state.refreshWarning = true;
     app.setBanner(refs.banner, "warning", message);
     return { generation, stale: false, ok: false, partial: true, status: "partial_failure", message };
   }
 
-  if (reason && !state.watchDirDirty) app.setBanner(refs.banner, "success", `已刷新：${reason}`);
+  // A directory draft suppresses routine success notices, but must not leave
+  // a failed-read warning visible after the same data has recovered.
+  if (state.refreshWarning) app.setBanner(refs.banner, "success", state.watchDirDirty
+    ? "当前目录已恢复读取，待保存目录尚未生效。"
+    : "当前目录已恢复读取。");
+  else if (reason && !state.watchDirDirty) app.setBanner(refs.banner, "success", `已刷新：${reason}`);
+  state.refreshWarning = false;
   return { generation, stale: false, ok: true, partial: false, status: "ok", message: "" };
 }
 
@@ -2054,7 +2099,7 @@ for (const [id, delta] of [["invoicePreviousPage", -1], ["invoiceNextPage", 1]])
   document.getElementById(id)?.addEventListener("click", () => {
     state.invoicePage += delta;
     void refreshAll();
-    refs.invoiceBody.closest(".table-wrap")?.scrollTo(0, 0);
+    refs.invoiceBody.closest(".table-shell")?.scrollTo(0, 0);
   });
 }
 refs.clearSelectedInvoicesBtn?.addEventListener("click", clearSelectedInvoices);

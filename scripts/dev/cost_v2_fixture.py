@@ -89,9 +89,13 @@ def create_fixture(root):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port", type=int, required=True)
+    parser.add_argument("--root", type=Path)
     args = parser.parse_args()
     with TemporaryDirectory(prefix="invoicehub-cost-v2-") as temporary:
-        app = create_fixture(Path(temporary))
+        root = args.root or Path(temporary)
+        if any(root.iterdir()):
+            parser.error("Fixture root must be an empty temporary directory")
+        app = create_fixture(root)
         uvicorn.run(app, host="127.0.0.1", port=args.port, log_level="warning")
 
 

@@ -7,6 +7,7 @@
 /dist/
 /wheelhouse/
 /release-staging/
+/output/playwright/
 /发票文件/*
 !/发票文件/.gitkeep
 /运行状态/

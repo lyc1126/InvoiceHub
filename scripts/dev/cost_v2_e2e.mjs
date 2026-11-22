@@ -4,45 +4,15 @@
  * All sources/configuration are temporary synthetic data. No HTTP mocks or real company data.
  */
 import assert from 'node:assert/strict';
-import { spawn, execFileSync } from 'node:child_process';
-import { createRequire } from 'node:module';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { execFileSync } from 'node:child_process';
+import { readFile, writeFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
-import { createServer } from 'node:net';
-import { resolve, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
-const repo = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
-const require = createRequire(import.meta.url);
-const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
-const output = resolve(process.env.COST_V2_E2E_OUTPUT || 'output/playwright/cost-v2');
-const python = process.env.PYTHON || resolve(repo, '.venv/bin/python');
-await mkdir(output, { recursive: true });
-const socket = createServer();
-await new Promise(done => socket.listen(0, '127.0.0.1', done));
-const port = socket.address().port;
-await new Promise(done => socket.close(done));
-const child = spawn(python, [resolve(repo, 'scripts/dev/cost_v2_fixture.py'), '--port', String(port)], {
-  cwd: repo, env: { ...process.env, PYTHONPATH: resolve(repo, 'src'), INVOICE_HUB_DISABLE_NOTIFY: '1' }, stdio: ['ignore', 'pipe', 'pipe'],
-});
-let logs = '', browser, context;
-child.stdout.on('data', data => { logs += data; });
-child.stderr.on('data', data => { logs += data; });
-const base = `http://127.0.0.1:${port}`;
+import { resolve } from 'node:path';
+import { runBrowserScenario } from './browser_e2e_support.mjs';
+
 const issues = [], expectedFailures = [], screenshots = [];
-try {
-  browser = process.env.COST_V2_E2E_CDP ? await chromium.connectOverCDP(process.env.COST_V2_E2E_CDP)
-    : await chromium.launch({ channel: process.env.COST_V2_E2E_BROWSER || 'chrome', headless: !process.env.COST_V2_E2E_HEADED });
-  context = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
-  const page = await context.newPage();
-  page.setDefaultTimeout(15000);
-  let ready = false;
-  for (const deadline = Date.now() + 30000; Date.now() < deadline;) {
-    if (child.exitCode !== null) throw Error(`Fixture exited: ${logs}`);
-    try { ready = (await page.goto(`${base}/api/v1/health`, { timeout: 2000 }))?.ok() ?? false; } catch {}
-    if (ready) break;
-    await new Promise(done => setTimeout(done, 200));
-  }
-  assert(ready, `Fixture unavailable: ${logs}`);
+await runBrowserScenario({ name: 'cost-v2', fixture: 'cost_v2_fixture.py', prefix: 'COST_V2_E2E',
+  run: async ({ page, base, output, python, repo }) => {
   page.on('pageerror', error => issues.push(error.message));
   page.on('console', message => {
     if (message.type() === 'error' && !message.text().includes('503')) issues.push(message.text());
@@ -168,15 +138,5 @@ w.close()`, output], { cwd: repo });
   const result = { status: 'passed', counts, sourceHash, screenshots, expectedFailures: expectedFailures.length, consoleErrors: issues };
   await writeFile(resolve(output, 'result.json'), JSON.stringify(result, null, 2));
   console.log(JSON.stringify(result));
-} catch (error) {
-  console.error(logs.slice(-5000));
-  if (context) await context.pages()[0]?.screenshot({ path: resolve(output, 'failure.png'), fullPage: true }).catch(() => {});
-  throw error;
-} finally {
-  if (context) await context.close().catch(() => {});
-  if (browser) await browser.close();
-  const stopped = new Promise(done => child.once('exit', done));
-  child.kill('SIGINT');
-  await Promise.race([stopped, new Promise(done => setTimeout(done, 5000))]);
-  if (child.exitCode === null) { child.kill('SIGKILL'); await stopped; }
-}
+  },
+});

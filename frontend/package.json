@@ -11,7 +11,8 @@
     "dev": "vite",
     "build": "vite build",
     "typecheck": "vue-tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:e2e": "node ../scripts/dev/browser_e2e.mjs"
   },
   "dependencies": {
     "pinia": "4.1.0",
@@ -24,6 +25,7 @@
     "@vue/test-utils": "2.5.1",
     "@vue/tsconfig": "0.9.1",
     "happy-dom": "21.0.4",
+    "playwright": "1.65.1",
     "typescript": "5.9.3",
     "vite": "8.3.6",
     "vitest": "5.1.0",

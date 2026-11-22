@@ -1,5 +1,19 @@
 # InvoiceHub 完整文件地图
 
+## 2026-11-22 合成浏览器门禁
+
+| 文件 | 职责与联动 |
+|---|---|
+| `scripts/dev/browser_e2e.mjs` | 三组顺序运行、独立重复、指定断言的故障检出和总结果；从 frontend 的 test:e2e 调用。 |
+| `scripts/dev/browser_e2e_support.mjs` | 固定来源模块解析、临时合成根、隔离环境、真实浏览器/CDP、trace/失败诊断、信号与子进程清理。 |
+| `scripts/dev/classic_home_fixture.py` | 104 条合成记录、真实投影、单次 503/迟到响应/SSE 控制与显式 JS 故障；仅开发 app。 |
+| `scripts/dev/classic_home_e2e.mjs` | 经典首页分页/同票合计、局部行/焦点/滚动、目录草稿、失败/迟到/空态和皮肤资源检查。 |
+| `requirements/browser-linux-x64-py314.lock` | Linux x64/CPython 3.14 浏览器 CI 运行依赖与轮子哈希，不作为正式发行输入。 |
+| `tests/test_browser_e2e.py` | 夹具配置/原票隔离、真实分页、一次失败后恢复、故障 JS 不进入生产资源。 |
+| `docs/BROWSER_E2E.md` | 依赖、执行参数、诊断/清理与本机/远端验收边界。 |
+
+既有 P3/成本脚本复用共享支持，Python 夹具支持父进程持有的空临时根；`frontend/package.json`/pnpm 锁仅增加精确 Playwright 开发依赖和 test:e2e；CI 新增 Linux 作业，合成输出由 `.gitignore` 隔离。`page-index.js`/首页资源版本与前端契约同步。
+
 ## 2026-11-21 成本 V2 服务与价格提示
 
 | 文件 | 职责与联动 |

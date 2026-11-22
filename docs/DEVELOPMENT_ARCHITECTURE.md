@@ -1,5 +1,9 @@
 # InvoiceHub 开发架构与工程导航
 
+## 2026-11-22 浏览器门禁与经典首页局部刷新
+
+ENG-05 由 `browser_e2e.mjs` 顺序编排 P3、成本 V2 与经典首页，`browser_e2e_support.mjs` 负责临时资料、真实浏览器、SSE 释放、子进程收束及诊断，Linux 作业只消费合成资料与独立 CI 锁。经典首页的行节点仅为当前页 DOM 缓存，按 target/key/source 隔离，不成为发票真值；勾选不重绘表格，读取保护和后端计算不变。入口、故障检出与未覆盖范围见[浏览器回归说明](BROWSER_E2E.md)，当前本地候选见[分支记录](BRANCH_STATUS.md)；main 与发布基线未改变。
+
 ## 2026-11-21 成本 V2 服务与价格提示收尾
 
 新增 `cost_item_types` 通过成本领域路由提供公司级品目类型预览/确认，沿用 `item_catalog` 与 profile 监控写锁，明确服务收入并刷新兼容工作簿；不增加第二份品目主数据。`cost_reports` 增加同月同项目服务毛利及来源、实际加价率一致样本与有界疑似同物异名；Vue `CostItemTypes`/`CostAnalysis` 只消费后端口径。可重复合成浏览器入口为 `scripts/dev/cost_v2_e2e.mjs` 与 `cost_v2_fixture.py`，不扩展 AppState 或 SQLite。开发范围与剩余实机验收见 [V2 当前实现](COST_ANALYSIS_V2_DESIGN.md)及五张地图；稳定 main/发布基线保持不变。
