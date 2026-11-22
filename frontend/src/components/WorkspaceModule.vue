@@ -8,6 +8,7 @@ import CompanyVouchers from "./CompanyVouchers.vue";
 import CompanyTax from "./CompanyTax.vue";
 import CompanyPayroll from "./CompanyPayroll.vue";
 import CompanyCompare from "./CompanyCompare.vue";
+import CompanyCostsV2 from "./CompanyCostsV2.vue";
 import InvoiceTagsEditor from "./InvoiceTagsEditor.vue";
 import WatchSwitchConfirm from "./WatchSwitchConfirm.vue";
 import WorkspaceIcon from "./WorkspaceIcon.vue";
@@ -30,7 +31,13 @@ function selectSection(id: string): void { section.value = id; opened.value.add(
 // Legacy modules still consume the single active target. A different company must
 // never relabel that data; show a deliberate handoff until its API is company-aware.
 const activeSource = computed(() => !!company.value?.monitored && (!subdir.value || company.value.monitored_subdir_key === subdir.value.key));
-const classicVisible = computed(() => props.module === "settings" || (props.module !== "bookkeeping" && activeSource.value) || (props.module === "bookkeeping" && !!company.value && ["mapping", "setup"].includes(section.value)));
+// Costs: the company-aware V2 workbench is the default view for any registered company;
+// the classic /costs frame (v1 workbook, issued snapshots) stays one tab away and still
+// requires the company to be the active monitor target.
+const costSection = ref<"v2" | "classic">("v2");
+const classicVisible = computed(() => props.module === "settings"
+  || (props.module === "costs" ? costSection.value === "classic" && activeSource.value : props.module !== "bookkeeping" && activeSource.value)
+  || (props.module === "bookkeeping" && !!company.value && ["mapping", "setup"].includes(section.value)));
 // The classic bookkeeping frame reads the active monitor target. Mount it only
 // on its first actual tab visit; hidden company draft/tax tabs must not trigger
 // unrelated watch_dir API requests. Once opened, retain it across tab switches.
@@ -89,7 +96,16 @@ const switchPath = computed(() => subdir.value?.path ?? company.value?.subdirs.f
       <CompanyTax v-if="section === 'tax'" :company="company" :start="book?.month" :end="book?.month" />
       <p v-if="['mapping', 'setup'].includes(section)" class="overview-notice">下方沿用现有账套设置和映射功能，实际作用目录以下方设置为准。</p>
     </div>
-    <div v-if="company && module !== 'settings' && module !== 'bookkeeping' && !activeSource" class="module-empty">
+    <div v-if="module === 'costs' && company" class="module-company-content cost-workspace">
+      <div class="tabs" role="tablist" aria-label="成本视图">
+        <button type="button" role="tab" :aria-selected="costSection === 'v2'" @click="costSection = 'v2'">成本分析 V2（本公司）</button>
+        <button type="button" role="tab" :aria-selected="costSection === 'classic'" @click="costSection = 'classic'">经典成本表（v1）</button>
+      </div>
+      <template v-for="item in companies.companies" :key="`${item.id}:${modules.refresh.costs ?? 0}`">
+        <CompanyCostsV2 v-if="visitedCompanies.has(item.id)" v-show="item.id === company.id && costSection === 'v2'" :company="item" :active="active && item.id === company.id && costSection === 'v2'" />
+      </template>
+    </div>
+    <div v-if="company && module !== 'settings' && module !== 'bookkeeping' && !activeSource && (module !== 'costs' || costSection === 'classic')" class="module-empty">
       <WorkspaceIcon name="folder" /><h2>{{ company.name }} · {{ label }}</h2><p>当前模块仍读取监控目录。所选公司或目录尚未接入此模块，不能展示其它目录的结果。</p>
       <button v-if="switchPath" type="button" @click="switching = true">设为监控目录后使用</button>
       <WatchSwitchConfirm v-if="switching" :path="switchPath" @done="switching = false" @cancel="switching = false" />

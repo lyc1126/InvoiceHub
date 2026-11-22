@@ -1,5 +1,34 @@
 # InvoiceHub 接口与运行流程
 
+## 2026-11-21 成本 V2 服务与价格提示
+
+公司成本 V2 新增下列接口，仍由成本路由在线程池执行；写入/预览沿用同源与 2 MiB JSON 限制：
+
+| 方法与路径 | 契约 |
+|---|---|
+| GET `/api/v1/companies/{company_id}/cost-analysis/v2/item-types` | 返回来源 revision 与进销双方品名的标准名称、类型、来源侧；只读，不建 profile 或写文件。 |
+| POST `/api/v1/companies/{company_id}/cost-analysis/v2/item-types/preview` | `{revision,types:{原品名:goods|service|expense|fixed_asset}}`，未列名称保持，别名按最终标准名联动，同组矛盾类型拒绝；返回 changes/preview_hash。 |
+| PUT `/api/v1/companies/{company_id}/cost-analysis/v2/item-types` | 原预览体加 `{confirm:true,preview_hash}`。成本锁→捕获 profile 的 monitor 同步锁→重新核对→既有品目表保存/兼容工作簿刷新→读回；无变化不写，来源/确认过期409、非法/坏文件422。明确归类会改品目表与兼容工作簿，普通 quote/analysis 不写。 |
+
+GET `…/analysis` 增加 `service_margin={rows,unplaced,complete,basis_label}`；rows 为月份/项目、除税收入/人工成本/毛利/毛利率、state/reasons、收入 sources 与人工 cost_sources。只匹配明确 service 类型与同月非空项目，缺失不补零、未归属不猜配；保留单列 `service_costs` 和原货物 dimensions。`actual_sales` 提供价格监控使用的同源原月收入/成本/数量及来源。默认起月同时考虑购销和人工成本，纯服务公司不会漏掉更早期间。
+
+GET `…/price-monitor` 增加 `uniform_markup`（state/sample_count/unknown_count/markup_percent/samples/依据）与 `alias_candidates={items,truncated}`。至少三个完整样本的实际加价率到 0.01 个百分点一致才增加 `uniform_actual_markup` 提示；候选同规格同单位、最多50组，来源可追溯，不自动合并或改价。原采购波动与最近票面税率仍取截至截止日的最近证据，不因起始月改变既有口径。Vue 查询失败清掉上一期间结果，公司映射变化与卸载丢弃迟到响应。
+
+可重复浏览器入口：`PLAYWRIGHT_MODULE=<已安装模块> node scripts/dev/cost_v2_e2e.mjs`；可设 `COST_V2_E2E_CDP` 连接外部 Chrome、`COST_V2_E2E_OUTPUT` 指定截图/下载目录（默认 output/playwright/cost-v2，收尾清理）。临时独立配置与合成源、服务端单次已落盘响应503，核对原记录仅查询与 XLSX冻结金额；不替代正式入口、真实业务和平台验收。
+
+## 2026-11-21 成本 V2 迁移对照与前端消费
+
+| 方法与路径 | 契约 |
+|---|---|
+| GET `/api/v1/companies/{company_id}/cost-analysis/v2/migration` | 可选 `pricing_date`；只读返回 revision、rules_revision、legacy_migrated、complete、summary（same/different/needs_review/legacy_active/legacy_migrated/legacy_none）与 rows（v1 历史均价口径价、V2 无客户数量 1 的当前规则价、差额、旧加价率状态、“不沿用”时的 V2 价）。不写盘。 |
+| POST `/api/v1/companies/{company_id}/cost-analysis/v2/migration/export` | 严格 `{revision,pricing_date}`；revision 与当前对照不符 409 `COST_V2_CONFLICT`，缺字段 422。返回内存 XLSX（V2开票参考/新旧对照/版本与口径，文本单元格、no-store），不改 v1 工作簿。 |
+
+GET V2 增加 `legacy_migrated`、`customers` 与每品目 `legacy_state`、`v1_reference`。rules/preview 与 PUT rules 接受可选 `legacy_migrated`（品目 key 列表，完整替换）；省略时沿用已保存列表，非法 key 422；列表进入 preview_hash 与“无变化”判断。
+
+前端：工作区“成本分析”模块选中公司默认显示 `CompanyCostsV2`，经典 `/costs` 在“经典成本表（v1）”标签且仍要求活动监控目录。页面 → `costV2.ts` → 上述接口；所有写入先 preview 再以 preview_hash+confirm 提交，409 重读不重放，网络/5xx 标未知并锁定直到成功读回。导出走 POST 附件 → blob 下载；Tauri 宿主的附件下载未验。
+
+接手复核：归档未知时只查询原记录 ID，禁止生成新预览/ID，重新试算仍保留查询入口；查询失败保持锁定。规则/迁移的读回以父组件成功 GET 后替换的快照为准，相同 revision 也能解锁，缺失快照不放行；解锁只允许重新预览，不重发旧 PUT。快照刷新使规则/迁移旧预览失效，迟到预览/保存响应不得恢复旧确认；归档预览的两次读取之间亦核对当前公司和报价。
+
 ## 2026-11-21 成本核对、归档与分析接口
 
 全部由 `api/routes/costs.py` 在线程池调用独立服务；JSON 写入/预览/导出沿用 2 MiB、重复键拒绝与同源保护。GET/报价/预览不写盘；只有明确确认保存的独立人工状态文件写盘，不触发 monitor/汇总或改旧工作簿。

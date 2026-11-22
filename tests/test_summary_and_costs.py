@@ -1614,7 +1614,7 @@ def test_item_catalog_survives_other_saves_and_rejects_bad_input(tmp_path: Path)
 
     assert read_json_object(service.status_json)["item_catalog"]["items"]["三级抗震盘螺HRB400E"]["standard_name"] == "盘螺"
     before = service.status_json.read_text(encoding="utf-8")
-    for bad in ({"盘螺": {"type": "service"}}, {"盘螺": {"output_tax_rate_percent": "120"}}, {"盘螺": {"standard_name": "名" * 61}}, "盘螺"):
+    for bad in ({"盘螺": {"type": "unknown"}}, {"盘螺": {"output_tax_rate_percent": "120"}}, {"盘螺": {"standard_name": "名" * 61}}, "盘螺"):
         with pytest.raises(ValueError):
             service.save_reference_status({"items": [], "item_catalog": bad})
     assert service.status_json.read_text(encoding="utf-8") == before

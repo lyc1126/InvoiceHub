@@ -395,3 +395,90 @@ def test_malformed_second_batch_line_inputs_are_422_without_writes(env, fields):
     before = _tree(root)
     assert client.post(url + "/quote", json=body).status_code == 422
     assert _tree(root) == before
+
+
+def _legacy(client, root, url, rate="12"):
+    client.app.state.invoice_hub.update_settings({"watch_dir": str(root / "成本发票")})
+    key = snapshot(client, url)["items"][0]["key"]
+    saved = client.post("/api/v1/cost-analysis/reference-status", json={"items": [{"key": key, "reference_markup_rate_percent": rate}]})
+    assert saved.status_code == 200, saved.text
+    return key
+
+
+def test_migration_compares_v1_and_v2_without_writes(env):
+    _app, client, root, _cid, url = env
+    key = _legacy(client, root, url)
+    view = snapshot(client, url)
+    item = view["items"][0]
+    assert item["legacy_state"] == "active" and view["legacy_migrated"] == []
+    # v1 prices the row from all historical purchases (150) × 1.12; V2 from category closing stock.
+    assert item["v1_reference"]["cost_unit_price"] == "150.00" and item["v1_reference"]["net_unit_price"] == "168.00"
+    assert view["customers"] == ["甲公司"]
+    before = _tree(root)
+    migration = client.get(url + "/migration", params={"pricing_date": "2026-07-31"})
+    assert migration.status_code == 200, migration.text
+    (row,) = migration.json()["rows"]
+    assert row["key"] == key and row["v2"]["rule"]["source"] == "legacy"
+    assert row["v2"]["net_unit_price"] == "186.67" and row["difference_net_unit_price"] == "18.67" and row["state"] == "different"
+    assert row["v2_without_legacy"]["rule"]["source"] == "fallback" and row["v2_without_legacy"]["net_unit_price"] == "180.00"
+    assert migration.json()["summary"]["legacy_active"] == 1
+    assert _tree(root) == before
+
+
+def test_explicit_migration_converts_or_drops_legacy_and_rule_edits_keep_it(env):
+    _app, client, root, _cid, url = env
+    key = _legacy(client, root, url)
+    view = snapshot(client, url)
+    line = {"scope": "line", "item_key": key, "kind": "markup", "value": "12"}
+    body = proposal(view, rules={"line": line}, legacy_migrated=[key])
+    preview = client.post(url + "/rules/preview", json=body).json()
+    assert preview["before"][0]["rule"]["source"] == "legacy" and preview["after"][0]["rule"]["source"] == "saved"
+    assert preview["before"][0]["net_unit_price"] == preview["after"][0]["net_unit_price"]
+    saved = client.put(url + "/rules", json={**body, "confirm": True, "preview_hash": preview["preview_hash"]})
+    assert saved.status_code == 200 and saved.json()["legacy_migrated"] == [key]
+    stored = json.loads((root / "成本发票" / RULE_FILE).read_text(encoding="utf-8"))
+    assert stored["pricing"]["legacy_migrated"] == [key]
+    view = snapshot(client, url)
+    assert view["items"][0]["legacy_state"] == "migrated" and view["items"][0]["legacy_markup_percent"] == "12"
+    # A later edit that omits the list keeps the migration; removing the rule must not revive v1.
+    dropped = proposal(view, rules={"company": {"scope": "company", "kind": "markup", "value": "5"}})
+    assert client.put(url + "/rules", json=confirm(client, url, dropped)).status_code == 200
+    view = snapshot(client, url)
+    assert view["legacy_migrated"] == [key]
+    quote = client.post(url + "/quote", json={"revision": view["revision"], "pricing_date": view["pricing_date"],
+                                              "lines": [{"key": key, "quantity": "1"}]}).json()["items"][0]
+    assert quote["rule"]["id"] == "company"
+    # Clearing the list explicitly re-enables the still-saved v1 manual rate.
+    revived = proposal(view, rules=view["rules"], legacy_migrated=[])
+    assert client.put(url + "/rules", json=confirm(client, url, revived)).status_code == 200
+    stored = json.loads((root / "成本发票" / RULE_FILE).read_text(encoding="utf-8"))
+    assert "legacy_migrated" not in stored["pricing"]
+    assert snapshot(client, url)["items"][0]["legacy_state"] == "active"
+
+
+@pytest.mark.parametrize("value", [["not-a-key"], "x", [1]])
+def test_malformed_legacy_migration_list_is_rejected(env, value):
+    _app, client, root, _cid, url = env
+    before = _tree(root)
+    assert client.post(url + "/rules/preview", json=proposal(snapshot(client, url), legacy_migrated=value)).status_code == 422
+    assert _tree(root) == before
+
+
+def test_migration_workbook_is_version_bound_and_in_memory(env):
+    from io import BytesIO
+    from openpyxl import load_workbook
+    _app, client, root, _cid, url = env
+    _legacy(client, root, url)
+    view = client.get(url + "/migration", params={"pricing_date": "2026-07-31"}).json()
+    before = _tree(root)
+    response = client.post(url + "/migration/export", json={"revision": view["revision"], "pricing_date": "2026-07-31"})
+    assert response.status_code == 200, response.text
+    assert response.headers["cache-control"] == "no-store"
+    book = load_workbook(BytesIO(response.content))
+    assert book.sheetnames == ["V2开票参考", "新旧对照", "版本与口径"]
+    compare = [[cell.value for cell in row] for row in book["新旧对照"].iter_rows()]
+    assert compare[1][6] == "168.00" and compare[1][8] == "186.67" and compare[1][13] == "旧加价率仍生效"
+    assert _tree(root) == before
+    stale = client.post(url + "/migration/export", json={"revision": "0" * 64, "pricing_date": "2026-07-31"})
+    assert stale.status_code == 409
+    assert client.post(url + "/migration/export", json={"revision": view["revision"]}).status_code == 422

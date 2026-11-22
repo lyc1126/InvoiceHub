@@ -1,5 +1,33 @@
 # InvoiceHub 完整文件地图
 
+## 2026-11-21 成本 V2 服务与价格提示
+
+| 文件 | 职责与联动 |
+|---|---|
+| `src/invoice_hub/services/cost_item_types.py` | 公司进销品名读取、类型/服务归类预览与确认；沿原品目表保存和 profile 同步锁，拒坏状态、迟到确认与矛盾别名类型。 |
+| `frontend/src/components/CostItemTypes.vue` | 服务成本中的归类 WsModal；来源版本、别名组联动、变更预览与未知结果只读查询。 |
+| `tests/test_cost_v2_completion.py` | 服务同月双项目/跨月/零与缺失、来源过期、归类坏状态/快照保护及只读价格证据。 |
+| `frontend/tests/cost-v2-completion.spec.ts` | 服务金额/来源、提示样本、未知归类不重放与过期草稿保护。 |
+| `scripts/dev/cost_v2_fixture.py` | 临时合成进销/项目与真实 FastAPI，归档成功后一次503故障注入，不读取本机配置。 |
+| `scripts/dev/cost_v2_e2e.mjs` | Chromium 归类/毛利/提示/报价→归档→查询→下载，XLSX金额与当前资源哈希、浅深/390/no_skin验证；可启动 Chrome 或接外部 CDP。 |
+
+联动 `cost_reports.py`、`cost_analysis.py`、成本路由、`CostAnalysis.vue`、`CostServiceCosts.vue` 与经典 `page-costs.js`/`costs.html` 的服务类型选项；未新增人工状态文件。
+
+## 2026-11-21 成本 V2 前端工作台
+
+| 文件 | 职责与联动 |
+|---|---|
+| `frontend/src/api/costV2.ts` | V2 类型、规则标签、十进制校验与内存附件下载；所有成本 V2 组件共用。 |
+| `frontend/src/components/CompanyCostsV2.vue` | 公司成本 V2 容器：计划开票日、快照读取（迟到响应丢弃）、八个标签与 `saved` 重读信号；由 `WorkspaceModule` 成本模块挂载。 |
+| `frontend/src/components/CostQuote.vue` | 定价助手：客户/品目/数量/税率/阶梯金额/市场依据→报价、代入式与分位合计，报价归档预览确认及未知结果查询。 |
+| `frontend/src/components/CostItems.vue` | 品目总览与新旧对照：v1/V2 差额、旧加价率转规则或不沿用的预览确认、V2 开票参考对照导出。 |
+| `frontend/src/components/CostRules.vue` | 规则草稿编辑（六类、取整、阶梯、税率/毛利/特殊计税）、全量试算对照与确认保存；不发送迁移清单。 |
+| `frontend/src/components/CostAnalysis.vue` | 毛利四维分析与价格监控；未知成本显示待核对，暂计月与服务成本单列。 |
+| `frontend/src/components/CostInventorySetup.vue` | 库存科目对照/期初/读回月份编辑、预览确认，账面核对差额展示。 |
+| `frontend/src/components/CostRecords.vue` | 归档记录列表、详情与按 content_hash 导出。 |
+| `frontend/src/components/CostServiceCosts.vue` | 服务成本人工录入、变更预览与确认保存。 |
+| `frontend/tests/cost-v2.spec.ts`、`frontend/tests/cost-v2-tabs.spec.ts` | 组件契约：确认体与 preview_hash、迁移清单并集、409 不重放、未知锁、未知值不补零、迟到公司响应丢弃。 |
+
 ## 2026-11-21 成本核对、归档与分析
 
 | 文件 | 职责与联动 |

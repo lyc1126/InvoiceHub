@@ -247,3 +247,16 @@ def test_customer_tier_priority_dates_and_manual_override_keep_the_same_order(qu
     manual = rule("fixed_price", "99", scope="line", item_key=KEY)
     assert select_rule(rules, **args, override=manual)[0]["source"] == "manual"
     assert select_rule(rules, **{**args, "on": "2026-08-01"})[0]["id"] == "company"
+
+
+def test_explanation_steps_shorten_long_weighted_costs_without_changing_prices():
+    from decimal import Decimal, localcontext
+    from invoice_hub.services.cost_pricing import calculate_price, normalize_rule
+    with localcontext() as context:
+        context.prec = 50
+        cost = Decimal(2000) / Decimal(12)
+    result = calculate_price(cost, "3", "13", normalize_rule({"scope": "company", "kind": "markup", "value": "12"}))
+    assert result["steps"][0] == "成本 ≈166.6667 × (1 + 12%) = ≈186.6667"
+    assert result["net_unit_price"] == "186.67" and result["net_amount"] == "560.01"
+    exact = calculate_price(Decimal("40"), "1", "13", normalize_rule({"scope": "company", "kind": "markup", "value": "5"}))
+    assert exact["steps"][0] == "成本 40 × (1 + 5%) = 42"

@@ -153,7 +153,7 @@ def test_cost_page_keeps_required_controls() -> None:
     assert 'list="itemCatalogNames"' in js
     assert "item_catalog: { items }" in js
     assert "开票参考还有未保存的草稿，请先保存或刷新后再修改品目表。" in js
-    assert '["goods", "货物"], ["expense", "费用"], ["fixed_asset", "固定资产"]' in js
+    assert '["goods", "货物"], ["service", "服务"], ["expense", "费用"], ["fixed_asset", "固定资产"]' in js
     assert 'app.statusPill("已开数量待核对", "warning")' in js
     assert ".item-catalog-dialog[open] { display: flex; }" in css
     assert "const referenceAmount = referenceAverageUnitPrice * max;" in js
@@ -205,7 +205,7 @@ def test_cost_page_keeps_required_controls() -> None:
     assert "解锁" in js
     assert "common.js?v=20261114-workspace-skin-isolation-1" in html
     assert "app.css?v=20261116-project-column" in html
-    assert "page-costs.js?v=20261117-company-tax-rate-editable" in html
+    assert "page-costs.js?v=20261121-service-item-types" in html
     for token in (
         "发票大类",
         "特定业务类型",

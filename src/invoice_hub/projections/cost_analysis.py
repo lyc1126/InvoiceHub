@@ -649,7 +649,7 @@ def outbound_reference_fields(
 
 
 ITEM_TYPE_GOODS = "goods"
-ITEM_TYPE_LABELS = {"goods": "货物", "expense": "费用", "fixed_asset": "固定资产"}
+ITEM_TYPE_LABELS = {"goods": "货物", "service": "服务", "expense": "费用", "fixed_asset": "固定资产"}
 ITEM_STANDARD_NAME_MAX = 60
 # Top-level keys of 成本开票状态.json that belong to the company, not to one reference row;
 # every writer of the status file must carry them over unchanged.
@@ -681,7 +681,7 @@ def parse_item_catalog(value: object) -> dict[str, dict]:
             raise ValueError(f"标准名称不能超过 {ITEM_STANDARD_NAME_MAX} 个字：{standard[:20]}…")
         item_type = _clean_text(entry.get("type")) or ITEM_TYPE_GOODS
         if item_type not in ITEM_TYPE_LABELS:
-            raise ValueError(f"品目类型只能是货物、费用或固定资产：{name}")
+            raise ValueError(f"品目类型只能是货物、服务、费用或固定资产：{name}")
         rate_text = _clean_text(entry.get("output_tax_rate_percent"))
         if rate_text:
             _tax_rate_from_percent(rate_text)

@@ -1,5 +1,13 @@
 # InvoiceHub 开发架构与工程导航
 
+## 2026-11-21 成本 V2 服务与价格提示收尾
+
+新增 `cost_item_types` 通过成本领域路由提供公司级品目类型预览/确认，沿用 `item_catalog` 与 profile 监控写锁，明确服务收入并刷新兼容工作簿；不增加第二份品目主数据。`cost_reports` 增加同月同项目服务毛利及来源、实际加价率一致样本与有界疑似同物异名；Vue `CostItemTypes`/`CostAnalysis` 只消费后端口径。可重复合成浏览器入口为 `scripts/dev/cost_v2_e2e.mjs` 与 `cost_v2_fixture.py`，不扩展 AppState 或 SQLite。开发范围与剩余实机验收见 [V2 当前实现](COST_ANALYSIS_V2_DESIGN.md)及五张地图；稳定 main/发布基线保持不变。
+
+## 2026-11-21 成本 V2 前端工作台
+
+`WorkspaceModule` 的成本模块选中公司时挂载 `CompanyCostsV2`，经 `frontend/src/api/costV2.ts` 调用公司 V2 接口；八个子组件各自持有预览/确认/未知锁，报价/品目/规则共享一次快照，其余标签按 `saved` 计数重读。经典 `/costs` iframe 仍按活动监控目录显示。后端新增只读 `GET …/migration` 与内存 `POST …/migration/export`，规则文件可选 `legacy_migrated`。入口、接口、数据与守护测试见五张地图。
+
 ## 2026-11-21 成本 V2 核对、归档与分析
 
 当前开发线增加 `bank/stock_mapping.py` 共享显式库存对照和期初，独立 `cost_inventory/cost_records/cost_service_costs/cost_reports/cost_export` 服务经成本路由接入，不扩展 AppState 或发票主存储。V2、公司进销存与草稿复用科目解析及原月末成本；归档/服务成本写本公司根目录，查询与预览无写入。报价导出消费固定归档，货物毛利按品类月成本分摊到客户/项目且金额守恒，服务成本单列。结构、接口、文件协议和最低测试见五张地图及 [V2 当前实现](COST_ANALYSIS_V2_DESIGN.md)；旧 v1/工作簿/已开快照未切换，稳定 main 与发布基线未改变。下方日期保留当时状态。
@@ -384,7 +392,7 @@ BAT/页面/monitor 触发
 | 架构债务 | `cost_analysis.py` 与 `costs.py` 有参考键、加价和锁定快照的对应实现 | 修改公式必须双向核对并跑成本全链测试 |
 | 架构债务 | 路径规范化在 `targets`、`monitoring`、成本和选择合计中有不同语境实现 | 不能仅凭函数同名就机械合并 |
 | 架构债务 | `base_head.html` 存在，但页面仍各自维护 head 和资源版本 | 静态资源变更必须逐模板核对版本参数 |
-| 架构债务 | 旧页面前端自动化主要是静态契约测试与 Node 交互测试；新 Vue 工作区有组件测试，但两者都没有真实浏览器 E2E | UI 改动仍需要真实浏览器/DOM 验收；E2E 见 ENG-05 |
+| 架构债务 | 工作区 P3 和成本 V2 已有合成资料、真实 FastAPI 与 Chromium 的本机回归。经典首页关键流程仍主要靠静态契约与 Node 交互测试 | 待补 Linux CI 和经典首页局部刷新回归，见 [ENG-05](PRODUCT_BACKLOG.md#eng-05) |
 | 架构债务 | Windows 首版没有内置桌面 WebView 壳 | macOS development `.app` 的单次 L9 smoke 不改变这一事实；`startup_surface=desktop` 仍须在当前 Windows source/portable 路径 fail closed，不能让设置项暗示已实现 |
 | 发布阻断 | Windows 与 macOS 正式脚本已实现但真机/签名证据未齐 | 自动化通过不等于 ZIP/DMG 已放行，必须分别执行平台手册 |
 | 未启用能力 | OCR 页面和 API 保留候选文件入口 | core 包未内置正式本地 OCR，提取接口返回禁用状态 |

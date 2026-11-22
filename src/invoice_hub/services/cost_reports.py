@@ -6,10 +6,11 @@ import json
 from collections import defaultdict
 from datetime import date
 from decimal import Decimal, ROUND_HALF_UP, localcontext
+from difflib import SequenceMatcher
 
 from invoice_hub.bank.stock_mapping import MONTH, resolve_stock, unique_object
 from invoice_hub.bank.vouchers import goods_family
-from invoice_hub.projections.cost_analysis import canonical_reference_rows
+from invoice_hub.projections.cost_analysis import canonical_reference_rows, normalize_spec_text, resolve_item
 from invoice_hub.services.company_costs import PRICING_LOCK, _conflict, _number
 from invoice_hub.services.company_files import read_relative
 from invoice_hub.services.company_projects import project_fields, remark_projects
@@ -56,6 +57,69 @@ def _aggregate(entries, dimension):
     return result
 
 
+def _service_margin(snapshot, context, costs, start, end, manual, remarks):
+    groups = {}
+    def group(month, project):
+        return groups.setdefault((month, project), {"revenue": ZERO, "cost": ZERO, "income_count": 0,
+            "cost_count": 0, "income_known": True, "sources": [], "cost_sources": []})
+    unplaced = []
+    catalog = context["cost_inputs"]["item_catalog"]
+    for row in context["sale_rows"]:
+        if resolve_item(catalog, row.get("内部项目名称"))["type"] != "service":
+            continue
+        month = str(row.get("开票日期", ""))[:7]
+        source = {"invoice_number": str(row.get("发票号码") or ""), "source_file": row.get("源文件", ""),
+                  "date": row.get("开票日期", ""), "name": row.get("内部项目名称", "")}
+        if not MONTH.fullmatch(month):
+            unplaced.append({**source, "reason": "服务销项日期未知，无法确定月份。"})
+            continue
+        if not start <= month <= end:
+            continue
+        fields = project_fields(source["invoice_number"], remarks, manual)
+        bucket = group(month, fields["project"])
+        revenue = _number(row.get("金额(除税)"))
+        bucket["income_count"] += 1
+        bucket["income_known"] &= revenue is not None
+        bucket["revenue"] += revenue or ZERO
+        bucket["sources"].append({**source, "project_source": fields["project_source"]})
+    for record_id, row in costs.items():
+        if start <= row["month"] <= end:
+            bucket = group(row["month"], row["project"])
+            bucket["cost"] += Decimal(row["amount"])
+            bucket["cost_count"] += 1
+            bucket["cost_sources"].append({"id": record_id, "source": row["source"], "amount": row["amount"]})
+    output = snapshot["sources"]["output"]
+    fresh = output["projection"]["cost_detail_exists"] and output["freshness"]["state"] not in {
+        "stale", "never_built", "unknown", "missing_dir"}
+    rows = []
+    for (month, project), bucket in sorted(groups.items()):
+        reasons = []
+        if not project:
+            reasons.append("项目未归属或备注冲突，未自动匹配服务成本。")
+        if not bucket["income_count"]:
+            reasons.append("没有匹配的服务收入，未将缺失收入当作零。")
+        if not bucket["income_known"]:
+            reasons.append("服务收入金额未识别。")
+        if not bucket["cost_count"]:
+            reasons.append("未录入同月份、同项目的服务成本；明确零成本也须录入。")
+        if not fresh:
+            reasons.append("销项来源不完整或已过期。")
+        known = not reasons
+        # Only explicit service types and an exact month/project match can form
+        # service profit. Empty projects and absent costs never become zero costs.
+        revenue = bucket["revenue"] if bucket["income_count"] and bucket["income_known"] else None
+        cost = bucket["cost"] if bucket["cost_count"] else None
+        profit = revenue - cost if known else None
+        margin = profit / revenue * 100 if profit is not None and revenue else None
+        rows.append({"month": month, "project": project, "revenue": f"{revenue:.2f}" if revenue is not None else None,
+            "cost": f"{cost:.2f}" if cost is not None else None, "gross_profit": f"{profit:.2f}" if profit is not None else None,
+            "gross_margin_percent": str(margin.quantize(Decimal("0.000001"), rounding=ROUND_HALF_UP)) if margin is not None else None,
+            "state": "known" if known else "needs_review", "reasons": reasons,
+            "sources": bucket["sources"], "cost_sources": bucket["cost_sources"]})
+    return {"rows": rows, "unplaced": unplaced, "complete": fresh and not unplaced and all(r["state"] == "known" for r in rows),
+            "basis_label": "仅品目表明确标记为服务的销项，按同公司、同月份、同项目匹配人工成本；费用与固定资产不推定为服务。"}
+
+
 def build_margin_report(snapshot, context, costs, start, end):
     inventory = snapshot["inventory"]
     catalog = context["cost_inputs"]["item_catalog"]
@@ -82,13 +146,15 @@ def build_margin_report(snapshot, context, costs, start, end):
         project = project_fields(number, remarks, manual)["project"]
         batches[(key, month)].append({"month": month, "item": key, "customer": str(row.get("购买方") or ""), "project": project,
                                       "revenue": revenue, "quantity": quantity, "index": index,
-                                      "source": {"invoice_number": number, "source_file": row.get("源文件", ""), "date": row.get("开票日期", "")}})
+                                      "source": {"invoice_number": number, "source_file": row.get("源文件", ""), "date": row.get("开票日期", ""),
+                                                 "name": row["内部项目名称"], "spec": row.get("规格型号", ""), "unit": row.get("单位", "")}})
     # No service/asset sale is silently reported as goods profit. Its cost basis
     # requires separate attribution, even when its invoice amount is readable.
-    from invoice_hub.projections.cost_analysis import resolve_item
     non_goods = [row for row in context["sale_rows"] if resolve_item(catalog, row.get("内部项目名称"))["type"] != "goods"
                  and start <= str(row.get("开票日期", ""))[:7] <= end]
-    excluded.extend({"invoice_number": row.get("发票号码", ""), "reason": "非货物收入未并入货物毛利，服务/资产成本须另行确认。"} for row in non_goods)
+    excluded.extend({"invoice_number": row.get("发票号码", ""), "item_type": resolve_item(catalog, row.get("内部项目名称"))["type"],
+                     "reason": "服务收入在服务项目毛利中单列。" if
+                     resolve_item(catalog, row.get("内部项目名称"))["type"] == "service" else "费用或资产收入未并入货物/服务毛利。"} for row in non_goods)
     entries = []
     with localcontext() as dc:
         dc.prec = 50
@@ -110,6 +176,9 @@ def build_margin_report(snapshot, context, costs, start, end):
                     allocated = cumulative
                 entries.append(entry)
         dimensions = {name: _aggregate(entries, name) for name in ("month", "item", "customer", "project")}
+        service_margin = _service_margin(snapshot, context, costs, start, end, manual, remarks)
+        samples = [{**e["source"], "quantity": str(e["quantity"]) if e["quantity"] is not None else None,
+                    "revenue": f"{e['revenue']:.2f}", "cost": f"{e['cost']:.2f}" if e["cost"] is not None else None} for e in entries]
     service = defaultdict(lambda: {"amount": ZERO, "sources": []})
     for row in costs.values():
         if start <= row["month"] <= end:
@@ -118,10 +187,12 @@ def build_margin_report(snapshot, context, costs, start, end):
             group["sources"].append(row["source"])
     return {"ok": True, "revision": snapshot["revision"], "company_id": snapshot["company_id"], "start": start, "end": end,
             "dimensions": dimensions, "excluded": excluded,
+            "service_margin": service_margin, "actual_sales": samples,
             "service_costs": [{"month": m, "project": p, "amount": f"{v['amount']:.2f}", "sources": v["sources"]} for (m, p), v in sorted(service.items())],
             "service_cost_total": f"{sum((v['amount'] for v in service.values()), ZERO):.2f}",
-            "complete": snapshot["complete"] and not excluded and not inventory["excluded"] and all(e["cost"] is not None for e in entries),
-            "basis_label": "货物实际除税收入与品类月末销售成本；按品类/单位、客户、项目和月份汇总。服务成本按人工记录单列，不分摊到客户/品目，不冒充公司净利润。"}
+            "complete": snapshot["complete"] and not any(r.get("item_type") != "service" for r in excluded)
+                        and not inventory["excluded"] and all(e["cost"] is not None for e in entries) and service_margin["complete"],
+            "basis_label": "货物实际除税收入与品类月末销售成本按四维汇总；服务收入与人工成本按月份/项目单列匹配，不从货物毛利扣除，不代表公司净利润。"}
 
 
 def _tax_percent(value):
@@ -133,9 +204,77 @@ def _tax_percent(value):
     return rate if 0 <= rate < 100 else None
 
 
+def _uniform_markup(report):
+    groups = {}
+    for row in report["actual_sales"]:
+        key = (row["invoice_number"] or row["source_file"], row["name"], row["spec"], row["unit"])
+        bucket = groups.setdefault(key, {"quantity": ZERO, "revenue": ZERO, "cost": ZERO, "known": True, "sources": []})
+        qty, cost = _number(row["quantity"]), _number(row["cost"])
+        bucket["known"] &= qty is not None and cost is not None
+        bucket["quantity"] += qty or ZERO
+        bucket["revenue"] += Decimal(row["revenue"])
+        bucket["cost"] += cost or ZERO
+        bucket["sources"].append(row)
+    samples, unknown = [], 0
+    for bucket in groups.values():
+        if not bucket["known"] or bucket["quantity"] <= 0 or bucket["cost"] <= 0 or bucket["revenue"] <= 0:
+            unknown += 1
+            continue
+        rate = ((bucket["revenue"] / bucket["cost"] - 1) * 100).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        samples.append({"markup_percent": str(rate), "revenue": f"{bucket['revenue']:.2f}", "cost": f"{bucket['cost']:.2f}",
+                        "sources": bucket["sources"]})
+    # A missing cost or excluded sale invalidates a period-wide conclusion; do
+    # not cherry-pick the known subset and label the whole period uniform.
+    unknown += sum(row.get("item_type") != "service" for row in report["excluded"])
+    uniform = len(samples) >= 3 and unknown == 0 and len({s["markup_percent"] for s in samples}) == 1
+    return {"state": "uniform" if uniform else "needs_review" if unknown else "insufficient" if len(samples) < 3 else "varied",
+            "sample_count": len(samples), "unknown_count": unknown, "minimum_samples": 3,
+            "markup_percent": samples[0]["markup_percent"] if uniform else None, "samples": samples,
+            "basis_label": "同票、同品名/规格/单位合为一个样本；实际加价率=(除税收入÷原月销售成本−1)×100%，按0.01个百分点比较，至少3个样本。"}
+
+
+def _alias_candidates(context, start, end):
+    buckets = defaultdict(dict)
+    catalog = context["cost_inputs"]["item_catalog"]
+    for row in context["purchases"] + context["sale_rows"]:
+        if not start <= str(row.get("开票日期", ""))[:7] <= end:
+            continue
+        name = str(row.get("内部项目名称") or "").strip()
+        item = resolve_item(catalog, name)
+        spec = normalize_spec_text(row.get("规格型号"))
+        unit = str(row.get("单位") or "").strip()
+        if not name or not spec or not unit or item["type"] != "goods":
+            continue
+        bucket = buckets[(spec, unit)]
+        value = bucket.setdefault(name, {"name": name, "standard_name": item["standard_name"], "sources": []})
+        source = {"invoice_number": row.get("发票号码", ""), "source_file": row.get("源文件", ""), "date": row.get("开票日期", "")}
+        if source not in value["sources"]:
+            value["sources"].append(source)
+    candidates, comparisons, truncated = [], 0, False
+    for (spec, unit), names in sorted(buckets.items()):
+        ordered = sorted(names.values(), key=lambda v: v["name"])
+        for index, left in enumerate(ordered):
+            for right in ordered[index + 1:]:
+                comparisons += 1
+                if comparisons > 20000 or len(candidates) >= 50:
+                    return {"items": candidates, "truncated": True}
+                if left["standard_name"] == right["standard_name"]:
+                    continue
+                a, b = left["name"], right["name"]
+                family_a, family_b = goods_family(a), goods_family(b)
+                similar = (min(len(a), len(b)) >= 2 and (a in b or b in a)) or SequenceMatcher(None, a, b).ratio() >= 0.65
+                same_family = family_a == family_b and family_a not in (None, "", "其他")
+                if similar or same_family:
+                    candidates.append({"names": [a, b], "spec": spec, "unit": unit,
+                        "reason": "规格与单位完全相同，名称相近。" if similar else "规格与单位完全相同，库存品类相同。",
+                        "sources": [{"name": v["name"], "count": len(v["sources"]), "invoices": v["sources"][:20]} for v in (left, right)]})
+    return {"items": candidates, "truncated": truncated}
+
+
 def build_price_monitor(snapshot, context, report, threshold, minimum_margin):
     alerts, suggestions = [], []
     purchase_index, sales_index = defaultdict(list), defaultdict(list)
+    start, end = report["start"], report["end"]
     for row in canonical_reference_rows(context["purchases"], context["cost_inputs"]["item_catalog"]):
         purchase_index[(row["内部项目名称"], row.get("单位", ""), row.get("规格型号", ""))].append(row)
     for row in canonical_reference_rows(context["sale_rows"], context["cost_inputs"]["item_catalog"]):
@@ -169,7 +308,12 @@ def build_price_monitor(snapshot, context, report, threshold, minimum_margin):
         if margin is not None and Decimal(margin) < minimum_margin:
             alerts.append({"code": "actual_low_margin", "category_key": row["key"], "state": "review",
                            "message": "实际货物毛利低于本次指定阈值。", "gross_margin_percent": margin, "sources": row["sources"]})
+    uniform = _uniform_markup(report)
+    if uniform["state"] == "uniform":
+        alerts.append({"code": "uniform_actual_markup", "state": "review", "sample_count": uniform["sample_count"],
+                       "markup_percent": uniform["markup_percent"], "message": "所选期间实际加价率一致，请核对并留存定价依据；未自动改价。"})
     return {"ok": True, "revision": snapshot["revision"], "alerts": alerts, "tax_suggestions": suggestions,
+            "start": start, "end": end, "uniform_markup": uniform, "alias_candidates": _alias_candidates(context, start, end),
             "price_change_percent": str(threshold), "minimum_margin_percent": str(minimum_margin),
             "basis_label": "价格与设置差异提示，不判断税率适用是否合法，不因售价偏离参考价告警，不联网获取行情。"}
 
@@ -198,7 +342,9 @@ class CostAnalysisService:
         with PRICING_LOCK:
             snapshot, context = self.pricing._snapshot(company_id, on)
             costs = ServiceCostService(self.pricing).read(company_id)
-            start = start or snapshot["inventory"]["first_month"] or end
+            months = [str(row.get("开票日期", ""))[:7] for row in context["purchases"] + context["sale_rows"]]
+            months += [row["month"] for row in costs["costs"].values()]
+            start = start or min((m for m in months if MONTH.fullmatch(m) and m <= end), default=end)
             result = build_margin_report(snapshot, context, costs["costs"], start, end)
             if monitor:
                 with localcontext() as dc:

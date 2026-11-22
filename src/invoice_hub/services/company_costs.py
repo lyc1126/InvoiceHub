@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import threading
 from collections import defaultdict
 from datetime import date
@@ -29,7 +30,8 @@ from invoice_hub.services.cost_pricing import (
 RULE_FILE = "成本定价规则.json"
 PRICING_LOCK = threading.RLock()
 QUOTE_FIELDS = {"revision", "pricing_date", "customer", "lines"}
-PREVIEW_FIELDS = QUOTE_FIELDS | {"rules_revision", "rules"}
+PREVIEW_FIELDS = QUOTE_FIELDS | {"rules_revision", "rules", "legacy_migrated"}
+ITEM_KEY = re.compile(r"[a-f0-9]{40}\Z")
 
 
 def _body(body: object, fields: set[str]) -> None:
@@ -85,6 +87,13 @@ def _safe_rows(rows: list[dict], on: str) -> list[dict]:
     return result
 
 
+def normalize_legacy_migrated(raw: object) -> list[str]:
+    """Item keys whose v1 manual markup was explicitly migrated or dropped in V2."""
+    if not isinstance(raw, list) or len(raw) > 5000 or any(not isinstance(key, str) or not ITEM_KEY.fullmatch(key) for key in raw):
+        raise ValueError("旧加价率迁移清单须为品目行标识列表（最多 5000 个）。")
+    return sorted(set(raw))
+
+
 def _read_rules(folder: Path, company_id: str) -> dict:
     try:
         raw = read_relative(folder, RULE_FILE, 2 * 1024 * 1024)
@@ -95,10 +104,13 @@ def _read_rules(folder: Path, company_id: str) -> dict:
         if (not isinstance(data, dict) or set(data) != {"version", "revision", "pricing"}
                 or type(data["version"]) is not int or data["version"] != 1
                 or type(data["revision"]) is not int or data["revision"] < 0
-                or not isinstance(data["pricing"], dict) or set(data["pricing"]) != {"company_id", "rules"}
+                or not isinstance(data["pricing"], dict)
+                or set(data["pricing"]) not in ({"company_id", "rules"}, {"company_id", "rules", "legacy_migrated"})
                 or data["pricing"]["company_id"] != company_id):
             raise ValueError("结构或公司身份不一致")
         data["pricing"]["rules"] = normalize_rules(data["pricing"]["rules"])
+        if "legacy_migrated" in data["pricing"]:
+            data["pricing"]["legacy_migrated"] = normalize_legacy_migrated(data["pricing"]["legacy_migrated"])
         return data
     except (ValueError, UnicodeError, TypeError, RecursionError) as exc:
         raise ValueError(f"{RULE_FILE} 损坏或不属于本公司，已保留原文件并拒绝写入。") from exc
@@ -172,6 +184,7 @@ class CompanyCostService:
                                           tax_profile=cost["tax_profile"], book=book, end=on[:7])
         self.views._freshness_warnings(inventory, context["sources"], {"input": "成本发票", "output": "开具发票"})
         rules = _read_rules(Path(context["profiles"]["input"].watch_dir), company_id)
+        migrated = set(rules["pricing"].get("legacy_migrated", []))
         categories = {row["key"]: row for row in inventory["items"]}
         deductibility = input_tax_index(cost["check_rows"])
         groups, issued = defaultdict(list), defaultdict(list)
@@ -231,6 +244,9 @@ class CompanyCostService:
                           "latest_purchase_date": latest_date or None, "cost_tax_basis": basis["label"],
                           "output_tax_rate_percent": reference["reference_output_tax_rate_percent"],
                           "legacy_markup_percent": legacy_markup, "reference_markup_rate": reference["reference_markup_rate"],
+                          # Migrated/dropped v1 rates stay visible as evidence but no longer price V2 quotes.
+                          "legacy_state": None if legacy_markup is None else "migrated" if key in migrated else "active",
+                          "v1_reference": self._v1_reference(reference),
                           "manual_issued_snapshot": manual, "actual_issued": actual, "issued": actual or manual,
                           "warnings": warnings + ([basis["note"]] if basis["note"] else [])})
         after_context = self._context(company_id)
@@ -241,6 +257,8 @@ class CompanyCostService:
         context.update(cost_inputs=cost, purchases=purchases, sale_rows=sale_rows, book=book)
         payload = {"ok": True, "schema_version": 2, "company_id": company_id, "pricing_date": on,
                    "revision": before, "rules_revision": rules["revision"], "rules": rules["pricing"]["rules"],
+                   "legacy_migrated": sorted(migrated),
+                   "customers": sorted({" ".join(str(row.get("购买方") or "").split()) for row in sale_rows} - {""})[:2000],
                    "default_markup_percent": cost["default_markup_percent"], "items": items,
                    "sources": context["sources"], "inventory": inventory, "book_reconciliation": reconciliation,
                    "warnings": inventory["warnings"], "complete": complete,
@@ -258,14 +276,29 @@ class CompanyCostService:
                                   if result["net_amount"] is not None and result["tax_amount"] is not None else None)
         return result
 
+    @staticmethod
+    def _v1_reference(reference: dict) -> dict:
+        """The v1 workbook row's price, read only so migration can show old vs new bases."""
+        values = {}
+        for output, field in (("cost_unit_price", "reference_cost_unit_price"), ("net_unit_price", "reference_average_unit_price"),
+                              ("gross_unit_price", "reference_average_unit_price_with_tax")):
+            number = _number(reference.get(field))
+            values[output] = money(number) if number is not None else None
+        # v1 writes 0 when its historical cost is unknown; that is not a real price.
+        if values["cost_unit_price"] in (None, "0.00"):
+            values = dict.fromkeys(values)
+        return {**values, "markup_percent": reference["reference_markup_rate_percent"],
+                "cost_basis": str(reference.get("reference_cost_basis") or ""), "basis": "historical_average"}
+
     def read(self, company_id: str, *, on: str = "") -> dict:
         with PRICING_LOCK:
             return self._snapshot(company_id, pricing_date(on, default=True))[0]
 
     @staticmethod
-    def _quote(snapshot: dict, body: dict, rules: dict) -> list[dict]:
+    def _quote(snapshot: dict, body: dict, rules: dict, legacy_migrated: list[str] | None = None) -> list[dict]:
         customer = customer_name(body.get("customer", ""))
         items = {item["key"]: item for item in snapshot["items"]}
+        migrated = set(snapshot["legacy_migrated"] if legacy_migrated is None else legacy_migrated)
         lines = body.get("lines")
         if not isinstance(lines, list) or not 1 <= len(lines) <= 500:
             raise ValueError("试算须提供 1—500 行。")
@@ -281,7 +314,7 @@ class CompanyCostService:
             seen.add(key)
             item = items[key]
             rule, covered = select_rule(rules, item_key=key, customer=customer, on=snapshot["pricing_date"],
-                                        legacy_markup=item["legacy_markup_percent"],
+                                        legacy_markup=None if key in migrated else item["legacy_markup_percent"],
                                         default_markup=snapshot["default_markup_percent"], override=line.get("rule"))
             if "output_tax_rate_percent" in line:
                 rule = {**rule, "output_tax_rate_percent": line["output_tax_rate_percent"]}
@@ -314,14 +347,20 @@ class CompanyCostService:
             raise ValueError("超过 500 个品目，请显式选择不超过 500 行进行规则试算。")
         if "lines" in body and (not isinstance(body["lines"], list) or not 1 <= len(body["lines"]) <= 500):
             raise ValueError("显式试算须提供 1—500 行。")
+        # Omitting the list keeps the saved migration state, so ordinary rule edits
+        # cannot silently re-enable or drop v1 manual markups.
+        legacy = (normalize_legacy_migrated(body["legacy_migrated"]) if "legacy_migrated" in body
+                  else snapshot["legacy_migrated"])
         request = {**body, "lines": body.get("lines", [{"key": key, "quantity": "1"} for key in sorted(keys)])}
         before = self._quote(snapshot, request, snapshot["rules"]) if request["lines"] else []
-        after = self._quote(snapshot, request, rules) if request["lines"] else []
+        after = self._quote(snapshot, request, rules, legacy) if request["lines"] else []
         preview_hash = _hash({"company": company_id, "revision": snapshot["revision"], "rules": rules,
+                              "legacy_migrated": legacy,
                               "on": snapshot["pricing_date"], "customer": customer_name(body.get("customer", "")),
                               "lines": request["lines"], "before": before, "after": after})
         return {"ok": True, "revision": snapshot["revision"], "rules_revision": snapshot["rules_revision"],
-                "preview_hash": preview_hash, "before": before, "after": after, "rules": rules}, context, snapshot
+                "preview_hash": preview_hash, "before": before, "after": after, "rules": rules,
+                "legacy_migrated": legacy}, context, snapshot
 
     def preview(self, company_id: str, body: dict) -> dict:
         _body(body, PREVIEW_FIELDS)
@@ -343,12 +382,68 @@ class CompanyCostService:
             if snapshot["revision"] != self._fingerprint(self._context(company_id)):
                 raise _conflict()
             current = _read_rules(folder, company_id)
-            if current["pricing"]["rules"] == preview["rules"]:
+            if (current["pricing"]["rules"] == preview["rules"]
+                    and current["pricing"].get("legacy_migrated", []) == preview["legacy_migrated"]):
                 return {"ok": True, "changed": False, "rules_revision": current["revision"]}
-            data = {"version": 1, "revision": current["revision"] + 1,
-                    "pricing": {"company_id": company_id, "rules": preview["rules"]}}
+            pricing = {"company_id": company_id, "rules": preview["rules"]}
+            if preview["legacy_migrated"]:
+                pricing["legacy_migrated"] = preview["legacy_migrated"]
+            data = {"version": 1, "revision": current["revision"] + 1, "pricing": pricing}
             write_state(folder, RULE_FILE, data, expected_identity=identity)
             verified = _read_rules(folder, company_id)
             if verified != data:
                 raise _conflict("保存后读回不一致，结果未知；请查询规则，不要重复提交。")
-            return {"ok": True, "changed": True, "rules_revision": verified["revision"], "rules": verified["pricing"]["rules"]}
+            return {"ok": True, "changed": True, "rules_revision": verified["revision"], "rules": verified["pricing"]["rules"],
+                    "legacy_migrated": verified["pricing"].get("legacy_migrated", [])}
+
+    def migration(self, company_id: str, *, on: str = "") -> dict:
+        """Read-only v1 → V2 comparison for every reference row; no rule or workbook is changed."""
+        with PRICING_LOCK:
+            snapshot, _context = self._snapshot(company_id, pricing_date(on, default=True))
+            return migration_view(snapshot)
+
+
+def _unit_prices(snapshot: dict, keys: list[str], legacy_migrated: list[str]) -> dict[str, dict]:
+    """Company-default unit quotes (no customer, quantity 1) in the quote API's 500-line batches."""
+    result = {}
+    for start in range(0, len(keys), 500):
+        lines = [{"key": key, "quantity": "1"} for key in keys[start:start + 500]]
+        for row in CompanyCostService._quote(snapshot, {"customer": "", "lines": lines}, snapshot["rules"], legacy_migrated):
+            result[row["key"]] = row
+    return result
+
+
+def migration_view(snapshot: dict) -> dict:
+    rows, counts = [], defaultdict(int)
+    every = [item["key"] for item in snapshot["items"]]
+    prices = _unit_prices(snapshot, every, snapshot["legacy_migrated"])
+    # The alternative shows what each active v1 row costs if its markup is not carried over.
+    alternatives = _unit_prices(snapshot, [item["key"] for item in snapshot["items"] if item["legacy_state"] == "active"], every)
+    for item in snapshot["items"]:
+        current, without = prices[item["key"]], alternatives.get(item["key"])
+        old, new = item["v1_reference"]["net_unit_price"], current["net_unit_price"]
+        state = "needs_review" if old is None or new is None else "same" if old == new else "different"
+        counts[state] += 1
+        counts["legacy_" + (item["legacy_state"] or "none")] += 1
+        rows.append({"key": item["key"], "name": item["name"], "spec": item["spec"], "unit": item["unit"],
+                     "output_tax_rate_percent": item["output_tax_rate_percent"],
+                     "legacy_markup_percent": item["legacy_markup_percent"], "legacy_state": item["legacy_state"],
+                     "v1": item["v1_reference"],
+                     "v2": {"cost_unit_price": item["closing_weighted_unit_cost"],
+                            "historical_average_unit_cost": item["historical_average_unit_cost"],
+                            "latest_purchase_unit_cost": item["latest_purchase_unit_cost"],
+                            "rule": {field: current["rule"].get(field) for field in ("id", "source", "scope", "kind", "value", "price_basis")},
+                            "net_unit_price": new, "gross_unit_price": current["gross_unit_price"],
+                            "state": current["state"], "warnings": current["warnings"], "steps": current["steps"]},
+                     "v2_without_legacy": None if without is None else {
+                         "rule": {field: without["rule"].get(field) for field in ("id", "source", "kind", "value")},
+                         "net_unit_price": without["net_unit_price"], "gross_unit_price": without["gross_unit_price"],
+                         "state": without["state"]},
+                     "difference_net_unit_price": money(Decimal(new) - Decimal(old)) if state != "needs_review" else None,
+                     "state": state, "warnings": item["warnings"]})
+    return {"ok": True, "company_id": snapshot["company_id"], "pricing_date": snapshot["pricing_date"],
+            "revision": snapshot["revision"], "rules_revision": snapshot["rules_revision"],
+            "legacy_migrated": snapshot["legacy_migrated"], "complete": snapshot["complete"], "rows": rows,
+            "summary": {key: counts[key] for key in ("same", "different", "needs_review", "legacy_active", "legacy_migrated", "legacy_none")},
+            "basis_label": "v1 = 全部历史进项加权均价 × (1 + 行加价率)；V2 = 品类结存加权成本按规则定价（无客户、数量 1）。"
+                           "对照只读，不改 v1 工作簿、已开快照或规则。"}

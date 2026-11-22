@@ -28,6 +28,15 @@ def decimal_text(value: Decimal) -> str:
     return format(value, "f").rstrip("0").rstrip(".") if "." in format(value, "f") else format(value, "f")
 
 
+def shown(value: Decimal) -> str:
+    """Explanation text only: month-end weighted costs carry ~50 digits, so show ≈ 4 decimals.
+
+    Calculations keep full precision; archives keep these strings, so the ≈ marks rounding.
+    """
+    rounded = value.quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
+    return decimal_text(value) if rounded == value else "≈" + decimal_text(rounded)
+
+
 def money(value: Decimal) -> str:
     return format(value.quantize(CENT, rounding=ROUND_HALF_UP), ".2f")
 
@@ -238,19 +247,19 @@ def calculate_price(cost: Decimal | None, quantity: str, tax_rate: str, rule: di
         minimum_net = None
         if rule["kind"] == "markup":
             net = cost * (ONE + value / 100)
-            steps.append(f"成本 {decimal_text(cost)} × (1 + {rule['value']}%) = {decimal_text(net)}")
+            steps.append(f"成本 {shown(cost)} × (1 + {rule['value']}%) = {shown(net)}")
         elif rule["kind"] == "gross_margin":
             net = cost / (ONE - value / 100)
-            steps.append(f"成本 {decimal_text(cost)} ÷ (1 − {rule['value']}%) = {money(net)}")
+            steps.append(f"成本 {shown(cost)} ÷ (1 − {rule['value']}%) = {money(net)}")
         elif rule["kind"] == "fixed_addition":
             net = cost + value
-            steps.append(f"成本 {decimal_text(cost)} + {rule['value']} = {decimal_text(net)}")
+            steps.append(f"成本 {shown(cost)} + {rule['value']} = {shown(net)}")
         elif rule["kind"] == "market":
             minimum_net = cost * (ONE + value / 100)
             market_net = Decimal(market["unit_price"]) / (ONE + rate) if market["price_basis"] == "gross" else Decimal(market["unit_price"])
             net = max(market_net, minimum_net)
             result["minimum_net_unit_price"] = decimal_text(minimum_net)
-            steps.append(f"市场参照 {market['source']}（{market['observed_on']} 至 {market['valid_to']}）：max(除税市场价 {decimal_text(market_net)}, 成本 {decimal_text(cost)} × (1 + {rule['value']}%)) = {decimal_text(net)}")
+            steps.append(f"市场参照 {market['source']}（{market['observed_on']} 至 {market['valid_to']}）：max(除税市场价 {shown(market_net)}, 成本 {shown(cost)} × (1 + {rule['value']}%)) = {shown(net)}")
         else:
             net = value / (ONE + rate) if rule["price_basis"] == "gross" else value
             steps.append(f"固定{'含税' if rule['price_basis'] == 'gross' else '除税'}价 {rule['value']}")

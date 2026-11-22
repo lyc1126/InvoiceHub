@@ -1,5 +1,17 @@
 # InvoiceHub Agent 工程任务导航
 
+## 2026-11-21 成本 V2 开发范围收尾
+
+服务收入/项目毛利、实际统一加价率、同物异名命中 `cost_item_types`、`cost_reports`、`CostItemTypes.vue`、`CostAnalysis.vue`；完整读取[成本规则](rules/COST_ANALYSIS.md)、[页面规则](rules/WEB_UI.md)、[监控规则](rules/MONITORING.md)与下方成本任务行。品目类型属于既有品目表，确认归类会刷新兼容工作簿，须与监控共锁；报价/分析/提示保持只读。
+
+最低新增 `test_cost_v2_completion` 与 `cost-v2-completion.spec.ts`：同月双项目/跨月、缺成本与零、未归属/过期来源、别名组/状态保护、原月成本样本与未知阻断、规格E/单位边界及证据不改价。相邻成本、库存、公司、凭证、API/文档契约，Vue typecheck/test/build、Node脚本语法、全量pytest/Ruff/编译。重建后运行 `scripts/dev/cost_v2_e2e.mjs`（配 `cost_v2_fixture.py`），从真实Vue/FastAPI复验服务归类、毛利、提示、报价→归档响应丢失→原ID查询→下载冻结金额，浅深/390/no_skin及当前资源哈希；支持 `COST_V2_E2E_CDP` 和 `COST_V2_E2E_OUTPUT`，收尾清理输出。真实默认配置、Windows正式BAT、正式前台、原生选择器、Tauri附件/打包继续单独验收。
+
+## 2026-11-21 成本 V2 前端工作台
+
+接手后的恢复回归：`frontend/tests/cost-v2.spec.ts` 覆盖归档未知期间禁止新 ID、重新试算保留查询入口、查询失败保持锁定、规则/迁移同版本成功读回解锁与迟到预览作废。浏览器另用隔离合成服务注入“已落盘但响应丢失 / 未落盘失败”，核对请求次数、显式重新预览确认、下载与浅深/390px/no_skin；不以此替代真实配置或 Tauri 验收。
+
+前端任务定位 `frontend/src/api/costV2.ts`、`CompanyCostsV2.vue` 与八个 `Cost*.vue`，并联动 `WorkspaceModule` 成本模块与后端 `company_costs.migration/_preview` 和 `cost_export.migration_workbook`。完整读取[成本规则](rules/COST_ANALYSIS.md)与[页面规则](rules/WEB_UI.md)。最低验证：`tests/test_company_costs.py`（迁移/清单/导出）、相邻成本 pytest、`frontend` 的 vitest 全量与 `vue-tsc`、`vite build` 后 `test_workspace_frontend`/`test_frontend_contract`；真实验收需浏览器前台跑报价→归档→导出、迁移确认与 Tauri 附件下载。
+
 ## 2026-11-21 成本 V2 核对、归档与分析
 
 成本任务扩展到共享 `bank/stock_mapping.py` 及独立 `cost_inventory/cost_records/cost_service_costs/cost_reports/cost_export` 服务，路由仍在成本领域。先读[成本规则](rules/COST_ANALYSIS.md)、[做账规则](rules/BOOKKEEPING.md)、[V2 当前实现](../COST_ANALYSIS_V2_DESIGN.md)和下方成本/公司/做账任务行；接口、数据、文件、注释原因分别查对应地图。下方日期是历史阶段状态。

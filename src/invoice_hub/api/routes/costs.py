@@ -15,10 +15,11 @@ from fastapi.responses import JSONResponse, Response
 
 from invoice_hub.services.company_costs import CompanyCostService, _unique_object
 from invoice_hub.services.cost_inventory import CostInventoryService
+from invoice_hub.services.cost_item_types import CostItemTypeService
 from invoice_hub.services.cost_records import CostRecordService
 from invoice_hub.services.cost_reports import CostAnalysisService
 from invoice_hub.services.cost_service_costs import ServiceCostService
-from invoice_hub.services.cost_export import quote_workbook
+from invoice_hub.services.cost_export import migration_workbook, quote_workbook
 from invoice_hub.services.company_registry import CompanyRegistryError
 from invoice_hub.api.routes.companies import _error_response
 
@@ -81,6 +82,24 @@ def router() -> APIRouter:
         body = await _v2_body(request)
         return await _v2_call(lambda: CompanyCostService(_state(request).company_views).save(company_id, body))
 
+    @routes.get("/api/v1/companies/{company_id}/cost-analysis/v2/migration")
+    async def cost_migration(request: Request, company_id: str, pricing_date: str = ""):
+        return await _v2_call(lambda: CompanyCostService(_state(request).company_views).migration(company_id, on=pricing_date))
+
+    @routes.post("/api/v1/companies/{company_id}/cost-analysis/v2/migration/export")
+    async def export_cost_migration(request: Request, company_id: str):
+        body = await _v2_body(request)
+        def export():
+            if set(body) != {"revision", "pricing_date"}:
+                raise ValueError("请提供当前对照的成本修订与计划开票日。")
+            view = CompanyCostService(_state(request).company_views).migration(company_id, on=body["pricing_date"])
+            # The download must be the comparison the user is looking at, not a newer generation.
+            if body["revision"] != view["revision"]:
+                raise CompanyRegistryError("COST_V2_CONFLICT", "成本或规则来源已变化，请重新读取对照后导出。", status_code=409)
+            return Response(migration_workbook(view), media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            headers={"Content-Disposition": f'attachment; filename="cost-v2-reference-{view["pricing_date"]}.xlsx"', "Cache-Control": "no-store"})
+        return await _v2_call(export)
+
     @routes.get("/api/v1/companies/{company_id}/cost-analysis/v2/inventory-setup")
     async def inventory_setup(request: Request, company_id: str):
         return await _v2_call(lambda: CostInventoryService(CompanyCostService(_state(request).company_views)).read(company_id))
@@ -129,6 +148,20 @@ def router() -> APIRouter:
     @routes.get("/api/v1/companies/{company_id}/cost-analysis/v2/service-costs")
     async def service_costs(request: Request, company_id: str):
         return await _v2_call(lambda: ServiceCostService(CompanyCostService(_state(request).company_views)).read(company_id))
+
+    @routes.get("/api/v1/companies/{company_id}/cost-analysis/v2/item-types")
+    async def item_types(request: Request, company_id: str):
+        return await _v2_call(lambda: CostItemTypeService(CompanyCostService(_state(request).company_views)).read(company_id))
+
+    @routes.post("/api/v1/companies/{company_id}/cost-analysis/v2/item-types/preview")
+    async def preview_item_types(request: Request, company_id: str):
+        body = await _v2_body(request)
+        return await _v2_call(lambda: CostItemTypeService(CompanyCostService(_state(request).company_views)).preview(company_id, body))
+
+    @routes.put("/api/v1/companies/{company_id}/cost-analysis/v2/item-types")
+    async def save_item_types(request: Request, company_id: str):
+        body = await _v2_body(request)
+        return await _v2_call(lambda: CostItemTypeService(CompanyCostService(_state(request).company_views)).save(company_id, body))
 
     @routes.post("/api/v1/companies/{company_id}/cost-analysis/v2/service-costs/preview")
     async def preview_service_costs(request: Request, company_id: str):

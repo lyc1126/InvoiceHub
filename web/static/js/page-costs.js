@@ -630,7 +630,7 @@ function renderOutboundCompare(row) {
   return `<span class="reference-compare">${mergeNote}${app.statusPill(meta.text, meta.tone)}${button}</span>`;
 }
 
-const ITEM_TYPE_OPTIONS = [["goods", "货物"], ["expense", "费用"], ["fixed_asset", "固定资产"]];
+const ITEM_TYPE_OPTIONS = [["goods", "货物"], ["service", "服务"], ["expense", "费用"], ["fixed_asset", "固定资产"]];
 const ITEM_RATE_OPTIONS = [["", "跟随公司"], ["13", "13%"], ["9", "9%"], ["6", "6%"], ["5", "5%"], ["3", "3%"], ["1", "1%"], ["0", "0%"]];
 
 function catalogSelect(name, field, options, value) {
