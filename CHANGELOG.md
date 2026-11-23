@@ -2,6 +2,15 @@
 
 ## 未发布
 
+### 2026-11-23 将 Tauri 默认启动入口切换至新版工作区并收尾 Windows 单测
+
+- 需求与现场：macOS 本机 Tauri 实机验收发现桌面窗口启动默认打开经典首页 `/`，且经典页顶栏无进入 `/workspace/` 的入口；同时 PR #32 `c5d84b0` 远端 CI 中 7/8 项全绿（含首次全过的 Linux Playwright 浏览器 E2E 双向各 3 轮与 macOS Python 全量），`Windows Python` 仅余 1 项 `test_company_receipts.py::test_changes_during_parse_are_not_cached`（1,517 passed / 1 failed）。
+- 修改方案：
+  - `src-tauri/src/lib.rs` 新增 `backend_workspace_url()`（`http://127.0.0.1:8766/workspace/`），保持 `backend_origin()`（`http://127.0.0.1:8766`）不变以守住 Host RPC/Origin/打印弹窗边界；`src-tauri/src/main.rs` 的桌面主窗口、browser 模式与托盘打开改用 `backend_workspace_url()`。
+  - `web/templates/index.html` 顶栏在主导航右侧新增“新版工作区”（`href="/workspace/"`），不改动 7 项主导航契约，且在 `/workspace/` 嵌入 iframe 下随 `.topbar` 自动隐藏，实现新旧界面双向互切；同步 `docs/architecture/rules/TAURI_HOST.md`。
+  - `tests/test_company_receipts.py::test_changes_during_parse_are_not_cached` 改为写入不同字节数 `b'newer'`，避免 Windows NTFS 同 15.6ms 时钟滴答内等长覆写导致 stat 签名未变。
+- 验证范围与未覆盖项：本机通过 Rust `cargo fmt --check`、`cargo clippy --locked --all-targets -- -D warnings`、`cargo test --lib`、重新构建 macOS ARM64 `InvoiceHub.app` 并实机验证桌面启动直接进入 `/workspace/`，以及 Python 受影响前端/契约/回单/文档测试；远端 Windows Python 100% 全绿以本提交推送后的 PR #32 CI 结果为准，真实业务金额与 Windows 实机验收继续独立跟进。
+
 ### 2026-11-23 修复 PR #32 远端 CI 与 Windows 跨平台兼容性问题
 
 - 需求与现场：PR #32（`codex/workspace-p3@0502541`）首轮 GitHub Actions（run `45119681382`）中 `DCO`、`ruff`、`macOS ARM64 Python`、`Tauri Rust (macos-15 / windows-latest)` 与 `macOS reference shell` 均已通过，同时暴露 2 个 Linux Node 作业配置问题及 138 项 Windows Python 兼容性失败（另有 3 条 Windows Rust clippy dead-code 警告已登记至 [ENG-01](docs/PRODUCT_BACKLOG.md#eng-01)）。

@@ -14,6 +14,12 @@ pub fn backend_origin() -> String {
     format!("http://{FIXED_BACKEND_HOST}:{FIXED_BACKEND_PORT}")
 }
 
+/// Default entry URL for desktop windows and browser launches: opens the Vue
+/// workspace directly while keeping `/` available for classic fallback/embeds.
+pub fn backend_workspace_url() -> String {
+    format!("{}/workspace/", backend_origin())
+}
+
 pub fn accepts_temporary_file_drop(url: &tauri::Url) -> bool {
     // The Vue temporary page shares the original selection service. State queries
     // must not disable drops or grant another workspace module access to paths.
@@ -30,13 +36,14 @@ pub fn accepts_temporary_file_drop(url: &tauri::Url) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{backend_origin, FIXED_BACKEND_HOST, FIXED_BACKEND_PORT};
+    use super::{backend_origin, backend_workspace_url, FIXED_BACKEND_HOST, FIXED_BACKEND_PORT};
 
     #[test]
     fn backend_origin_is_the_fixed_localhost_contract() {
         assert_eq!(FIXED_BACKEND_HOST, "127.0.0.1");
         assert_eq!(FIXED_BACKEND_PORT, 8766);
         assert_eq!(backend_origin(), "http://127.0.0.1:8766");
+        assert_eq!(backend_workspace_url(), "http://127.0.0.1:8766/workspace/");
     }
 
     #[test]

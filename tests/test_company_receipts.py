@@ -111,7 +111,9 @@ def test_changes_during_parse_are_not_cached(tmp_path):
     source = tmp_path / 'file.pdf'
     source.write_bytes(b'old')
     def parse(paths):
-        paths[0].write_bytes(b'new')
+        # Change size as well as content so fast writes within one Windows NTFS
+        # 15.6ms mtime tick still change the stat signature.
+        paths[0].write_bytes(b'newer')
         return 'stale result'
     reader = CachedFolderReader(parse, ('.pdf',), 'synthetic')
     result = reader.read(tmp_path)

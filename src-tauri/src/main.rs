@@ -40,7 +40,7 @@ fn open_backend_in_browser(
     app: &tauri::AppHandle<tauri::Wry>,
 ) -> Result<(), tauri_plugin_opener::Error> {
     app.opener()
-        .open_url(invoicehub_desktop::backend_origin(), None::<&str>)
+        .open_url(invoicehub_desktop::backend_workspace_url(), None::<&str>)
 }
 
 fn reveal_desktop_window(app: &tauri::AppHandle<tauri::Wry>) {
@@ -374,7 +374,7 @@ fn create_desktop_window(
     webview_data_directory: &Path,
     allow_print_popups: bool,
 ) -> Result<(), Box<dyn Error>> {
-    let backend_url = invoicehub_desktop::backend_origin().parse()?;
+    let backend_url = invoicehub_desktop::backend_workspace_url().parse()?;
     let app_handle = app.handle().clone();
     let window = tauri::WebviewWindowBuilder::new(
         app,
