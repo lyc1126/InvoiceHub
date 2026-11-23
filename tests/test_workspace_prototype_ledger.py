@@ -27,7 +27,7 @@ def prototype():
         "JSON.stringify(COMPANIES.map(c => { const l=ledger(c); return {company:c, ...l, inventory:stockRoll(c), matches:['in','out'].map(dir => { const fs=l.flows.filter(f=>f.dir===(dir==='in'?'out':'in')); const m=matchFlows(dir==='in'?l.inv:l.sales,fs); return [...m.res].map(([f,r])=>({id:f.id,...r})); })}; }))",
     ])
     script = 'const vm=require("node:vm");process.stdout.write(vm.runInNewContext(' + json.dumps(code) + '));'
-    run = subprocess.run(['node', '-e', script], check=True, capture_output=True, text=True, cwd=ROOT, timeout=10)
+    run = subprocess.run(['node', '-e', script], check=True, capture_output=True, text=True, encoding="utf-8", cwd=ROOT, timeout=10)
     return json.loads(run.stdout)
 
 

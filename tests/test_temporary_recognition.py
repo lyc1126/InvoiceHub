@@ -204,7 +204,7 @@ def test_preview_draft_text_and_pages_recover_expiry_without_source_mutation(tmp
     xml_id, pdf_id = [item["id"] for item in files]
     original = path.read_bytes()
     assert svc.preview(xml_id)["type"] == "text"
-    assert svc.preview(xml_id, text=True)["text"] == path.read_text(encoding="utf-8")
+    assert svc.preview(xml_id, text=True)["text"] == path.read_bytes().decode("utf-8")
     assert str(tmp_path) not in json.dumps(svc.preview(xml_id))
     assert svc.preview(pdf_id)["pages"] == 2
     page = svc.preview(pdf_id, page=2)
@@ -226,7 +226,7 @@ def test_preview_history_validates_entire_thread_and_membership(tmp_path):
     job = finish(svc, svc.start(ids))
     svc.close()
     svc = TemporaryRecognitionService(tmp_path / "cache", tmp_path)
-    assert svc.preview(ids[0], job["id"], text=True)["text"] == a.read_text(encoding="utf-8")
+    assert svc.preview(ids[0], job["id"], text=True)["text"] == a.read_bytes().decode("utf-8")
     with pytest.raises(TemporaryRecognitionError):
         svc.preview("f" * 32, job["id"])
     # Even previewing a surviving member cannot bypass an invalid thread.

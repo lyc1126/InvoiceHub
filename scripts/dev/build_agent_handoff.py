@@ -54,14 +54,20 @@ def safe_name(name):
     return PurePosixPath(*parts).as_posix()
 
 
-def write_member(root, name, data, executable=False):
-    path = root / safe_name(name)
+def write_member(root, name, data, executable=False, executables=None):
+    clean = safe_name(name)
+    path = root / clean
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(data)
     path.chmod(0o755 if executable else 0o644)
+    if executables is not None:
+        if executable:
+            executables.add(clean)
+        else:
+            executables.discard(clean)
 
 
-def unpack_runtime(archive, destination, platform):
+def unpack_runtime(archive, destination, platform, executables=None):
     expected = RUNTIMES[platform]
     if sha(archive) != expected["sha256"]:
         raise ValueError("runtime SHA-256 mismatch; download the pinned archive")
@@ -80,7 +86,7 @@ def unpack_runtime(archive, destination, platform):
                 if total > MAX_UNPACKED:
                     raise ValueError("runtime exceeds unpacked size limit")
                 if not info.is_dir():
-                    write_member(destination, "python/" + name, zf.read(info))
+                    write_member(destination, "python/" + name, zf.read(info), executables=executables)
     else:
         links = []
         with tarfile.open(archive, "r:gz") as tf:
@@ -108,7 +114,7 @@ def unpack_runtime(archive, destination, platform):
                     stream = tf.extractfile(info)
                     if stream is None:
                         raise ValueError("missing runtime member data")
-                    write_member(destination, name, stream.read(), bool(info.mode & 0o111))
+                    write_member(destination, name, stream.read(), bool(info.mode & 0o111), executables=executables)
                 else:
                     raise ValueError("unsupported runtime file type")
         # Materialize only validated in-archive links. Ordinary ZIP extraction
@@ -116,9 +122,11 @@ def unpack_runtime(archive, destination, platform):
         while links:
             pending = []
             for name, target in links:
-                source = destination / safe_name(target)
+                clean_target = safe_name(target)
+                source = destination / clean_target
                 if source.is_file():
-                    write_member(destination, name, source.read_bytes(), bool(source.stat().st_mode & 0o111))
+                    is_exec = (clean_target in executables) if executables is not None else bool(source.stat().st_mode & 0o111)
+                    write_member(destination, name, source.read_bytes(), is_exec, executables=executables)
                 else:
                     pending.append((name, target))
             if len(pending) == len(links):
@@ -138,7 +146,7 @@ def unpack_runtime(archive, destination, platform):
             raise ValueError("unexpected Windows payload in macOS runtime")
 
 
-def copy_verified_runtime(package_path, destination, platform, expected_sha256):
+def copy_verified_runtime(package_path, destination, platform, expected_sha256, executables=None):
     if not expected_sha256 or not re.fullmatch(r"[0-9a-f]{64}", expected_sha256) or sha(package_path) != expected_sha256:
         raise ValueError("cached runtime package requires its trusted SHA-256")
     result = verify(package_path)
@@ -149,7 +157,7 @@ def copy_verified_runtime(package_path, destination, platform, expected_sha256):
     with zipfile.ZipFile(package_path) as zf:
         for info in zf.infolist():
             if info.filename.startswith("python/"):
-                write_member(destination, info.filename, zf.read(info), bool(info.external_attr >> 16 & 0o111))
+                write_member(destination, info.filename, zf.read(info), bool(info.external_attr >> 16 & 0o111), executables=executables)
 
 
 def package(source_root, platform, archive, output, *, runtime_package=None, runtime_package_sha256=None):
@@ -163,6 +171,9 @@ def package(source_root, platform, archive, output, *, runtime_package=None, run
     target = output / f"agent-handoff-{version}-{platform}.zip"
     with tempfile.TemporaryDirectory(prefix="agent-handoff-build-") as temporary:
         tree = Path(temporary)
+        # Track executable bits explicitly instead of relying on st_mode & 0o111,
+        # because Windows filesystems do not store POSIX execute permissions.
+        executables: set[str] = set()
         source_hashes = {}
         # Never recurse through the repository, private state, config or runtime.
         # Only these public inputs and the independently pinned runtime enter ZIP.
@@ -170,14 +181,14 @@ def package(source_root, platform, archive, output, *, runtime_package=None, run
             source = source_root / name
             if source.is_symlink() or source.resolve().relative_to(source_root).as_posix() != name:
                 raise ValueError("public source escapes source root")
-            write_member(tree, packaged_name, source.read_bytes())
+            write_member(tree, packaged_name, source.read_bytes(), executables=executables)
             source_hashes[name] = sha(source)
         if runtime_package is not None:
             if archive is not None:
                 raise ValueError("choose one runtime input")
-            copy_verified_runtime(runtime_package, tree, platform, runtime_package_sha256)
+            copy_verified_runtime(runtime_package, tree, platform, runtime_package_sha256, executables=executables)
         else:
-            unpack_runtime(archive, tree, platform)
+            unpack_runtime(archive, tree, platform, executables=executables)
         write_member(tree, "AGENT-INSTRUCTIONS.md", (
             "# Agent-neutral handoff entry\n\nRead your workspace rules first. Use the bundled launcher with "
             "`resume --ref <handoff-link-or-registered-thread-ID>` or `--project <project> resume --task <id>`. The default private root is "
@@ -195,7 +206,7 @@ def package(source_root, platform, archive, output, *, runtime_package=None, run
         write_member(tree, "CHECKPOINT.template.json", (json.dumps(notes, indent=2) + "\n").encode())
         if platform == "macos-arm64":
             launcher = '#!/bin/sh\nset -eu\nHANDOFF_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)\nexec "$HANDOFF_DIR/python/bin/python3.14" -I -B "$HANDOFF_DIR/agent_handoff.py" "$@"\n'
-            write_member(tree, "agent-handoff.command", launcher.encode(), True)
+            write_member(tree, "agent-handoff.command", launcher.encode(), True, executables=executables)
         else:
             launcher = '@echo off\r\nsetlocal\r\n"%~dp0python\\python.exe" -I -B "%~dp0agent_handoff.py" %*\r\nexit /b %ERRORLEVEL%\r\n'
             write_member(tree, "agent-handoff.cmd", launcher.encode())
@@ -222,9 +233,10 @@ def package(source_root, platform, archive, output, *, runtime_package=None, run
             with zipfile.ZipFile(pending, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
                 for path in sorted(tree.rglob("*")):
                     if path.is_file():
-                        info = zipfile.ZipInfo(path.relative_to(tree).as_posix(), (2020, 1, 1, 0, 0, 0))
+                        rel_name = path.relative_to(tree).as_posix()
+                        info = zipfile.ZipInfo(rel_name, (2020, 1, 1, 0, 0, 0))
                         info.create_system = 3
-                        info.external_attr = ((stat.S_IFREG | (0o755 if path.stat().st_mode & 0o111 else 0o644)) << 16)
+                        info.external_attr = ((stat.S_IFREG | (0o755 if rel_name in executables else 0o644)) << 16)
                         info.compress_type = zipfile.ZIP_DEFLATED
                         zf.writestr(info, path.read_bytes())
             verify(pending)

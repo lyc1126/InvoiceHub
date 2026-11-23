@@ -67,7 +67,9 @@ class Mounted:
                 for item in items:
                     name = safe_name(item.name)
                     path = Path(item.path)
-                    info = item.stat(follow_symlinks=False)
+                    # Use os.lstat rather than DirEntry.stat so Windows populates real
+                    # (st_dev, st_ino) matching signature() in copy().
+                    info = os.lstat(item.path)
                     if item.is_symlink() or (hasattr(path, "is_junction") and path.is_junction()):
                         raise SourceError("来源含链接或重解析点，未发布不完整清单。", "unsafe_path")
                     folder = stat.S_ISDIR(info.st_mode)

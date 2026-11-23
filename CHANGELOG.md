@@ -10,7 +10,11 @@
   - **Windows 只读句柄 `fsync` 失败（`EBADF`）**：`storage/files.py::atomic_write_json` 改为在 `os.replace` 前对可写临时文件 `flush + os.fsync`，移除 `company_setup.py`、`company_detection.py`、`company_export_jobs.py` 在替换后以 `"rb"` 打开并调用 `os.fsync` 的非 Windows 安全写法。
   - **Windows UTF-8 编码缺失（`charmap`）**：为 `storage/generations.py`、`company_detection.py`、`company_export_jobs.py`、`scripts/dev/build_agent_handoff.py`、`scripts/dev/build_ofd_preview.py` 及 26 个测试文件中的 `read_text/write_text/open` 显式补齐 `encoding="utf-8"`。
   - **Windows 文件身份与符号链接异常对齐**：`company_bank.py::list_files` 改用 `os.lstat(entry.path)`，解决 Windows `DirEntry.stat()` 返回 `(0, 0)` 而与 `company_bank_layouts.py` 的 `Path.lstat()` 不一致导致 `BANK_LAYOUT_STALE`；`company_files.py::read_relative` 在 Windows 符号链接/联结分支改抛 `OSError(errno.ELOOP, ...)` 以匹配 POSIX `O_NOFOLLOW` 的 HTTP 409 语义；`company_receipts.py` 预览任务同时绑定原文件 `source_sha256`，解决 Windows `st_ctime_ns` 为创建时间导致同大小同 mtime 替换未失效的问题；`tests/test_company_views.py::_tree` 统一 `.as_posix()`、`tests/test_company_ledger.py` 兼容 `\` 路径分隔符。
-- 验证范围与未覆盖项：本机 macOS 通过 `ruff`、`compileall`、27 个受影响测试文件（含文档契约与 macOS 发布契约）及 `git diff --check`；本轮修改将按 DCO 提交并推送更新 PR #32，远端 Windows Python、Linux Vue 与 Linux 浏览器 E2E 实际通过以 PR #32 新一轮 GitHub Actions 运行结果为准；真实 Windows/macOS 成品验收仍按各自清单独立推进。
+- 第二轮补修（PR #32 `af36d86` 远端复跑将 Windows 失败由 138 项降至 11 项，Linux Vue 已绿，Linux 浏览器 E2E 首轮全过但在第 2 轮捕获真实界面竞态）：
+  - **Linux 浏览器 E2E / 服务成本刷新竞态**：`frontend/src/components/CostServiceCosts.vue` 在归类保存触发 `load()` 重载期间禁用“添加一行 / 预览 / 确认保存”，避免用户或 E2E 在重载返回前新增行后被回包清空卸载；已重新执行 `pnpm --dir frontend run build` 并同步提交 `web/static/app/` 产物。
+  - **OFD 组件源码指纹恢复**：恢复 `scripts/dev/build_ofd_preview.py` 至原锁版本（仅读取纯 ASCII 锁文件），修复 macOS 与 Windows 的 `COMPONENT_SOURCE_FINGERPRINT` 校验。
+  - **剩余 Windows 兼容项**：`storage/source_adapters/__init__.py::Mounted.entries` 改用 `os.lstat(item.path)` 对齐 `signature()` 的 `(st_dev, st_ino)`；`scripts/dev/build_agent_handoff.py` 显式追踪 POSIX 可执行成员集合，不依赖 Windows 文件系统 `st_mode & 0o111`；`tests/test_workspace_prototype_ledger.py` 为 `subprocess.run(..., text=True)` 补 `encoding="utf-8"`；`tests/test_temporary_recognition.py` 改按原字节 UTF-8 核对 `get_text` 保留原始行尾的 XML 预览。
+- 验证范围与未覆盖项：本机 macOS 通过 `ruff`、`compileall`、受影响后端测试、`pnpm --dir frontend run typecheck / test / build`、`test_workspace_frontend.py`、`test_frontend_contract.py` 及 `git diff --check`；远端全量结果以 PR #32 新一轮 GitHub Actions 运行为准；真实默认配置与双平台成品验收继续独立推进。
 
 ### 2026-11-23 确认 v1.0.0 发布路线并推进远端 CI 与 Draft PR
 

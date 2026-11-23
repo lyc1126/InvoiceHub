@@ -149,9 +149,10 @@ onBeforeUnmount(() => { generation += 1; previewEpoch += 1; });
       </tbody>
     </table></div>
     <div class="actions">
-      <button type="button" :disabled="!data || saving || unknown" @click="add">添加一行</button>
-      <button type="button" class="primary" :disabled="!data || saving || unknown || stale" :aria-busy="saving" @click="runPreview">预览</button>
-      <button type="button" :disabled="!preview || saving || unknown || stale" @click="confirming = true">确认保存…</button>
+      <!-- Block adding/previewing while reloading after a classification change so a late load cannot wipe the new row. -->
+      <button type="button" :disabled="!data || loading || saving || unknown" @click="add">添加一行</button>
+      <button type="button" class="primary" :disabled="!data || loading || saving || unknown || stale" :aria-busy="saving" @click="runPreview">预览</button>
+      <button type="button" :disabled="!preview || loading || saving || unknown || stale" @click="confirming = true">确认保存…</button>
     </div>
     <template v-if="preview">
       <p v-if="!changes.length" class="muted">与已保存内容相同。</p>

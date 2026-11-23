@@ -54,8 +54,8 @@ def fetch(entry: dict, destination: Path) -> None:
 
 def build(jdk_archive: Path, dependencies: Path, output: Path) -> dict:
     target = platform_id()
-    toolchain = json.loads((SOURCE / "toolchains.lock.json").read_text(encoding="utf-8"))[target]
-    lock = json.loads((SOURCE / "dependencies.lock.json").read_text(encoding="utf-8"))
+    toolchain = json.loads((SOURCE / "toolchains.lock.json").read_text())[target]
+    lock = json.loads((SOURCE / "dependencies.lock.json").read_text())
     if output.exists():
         raise ValueError("output already exists; use a new component directory")
     if sha(jdk_archive) != toolchain["sha256"]:
@@ -134,11 +134,11 @@ def main() -> None:
     if args.fetch:
         if args.jdk_archive or args.dependencies:
             parser.error("--fetch cannot be combined with explicit archive/dependency paths")
-        toolchain = json.loads((SOURCE / "toolchains.lock.json").read_text(encoding="utf-8"))[platform_id()]
+        toolchain = json.loads((SOURCE / "toolchains.lock.json").read_text())[platform_id()]
         args.jdk_archive = args.cache_dir / Path(toolchain["url"]).name
         args.dependencies = args.cache_dir / "lib"
         fetch(toolchain, args.jdk_archive)
-        for entry in json.loads((SOURCE / "dependencies.lock.json").read_text(encoding="utf-8")):
+        for entry in json.loads((SOURCE / "dependencies.lock.json").read_text()):
             fetch(entry, args.dependencies / entry["filename"])
     elif not args.jdk_archive or not args.dependencies:
         parser.error("provide --fetch or both --jdk-archive and --dependencies")
