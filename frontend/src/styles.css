@@ -303,8 +303,15 @@ button.link { border: 0; background: none; padding: 0 2px; color: inherit; curso
 .source-preview__files button { max-width: 100%; overflow-wrap: anywhere; font-size: 12px; }
 .source-preview__jump input { width: 6em; }
 
-.directory-invoices-table { display: block; max-width: 100%; overflow-x: auto; position: relative; }
-.directory-invoices-table .invoice-party { min-width: 120px; }
+.directory-invoices-wrap { max-width: 100%; overflow-x: auto; position: relative; }
+.directory-invoices-table { display: table; width: 100%; position: relative; }
+.directory-invoices-table :is(th, td) { text-align: center; vertical-align: middle; }
+.directory-invoices-table .num { text-align: center; }
+.directory-invoices-table .invoice-party { min-width: 112px; }
+/* Cap intrinsic width of party/project text in table-layout:auto so one extra-long name
+   never stretches the entire column and creates a large blank gap between 销售方 and 购买方. */
+.directory-invoices-table .invoice-party__text { display: inline-block; max-width: 196px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: middle; }
+.directory-invoices-table .invoice-project__text { display: inline-block; max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: middle; }
 
 .company-subdir-field > span { min-width: 5em; }
 .company-subdir-field > input { flex: 1 1 180px; max-width: 100%; }

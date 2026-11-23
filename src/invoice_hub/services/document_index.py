@@ -18,8 +18,9 @@ from invoice_hub.projections.documents import inbound_invoice_options, outbound_
 from invoice_hub.storage.files import atomic_write_json, read_csv_rows, read_json_object
 
 # Cached InvoiceRecords are keyed by file signature only; bump when extraction fills fields
-# differently (2: split-label parties and 合计-row amounts, BUG-04) so old records re-extract.
-CACHE_VERSION = 2
+# differently (2: split-label parties and 合计-row amounts, BUG-04; 3: refined oil business_type)
+# so old records re-extract.
+CACHE_VERSION = 3
 
 
 class InboundDetails:

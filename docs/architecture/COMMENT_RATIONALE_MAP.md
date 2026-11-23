@@ -1,5 +1,13 @@
 # InvoiceHub 注释与设计原因地图
 
+## 2026-11-23 解析器版本重算、成品油归类与工作区重算
+
+| 文件与符号 | 原因与不变量 | 守护 |
+|---|---|---|
+| `storage/generations.py::parser_versions_stale`、`monitoring/sync.py`、`company_views.py::directory_freshness` | 程序升级改进提取/分类/成本规则不会改变源发票 `mtime_ns/size`，旧目录（如升级前无 manifest 或旧 `parser_versions`）会一直展示过时空白结果；检测版本变化触发一次增量重建并由 `ParseCache` 复用未变种类，稳态周期不重解析，手改覆盖仍保留。 | `test_monitor_sync_auto_rebuilds_when_parser_version_changes_or_manifest_missing`、`test_parser_version_change_marks_non_monitored_directory_stale_and_refresh_rebuilds` |
+| `services/document_index.py::CACHE_VERSION = 3`、`extraction/classification.py::BUSINESS_TYPE_REFINED_OIL` | 登记「成品油」特定业务类型后，原有成品油票的 `business_type` 从“标准电子发票”变为“成品油”；必须递增单据缓存版本使旧记录重新提取，且仅按坐标/显式结构化字段归类，拒绝公司名或商品名误触发。 | `test_refined_oil_business_type_uses_context_not_company_or_item_names` |
+| `DirectoryPanel.vue` / `CompanyDirectories.vue` 的 `rebuildActive` | 活动监控目录共用 `POST /api/v1/bridge/rebuild`（与经典页及 monitor 写锁一致），成功后派发 `workspace:company-refreshed` 通知同页列表与摘要；切换公司/目录或卸载时按 `rebuildGeneration` 丢弃迟到响应。 | `selection-summary-and-refresh.spec.ts` |
+
 ## 2026-11-23 服务类型先于库存分组
 
 | 文件与符号 | 原因与不变量 | 守护 |
@@ -77,6 +85,7 @@
 - `SourceService.entries` / `ServerSourcesPanel.load`：子树可读计数独立于筛选/分页，只有元信息的文件不能暗示有可读票面；收藏重开先恢复绑定/预算，避免默认值被再次保存覆盖。离线文件及标签入口明确提示副本。守护完整子树计数与 `server-sources.spec.ts` 的元信息、恢复及离线测试。
 
 - `DirectoryInvoices.focusTagMenu` / `.tag-menu`：批量选择条位于层级 20，菜单须在其上且在异步标记加载后再次约束窗口边界，否则真实指针会被选择条截获或菜单逃出窄屏；单元测试覆盖边界坐标，浏览器实际点击验证保存。
+- `DirectoryInvoices` 的 `.invoice-party__text` 与 `workspace.hiddenInvoiceColumns`：`table-layout: auto` 下直接给 `<td>` 设 `max-width` 易被 `white-space: nowrap` 的固有宽度忽略，单条超长单位名会撑宽整列导致销售方与购买方间出现大段空白，故用 `inline-block` 子元素限宽省略并保留完整文本与 `title`；隐藏列按 `dirKey` 存 `localStorage` 使成本发票隐藏购买方不误影响开具发票，且始终保留至少 1 列防止空表。守护 `frontend/tests/directory-preview.spec.ts`。
 
 ## 2026-11-19 WS 后端完整性收尾
 

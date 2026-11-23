@@ -27,6 +27,32 @@ export interface CompareBase {
   dirKey: string;
 }
 
+export type InvoiceColumnKey =
+  | "seller"
+  | "buyer"
+  | "format"
+  | "invoice_number"
+  | "project"
+  | "classification"
+  | "tax_rate"
+  | "amount"
+  | "invoice_date"
+  | "status";
+
+export const INVOICE_COLUMN_KEYS: readonly InvoiceColumnKey[] = [
+  "seller",
+  "buyer",
+  "format",
+  "invoice_number",
+  "project",
+  "classification",
+  "tax_rate",
+  "amount",
+  "invoice_date",
+  "status",
+];
+const INVOICE_COLUMN_SET = new Set<string>(INVOICE_COLUMN_KEYS);
+
 export const SIDEBAR_DEFAULT = 292;
 export const SIDEBAR_MIN = 220;
 export const SIDEBAR_MAX = 460;
@@ -38,6 +64,7 @@ interface Saved {
   pins?: unknown;
   sidebarWidth?: unknown;
   expanded?: unknown;
+  hiddenInvoiceColumns?: unknown;
 }
 
 function readSaved(): Saved {
@@ -51,6 +78,17 @@ function readSaved(): Saved {
 
 function stringList(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+}
+
+function hiddenColumnsMap(value: unknown): Record<string, InvoiceColumnKey[]> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const result: Record<string, InvoiceColumnKey[]> = {};
+  for (const [dirKey, raw] of Object.entries(value as Record<string, unknown>)) {
+    if (!dirKey || !Array.isArray(raw)) continue;
+    const cleaned = [...new Set(raw.filter((item): item is InvoiceColumnKey => typeof item === "string" && INVOICE_COLUMN_SET.has(item)))];
+    if (cleaned.length) result[dirKey] = cleaned;
+  }
+  return result;
 }
 
 export function tabId(tab: Omit<WorkspaceTab, "id" | "refresh">): string {
@@ -74,6 +112,9 @@ export const useWorkspaceStore = defineStore("workspace", () => {
   const pins = ref<string[]>(stringList(saved.pins));
   const expanded = ref<string[]>(stringList(saved.expanded));
   const sidebarWidth = ref(typeof saved.sidebarWidth === "number" ? saved.sidebarWidth : SIDEBAR_DEFAULT);
+  // Per-directory-type hidden invoice columns (e.g. hiding 购买方 in 成本发票 without hiding it
+  // in 开具发票). Pure UI preference stored in localStorage alongside pins/width.
+  const hiddenInvoiceColumns = ref<Record<string, InvoiceColumnKey[]>>(hiddenColumnsMap(saved.hiddenInvoiceColumns));
   const compareBase = ref<CompareBase | null>(null);
   // The first visit opens the monitored company once; after the user closes every tab the
   // start page stays empty instead of reopening it.
@@ -84,12 +125,17 @@ export const useWorkspaceStore = defineStore("workspace", () => {
   const active = computed(() => tabs.value.find((tab) => tab.id === activeId.value) ?? null);
 
   watch(
-    [pins, expanded, sidebarWidth],
+    [pins, expanded, sidebarWidth, hiddenInvoiceColumns],
     () => {
       try {
         globalThis.localStorage?.setItem(
           STORAGE_KEY,
-          JSON.stringify({ pins: pins.value, expanded: expanded.value, sidebarWidth: sidebarWidth.value }),
+          JSON.stringify({
+            pins: pins.value,
+            expanded: expanded.value,
+            sidebarWidth: sidebarWidth.value,
+            hiddenInvoiceColumns: hiddenInvoiceColumns.value,
+          }),
         );
       } catch {
         // Private mode or a full quota: the preference just does not survive a reload.
@@ -138,8 +184,45 @@ export const useWorkspaceStore = defineStore("workspace", () => {
       : [...expanded.value, companyId];
   }
 
+  function hiddenColumnsFor(dirKey: string, availableColumns: readonly InvoiceColumnKey[]): InvoiceColumnKey[] {
+    const stored = (hiddenInvoiceColumns.value[dirKey] ?? []).filter((key) => availableColumns.includes(key));
+    // Guard against corrupted/stale localStorage hiding every available column.
+    if (availableColumns.length > 0 && stored.length >= availableColumns.length) return [];
+    return stored;
+  }
+
+  function toggleInvoiceColumn(
+    dirKey: string,
+    column: InvoiceColumnKey,
+    availableColumns: readonly InvoiceColumnKey[],
+  ): boolean {
+    if (!availableColumns.includes(column)) return false;
+    const current = hiddenColumnsFor(dirKey, availableColumns);
+    const nextMap = { ...hiddenInvoiceColumns.value };
+    if (current.includes(column)) {
+      const next = current.filter((item) => item !== column);
+      if (next.length) nextMap[dirKey] = next;
+      else delete nextMap[dirKey];
+      hiddenInvoiceColumns.value = nextMap;
+      return true;
+    }
+    // Never allow hiding the last remaining data column.
+    if (availableColumns.length - current.length <= 1) return false;
+    nextMap[dirKey] = [...current, column];
+    hiddenInvoiceColumns.value = nextMap;
+    return true;
+  }
+
+  function resetInvoiceColumns(dirKey: string): void {
+    if (!hiddenInvoiceColumns.value[dirKey]?.length) return;
+    const nextMap = { ...hiddenInvoiceColumns.value };
+    delete nextMap[dirKey];
+    hiddenInvoiceColumns.value = nextMap;
+  }
+
   return {
-    tabs, activeId, active, pins, expanded, sidebarWidth, compareBase, seeded, createOpen,
+    tabs, activeId, active, pins, expanded, sidebarWidth, hiddenInvoiceColumns, compareBase, seeded, createOpen,
     open, close, closeCompany, refreshActive, togglePin, toggleExpanded,
+    hiddenColumnsFor, toggleInvoiceColumn, resetInvoiceColumns,
   };
 });

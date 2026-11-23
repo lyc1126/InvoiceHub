@@ -6,8 +6,8 @@ from typing import Any, Callable
 from invoice_hub.domain.models import utc_now_text
 from invoice_hub.projections.costs import CostProjectionService
 from invoice_hub.projections.summary import build_summary, summary_schema_needs_refresh
-from invoice_hub.projections.incremental import rebuild_generation
-from invoice_hub.storage import SQLiteRepository
+from invoice_hub.projections.incremental import current_parser_versions, rebuild_generation
+from invoice_hub.storage import SQLiteRepository, generations
 
 from .state import MonitorState, SyncProgress
 
@@ -112,6 +112,14 @@ class MonitorSynchronizer:
         cost_missing = not cost.detail_csv.exists() or not cost.summary_xlsx.exists()
         cost_schema_stale = (not cost_missing) and cost.needs_schema_refresh()
         tax_stale = (not cost_missing) and cost.needs_tax_profile_refresh()
+        # Catch upgrades to extraction/classification/cost parsers (and pre-manifest workspaces)
+        # even when source PDFs/OFDs/XMLs have unchanged mtime/size; ParseCache still reuses
+        # entries whose per-kind version did not change.
+        parser_stale = (not summary_missing and not cost_missing) and generations.parser_versions_stale(
+            self.state.workspace_dir,
+            self.state.watch_dir,
+            current_parser_versions(),
+        )
         should_rebuild = bool(
             force
             or changes.changed
@@ -119,6 +127,7 @@ class MonitorSynchronizer:
             or summary_schema_stale
             or cost_missing
             or cost_schema_stale
+            or parser_stale
             or manual_changed
         )
         counts = changes.as_counts()
@@ -142,6 +151,7 @@ class MonitorSynchronizer:
                 or summary_missing
                 or summary_schema_stale
                 or cost_missing
+                or parser_stale
                 or manual_changed
             )
         )
@@ -194,6 +204,7 @@ class MonitorSynchronizer:
                 "manual_applied": applied,
                 "summary_schema_refreshed": summary_schema_stale,
                 "cost_schema_refreshed": cost_schema_stale,
+                "parser_refreshed": parser_stale,
                 "summary_count": summary.get("count", 0),
                 "cost_detail_count": cost_result.get("detail_count", 0),
                 "rebuilt": True,

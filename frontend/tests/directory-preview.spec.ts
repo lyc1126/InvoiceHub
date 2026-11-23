@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { flushPromises, mount } from "@vue/test-utils";
 import { createPinia } from "pinia";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -23,6 +25,7 @@ const response = (body: unknown) => new Response(JSON.stringify(body), { status:
 afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
+  localStorage.clear();
   document.body.innerHTML = "";
 });
 
@@ -180,5 +183,97 @@ describe("directory invoice list and shared source preview", () => {
     await flushPromises();
     expect(saves).toEqual([{ revision: 4, changes: { [other.invoice_number]: [tag.id] } }]);
     wrapper.unmount();
+  });
+
+  it("hides and restores columns per directory type, keeps at least one visible column, and persists via localStorage", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      if (url.includes("/invoices?")) return response(payload());
+      if (url === "/api/v1/invoice-tags") return response({ revision: 0, tags: [] });
+      return response({});
+    }));
+    const pinia = createPinia();
+    const wrapper = mount(DirectoryInvoices, {
+      attachTo: document.body,
+      props: { company, dirKey: "cost_invoice_dir" },
+      global: { plugins: [pinia] },
+    });
+    await flushPromises();
+
+    // All columns visible initially; seller/buyer carry capped ellipsis spans with full title.
+    expect(wrapper.findAll("thead th").map((th) => th.text())).toContain("销售方");
+    expect(wrapper.findAll("thead th").map((th) => th.text())).toContain("购买方");
+    expect(wrapper.find(".invoice-party__text").attributes("title")).toBe("乙");
+
+    // Open column picker and hide 购买方 & 税率.
+    await wrapper.get('.col-picker > button').trigger("click");
+    const menu = wrapper.get('[aria-label="自定义发票列表显示列"]');
+    const checkboxFor = (label: string) =>
+      menu.findAll("label").find((el) => el.text().trim() === label)!.get("input");
+    await checkboxFor("购买方").setValue(false);
+    await checkboxFor("税率").setValue(false);
+    await flushPromises();
+
+    const headersAfterHide = wrapper.findAll("thead th").map((th) => th.text());
+    expect(headersAfterHide).not.toContain("购买方");
+    expect(headersAfterHide).not.toContain("税率");
+    expect(headersAfterHide).toContain("销售方");
+    expect(wrapper.get(".col-picker__badge").text()).toContain("已隐藏 2");
+
+    // Try hiding every remaining column: the last remaining column checkbox becomes disabled.
+    for (const label of ["格式", "发票号码", "项目", "发票分类与业务", "开票金额", "开票时间", "状态"]) {
+      await checkboxFor(label).setValue(false);
+    }
+    await flushPromises();
+    expect(wrapper.findAll("thead th").map((th) => th.text())).toContain("销售方");
+    expect((checkboxFor("销售方").element as HTMLInputElement).disabled).toBe(true);
+
+    // Escape closes the column menu.
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+    await flushPromises();
+    expect(wrapper.find('[aria-label="自定义发票列表显示列"]').exists()).toBe(false);
+
+    // Right-clicking the table header opens the same column menu.
+    await wrapper.get("thead tr").trigger("contextmenu", { clientX: 120, clientY: 160 });
+    await flushPromises();
+    expect(wrapper.find('[aria-label="自定义发票列表显示列"]').exists()).toBe(true);
+
+    // Restore all columns via the quick action button.
+    await wrapper.findAll("button").find((btn) => btn.text() === "恢复全部列")!.trigger("click");
+    await flushPromises();
+    expect(wrapper.findAll("thead th").map((th) => th.text())).toContain("购买方");
+    expect(wrapper.findAll("thead th").map((th) => th.text())).toContain("税率");
+    expect(wrapper.find(".col-picker__badge").exists()).toBe(false);
+
+    // Hide 购买方 in cost_invoice_dir and confirm it persists to localStorage without affecting issued_invoice_dir.
+    await wrapper.get('[aria-label="自定义发票列表显示列"]').findAll("label").find((el) => el.text().trim() === "购买方")!.get("input").setValue(false);
+    await flushPromises();
+    const saved = JSON.parse(localStorage.getItem("invoicehub.workspace.v1") ?? "{}");
+    expect(saved.hiddenInvoiceColumns).toEqual({ cost_invoice_dir: ["buyer"] });
+    wrapper.unmount();
+
+    const issuedWrapper = mount(DirectoryInvoices, {
+      props: { company, dirKey: "issued_invoice_dir" },
+      global: { plugins: [createPinia()] },
+    });
+    await flushPromises();
+    expect(issuedWrapper.findAll("thead th").map((th) => th.text())).toContain("购买方");
+    issuedWrapper.unmount();
+
+    const reloadedCost = mount(DirectoryInvoices, {
+      props: { company, dirKey: "cost_invoice_dir" },
+      global: { plugins: [createPinia()] },
+    });
+    await flushPromises();
+    expect(reloadedCost.findAll("thead th").map((th) => th.text())).not.toContain("购买方");
+    reloadedCost.unmount();
+  });
+
+  it("centers directory invoice columns and caps party column width in CSS", () => {
+    const stylesCss = readFileSync(resolve(__dirname, "../src/styles.css"), "utf-8");
+    const protoCss = readFileSync(resolve(__dirname, "../src/prototype.css"), "utf-8");
+    expect(protoCss).toMatch(/\.directory-invoices-table\s+:is\(th,\s*td\)\s*\{[^}]*text-align:\s*center/);
+    expect(protoCss).toMatch(/\.directory-invoices-table\s+\.num\s*\{[^}]*text-align:\s*center/);
+    expect(stylesCss).toMatch(/\.directory-invoices-table\s+\.invoice-party__text\s*\{[^}]*max-width:\s*196px/);
+    expect(stylesCss).toMatch(/\.directory-invoices-table\s+\.invoice-party__text\s*\{[^}]*text-overflow:\s*ellipsis/);
   });
 });

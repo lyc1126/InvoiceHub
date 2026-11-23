@@ -6,15 +6,18 @@ import { ApiError, request } from "../api/client";
 import type { Company, DirectoryInvoicesPayload, InvoiceRow, InvoiceTagMarks, PreviewRef, ProjectSummary } from "../api/types";
 import { errorText, ratePercent, money } from "../format";
 import { useTagsStore } from "../stores/tags";
+import { useWorkspaceStore, type InvoiceColumnKey } from "../stores/workspace";
 import { toast } from "../toast";
 import SourcePreview from "./SourcePreview.vue";
 import DirectorySelectionBar, { type SelectedInvoice, type TrashJob } from "./DirectorySelectionBar.vue";
+import WorkspaceIcon from "./WorkspaceIcon.vue";
 import WsModal from "./WsModal.vue";
 
 // One company folder's invoice list (last projection; read-only unless it is the monitored
 // folder). Shown in a directory tab of the workspace home; tags are display data only.
 const props = defineProps<{ company: Company; dirKey: string }>();
 const tagStore = useTagsStore();
+const workspace = useWorkspaceStore();
 const viewActive = inject(VIEW_ACTIVE, ref(true));
 let stale = false;
 function refreshFromEvent(): void {
@@ -25,7 +28,14 @@ function onCompanyRefreshed(event: Event): void {
   const detail = (event as CustomEvent).detail;
   if (!detail?.companyId || detail.companyId === props.company.id) refreshFromEvent();
 }
-watch(viewActive, (active) => { if (active && stale) { stale = false; void loadInvoices(invoicesPage.value); } });
+watch(viewActive, (active) => {
+  if (!active) {
+    columnMenuOpen.value = false;
+    tagMenu.value = null;
+    return;
+  }
+  if (stale) { stale = false; void loadInvoices(invoicesPage.value); }
+});
 const tagFilter = ref("");
 // Prototype filters; all are applied by the server before sorting/paging (WEB_UI rule).
 const keyword = ref("");
@@ -62,6 +72,106 @@ const selectingAll = ref(false);
 const selectable = computed(() => !!invoices.value && !invoices.value.snapshot?.provisional);
 const sourceActions = computed(() => selectable.value && !invoices.value?.read_only);
 const isProjectDir = computed(() => props.dirKey === "cost_invoice_dir" || props.dirKey === "issued_invoice_dir");
+
+// Column visibility (UI preference in workspace store, keyed by dirKey so hiding 购买方 in
+// 成本发票 does not hide it in 开具发票). Structural tag-dot and checkbox columns stay fixed.
+const ALL_INVOICE_COLUMNS: readonly { key: InvoiceColumnKey; label: string; projectOnly?: boolean }[] = [
+  { key: "seller", label: "销售方" },
+  { key: "buyer", label: "购买方" },
+  { key: "format", label: "格式" },
+  { key: "invoice_number", label: "发票号码" },
+  { key: "project", label: "项目", projectOnly: true },
+  { key: "classification", label: "发票分类与业务" },
+  { key: "tax_rate", label: "税率" },
+  { key: "amount", label: "开票金额" },
+  { key: "invoice_date", label: "开票时间" },
+  { key: "status", label: "状态" },
+];
+const columnMenuId = `invoice-columns-${Math.random().toString(36).slice(2, 9)}`;
+const columnMenuOpen = ref(false);
+const columnMenuPos = ref({ left: "8px", top: "8px" });
+const columnMenuWrap = ref<HTMLElement | null>(null);
+const columnMenuTrigger = ref<HTMLButtonElement | null>(null);
+const columnMenuEl = ref<HTMLElement | null>(null);
+const availableColumns = computed(() => ALL_INVOICE_COLUMNS.filter((col) => !col.projectOnly || isProjectDir.value));
+const availableColumnKeys = computed(() => availableColumns.value.map((col) => col.key));
+const hiddenColumns = computed(() => workspace.hiddenColumnsFor(props.dirKey, availableColumnKeys.value));
+const hiddenColumnSet = computed(() => new Set<InvoiceColumnKey>(hiddenColumns.value));
+const visibleColumnCount = computed(() => availableColumns.value.length - hiddenColumns.value.length);
+const isColumnVisible = (key: InvoiceColumnKey): boolean => !hiddenColumnSet.value.has(key);
+
+function positionColumnMenu(anchor?: { x: number; y: number }): void {
+  void nextTick(() => {
+    const el = columnMenuEl.value;
+    if (!el || !columnMenuOpen.value) return;
+    const menuBox = el.getBoundingClientRect();
+    const width = menuBox.width || 220;
+    const height = menuBox.height || 300;
+    let left: number;
+    let top: number;
+    if (anchor) {
+      left = anchor.x;
+      top = anchor.y;
+    } else {
+      const triggerBox = columnMenuTrigger.value?.getBoundingClientRect();
+      left = triggerBox ? triggerBox.right - width : 8;
+      top = triggerBox ? triggerBox.bottom + 6 : 8;
+      if (triggerBox && top + height > window.innerHeight - 8 && triggerBox.top - height - 6 >= 8) {
+        top = triggerBox.top - height - 6;
+      }
+    }
+    columnMenuPos.value = {
+      left: `${Math.max(8, Math.min(left, window.innerWidth - width - 8))}px`,
+      top: `${Math.max(8, Math.min(top, window.innerHeight - height - 8))}px`,
+    };
+    el.querySelector<HTMLElement>("input:not(:disabled), button:not(:disabled)")?.focus();
+  });
+}
+
+function toggleColumnMenu(): void {
+  if (columnMenuOpen.value) {
+    columnMenuOpen.value = false;
+    return;
+  }
+  tagMenu.value = null;
+  columnMenuOpen.value = true;
+  positionColumnMenu();
+}
+
+function openColumnMenuAtHeader(event: MouseEvent): void {
+  tagMenu.value = null;
+  columnMenuOpen.value = true;
+  positionColumnMenu(event.clientX ? { x: event.clientX, y: event.clientY } : undefined);
+}
+
+function closeColumnMenu(restoreFocus = false): void {
+  if (!columnMenuOpen.value) return;
+  columnMenuOpen.value = false;
+  if (restoreFocus) columnMenuTrigger.value?.focus();
+}
+
+function onToggleColumn(key: InvoiceColumnKey): void {
+  workspace.toggleInvoiceColumn(props.dirKey, key, availableColumnKeys.value);
+}
+
+function resetColumns(): void {
+  workspace.resetInvoiceColumns(props.dirKey);
+}
+
+function onDocumentPointerDown(event: Event): void {
+  if (!columnMenuOpen.value) return;
+  const target = event.target as Node | null;
+  if (target && (columnMenuWrap.value?.contains(target) || columnMenuEl.value?.contains(target))) return;
+  columnMenuOpen.value = false;
+}
+
+function onDocumentKeyDown(event: KeyboardEvent): void {
+  // Hidden KeepAlive tabs must not intercept window Escape (WEB_UI rule).
+  if (!viewActive.value || !columnMenuOpen.value || event.key !== "Escape") return;
+  event.preventDefault();
+  event.stopPropagation();
+  closeColumnMenu(true);
+}
 const selectedItems = computed(() => [...selected.value.values()].map(({ invoice_key, source_path }) => ({ invoice_key, source_path })));
 const entry = (row: InvoiceRow): SelectedRow => ({ invoice_key: row.invoice_key, source_path: row.source_path!, invoice_number: row.invoice_number ?? "" });
 const pageRows = computed(() => (invoices.value?.items ?? []).filter((row) => row.source_path));
@@ -203,6 +313,7 @@ function focusTagMenu(): void {
 }
 
 function openTagMenu(row: InvoiceRow, event: MouseEvent | KeyboardEvent): void {
+  columnMenuOpen.value = false;
   const target = event.currentTarget as HTMLElement;
   const box = target.getBoundingClientRect();
   const point = event instanceof MouseEvent && event.clientX ? { x: event.clientX, y: event.clientY } : { x: box.left + 24, y: box.bottom };
@@ -423,6 +534,8 @@ async function saveProjectModal(): Promise<void> {
 onMounted(() => {
   window.addEventListener("workspace:invoices-updated", refreshFromEvent);
   window.addEventListener("workspace:company-refreshed", onCompanyRefreshed);
+  document.addEventListener("pointerdown", onDocumentPointerDown);
+  document.addEventListener("keydown", onDocumentKeyDown, true);
   if (!tagStore.definitions) void tagStore.load();
 });
 
@@ -433,6 +546,7 @@ watch(
     invoices.value = null;
     marksRevision.value = null;
     tagMenu.value = null;
+    columnMenuOpen.value = false;
     clearSelection();
     void loadInvoices();
   },
@@ -440,7 +554,15 @@ watch(
 );
 // A preview is a snapshot of this exact selection; changing it releases its heartbeat.
 watch(() => JSON.stringify(selectedItems.value), () => { previewing.value = null; });
-onBeforeUnmount(() => { clearTimeout(keywordTimer); listGeneration += 1; selectionGeneration += 1; window.removeEventListener("workspace:invoices-updated", refreshFromEvent); window.removeEventListener("workspace:company-refreshed", onCompanyRefreshed); });
+onBeforeUnmount(() => {
+  clearTimeout(keywordTimer);
+  listGeneration += 1;
+  selectionGeneration += 1;
+  window.removeEventListener("workspace:invoices-updated", refreshFromEvent);
+  window.removeEventListener("workspace:company-refreshed", onCompanyRefreshed);
+  document.removeEventListener("pointerdown", onDocumentPointerDown);
+  document.removeEventListener("keydown", onDocumentKeyDown, true);
+});
 </script>
 
 <template>
@@ -459,6 +581,63 @@ onBeforeUnmount(() => { clearTimeout(keywordTimer); listGeneration += 1; selecti
           <h3>发票列表 <span class="muted">· {{ invoices.count }} 张</span> <span v-if="invoices.read_only" class="tag">只读 · 上次汇总</span></h3>
           <p>{{ selectable ? "勾选后底部会出现合计详情和批量操作；" : "" }}右键一行（或按 Shift+F10）可以打标签{{ selectable ? "，在已勾选的行上右键可批量打标签" : "" }}。</p>
         </div>
+        <div v-if="invoices.directory.projection.summary_exists" class="dir-list-head__actions">
+          <button
+            v-if="hiddenColumns.length"
+            type="button"
+            class="ghost"
+            @click="resetColumns"
+          >恢复全部列</button>
+          <div ref="columnMenuWrap" class="col-picker">
+            <button
+              ref="columnMenuTrigger"
+              type="button"
+              aria-haspopup="menu"
+              :aria-expanded="columnMenuOpen"
+              :aria-controls="columnMenuId"
+              @click="toggleColumnMenu"
+            >
+              <WorkspaceIcon name="eye" />
+              显示列
+              <span v-if="hiddenColumns.length" class="col-picker__badge">已隐藏 {{ hiddenColumns.length }}</span>
+            </button>
+            <div
+              v-if="columnMenuOpen"
+              :id="columnMenuId"
+              ref="columnMenuEl"
+              class="col-picker__menu"
+              role="menu"
+              aria-label="自定义发票列表显示列"
+              :style="columnMenuPos"
+            >
+              <div class="col-picker__head">
+                <strong>显示列</strong>
+                <button
+                  type="button"
+                  class="link"
+                  :disabled="!hiddenColumns.length"
+                  @click="resetColumns"
+                >恢复全部</button>
+              </div>
+              <p class="col-picker__hint muted">取消勾选即可隐藏不需要的列（至少保留 1 列）。</p>
+              <label
+                v-for="col in availableColumns"
+                :key="col.key"
+                class="col-picker__item"
+                role="menuitemcheckbox"
+                :aria-checked="isColumnVisible(col.key) ? 'true' : 'false'"
+              >
+                <input
+                  type="checkbox"
+                  :checked="isColumnVisible(col.key)"
+                  :disabled="isColumnVisible(col.key) && visibleColumnCount <= 1"
+                  @change="onToggleColumn(col.key)"
+                >
+                <span>{{ col.label }}</span>
+              </label>
+            </div>
+          </div>
+        </div>
       </div>
       <p v-if="invoices.read_only" class="muted">未设为监控的目录可以直接查看、勾选并批量打标签；如需预览原票、打印或删除文件，请先设为监控目录。</p>
       <p v-if="!invoices.directory.projection.summary_exists" class="muted">这个目录还没读取过发票，点上方“读取数据”即可查看。</p>
@@ -473,66 +652,85 @@ onBeforeUnmount(() => { clearTimeout(keywordTimer); listGeneration += 1; selecti
           <option v-for="tag in tagStore.tags" :key="tag.id" :value="tag.id">{{ tag.name }}</option>
         </select></label>
       </div>
-      <table v-if="invoices.directory.projection.summary_exists" class="grid directory-invoices-table" :aria-busy="invoicesLoading">
-        <thead>
-          <tr><th class="tag-cell"><span class="sr-only">标签</span></th><th>销售方</th><th>购买方</th><th>格式</th><th>发票号码</th><th v-if="isProjectDir">项目</th><th>发票分类与业务</th><th>税率</th><th class="num">开票金额</th><th :aria-sort="dateSort === 'asc' ? 'ascending' : dateSort === 'desc' ? 'descending' : 'none'">
-              <button type="button" class="link" :aria-label="dateSortLabel" @click="toggleDateSort">开票时间 {{ dateSort === 'asc' ? '↑' : dateSort === 'desc' ? '↓' : '↕' }}</button>
-            </th><th>状态</th>
-            <th v-if="selectable" class="select-cell">
-              <input
-                type="checkbox"
-                aria-label="勾选本页"
-                :checked="pageState.all"
-                :indeterminate.prop="pageState.some"
-                :disabled="!pageRows.length || invoicesLoading || selectingAll"
-                @change="togglePage"
-              >
-            </th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr
-            v-for="row in invoices.items"
-            :key="row.invoice_key"
-            tabindex="0"
-            @contextmenu.prevent="openTagMenu(row, $event)"
-            @keydown="onRowKey(row, $event)"
-          >
-            <!-- Fixed-width slot so names stay aligned; several tags stack like Finder dots. -->
-            <td class="tag-cell">
-              <span v-for="id in row.tags ?? []" :key="id" class="tag-dot" :style="{ background: tagStore.byId.get(id)?.color }" :title="tagTitle(id)" />
-            </td>
-            <td class="invoice-party">{{ row.seller }}</td>
-            <td class="invoice-party">{{ row.buyer }}</td>
-            <td class="nowrap"><span class="format-badge" :class="`format-badge--${formatTone(row)}`">{{ formatLabel(row) }}</span></td>
-            <td class="nowrap">{{ row.invoice_number }}</td>
-            <td v-if="isProjectDir" class="nowrap">
-              <template v-if="row.project">
-                <span>{{ row.project }}</span>
-                <small v-if="row.project_source === 'manual'" class="muted"> · 人工</small>
-              </template>
-              <span v-else class="muted">{{ row.project_source === "conflict" ? "备注冲突" : "—" }}</span>
-            </td>
-            <td class="invoice-classification" :title="row.classification_issue || ''">
-              <span class="invoice-type" :class="{ 'invoice-type--special': row.invoice_type === '增值税专用发票', 'invoice-type--ordinary': row.invoice_type === '增值税普通发票' }">{{ row.invoice_type || '—' }}</span>
-              <span class="muted invoice-classification__business">业务：{{ row.business_type || '—' }}</span>
-            </td>
-            <td class="nowrap">{{ ratePercent(row.tax_rate) }}</td>
-            <td class="num">{{ money(row.amount) }}</td>
-            <td class="nowrap">{{ row.invoice_date }}</td>
-            <td class="nowrap"><span class="tag" :class="row.status === '已识别' ? 'pill-ok' : row.status ? 'pill-warn' : ''">{{ row.status || "—" }}</span></td>
-            <td v-if="selectable" class="select-cell">
-              <input
-                type="checkbox"
-                :aria-label="`勾选 ${row.invoice_number || row.source_file}`"
-                :checked="selected.has(row.invoice_key)"
-                :disabled="!row.source_path || invoicesLoading || selectingAll"
-                @change="toggleRow(row)"
-              >
-            </td>
-          </tr>
-        </tbody>
-      </table>
+      <div v-if="invoices.directory.projection.summary_exists" class="directory-invoices-wrap">
+        <table class="grid directory-invoices-table" :aria-busy="invoicesLoading">
+          <thead>
+            <tr @contextmenu.prevent="openColumnMenuAtHeader($event)">
+              <th class="tag-cell"><span class="sr-only">标签</span></th>
+              <th v-if="isColumnVisible('seller')" class="invoice-party">销售方</th>
+              <th v-if="isColumnVisible('buyer')" class="invoice-party">购买方</th>
+              <th v-if="isColumnVisible('format')">格式</th>
+              <th v-if="isColumnVisible('invoice_number')">发票号码</th>
+              <th v-if="isProjectDir && isColumnVisible('project')" class="invoice-project">项目</th>
+              <th v-if="isColumnVisible('classification')">发票分类与业务</th>
+              <th v-if="isColumnVisible('tax_rate')">税率</th>
+              <th v-if="isColumnVisible('amount')" class="num">开票金额</th>
+              <th v-if="isColumnVisible('invoice_date')" :aria-sort="dateSort === 'asc' ? 'ascending' : dateSort === 'desc' ? 'descending' : 'none'">
+                <button type="button" class="link" :aria-label="dateSortLabel" @click="toggleDateSort">开票时间 {{ dateSort === 'asc' ? '↑' : dateSort === 'desc' ? '↓' : '↕' }}</button>
+              </th>
+              <th v-if="isColumnVisible('status')">状态</th>
+              <th v-if="selectable" class="select-cell">
+                <input
+                  type="checkbox"
+                  aria-label="勾选本页"
+                  :checked="pageState.all"
+                  :indeterminate.prop="pageState.some"
+                  :disabled="!pageRows.length || invoicesLoading || selectingAll"
+                  @change="togglePage"
+                >
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr
+              v-for="row in invoices.items"
+              :key="row.invoice_key"
+              tabindex="0"
+              @contextmenu.prevent="openTagMenu(row, $event)"
+              @keydown="onRowKey(row, $event)"
+            >
+              <!-- Fixed-width slot so names stay aligned; several tags stack like Finder dots. -->
+              <td class="tag-cell">
+                <span v-for="id in row.tags ?? []" :key="id" class="tag-dot" :style="{ background: tagStore.byId.get(id)?.color }" :title="tagTitle(id)" />
+              </td>
+              <td v-if="isColumnVisible('seller')" class="invoice-party">
+                <span class="invoice-party__text" :title="row.seller || ''">{{ row.seller }}</span>
+              </td>
+              <td v-if="isColumnVisible('buyer')" class="invoice-party">
+                <span class="invoice-party__text" :title="row.buyer || ''">{{ row.buyer }}</span>
+              </td>
+              <td v-if="isColumnVisible('format')" class="nowrap"><span class="format-badge" :class="`format-badge--${formatTone(row)}`">{{ formatLabel(row) }}</span></td>
+              <td v-if="isColumnVisible('invoice_number')" class="nowrap">{{ row.invoice_number }}</td>
+              <td v-if="isProjectDir && isColumnVisible('project')" class="invoice-project nowrap">
+                <span class="invoice-project__text" :title="row.project ? (row.project_source === 'manual' ? `${row.project} · 人工` : row.project) : ''">
+                  <template v-if="row.project">
+                    <span>{{ row.project }}</span>
+                    <small v-if="row.project_source === 'manual'" class="muted"> · 人工</small>
+                  </template>
+                  <span v-else class="muted">{{ row.project_source === "conflict" ? "备注冲突" : "—" }}</span>
+                </span>
+              </td>
+              <td v-if="isColumnVisible('classification')" class="invoice-classification" :title="row.classification_issue || ''">
+                <span class="invoice-type" :class="{ 'invoice-type--special': row.invoice_type === '增值税专用发票', 'invoice-type--ordinary': row.invoice_type === '增值税普通发票' }">{{ row.invoice_type || '—' }}</span>
+                <span class="muted invoice-classification__business">业务：{{ row.business_type || '—' }}</span>
+              </td>
+              <td v-if="isColumnVisible('tax_rate')" class="nowrap">{{ ratePercent(row.tax_rate) }}</td>
+              <td v-if="isColumnVisible('amount')" class="num">{{ money(row.amount) }}</td>
+              <td v-if="isColumnVisible('invoice_date')" class="nowrap">{{ row.invoice_date }}</td>
+              <td v-if="isColumnVisible('status')" class="nowrap"><span class="tag" :class="row.status === '已识别' ? 'pill-ok' : row.status ? 'pill-warn' : ''">{{ row.status || "—" }}</span></td>
+              <td v-if="selectable" class="select-cell">
+                <input
+                  type="checkbox"
+                  :aria-label="`勾选 ${row.invoice_number || row.source_file}`"
+                  :checked="selected.has(row.invoice_key)"
+                  :disabled="!row.source_path || invoicesLoading || selectingAll"
+                  @change="toggleRow(row)"
+                >
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
       <div
         v-if="tagMenu"
         ref="tagMenuEl"

@@ -23,7 +23,7 @@
 - 监控日志必须写入 `workspace/文件变化监控日志.txt`，至少保留 `STARTUP_SYNC/EVENT_SYNC/PERIODIC_SYNC/MANUAL_EDIT_* / NOTIFY_*` 动作。
 - 监控默认同步策略为启动校验一次、文件事件 1 秒合并、60 秒轻量兜底；无变化周期不得重解析全目录。
 - Excel 手改自动同步只允许 `销售方/开票金额/发票号码` 三字段，必须记录 `MANUAL_EDIT_DETECTED`、`MANUAL_SYNC_GUARD_PASS/BLOCK`、`MANUAL_EDIT_AUTO_SYNC`。
-- localhost 服务启动后，即使用户没有点击“启动监控”，也必须后台执行一次 `STARTUP_SYNC`：比较当前 `watch_dir` 与 `processed_files.json`、缺失汇总或成本产物时自动重建普通汇总和成本三件套。该动作不能阻塞 `/` 和 `/api/v1/health`。
+- localhost 服务启动后，即使用户没有点击“启动监控”，也必须后台执行一次 `STARTUP_SYNC`：比较当前 `watch_dir` 与 `processed_files.json`、缺失汇总或成本产物、或 `projection-manifest.json` 缺失 / `parser_versions` 落后当前解析器版本时自动增量重建普通汇总和成本三件套（保留手改覆盖；重建后稳态无变化周期仍不得重解析全目录）。该动作不能阻塞 `/` 和 `/api/v1/health`。
 - 删除同步只允许删除投影记录和状态，不得删除源发票文件。
 - `server_state.json`、`browser_launch.log`、`startup_preflight.log`、`monitor_status.json` 等只作为诊断文件，不是唯一运行真值。
 

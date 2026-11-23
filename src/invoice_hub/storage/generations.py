@@ -43,6 +43,22 @@ def current(workspace: Path, source: Path | None = None) -> dict:
         raise ValueError("完整投影清单损坏；未回退到可能混合的导出副本。") from exc
 
 
+def parser_versions_stale(workspace: Path, source: Path, expected: dict[str, str]) -> bool:
+    """Return True when the workspace lacks a manifest or was built with older parser versions.
+
+    MonitorSynchronizer and directory_freshness call this alongside file signatures so an app
+    upgrade that improves extraction/classification/cost rules triggers one incremental rebuild
+    without re-parsing steady-state directories on periodic checks.
+    """
+    data = current(workspace, source)
+    if not data:
+        return True
+    stored = data.get("parser_versions")
+    if not isinstance(stored, dict):
+        return True
+    return any(stored.get(key) != value for key, value in expected.items())
+
+
 def resolve(workspace: Path, source: Path, name: str, manifest: dict | None = None) -> Path:
     if name not in FILES:
         raise ValueError("未知投影。")
@@ -122,6 +138,7 @@ def publish(
     expected: str = "",
     coverage: dict | None = None,
     export_to_source: bool = True,
+    parser_versions: dict[str, str] | None = None,
 ) -> dict:
     previous = current(workspace, source)
     if previous.get("generation", "") != expected:
@@ -148,6 +165,8 @@ def publish(
         "scan_complete": True,
         "coverage": coverage or {},
     }
+    if parser_versions is not None:
+        data["parser_versions"] = {str(key): str(value) for key, value in parser_versions.items()}
     # Export failures cannot make API readers consume half of two generations.
     # The pointer is authoritative; each export is independently replaceable and rebuildable.
     atomic_write_json(Path(workspace) / "projection-manifest.json", data)
@@ -185,4 +204,11 @@ def publish_exports(workspace: Path, source: Path, changed: tuple = COST + OPTIO
                     if name in changed else resolve(workspace, source, name, previous))
             if path.exists():
                 shutil.copyfile(path, stage / name)
-        return publish(workspace, source, stage, expected=previous["generation"], coverage=previous["coverage"])
+        return publish(
+            workspace,
+            source,
+            stage,
+            expected=previous["generation"],
+            coverage=previous["coverage"],
+            parser_versions=previous.get("parser_versions") if isinstance(previous.get("parser_versions"), dict) else None,
+        )

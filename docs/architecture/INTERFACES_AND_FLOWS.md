@@ -1,5 +1,12 @@
 # InvoiceHub 接口与运行流程
 
+## 2026-11-23 解析器版本感知自动重算、成品油业务样式与工作区活动目录重算
+
+- `storage/generations.py::publish` 在 `projection-manifest.json` 记录 `parser_versions`（`summary` / `cost`）；`MonitorSynchronizer._run_sync_locked` 在源文件未变化时额外检查 `parser_versions_stale`，缺失清单的旧工作区或识别规则升级后自动触发一次增量重建并回报 `parser_refreshed: true`（保留手改字段；重建后周期检查恢复零重解析）。
+- `GET /api/v1/companies/{company_id}/directories` 的 `freshness` 在源文件未变化但 `parser_versions_stale` 为真时返回 `state: "stale"`、`parser_stale: true` 与“识别规则已更新”提示；`CompanyDataRefreshService` 非强制刷新亦会触发重建。
+- Vue 工作区 `DirectoryPanel.vue` 与 `CompanyDirectories.vue` 为当前活动监控发票目录提供「重新汇总」按钮，调用现有 `POST /api/v1/bridge/rebuild`，完成后提示 toast、派发 `workspace:company-refreshed` 并刷新目录列表；切换目录或卸载时丢弃迟到响应。
+- `extraction/classification.py` 登记 `BUSINESS_TYPE_REFINED_OIL = "成品油"`（PDF 左上角业务标签坐标、OFD 坐标/CustomTag 与 XML 显式业务字段触发；公司名/品名不触发），经典首页筛选新增「成品油」选项，单据索引 `CACHE_VERSION` 升至 3。
+
 ## 2026-11-23 草稿生成的品目与来源交接
 
 外部 HTTP body 与 XLSX 列不变。工作区生成/改记入期通过 `_voucher_invoice_inputs` 成对捕获完整代际 `invoice_csv` 与其映射来源 `reference_status`，再经 `company_vouchers → CompanyPaths → prepare`；状态不从代际父目录、另一公司或活动 monitor 推断。无已建投影的旧根 CSV 公司继续读取根 CSV 旁的状态，CLI 也是同一入口；每次请求重新捕获来源，改记入期不能丢失状态路径。

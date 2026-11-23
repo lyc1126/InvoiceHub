@@ -137,6 +137,15 @@ export interface Freshness {
   deleted?: number;
   source_file_count?: number;
   complete?: boolean;
+  parser_stale?: boolean;
+}
+
+export interface BridgeRebuildPayload {
+  ok: boolean;
+  task_id?: string;
+  exit_code?: number;
+  message?: string;
+  error?: string;
 }
 
 export interface CompanyDirectory extends CompanySubdir {

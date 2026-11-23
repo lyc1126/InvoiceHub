@@ -2,6 +2,30 @@
 
 ## 未发布
 
+### 2026-11-23 解析器版本感知自动重算、成品油业务类型与工作区活动目录「重新汇总」
+
+- 需求与起点：基于 `codex/workspace-p3@380a359`（保留同日未提交的工作区发票列表列宽/显隐/居中改动，本轮一起提交），排查并根治用户升级至 `1.0.0-beta.1` 后成品油专票在界面上仍显示空白销售方的问题。只读核查确认：新版解析器（BUG-04）本身已完整提取销售方、购买方、除税价与税金，界面空白源自三项叠加原因：(1) 既有工作区汇总文件停留在 BUG-04 之前且无 `projection-manifest.json`；(2) `MonitorSynchronizer` 未检测解析器版本变化，文件未变动时不自动重算；(3) 新版工作区对当前活动监控目录缺少手动「重新汇总」入口；同时用户确认将「成品油」补齐为独立特定业务类型，并在提交后更新本机开发版 `InvoiceHub.app`。
+- 采用方案：
+  - **解析器版本感知自动重算**：`storage/generations.py::publish` 在 `projection-manifest.json` 写入 `parser_versions`（`summary: PARSER_VERSION`、`cost: COST_PARSER_VERSION`），`publish_exports` 保留该字段；新增 `generations.parser_versions_stale`；`projections/incremental.py` 新增 `current_parser_versions()` 并写入新代际；`monitoring/sync.py::MonitorSynchronizer._run_sync_locked` 将 `parser_stale` 纳入 `should_rebuild`（排除在 `schema_only_refresh` 外，回报 `parser_refreshed`），升级后自动触发一次增量重建并保留手改字段，重建后稳态周期恢复零重解析。`services/company_views.py::directory_freshness` 对缺失清单或规则过期的非监控目录返回 `state: "stale"`、`parser_stale: true` 与“识别规则已更新”提示，`CompanyDataRefreshService` 非强制刷新亦会触发重建。
+  - **特定业务类型新增「成品油」**：`extraction/classification.py` 登记 `BUSINESS_TYPE_REFINED_OIL = "成品油"`（含别名「成品油发票」），由 PDF 左上角业务标签坐标、OFD 坐标/CustomTag 与 XML 显式业务字段触发，公司名与商品名不触发；`web/templates/index.html` 特定业务筛选补充「成品油」；`services/document_index.py::CACHE_VERSION` 升至 `3` 使旧单据索引重提。
+  - **工作区活动监控目录补齐「重新汇总」**：`frontend/src/components/DirectoryPanel.vue` 与 `CompanyDirectories.vue` 为当前活动监控发票目录提供「重新汇总」按钮（复用 `POST /api/v1/bridge/rebuild`，处理中保持 `aria-busy`、切换/卸载丢弃迟到响应，完成后弹 toast、派发 `workspace:company-refreshed` 并刷新）；非监控目录因规则升级过期时显示「（识别规则已更新）」，不显示「新增 0、改动 0、删除 0」。同步重建 `web/static/app/` 与更新架构地图及功能规则。
+- 验证范围与未覆盖项：
+  - 已运行并通过：新增后端/前端回归（`test_monitor_sync_auto_rebuilds_when_parser_version_changes_or_manifest_missing`、`test_parser_version_change_marks_non_monitored_directory_stale_and_refresh_rebuilds`、`test_refined_oil_business_type_uses_context_not_company_or_item_names`、`selection-summary-and-refresh.spec.ts`）；本机 macOS/Python 3.14.7 全量 pytest 除 1 项与本轮无关的既有发布配置版本基线失败（`test_windows_release_contract.py::test_windows_repackage_config_is_complete_and_matches_release_identity`，源于 `cddafd2` 未同步 `WINDOWS_REPACKAGE_CONFIG.json`）外全部业务与契约测试通过；Vue `vue-tsc --noEmit`、`vitest run`（20 文件 167 项）、`vite build`、`node --test tests/*.test.cjs`（40 项）、Ruff、Python `compileall`、`tests/test_development_documentation.py`、`git diff --check`。另在本机真实成品油 PDF 上做内存只读提取核对，确认 `invoice_type=增值税专用发票`、`business_type=成品油`、购销方与三项金额完整一致（不写入源目录或仓库）。
+  - 开发版打包：本地 DCO 提交后使用 `scripts/dev/tauri_dev_app.py build` 重建 macOS ARM64 开发版 `InvoiceHub.app` 并更新至 `/Applications/InvoiceHub.app`。
+  - 未覆盖项：未覆盖正式 Windows BAT、Windows 打包产物、系统原生选择器、签名/公证 DMG 及真实业务完整写盘验收；本轮仅本地提交，未推送远端或合并 `main`。
+
+### 2026-11-23 调整工作区发票列表列宽间距、列显隐与居中对齐
+
+- 需求与起点：基于 `codex/workspace-p3@380a359` 响应用户三项工作区发票列表排版与交互需求：(1) 收紧销售方与购买方之间的过大空白间隔，调整到合适宽度；(2) 支持隐藏发票列表不需要查看的数据列并支持随时恢复显示；(3) 发票列表所有显示列居中对齐。
+- 采用方案：
+  - **合理列宽与防撑宽截断**：`DirectoryInvoices.vue` 将列表包裹在 `.directory-invoices-wrap` 横向滚动容器内并保持真实 `<table>`（`display: table; width: 100%`）；为销售方/购买方（`.invoice-party__text`，`max-width: 196px`）及项目名（`.invoice-project__text`，`max-width: 180px`）增加 `inline-block` 单行省略与完整 `title` 悬停提示，防止单条超长单位名在 `table-layout: auto` 下将整列拉宽并在销售方与购买方之间留出大段空白，同时保留可选择文本与 Excel/WPS TSV 完整复制路径。
+  - **列显隐与恢复持久化**：`frontend/src/stores/workspace.ts` 在 `localStorage`（`invoicehub.workspace.v1`）按目录类型 `dirKey` 持久化 `hiddenInvoiceColumns`（例如在成本发票隐藏购买方不影响开具发票显示购买方），并守护至少保留 1 个可见数据列及损坏配置自动回退；`DirectoryInvoices.vue` 在列表头右侧提供「显示列」勾选菜单（隐藏时显示「已隐藏 N」徽标与「恢复全部列」快捷入口），同时支持右键表头快速打开菜单，Esc 与视口边界约束遵守 KeepAlive 隐藏标签规则。
+  - **显示列居中对齐**：`frontend/src/styles.css` 与 `frontend/src/prototype.css` 仅针对 `.directory-invoices-table` 将全部表头与数据单元格（含 `.num` 开票金额，保留 `tabular-nums`）设为 `text-align: center; vertical-align: middle;`，不影响账簿/成本/凭证等其它表格的数字右对齐规范。同步重建 `web/static/app/` 产物及更新 `WEB_UI.md`、`FILE_MAP.md`、`COMMENT_RATIONALE_MAP.md`。
+- 验证范围与未覆盖项：
+  - 已运行并通过：Vue `vue-tsc --noEmit`、`vitest run`（20 文件 166 项，含 `frontend/tests/directory-preview.spec.ts` 新增列显隐持久化、最少 1 列保护、右键表头、居中与列宽上限回归）、`vite build`、`tests/test_workspace_frontend.py`、`tests/test_development_documentation.py`、`node --test tests/*.test.cjs`（40 项）、Ruff、Python `compileall`、`git diff --check`。
+  - 隔离合成浏览器实测（本机 Chrome，独立临时目录，不触碰真实默认配置）：验证浅色 1440×900 全部列计算样式 `text-align: center`、超长销售方截断至 196px 且 `销售方` 列宽收束在 216px、隐藏/重载持久化/右键表头/恢复全部列，`website-dark` 深色皮肤与 `?no_skin=1` 390px 窄屏无横向溢出且菜单未出界，全程零控制台/页面错误。
+  - 未覆盖项：未覆盖真实默认配置业务目录、正式 Windows BAT、真实前台桌面宿主拉起、系统原生选择器与 Tauri 打包产物验收（本机如需桌面端生效须重启服务或重打 `InvoiceHub.app`）。
+
 ### 2026-11-23 补齐项目归属全量人工调整、目录批量改项目与项目重命名（WS-03）
 
 - 需求与起点：基于 `codex/workspace-p3@cddafd2`（`1.0.0-beta.1`）响应用户需求：不仅未归属发票，所有已识别发票（含发票备注自动识别的项目）都须支持人工手动调整项目归属，并且项目名称必须支持重命名（及合并到已有项目），同时不修改源发票且保持项目汇总、发票目录、侧栏项目树与成本分析 V2 口径一致。

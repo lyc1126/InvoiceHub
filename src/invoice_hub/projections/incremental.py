@@ -5,9 +5,19 @@ import copy
 import shutil
 from pathlib import Path
 
+from invoice_hub.projections import cost_analysis as _cost_analysis
+from invoice_hub.projections import summary as _summary
 from invoice_hub.projections.costs import CostProjectionService
 from invoice_hub.storage import generations
 from invoice_hub.storage.parse_cache import ParseCache, identity, scan_files, signature
+
+
+def current_parser_versions() -> dict[str, str]:
+    """Current extraction/classification and cost-analysis fingerprints stored in manifests."""
+    return {
+        "summary": str(_summary.PARSER_VERSION),
+        "cost": str(_cost_analysis.COST_PARSER_VERSION),
+    }
 
 
 def rebuild_generation(
@@ -66,6 +76,7 @@ def rebuild_generation(
             expected=previous.get("generation", ""),
             coverage=cache.stats(),
             export_to_source=export_to_source,
+            parser_versions=current_parser_versions(),
         )
         state.save_processed(processed)
         cost._save_tax_dependency()

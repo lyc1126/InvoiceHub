@@ -342,9 +342,27 @@ button.ghost { color:var(--muted); min-height:30px; padding:0 10px; font-size:13
    rail, sidebar and module header dim together while the frame (and its dialog) stays on top. */
 .ws-module-scrim { position:fixed; inset:0; z-index:60; background:var(--ws-scrim); backdrop-filter:blur(4px); }
 .module-frame--modal { position:relative; z-index:61; }
-.directory-invoices-table :is(th,td) { white-space:nowrap; }
-.directory-invoices-table { border:1px solid var(--line); border-radius:4px; background:var(--surface); }
+.directory-invoices-wrap { border:1px solid var(--line); border-radius:4px; background:var(--surface); }
+.directory-invoices-table { display:table; width:100%; border:0; border-radius:0; background:transparent; }
+.directory-invoices-table :is(th,td) { white-space:nowrap; padding:8px 10px; text-align:center; vertical-align:middle; }
+.directory-invoices-table .num { text-align:center; font-variant-numeric:tabular-nums; }
+.directory-invoices-table .tag-cell { width:36px; min-width:36px; padding-left:6px; padding-right:6px; }
+.directory-invoices-table .select-cell { width:40px; min-width:40px; padding-left:6px; padding-right:6px; }
+.directory-invoices-table thead th button.link { min-height:0; padding:0 2px; }
 .directory-invoices-table tbody tr:hover { background:color-mix(in srgb,var(--primary) 9%,var(--surface)); }
+.dir-list-head__actions { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+.col-picker { position:relative; display:inline-flex; }
+.col-picker__badge { display:inline-flex; align-items:center; padding:0 6px; border:1px solid var(--ws-active-line); border-radius:999px; background:var(--ws-selected); color:var(--text); font-size:11.5px; font-weight:600; line-height:18px; }
+/* Keep column menu above sticky selection bar (z-index:20) and viewport-clamped like tag-menu. */
+.col-picker__menu { position:fixed; z-index:35; display:flex; flex-direction:column; gap:4px; min-width:210px; max-width:calc(100vw - 16px); max-height:calc(100vh - 16px); overflow:auto; padding:10px; border:1px solid var(--line-strong); border-radius:6px; background:var(--surface); box-shadow:var(--ws-shadow); text-align:left; }
+.col-picker__head { display:flex; align-items:center; justify-content:space-between; gap:12px; padding-bottom:6px; border-bottom:1px solid var(--line); }
+.col-picker__head strong { font-size:13.5px; color:var(--text); }
+.col-picker__head button.link { min-height:0; padding:0 2px; font-size:12.5px; }
+.col-picker__hint { margin:2px 0 4px; font-size:12px; line-height:1.4; }
+.col-picker__item { display:flex; align-items:center; gap:8px; padding:4px 6px; border-radius:4px; font-size:13px; color:var(--text); cursor:pointer; user-select:none; }
+.col-picker__item:hover { background:var(--ws-hover); }
+.col-picker__item:has(input:disabled) { opacity:.55; cursor:default; }
+.col-picker__item input[type='checkbox'] { margin:0; flex:none; }
 @media (max-width:1100px) { .company-tools { top:0; } }
 @media (max-width:640px) { .rail-sep { width:1px; height:32px; margin:0 3px; } }
 /* ---- Prototype dialog (.modal-back / .modal) and toast ---- */

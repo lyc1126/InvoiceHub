@@ -209,6 +209,87 @@ describe("non-monitored directory read-only data refresh", () => {
     expect(wrapper.text()).toContain("供应甲");
     wrapper.unmount();
   });
+
+  it("shows parser-upgrade stale hint for non-monitored folders and lets active monitored folders run bridge rebuild", async () => {
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    const activeCompany: Company = { ...COMPANY, monitored: true, monitored_subdir_key: "cost_invoice_dir" };
+    useCompaniesStore().list = { ok: true, revision: 1, companies: [activeCompany], monitored_company_id: "co_1", target_id: "t_cost", watch_dir: "/合成/甲/成本发票", standard_subdirs: [] };
+    let rebuilt = false;
+    const calls: string[] = [];
+    const refreshedEvents: unknown[] = [];
+    const onRefreshed = (e: Event) => refreshedEvents.push((e as CustomEvent).detail);
+    window.addEventListener("workspace:company-refreshed", onRefreshed);
+
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init: RequestInit = {}) => {
+      calls.push(`${init.method ?? "GET"} ${url}`);
+      if (url === "/api/v1/bridge/rebuild" && init.method === "POST") {
+        rebuilt = true;
+        return respond({ ok: true, task_id: "task-1", exit_code: 0, message: "汇总已完成，共 1 条发票，成本明细 4 行。" });
+      }
+      if (url.endsWith("/directories")) {
+        return respond({
+          ok: true,
+          revision: 1,
+          company: activeCompany,
+          directories: [
+            {
+              ...COMPANY.subdirs[0],
+              target_id: "t_cost",
+              active: true,
+              read_only: false,
+              projection: { summary_exists: true, summary_updated_at: rebuilt ? "2026-11-23 23:20:00" : "2026-10-09 20:21:02", cost_detail_exists: true, cost_detail_updated_at: "" },
+              freshness: { state: "monitored", message: "当前监控目录，新发票会自动读取。" },
+            },
+            {
+              ...COMPANY.subdirs[1],
+              target_id: "t_issued",
+              active: false,
+              read_only: true,
+              projection: { summary_exists: true, summary_updated_at: "2026-10-09 20:21:02", cost_detail_exists: true, cost_detail_updated_at: "" },
+              freshness: { state: "stale", parser_stale: true, added: 0, updated: 0, deleted: 0, message: "识别规则已更新，点“更新数据”即可重新汇总。" },
+            },
+          ],
+        });
+      }
+      if (url.includes("/invoices")) {
+        return respond({
+          ok: true, company_id: "co_1", directory_key: "cost_invoice_dir", read_only: false, count: 1, page: 1, page_size: 50,
+          items: [{ invoice_key: "k1", source_path: "/合成/甲/成本发票/oil.pdf", source_file: "oil.pdf", file_format: "PDF", seller: rebuilt ? "示例石油分公司" : "", buyer: "合成测试公司", invoice_number: "26327000000000000001", invoice_type: "增值税专用发票", business_type: rebuilt ? "成品油" : "标准电子发票", tax_rate: "13%", amount: "8800.00", invoice_date: "2026-07-29", status: "已识别", tags: [] }],
+          stats: { all: { total: 1, recognized: 1, needs_review: 0, duplicates: 0 }, filtered: { total_amount: "8800.00", total_amount_valid_count: 1 } },
+          snapshot: { revision: rebuilt ? 2 : 1, provisional: false },
+          directory: { target_id: "t_cost", projection: { summary_exists: true } },
+        });
+      }
+      if (url.endsWith("/invoice-tags")) return respond({ ok: true, revision: 1, tags: [] });
+      return respond({ ok: true });
+    }));
+
+    const panel = mount(DirectoryPanel, {
+      global: { plugins: [pinia] },
+      props: { company: activeCompany, dirKey: "cost_invoice_dir" },
+    });
+    await flushPromises();
+    const rebuildBtn = panel.findAll("button").find((btn) => btn.text() === "重新汇总")!;
+    expect(rebuildBtn).toBeDefined();
+    await rebuildBtn.trigger("click");
+    await flushPromises();
+    expect(calls).toContain("POST /api/v1/bridge/rebuild");
+    expect(refreshedEvents.length).toBeGreaterThan(0);
+    expect(panel.text()).toContain("示例石油分公司");
+    expect(panel.text()).toContain("业务：成品油");
+    panel.unmount();
+
+    const dirTable = mount(CompanyDirectories, {
+      global: { plugins: [pinia] },
+      props: { company: activeCompany },
+    });
+    await flushPromises();
+    expect(dirTable.text()).toContain("重新汇总");
+    expect(dirTable.text()).toContain("（识别规则已更新）");
+    dirTable.unmount();
+    window.removeEventListener("workspace:company-refreshed", onRefreshed);
+  });
 });
 
 describe("voucher list layout guard", () => {

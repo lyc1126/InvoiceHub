@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { ApiError, request } from "../api/client";
-import type { Company, CompanyDirectory, DirectoriesPayload, SubdirCreateResult, SubdirPlan } from "../api/types";
+import type { BridgeRebuildPayload, Company, CompanyDirectory, DirectoriesPayload, SubdirCreateResult, SubdirPlan } from "../api/types";
 import { FRESHNESS_LABELS, SUBDIR_STATUS_LABELS, errorText } from "../format";
+import { toast } from "../toast";
 import { companySourceKey, useCompaniesStore } from "../stores/companies";
 import { useWorkspaceStore } from "../stores/workspace";
 import WatchSwitchConfirm from "./WatchSwitchConfirm.vue";
@@ -22,10 +23,12 @@ const planKeys = ref<string[] | undefined>(undefined);
 const planBusy = ref(false);
 const planResult = ref<SubdirCreateResult | null>(null);
 const switchTarget = ref<CompanyDirectory | null>(null);
+const rebuildingActive = ref(false);
 
 const base = () => `/api/v1/companies/${encodeURIComponent(props.company.id)}`;
 
 let loadGeneration = 0;
+let rebuildGeneration = 0;
 async function loadDirectories(): Promise<void> {
   const mine = ++loadGeneration;
   loading.value = true;
@@ -96,17 +99,50 @@ function readDirectory(item?: CompanyDirectory): void {
   }
 }
 
+async function rebuildActive(): Promise<void> {
+  if (rebuildingActive.value) return;
+  const mine = ++rebuildGeneration;
+  const companyId = props.company.id;
+  rebuildingActive.value = true;
+  error.value = "";
+  try {
+    const payload = await request<BridgeRebuildPayload>("/api/v1/bridge/rebuild", {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+    if (mine !== rebuildGeneration) return;
+    if (!payload.ok) {
+      error.value = payload.message || payload.error || "重新汇总失败，请稍后重试。";
+      return;
+    }
+    toast(payload.message || "重新汇总已完成。");
+    window.dispatchEvent(new CustomEvent("workspace:company-refreshed", { detail: { companyId } }));
+    await loadDirectories();
+  } catch (cause) {
+    if (mine === rebuildGeneration) error.value = errorText(cause);
+  } finally {
+    if (mine === rebuildGeneration) rebuildingActive.value = false;
+  }
+}
+
 function onCompanyRefreshed(event: Event): void {
   const detail = (event as CustomEvent).detail;
   if (!detail?.companyId || detail.companyId === props.company.id) void loadDirectories();
 }
 
 onMounted(() => window.addEventListener("workspace:company-refreshed", onCompanyRefreshed));
-onBeforeUnmount(() => window.removeEventListener("workspace:company-refreshed", onCompanyRefreshed));
+onBeforeUnmount(() => {
+  ++loadGeneration;
+  ++rebuildGeneration;
+  rebuildingActive.value = false;
+  window.removeEventListener("workspace:company-refreshed", onCompanyRefreshed);
+});
 
 watch(
   () => `${companySourceKey(props.company)}/${props.company.monitored}/${props.company.monitored_subdir_key ?? ""}`,
   () => {
+    ++rebuildGeneration;
+    rebuildingActive.value = false;
     switchTarget.value = null;
     plan.value = null;
     planResult.value = null;
@@ -165,10 +201,11 @@ watch(
           <td class="nowrap">{{ item.projection.summary_updated_at || "—" }}</td>
           <td :class="`fresh fresh--${item.freshness.state}`" :title="item.freshness.message">
             {{ FRESHNESS_LABELS[item.freshness.state] }}
-            <span v-if="item.freshness.state === 'stale'" class="muted">（新增 {{ item.freshness.added }}、改动 {{ item.freshness.updated }}、删除 {{ item.freshness.deleted }}）</span>
+            <span v-if="item.freshness.state === 'stale'" class="muted">{{ item.freshness.parser_stale && !(item.freshness.added || item.freshness.updated || item.freshness.deleted) ? "（识别规则已更新）" : `（新增 ${item.freshness.added}、改动 ${item.freshness.updated}、删除 ${item.freshness.deleted}）` }}</span>
           </td>
           <td class="row-actions">
             <button v-if="item.status === 'present'" type="button" @click="openDirectory(item)">查看发票</button>
+            <button v-if="item.status === 'present' && item.active && INVOICE_KEYS.has(item.key)" type="button" :disabled="rebuildingActive" :aria-busy="rebuildingActive" @click="rebuildActive">{{ rebuildingActive ? "汇总中…" : "重新汇总" }}</button>
             <button v-if="item.status === 'present' && !item.active && INVOICE_KEYS.has(item.key)" type="button" :disabled="refreshing" @click="readDirectory(item)">{{ item.freshness.state === "never_built" ? "读取数据" : "更新数据" }}</button>
             <button v-if="item.status === 'present' && !item.active" type="button" @click="switchTarget = item">设为监控目录</button>
             <button v-if="item.status === 'missing'" type="button" :disabled="planBusy" @click="previewSubdirs([item.key])">创建文件夹</button>

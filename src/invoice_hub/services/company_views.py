@@ -31,6 +31,7 @@ from invoice_hub.extraction.parsers import SUPPORTED_EXTS
 from invoice_hub.monitoring.state import PROCESSED_FILE_NAME, canonical_path as monitor_path_key
 from invoice_hub.projections.cost_analysis import COST_DETAIL_CSV_NAME
 from invoice_hub.projections.costs import CostProjectionService
+from invoice_hub.projections.incremental import current_parser_versions
 from invoice_hub.services.company_bank import BankFlowReader, build_bank_ledger
 from invoice_hub.services.company_bank_layouts import BankLayoutService
 from invoice_hub.services.company_tax import CompanyTaxService
@@ -148,7 +149,10 @@ def _scan_signatures(directory: Path) -> tuple[dict[str, tuple[int, int]], bool,
 def directory_freshness(directory: Path, profile: TargetProfile) -> dict:
     """Compare the folder with the signatures its last projection was built from."""
     result = {"state": "unknown", "added": 0, "updated": 0, "deleted": 0, "scanned_entries": 0, "complete": False}
-    summary_exists = generations.resolve(Path(profile.workspace_dir), Path(profile.watch_dir), "发票汇总.csv").exists()
+    try:
+        summary_exists = generations.resolve(Path(profile.workspace_dir), Path(profile.watch_dir), "发票汇总.csv").exists()
+    except ValueError:
+        return result
     processed = _read_processed(Path(profile.state_dir))
     current, complete, scanned = _scan_signatures(directory)
     result.update(scanned_entries=scanned, complete=complete, source_file_count=len(current))
@@ -170,7 +174,19 @@ def directory_freshness(directory: Path, profile: TargetProfile) -> dict:
     if added or updated or deleted:
         result["state"] = "stale"
     elif complete:
-        result["state"] = "fresh"
+        try:
+            parser_stale = generations.parser_versions_stale(
+                Path(profile.workspace_dir),
+                Path(profile.watch_dir),
+                current_parser_versions(),
+            )
+        except ValueError:
+            return result
+        if parser_stale:
+            result["state"] = "stale"
+            result["parser_stale"] = True
+        else:
+            result["state"] = "fresh"
     return result
 
 
@@ -256,7 +272,10 @@ class CompanyViewService:
             freshness = directory_freshness(Path(subdir["path"]), profile)
         else:
             freshness = {"state": "not_checked"}
-        freshness["message"] = FRESHNESS_MESSAGES.get(freshness["state"], "")
+        if freshness.get("parser_stale") and not (freshness.get("added") or freshness.get("updated") or freshness.get("deleted")):
+            freshness["message"] = "识别规则已更新，点“更新数据”即可重新汇总。"
+        else:
+            freshness["message"] = FRESHNESS_MESSAGES.get(freshness["state"], "")
         view["freshness"] = freshness
         return view
 

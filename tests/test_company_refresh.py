@@ -165,3 +165,49 @@ def test_single_subdir_plan_and_create_only_creates_requested_missing_folder(env
     assert created["created"] == ["expense_reimbursement_dir"]
     assert (root / "费用报销").is_dir()
     assert not (root / "进项抵扣").exists()
+
+
+def test_parser_version_change_marks_non_monitored_directory_stale_and_refresh_rebuilds(env, monkeypatch):
+    from invoice_hub.projections import summary as summary_module
+
+    def _run_refresh(client: TestClient, company_id: str, body: dict) -> dict:
+        final = client.post(f"/api/v1/companies/{company_id}/refresh-data", json=body, headers=SAME_ORIGIN).json()
+        deadline = time.monotonic() + 15.0
+        while final["status"] == "running" and time.monotonic() < deadline:
+            time.sleep(0.05)
+            final = client.get(f"/api/v1/companies/{company_id}/refresh-data").json()
+        return final
+
+    app, client, tmp_path = env
+    root = tmp_path / "客户资料" / "丁公司"
+    (root / "成本发票").mkdir(parents=True)
+    (root / "成本发票" / "a.xml").write_text(
+        _xml_invoice("10000000000000000011", "供应丁", "丁公司", [("12E", "1", "100.00", "13.00", "钢筋")]),
+        encoding="utf-8",
+    )
+    company_id = _register_company(client, root)
+
+    first = _run_refresh(client, company_id, {})
+    assert first["status"] == "completed", first
+    dirs = {item["key"]: item for item in client.get(f"/api/v1/companies/{company_id}/directories").json()["directories"]}
+    assert dirs["cost_invoice_dir"]["freshness"]["state"] == "fresh"
+
+    # Simulate an app upgrade that changes PARSER_VERSION without touching any source files.
+    monkeypatch.setattr(summary_module, "PARSER_VERSION", "invoice-raw-1:company-refresh-upgraded")
+    stale_dirs = {item["key"]: item for item in client.get(f"/api/v1/companies/{company_id}/directories").json()["directories"]}
+    freshness = stale_dirs["cost_invoice_dir"]["freshness"]
+    assert freshness["state"] == "stale"
+    assert freshness["parser_stale"] is True
+    assert "识别规则已更新" in freshness["message"]
+
+    # Non-forced refresh must detect parser staleness and rebuild.
+    refreshed = _run_refresh(client, company_id, {"keys": ["cost_invoice_dir"], "force": False})
+    assert refreshed["status"] == "completed", refreshed
+    assert refreshed["directories"]["cost_invoice_dir"]["status"] == "done"
+
+    # Manifest now records the upgraded parser version, so freshness returns to fresh.
+    profile = target_profile_for(app.state.invoice_hub.config, root / "成本发票")
+    manifest = json.loads((Path(profile.workspace_dir) / "projection-manifest.json").read_text(encoding="utf-8"))
+    assert manifest["parser_versions"]["summary"] == "invoice-raw-1:company-refresh-upgraded"
+    after_dirs = {item["key"]: item for item in client.get(f"/api/v1/companies/{company_id}/directories").json()["directories"]}
+    assert after_dirs["cost_invoice_dir"]["freshness"]["state"] == "fresh"
