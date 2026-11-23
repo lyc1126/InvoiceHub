@@ -3,11 +3,12 @@ import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import WorkspaceIcon from "./WorkspaceIcon.vue";
 import WsModal from "./WsModal.vue";
+import ProjectRenameModal from "./ProjectRenameModal.vue";
 import { MODULES, type ModuleId } from "../modules";
 import { useModulesStore } from "../stores/modules";
 import { skinBypassRequested } from "../appearance";
 import { ApiError, request } from "../api/client";
-import type { Company, CompanySubdir, ProjectSummary, SubdirPlan } from "../api/types";
+import type { Company, CompanySubdir, ProjectRenameResult, ProjectSummary, SubdirPlan } from "../api/types";
 import { errorText } from "../format";
 import { INVOICE_DIRS, SAME_NUMBER, relationFor } from "../relations";
 import { companySourceKey, useCompaniesStore } from "../stores/companies";
@@ -340,9 +341,73 @@ function onResizeKey(event: KeyboardEvent): void {
 }
 
 const headerMenu = ref(false);
+const renameModal = ref<{
+  company: Company;
+  fromName: string;
+  revision: number;
+  projectNames: string[];
+} | null>(null);
+
+async function startRenameProject(node: SidebarNode): Promise<void> {
+  if (!node.project) return;
+  closeMenu(false);
+  try {
+    const summary = await request<ProjectSummary>(`/api/v1/companies/${encodeURIComponent(node.company.id)}/projects?granularity=year`);
+    renameModal.value = {
+      company: node.company,
+      fromName: node.project,
+      revision: summary.assignments_revision,
+      projectNames: summary.project_names,
+    };
+  } catch (cause) {
+    toast(errorText(cause), "error", 4000);
+  }
+}
+
+function onSidebarProjectRenamed(result: ProjectRenameResult): void {
+  const activeModal = renameModal.value;
+  renameModal.value = null;
+  if (!activeModal) return;
+  const company = activeModal.company;
+  // Keep open project tabs and pins synchronized with the renamed project name.
+  const oldTabId = `project:${company.id}:${result.from_name}`;
+  const newTabId = `project:${company.id}:${result.to_name}`;
+  const existingNew = workspace.tabs.find((tab) => tab.id === newTabId);
+  for (const tab of workspace.tabs) {
+    if (tab.id === oldTabId) {
+      if (existingNew) {
+        workspace.close(oldTabId);
+        workspace.activeId = newTabId;
+      } else {
+        tab.id = newTabId;
+        tab.project = result.to_name;
+        if (workspace.activeId === oldTabId) workspace.activeId = newTabId;
+      }
+      break;
+    }
+  }
+  if (workspace.pins.includes(oldTabId)) {
+    workspace.pins = workspace.pins
+      .map((pin) => (pin === oldTabId ? newTabId : pin))
+      .filter((pin, idx, list) => list.indexOf(pin) === idx);
+  }
+  void loadProjects(company);
+  toast(`已将项目「${result.from_name}」重命名为「${result.to_name}」`, "info", 3500);
+  window.dispatchEvent(new CustomEvent("workspace:company-refreshed", { detail: { companyId: company.id } }));
+}
+
+function onWorkspaceCompanyRefreshed(event: Event): void {
+  const detail = (event as CustomEvent).detail;
+  for (const company of companies.companies) {
+    if (detail?.companyId && detail.companyId !== company.id) continue;
+    if (workspace.expanded.includes(company.id)) void loadProjects(company);
+  }
+}
+window.addEventListener("workspace:company-refreshed", onWorkspaceCompanyRefreshed);
 
 onBeforeUnmount(() => {
   document.removeEventListener("pointerdown", onDocumentPointer);
+  window.removeEventListener("workspace:company-refreshed", onWorkspaceCompanyRefreshed);
   clearTimeout(cardTimer);
 });
 </script>
@@ -522,6 +587,12 @@ onBeforeUnmount(() => {
       <button type="button" role="menuitem" @click="workspace.togglePin(menu.node.id); closeMenu()">
         {{ workspace.pins.includes(menu.node.id) ? "取消置顶" : "置顶" }}
       </button>
+      <button
+        v-if="menu.node.kind === 'project'"
+        type="button"
+        role="menuitem"
+        @click="startRenameProject(menu.node)"
+      >重命名项目…</button>
       <template v-if="menu.node.kind === 'directory'">
         <button
           v-if="menu.node.subdir?.status === 'missing'"
@@ -574,5 +645,16 @@ onBeforeUnmount(() => {
         </div>
       </template>
     </WsModal>
+
+    <ProjectRenameModal
+      v-if="renameModal"
+      :company-id="renameModal.company.id"
+      :company-name="renameModal.company.name"
+      :from-name="renameModal.fromName"
+      :revision="renameModal.revision"
+      :project-names="renameModal.projectNames"
+      @close="renameModal = null"
+      @done="onSidebarProjectRenamed"
+    />
   </aside>
 </template>

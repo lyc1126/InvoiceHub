@@ -1976,9 +1976,24 @@ def _xml_cost_row_values(path: Path) -> list[dict[str, str]]:
     return rows
 
 
+def _xml_remark_project_name(path: Path) -> str:
+    try:
+        root = ET.parse(path).getroot()
+    except Exception:
+        return ""
+    for element in root.iter():
+        if _local_name(element.tag) in {"remark", "bz", "note"}:
+            found = _extract_project_name("".join(element.itertext()))
+            if found:
+                return found
+    return ""
+
+
 def analyze_xml_costs(xml_path: Path, metadata: dict | None = None) -> dict:
     source_path = Path(xml_path)
     base_meta = _invoice_base_metadata(source_path, metadata)
+    if not base_meta.get("备注项目名称"):
+        base_meta["备注项目名称"] = _xml_remark_project_name(source_path)
     rows = [
         row
         for values in _xml_cost_row_values(source_path)

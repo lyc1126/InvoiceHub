@@ -177,6 +177,7 @@
 - `company_projects.py::ProjectAssignmentStore`：人工项目归属存在公司资料夹根目录而不是 `runtime/`，资料夹换机器或换人接手时人工判断随资料走；它和 `成本开票状态.json` 一样只在用户保存时写，重新汇总不读写。守护：`test_manual_assignment_is_saved_in_the_company_folder_and_survives`。
 - 损坏的 `项目归属.json` 拒绝读写而不是当作空文件：当空文件覆盖会一次丢掉全部人工归属。守护：`test_bad_requests_and_a_damaged_file_are_refused`。
 - 一张票备注出现两个项目名称时不择一：选哪个都是猜，列入未归属等人工指定。守护：`test_projects_come_from_remarks_and_manual_values_win`。
+- 项目重命名 `aliases` 保持单跳无环（`keys ∩ values == ∅`），并在 `PRICING_LOCK -> _projects._lock` 固定锁序下同步 `服务成本归集.json`：既避免改写源发票或出现多次改名后的循环转发，也防止项目改名后服务收入与人工服务成本脱节或跨锁死锁。守护：`test_project_rename_preview_confirm_alias_collapse_and_service_cost_sync`、`test_damaged_aliases_in_projects_file_are_refused`。
 - `build_project_summary` 与 `build_invoice_ledger` 交叉校验：项目页和账簿页对同一批票必须给出同一个合计，否则用户无法判断哪个对。
 
 ## 2026-11-11 往来核对（WS-07 第 4 步）

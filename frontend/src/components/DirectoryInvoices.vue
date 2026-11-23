@@ -3,11 +3,13 @@ import { companySourceKey } from "../stores/companies";
 import { computed, inject, nextTick, onMounted, onBeforeUnmount, ref, watch } from "vue";
 import { VIEW_ACTIVE } from "../modules";
 import { ApiError, request } from "../api/client";
-import type { Company, DirectoryInvoicesPayload, InvoiceRow, InvoiceTagMarks, PreviewRef } from "../api/types";
+import type { Company, DirectoryInvoicesPayload, InvoiceRow, InvoiceTagMarks, PreviewRef, ProjectSummary } from "../api/types";
 import { errorText, ratePercent, money } from "../format";
 import { useTagsStore } from "../stores/tags";
+import { toast } from "../toast";
 import SourcePreview from "./SourcePreview.vue";
 import DirectorySelectionBar, { type SelectedInvoice, type TrashJob } from "./DirectorySelectionBar.vue";
+import WsModal from "./WsModal.vue";
 
 // One company folder's invoice list (last projection; read-only unless it is the monitored
 // folder). Shown in a directory tab of the workspace home; tags are display data only.
@@ -59,6 +61,7 @@ const selected = ref(new Map<string, SelectedRow>());
 const selectingAll = ref(false);
 const selectable = computed(() => !!invoices.value && !invoices.value.snapshot?.provisional);
 const sourceActions = computed(() => selectable.value && !invoices.value?.read_only);
+const isProjectDir = computed(() => props.dirKey === "cost_invoice_dir" || props.dirKey === "issued_invoice_dir");
 const selectedItems = computed(() => [...selected.value.values()].map(({ invoice_key, source_path }) => ({ invoice_key, source_path })));
 const entry = (row: InvoiceRow): SelectedRow => ({ invoice_key: row.invoice_key, source_path: row.source_path!, invoice_number: row.invoice_number ?? "" });
 const pageRows = computed(() => (invoices.value?.items ?? []).filter((row) => row.source_path));
@@ -325,6 +328,98 @@ function tagTitle(id: string): string {
   return tag ? (tag.meaning ? `${tag.name}：${tag.meaning}` : tag.name) : "";
 }
 
+// ---- manual project assignment (single row or batch selection, WS-03)
+interface ProjectAssignModal {
+  numbers: string[];
+  missing: number;
+  mode: "assign" | "unassign" | "restore";
+  projectName: string;
+  projectNames: string[];
+  revision: number | null;
+  loading: boolean;
+  saving: boolean;
+  error: string;
+}
+const projectModal = ref<ProjectAssignModal | null>(null);
+let projectModalGeneration = 0;
+
+async function openProjectAssign(targetRows?: { invoice_number: string }[]): Promise<void> {
+  if (!isProjectDir.value) return;
+  closeTagMenu();
+  const mine = ++projectModalGeneration;
+  const list = targetRows ?? [...selected.value.values()];
+  const numbers = [...new Set(list.map((item) => item.invoice_number).filter(Boolean))];
+  const missing = list.filter((item) => !item.invoice_number).length;
+  const first = list[0];
+  const currentProject = list.length === 1 && first && "project" in first ? String((first as InvoiceRow).project || "") : "";
+  projectModal.value = {
+    numbers,
+    missing,
+    mode: "assign",
+    projectName: currentProject,
+    projectNames: [],
+    revision: null,
+    loading: numbers.length > 0,
+    saving: false,
+    error: "",
+  };
+  if (!numbers.length) return;
+  try {
+    const summary = await request<ProjectSummary>(`/api/v1/companies/${encodeURIComponent(props.company.id)}/projects?granularity=year`);
+    if (mine !== projectModalGeneration || !projectModal.value) return;
+    projectModal.value.revision = summary.assignments_revision;
+    projectModal.value.projectNames = summary.project_names;
+  } catch (cause) {
+    if (mine === projectModalGeneration && projectModal.value) projectModal.value.error = errorText(cause);
+  } finally {
+    if (mine === projectModalGeneration && projectModal.value) projectModal.value.loading = false;
+  }
+}
+
+async function saveProjectModal(): Promise<void> {
+  const state = projectModal.value;
+  if (!state || state.saving || state.revision === null || !state.numbers.length) return;
+  const trimmed = state.projectName.trim().replace(/\s+/g, " ");
+  if (state.mode === "assign" && !trimmed) {
+    state.error = "请输入或选择项目名称。";
+    return;
+  }
+  state.saving = true;
+  state.error = "";
+  try {
+    const body: Record<string, unknown> = { revision: state.revision };
+    if (state.mode === "assign") {
+      body.assignments = Object.fromEntries(state.numbers.map((number) => [number, trimmed]));
+    } else if (state.mode === "restore") {
+      body.assignments = Object.fromEntries(state.numbers.map((number) => [number, ""]));
+    } else {
+      body.unassigned = state.numbers;
+    }
+    await request(`/api/v1/companies/${encodeURIComponent(props.company.id)}/projects/assignments`, {
+      method: "PUT",
+      body,
+    });
+    projectModal.value = null;
+    toast(
+      state.mode === "assign"
+        ? `已将 ${state.numbers.length} 张发票归属至「${trimmed}」`
+        : state.mode === "unassign"
+          ? `已将 ${state.numbers.length} 张发票移出至未归属`
+          : `已恢复 ${state.numbers.length} 张发票按备注识别项目`,
+      "info",
+      3000,
+    );
+    await loadInvoices(invoicesPage.value);
+    window.dispatchEvent(new CustomEvent("workspace:company-refreshed", { detail: { companyId: props.company.id } }));
+  } catch (cause) {
+    state.error = cause instanceof ApiError && cause.code === "COMPANY_PROJECTS_CONFLICT"
+      ? "项目归属已被修改，请关闭后重新打开。"
+      : errorText(cause);
+  } finally {
+    state.saving = false;
+  }
+}
+
 onMounted(() => {
   window.addEventListener("workspace:invoices-updated", refreshFromEvent);
   window.addEventListener("workspace:company-refreshed", onCompanyRefreshed);
@@ -368,6 +463,7 @@ onBeforeUnmount(() => { clearTimeout(keywordTimer); listGeneration += 1; selecti
       <p v-if="invoices.read_only" class="muted">未设为监控的目录可以直接查看、勾选并批量打标签；如需预览原票、打印或删除文件，请先设为监控目录。</p>
       <p v-if="!invoices.directory.projection.summary_exists" class="muted">这个目录还没读取过发票，点上方“读取数据”即可查看。</p>
       <p v-if="invoices.tags_error" class="banner banner--error" role="alert">标签读取失败，未显示：{{ invoices.tags_error }}</p>
+      <p v-if="invoices.projects_error" class="banner banner--error" role="alert">{{ invoices.projects_error }}</p>
       <div class="filters">
         <label class="field">关键字<input v-model="keyword" aria-label="关键字" :placeholder="dirKey === 'issued_invoice_dir' ? '购买方 / 发票号 / 文件名' : '销售方 / 发票号 / 文件名'" @input="keywordChanged"></label>
         <label class="field">格式<select v-model="fileExt" aria-label="格式" @change="loadInvoices(1)"><option value="">全部</option><option value=".pdf">PDF</option><option value=".ofd">OFD</option><option value=".xml">XML</option></select></label>
@@ -379,7 +475,7 @@ onBeforeUnmount(() => { clearTimeout(keywordTimer); listGeneration += 1; selecti
       </div>
       <table v-if="invoices.directory.projection.summary_exists" class="grid directory-invoices-table" :aria-busy="invoicesLoading">
         <thead>
-          <tr><th class="tag-cell"><span class="sr-only">标签</span></th><th>销售方</th><th>购买方</th><th>格式</th><th>发票号码</th><th>发票分类与业务</th><th>税率</th><th class="num">开票金额</th><th :aria-sort="dateSort === 'asc' ? 'ascending' : dateSort === 'desc' ? 'descending' : 'none'">
+          <tr><th class="tag-cell"><span class="sr-only">标签</span></th><th>销售方</th><th>购买方</th><th>格式</th><th>发票号码</th><th v-if="isProjectDir">项目</th><th>发票分类与业务</th><th>税率</th><th class="num">开票金额</th><th :aria-sort="dateSort === 'asc' ? 'ascending' : dateSort === 'desc' ? 'descending' : 'none'">
               <button type="button" class="link" :aria-label="dateSortLabel" @click="toggleDateSort">开票时间 {{ dateSort === 'asc' ? '↑' : dateSort === 'desc' ? '↓' : '↕' }}</button>
             </th><th>状态</th>
             <th v-if="selectable" class="select-cell">
@@ -410,6 +506,13 @@ onBeforeUnmount(() => { clearTimeout(keywordTimer); listGeneration += 1; selecti
             <td class="invoice-party">{{ row.buyer }}</td>
             <td class="nowrap"><span class="format-badge" :class="`format-badge--${formatTone(row)}`">{{ formatLabel(row) }}</span></td>
             <td class="nowrap">{{ row.invoice_number }}</td>
+            <td v-if="isProjectDir" class="nowrap">
+              <template v-if="row.project">
+                <span>{{ row.project }}</span>
+                <small v-if="row.project_source === 'manual'" class="muted"> · 人工</small>
+              </template>
+              <span v-else class="muted">{{ row.project_source === "conflict" ? "备注冲突" : "—" }}</span>
+            </td>
             <td class="invoice-classification" :title="row.classification_issue || ''">
               <span class="invoice-type" :class="{ 'invoice-type--special': row.invoice_type === '增值税专用发票', 'invoice-type--ordinary': row.invoice_type === '增值税普通发票' }">{{ row.invoice_type || '—' }}</span>
               <span class="muted invoice-classification__business">业务：{{ row.business_type || '—' }}</span>
@@ -472,6 +575,12 @@ onBeforeUnmount(() => { clearTimeout(keywordTimer); listGeneration += 1; selecti
             <span class="tag-dot" :style="{ background: tag.color }" /> {{ tag.name }}
           </label>
         </template>
+        <button
+          v-if="isProjectDir"
+          type="button"
+          role="menuitem"
+          @click="openProjectAssign(tagMenu.batch ? undefined : [tagMenu.row])"
+        >{{ tagMenu.batch ? "批量调整项目归属…" : "调整项目归属…" }}</button>
         <button type="button" @click="closeTagMenu">关闭</button>
       </div>
       <div v-if="pageCount() > 1" class="actions">
@@ -495,19 +604,61 @@ onBeforeUnmount(() => { clearTimeout(keywordTimer); listGeneration += 1; selecti
         :target-id="invoices.directory.target_id"
         :total="invoices.count"
         :selecting-all="selectingAll || invoicesLoading"
+        :can-assign-project="isProjectDir"
         @clear="clearSelection"
         @preview="previewSelected"
         @preview-item="previewSingle"
+        @assign-project="openProjectAssign()"
         @select-all="selectAll"
         @changed="afterChange"
       />
       <div v-if="selectable && !sourceActions && selected.size" class="selection-bar" role="region" aria-label="批量标签">
         <strong>已勾选 {{ selected.size }} 张</strong>
-        <span>在勾选行上右键或按 Shift+F10 批量打标签</span>
+        <span>右键或按 Shift+F10 可批量打标签</span>
+        <button v-if="isProjectDir" type="button" class="sb-btn" :disabled="selectingAll || invoicesLoading" @click="openProjectAssign()">调整项目…</button>
         <button type="button" :disabled="selectingAll || invoicesLoading" @click="selectAll">全选筛选结果</button>
         <button type="button" aria-label="清除勾选" @click="clearSelection">×</button>
       </div>
       <SourcePreview v-if="previewing && sourceActions" label="已勾选发票" :preview="previewing" @close="previewing = null" />
+      <WsModal
+        v-if="projectModal"
+        title="调整项目归属"
+        :subtitle="`${company.name} · 已选 ${projectModal.numbers.length} 个发票号码（人工值优先于备注，重新汇总不会覆盖）`"
+        @close="!projectModal.saving && (projectModal = null)"
+      >
+        <p v-if="projectModal.missing" class="muted">其中 {{ projectModal.missing }} 张没有发票号码，无法指定项目。</p>
+        <p v-if="!projectModal.numbers.length" class="banner banner--error" role="alert">所选发票均缺少发票号码，无法调整项目归属。</p>
+        <p v-else-if="projectModal.loading" class="muted" aria-busy="true">正在读取公司项目清单…</p>
+        <form v-else class="stack" @submit.prevent="saveProjectModal">
+          <div class="radios" role="radiogroup" aria-label="调整方式">
+            <label><input v-model="projectModal.mode" type="radio" value="assign"> 指定到项目</label>
+            <label><input v-model="projectModal.mode" type="radio" value="unassign"> 移出至未归属</label>
+            <label><input v-model="projectModal.mode" type="radio" value="restore"> 恢复按发票备注识别</label>
+          </div>
+          <label v-if="projectModal.mode === 'assign'" class="field">
+            项目名称
+            <input
+              v-model="projectModal.projectName"
+              type="text"
+              maxlength="60"
+              list="dir-project-names"
+              placeholder="输入新项目名或选择已有项目"
+              aria-label="项目名称"
+              :disabled="projectModal.saving"
+            >
+          </label>
+          <datalist id="dir-project-names">
+            <option v-for="name in projectModal.projectNames" :key="name" :value="name" />
+          </datalist>
+          <p v-if="projectModal.error" class="banner banner--error" role="alert">{{ projectModal.error }}</p>
+          <div class="actions">
+            <button type="submit" class="primary" :disabled="projectModal.saving" :aria-busy="projectModal.saving">
+              {{ projectModal.saving ? "保存中…" : "确认保存" }}
+            </button>
+            <button type="button" class="ghost" :disabled="projectModal.saving" @click="projectModal = null">取消</button>
+          </div>
+        </form>
+      </WsModal>
     </section>
   </div>
 </template>

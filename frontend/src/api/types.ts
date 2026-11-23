@@ -165,6 +165,9 @@ export interface InvoiceRow {
   source_path?: string;
   /** WS-06 tag ids in definition order; display data only. */
   tags?: string[];
+  /** WS-03 effective project name (manual > alias > remark); display data only. */
+  project?: string;
+  project_source?: "remark" | "manual" | "conflict" | "none" | "unavailable";
   source_file: string;
   file_format: string;
   invoice_type: string;
@@ -190,6 +193,7 @@ export interface DirectoryInvoicesPayload {
   read_only: boolean;
   directory: CompanyDirectory;
   tags_error?: string;
+  projects_error?: string;
   /** Full-folder and fully filtered statistics, including tags, before pagination. */
   stats?: { all?: InvoiceListStats; filtered?: InvoiceListStats };
   /** A first, still-building result: rows may move, so nothing can be selected (classic homepage rule). */
@@ -496,6 +500,34 @@ export interface ProjectInvoice {
   source_files: string[];
 }
 
+export interface ProjectRenamePreview {
+  ok: boolean;
+  company_id: string;
+  revision: number;
+  from_name: string;
+  to_name: string;
+  manual_count: number;
+  remark_count: number;
+  stored_manual_count: number;
+  total_invoices: number;
+  merges_into_existing: boolean;
+  sync_service_costs: boolean;
+  service_cost_count: number;
+  service_costs_revision: number | null;
+  preview_hash: string;
+}
+
+export interface ProjectRenameResult {
+  ok: boolean;
+  from_name: string;
+  to_name: string;
+  assignments_revision: number;
+  manual_updated: number;
+  remark_count: number;
+  merges_into_existing: boolean;
+  service_costs_updated: number;
+}
+
 export interface ProjectSummary {
   ok: boolean;
   basis_label: string;
@@ -509,6 +541,8 @@ export interface ProjectSummary {
     periods: { period: string; input_pretax: string; output_pretax: string }[];
   }[];
   project_names: string[];
+  aliases?: Record<string, string>;
+  invoices?: ProjectInvoice[];
   unassigned_invoices: ProjectInvoice[];
   manual_invoices: ProjectInvoice[];
   warnings: { code: string; message: string }[];

@@ -60,9 +60,9 @@ interface Summary {
   cost_breakdown?: CostBreakdown;
 }
 
-const props = defineProps<{ items: SelectedInvoice[]; targetId: string; total: number; selectingAll: boolean }>();
+const props = defineProps<{ items: SelectedInvoice[]; targetId: string; total: number; selectingAll: boolean; canAssignProject?: boolean }>();
 // `changed` hands the finished job up: the list reloads and keeps showing every file's result.
-const emit = defineEmits<{ clear: []; selectAll: []; changed: [job: TrashJob]; preview: []; previewItem: [item: SelectedInvoice] }>();
+const emit = defineEmits<{ clear: []; selectAll: []; changed: [job: TrashJob]; preview: []; previewItem: [item: SelectedInvoice]; assignProject: [] }>();
 
 const summary = ref<Summary | null>(null);
 const summaryError = ref("");
@@ -301,6 +301,7 @@ onBeforeUnmount(() => clearTimeout(summaryTimer));
       <button type="button" class="sb-btn" :disabled="busy || !targetId" @click="emit('preview')"><WorkspaceIcon name="eye" />预览</button>
       <button type="button" class="sb-btn" :disabled="busy" @click="print"><WorkspaceIcon name="print" />打印</button>
       <button type="button" class="sb-btn" :disabled="busy || !targetId" @click="inbound"><WorkspaceIcon name="docs" />开具入库单</button>
+      <button v-if="canAssignProject" type="button" class="sb-btn" :disabled="busy" @click="emit('assignProject')"><WorkspaceIcon name="project" />调整项目…</button>
       <button type="button" class="sb-btn sb-btn--danger" :disabled="busy" @click="prepareTrash"><WorkspaceIcon name="trash" />删除所选…</button>
       <span class="sb-end">
         <button v-if="items.length < total" type="button" class="sb-link" :disabled="selectingAll" :aria-busy="selectingAll" @click="emit('selectAll')">全选筛选结果（{{ total }}）</button>

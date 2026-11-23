@@ -254,6 +254,18 @@ def router() -> APIRouter:
         payload = await _json_body(request)
         return await _call(lambda: _state(request).company_views.save_project_assignments(company_id, payload))
 
+    @routes.post("/api/v1/companies/{company_id}/projects/rename/preview")
+    async def preview_company_project_rename(request: Request, company_id: str):
+        _require_same_origin_write(request)
+        payload = await _json_body(request)
+        return await _call(lambda: _state(request).company_views.preview_project_rename(company_id, payload))
+
+    @routes.post("/api/v1/companies/{company_id}/projects/rename")
+    async def rename_company_project(request: Request, company_id: str):
+        _require_same_origin_write(request)
+        payload = await _json_body(request)
+        return await _call(lambda: _state(request).company_views.rename_project(company_id, payload))
+
     @routes.get("/api/v1/companies/{company_id}/payroll")
     async def company_payroll(request: Request, company_id: str, reveal: bool = Query(False)):
         return await _call(lambda: _state(request).company_views.payroll(company_id, reveal=reveal))

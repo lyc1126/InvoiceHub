@@ -565,10 +565,13 @@ WS-02 新建工作区（`company_setup.py`）沿用 schema v1 公司清单；独
 公司项目汇总（WS-03，`services/company_projects.py`）：
 
 ```text
-项目   发票号码 → 两个目录 成本发票明细.csv 的“备注项目名称”（成本投影从备注“项目名称：xxx”提取）；
-       同一张票只有一个名称才采用，多个名称 → conflict，列入未归属
-人工   公司资料夹根目录 项目归属.json：{version: 1, revision, invoices: {发票号码: {project, updated_at}}}；
-       人工值优先于备注；空字符串清除；写入带 revision 与锁，损坏文件拒绝覆盖；重新汇总不读写它
+项目   发票号码 → 两个目录 成本发票明细.csv 的“备注项目名称”（成本投影从 PDF 文本或 XML <Remark> 提取“项目名称：xxx”）；
+       先经重命名映射 aliases 解析，同一张票只有一个解析后名称才采用，多个名称 → conflict，列入未归属
+人工   公司资料夹根目录 项目归属.json：{version: 1, revision, invoices: {发票号码: {project, unassigned?, updated_at}}, aliases?: {原名: 目标名}}；
+       优先级：人工显式 unassigned=true（移出未归属） / 人工非空 project > aliases 映射后的备注名称；
+       空字符串清除人工条目并恢复备注；aliases 保持单跳无环（keys ∩ values == ∅），重命名同步重写人工值、折叠历史别名并可选同步 服务成本归集.json；
+       写入带 revision 与锁（PRICING_LOCK -> _projects._lock），损坏文件拒绝覆盖；重新汇总不读写它，源发票只读
+消费者 公司项目汇总、监控及非监控成本/开具目录发票列表、经典首页项目列、成本 V2 毛利/服务毛利均共用 project_fields(..., aliases)
 归集   与发票账簿同一家族、同一金额规则、同一期间过滤；未归属单列，不分摊
 校验   各项目 + 未归属 的张数与价税合计 = build_invoice_ledger 的合计（每个方向）
 口径   票面口径，差额不是项目利润

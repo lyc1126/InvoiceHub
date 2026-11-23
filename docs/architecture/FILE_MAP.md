@@ -947,7 +947,8 @@
 | `frontend/src/components/CompanyDeductionResult.vue` | 抵扣核对结果：各所属期表、清单有目录无、已勾选并对上（税额不一致标红）、目录有清单无、重复勾选与未识别文件。 | 由 `CompanyCompare.vue` 渲染。 |
 | `frontend/src/components/CompanyInventoryResult.vue` | 进销存结果：品类表（明细科目编码，期初/购入/销售/成本/期末，卖超与“进项和期初中没有”标红），品类前的 ▸ 在同一列下展开规格行（只有购入、销售与净增，期初与成本显示 —），“逐月”在品类下展开整行明细（加权单价与说明），合计、未计入期初的账套明细与未计入的明细行。 | 由 `CompanyCompare.vue` 渲染。 |
 | `frontend/src/components/CompanySettlementResult.vue` | 往来核对结果：往来单位余额表（“明细”整行展开未对上发票与未逐笔对应流水）、逐笔对应、红字发票、户名不唯一、非发票流水（折叠）与未识别发票。 | 由 `CompanyCompare.vue` 渲染。 |
-| `frontend/src/components/CompanyProjects.vue` | “项目”分区（项目标签以 `focus` 标出该项目并列出各期）：粒度与期间、与账簿一致的校验、项目汇总表（未归属单列），未归属与已人工指定发票的项目输入（已有项目名候选），只提交改动并带 revision，冲突时刷新提示。 | `/api/v1/companies/{id}/projects*`。 |
+| `frontend/src/components/CompanyProjects.vue` | “项目”分区（项目标签以 `focus` 标出该项目并列出各期）：粒度与期间、与账簿一致的校验、项目汇总表（含重命名按钮与点击筛行）、全量发票的项目归属调整表（支持来源/项目/关键字筛选、调整备注识别发票、移出未归属与恢复备注），只提交改动并带 revision，冲突时刷新提示。 | `/api/v1/companies/{id}/projects*`、`ProjectRenameModal.vue`。 |
+| `frontend/src/components/ProjectRenameModal.vue` | 项目重命名/合并预览确认弹窗：校验名称、先预览受影响人工/备注发票数与关联服务成本条数，再带 `preview_hash` 确认保存，不改动源发票。 | 由 `CompanyProjects.vue`、`WorkspaceSidebar.vue` 复用。 |
 | `frontend/src/components/CompanyVouchers.vue` | “凭证草稿”分区：选择审核表与月份、只看有问题的；每张凭证一张卡片，逐格编辑摘要 / 科目编码 / 借贷 / 供应商，输入时显示借贷合计（只作显示），审核下拉（待审核 / 通过 / 不导入）；每张凭证可改所属期与记账日期（改月时日期移到月末并提示重新编号）；草稿核对表折叠只读显示；发票凭证的原始单据与同期 / 跨期、“改记入期”；“生成草稿…”面板（起止年月、统一记月末、序时账读回与科目表快照，结果列出沿用 / 需重审 / 新增 / 消失）；“导出已审核…”面板列出各月通过张数、可填账套已用到的号、必填制单人，确认后导出并逐项显示结果（有未保存改动时禁用）；保存只提交改动行、审核状态与所属期 / 日期并带 revision，冲突时刷新提示，审核通过被拒时保留改动并在凭证旁列出后端原因。 | `/api/v1/companies/{id}/voucher-drafts*`。 |
 | `frontend/src/components/InvoiceTagsEditor.vue` | 发票标签管理：颜色、名称、意义的增删改，整表保存带 revision，删除时说明会移除已打标记，冲突时刷新。 | `stores/tags.ts`，`/api/v1/invoice-tags`；首页“发票标签”标签。 |
 | `frontend/src/stores/tags.ts` | 标签定义的 Pinia store：读取、整表保存（带 revision，冲突时重读）与按 id 查找。 | `InvoiceTagsEditor.vue`、`DirectoryInvoices.vue`。 |
@@ -958,6 +959,7 @@
 | `frontend/tests/client.spec.ts` | 请求封装的成功、错误、`ok:false`、请求体与超时测试。 | Vitest + happy-dom。 |
 | `frontend/tests/companies.spec.ts` | 公司标签：侧栏列出公司并默认打开监控中的公司、新建带 revision 且不假定纳税人身份、版本冲突后重新读取、补建必须先预览并发送 `plan_hash`、预览过期要求重新预览、守恒校验失败标红且展开、非监控目录只读、金额分组。 | Vitest + Vue Test Utils，桩接 `fetch`。 |
 | `frontend/tests/selection-summary-and-refresh.spec.ts` | 勾选合计详情宽弹窗（开票项目/规格型号/均价明细、关键字与税率筛选不改变顶部总额、来源发票预览）、非监控目录按需读取数据并重载、`.voucher-list button` 防压缩防重叠样式守护。 | Vitest + Vue Test Utils。 |
+| `frontend/tests/project-management.spec.ts` | 项目人工归属调整（含备注识别发票改派与显式移出未归属）、项目重命名/合并与服务成本联动预览确认、非监控目录批量调整项目归属。 | Vitest + Vue Test Utils。 |
 | `frontend/tests/app.spec.ts` | 外框与首页（WS-01）：无公司时的起始页与 health、旧路径重定向、未迁移模块链接经典页面、刷新失败保留快照；侧栏节点打开为标签且不重复、隐藏标签保持挂载、全部关闭后停在起始页、项目展开时才读取、Shift+F10 菜单置顶并写入本机偏好、同公司有勾稽关系才可比较（无关系与不同公司禁用并说明）并以预选关系打开 ⇄ 标签、双击 `hi.` 只重载当前标签、侧栏宽度限位。 | Vitest + Vue Test Utils，桩接 `fetch`。 |
 | `web/static/app/index.html` | 提交的构建外壳，引用带 `?v=` 的资源。 | 由 `/workspace/*` 以 no-store 返回并按请求注入活动皮肤，恢复入口跳过；不手改。 |
 | `web/static/app/assets/app.js` | 提交的 Vue 应用 bundle（含 Vue/Pinia/Vue Router）。 | `?v=` 存在时按 immutable 缓存；CI 校验与源码构建逐字节一致。 |

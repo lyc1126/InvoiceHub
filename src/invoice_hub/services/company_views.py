@@ -39,7 +39,14 @@ from invoice_hub.services.company_receipts import CompanyReceiptService
 from invoice_hub.services.company_deduction import DeductionListReader, build_deduction_check
 from invoice_hub.services.company_inventory import build_inventory_check, read_book_inputs
 from invoice_hub.services.company_payroll import read_payroll, save_confirmed as save_payroll_months
-from invoice_hub.services.company_projects import ProjectAssignmentStore, build_project_summary, project_fields, remark_projects
+from invoice_hub.services.company_projects import (
+    MAX_PROJECT_NAME,
+    ProjectAssignmentStore,
+    _clean as _clean_project_name,
+    build_project_summary,
+    project_fields,
+    remark_projects,
+)
 from invoice_hub.services.company_refresh import CompanyDataRefreshService
 from invoice_hub.services.company_same_number import INVOICE_DIR_KEYS, build_same_number_check
 from invoice_hub.services.company_settlement import build_settlement_check
@@ -278,6 +285,8 @@ class CompanyViewService:
         payload = dict(payload)
         items = [dict(item) for item in payload["items"]]
         payload["items"] = items
+        if read_only and key in INVOICE_DIR_KEYS and company.get("root_status") == "present":
+            self._attach_company_project_fields(payload, Path(company["root_path"]), profile)
         # Tags are display data only: attached after the list is built, never fed back into it.
         tags_error = ""
         marks: dict[str, list[str]] = {}
@@ -589,7 +598,8 @@ class CompanyViewService:
         try:
             result = build_project_summary(
                 rows["input"], rows["output"], input_details=details["input"], output_details=details["output"],
-                manual={number: item["project"] for number, item in assignments["invoices"].items() if isinstance(item, dict) and item.get("project")},
+                manual=assignments["invoices"],
+                aliases=assignments["aliases"],
                 granularity=granularity, start=start, end=end,
             )
         except ValueError as exc:
@@ -598,6 +608,25 @@ class CompanyViewService:
                                  {"cost_invoice_dir": "成本发票", "issued_invoice_dir": "开具发票"})
         return {"ok": True, "revision": payload["revision"], "company": company, "sources": sources,
                 "assignments_revision": assignments["revision"], **result}
+
+    def _attach_company_project_fields(self, result: dict, root: Path, profile: TargetProfile) -> None:
+        # Enrich copied rows of a company's cost/issued directory without mutating cached payloads.
+        for row in result["items"]:
+            row.setdefault("project", "")
+            row.setdefault("project_source", "none")
+        try:
+            remarks = remark_projects(self._cost_service(profile).read_only_inputs()["detail_rows"])
+            loaded = self._projects.load(root)
+            manual, aliases = loaded["invoices"], loaded["aliases"]
+            for row in result["items"]:
+                family = selection_family_key(row)
+                number = family.split(":", 1)[1] if family.startswith("number:") else ""
+                row.update(project_fields(number, remarks, manual, aliases))
+        except (CompanyRegistryError, OSError, ValueError):
+            result["projects_error"] = "项目归属无法读取，未显示项目；请到公司项目页核对。"
+            for row in result["items"]:
+                row["project"] = ""
+                row["project_source"] = "unavailable"
 
     def active_project_fields(self, payload: dict) -> dict:
         # Enrich copies after paging; project edits must be visible without invalidating the
@@ -610,13 +639,14 @@ class CompanyViewService:
             company = next((company for company in self._registry.list_companies()["companies"]
                             if company.get("monitored_subdir_key") in INVOICE_DIR_KEYS and company.get("monitored")), None)
             remarks = remark_projects(self._cost_service(profile).read_only_inputs()["detail_rows"])
-            manual = self._projects.load(self._company_root(company))["invoices"] if company else {}
+            loaded = self._projects.load(self._company_root(company)) if company else {"invoices": {}, "aliases": {}}
+            manual, aliases = loaded["invoices"], loaded["aliases"]
             for row in result["items"]:
                 # The ledger also accepts a unique 20-digit filename family when the
                 # format has no header number; all copies must show the same project.
                 family = selection_family_key(row)
                 number = family.split(":", 1)[1] if family.startswith("number:") else ""
-                row.update(project_fields(number, remarks, manual))
+                row.update(project_fields(number, remarks, manual, aliases))
         except (CompanyRegistryError, OSError, ValueError):
             result["projects_error"] = "项目归属无法读取，未显示项目；请到公司项目页核对。"
             for row in result["items"]:
@@ -628,6 +658,147 @@ class CompanyViewService:
         company = self._registry.get_company(company_id)["company"]
         saved = self._projects.update(self._company_root(company), body)
         return {"ok": True, "assignments_revision": saved["revision"], "count": len(saved["invoices"])}
+
+    def _compute_project_rename_preview(self, company_id: str, body: object) -> tuple[dict, dict, dict | None, Path]:
+        import hashlib
+        import json as _json
+        from invoice_hub.services.cost_records import read_company_state
+        from invoice_hub.services.cost_service_costs import SERVICE_COST_FILE, normalize_costs
+
+        if not isinstance(body, dict):
+            raise CompanyRegistryError("COMPANY_PROJECTS_INVALID", "请求格式不正确。")
+        revision = body.get("revision")
+        if isinstance(revision, bool) or not isinstance(revision, int):
+            raise CompanyRegistryError("COMPANY_PROJECTS_INVALID", "缺少项目归属版本号 revision。", field="revision")
+        from_name = _clean_project_name(body.get("from_name"))
+        to_name = _clean_project_name(body.get("to_name"))
+        if not from_name or len(from_name) > MAX_PROJECT_NAME:
+            raise CompanyRegistryError("COMPANY_PROJECTS_INVALID", f"原项目名称须为 1—{MAX_PROJECT_NAME} 个字。", field="from_name")
+        if not to_name or len(to_name) > MAX_PROJECT_NAME:
+            raise CompanyRegistryError("COMPANY_PROJECTS_INVALID", f"新项目名称须为 1—{MAX_PROJECT_NAME} 个字。", field="to_name")
+        if from_name == to_name:
+            raise CompanyRegistryError("COMPANY_PROJECTS_INVALID", "新项目名称不能与原名称相同。", field="to_name")
+        sync_service_costs = body.get("sync_service_costs", True)
+        if not isinstance(sync_service_costs, bool):
+            raise CompanyRegistryError("COMPANY_PROJECTS_INVALID", "sync_service_costs 必须是布尔值。", field="sync_service_costs")
+
+        company = self._registry.get_company(company_id)["company"]
+        root = self._company_root(company)
+        current = self._projects.load(root)
+        if revision != current["revision"]:
+            raise CompanyRegistryError("COMPANY_PROJECTS_CONFLICT", "项目归属已被修改，请刷新后重试。", status_code=409, field="revision")
+
+        summary = self.company_projects(company_id, granularity="month", start="", end="")
+        manual_count = sum(1 for item in summary["invoices"] if item["project"] == from_name and item["source"] == "manual")
+        remark_count = sum(1 for item in summary["invoices"] if item["project"] == from_name and item["source"] == "remark")
+        stored_manual_count = sum(
+            1 for row in current["invoices"].values()
+            if isinstance(row, dict) and row.get("unassigned") is not True and _clean_project_name(row.get("project")) == from_name
+        )
+
+        # Check linked manual service costs so renaming a project never silently splits service revenue and cost.
+        service_state: dict | None = None
+        service_cost_count = 0
+        service_costs_revision: int | None = None
+        if (root / SERVICE_COST_FILE).exists():
+            try:
+                loaded_service = read_company_state(root, SERVICE_COST_FILE, company_id, "costs")
+                normalized_costs = normalize_costs(loaded_service["costs"])
+                service_state = {**loaded_service, "costs": normalized_costs}
+                service_costs_revision = int(loaded_service["revision"])
+                service_cost_count = sum(1 for row in normalized_costs.values() if row["project"] == from_name)
+            except (OSError, ValueError) as exc:
+                raise CompanyRegistryError(
+                    "COMPANY_PROJECTS_UNREADABLE",
+                    f"关联的服务成本文件无法读取，未执行重命名：{exc}",
+                    status_code=409,
+                ) from exc
+
+        known_projects = set(summary["project_names"])
+        if from_name not in known_projects and stored_manual_count == 0 and service_cost_count == 0:
+            raise CompanyRegistryError("COMPANY_PROJECTS_INVALID", f"未找到项目「{from_name}」。", field="from_name")
+
+        merges_into_existing = to_name in known_projects
+        preview_core = {
+            "company_id": company_id,
+            "revision": current["revision"],
+            "from_name": from_name,
+            "to_name": to_name,
+            "manual_count": manual_count,
+            "remark_count": remark_count,
+            "stored_manual_count": stored_manual_count,
+            "total_invoices": manual_count + remark_count,
+            "merges_into_existing": merges_into_existing,
+            "sync_service_costs": sync_service_costs,
+            "service_cost_count": service_cost_count,
+            "service_costs_revision": service_costs_revision,
+        }
+        preview_hash = hashlib.sha256(
+            _json.dumps(preview_core, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+        return {"ok": True, **preview_core, "preview_hash": preview_hash}, current, service_state, root
+
+    def preview_project_rename(self, company_id: str, body: object) -> dict:
+        preview, _current, _service_state, _root = self._compute_project_rename_preview(company_id, body)
+        return preview
+
+    def rename_project(self, company_id: str, body: object) -> dict:
+        from datetime import datetime
+        from invoice_hub.services.company_costs import PRICING_LOCK
+        from invoice_hub.services.company_files import write_state
+        from invoice_hub.services.cost_service_costs import SERVICE_COST_FILE
+        from invoice_hub.storage import atomic_write_json
+
+        if not isinstance(body, dict) or body.get("confirm") is not True:
+            raise CompanyRegistryError("COMPANY_PROJECTS_INVALID", "项目重命名需要明确确认。", field="confirm")
+        expected_hash = str(body.get("preview_hash") or "").strip()
+        if not expected_hash:
+            raise CompanyRegistryError("COMPANY_PROJECTS_INVALID", "缺少 preview_hash，请先预览影响。", field="preview_hash")
+        expected_sc_rev = body.get("service_costs_revision")
+        if expected_sc_rev is not None and (isinstance(expected_sc_rev, bool) or not isinstance(expected_sc_rev, int)):
+            raise CompanyRegistryError("COMPANY_PROJECTS_INVALID", "service_costs_revision 格式不正确。", field="service_costs_revision")
+
+        # Lock order: PRICING_LOCK -> self._projects._lock to stay deadlock-free with cost reports.
+        with PRICING_LOCK, self._projects._lock:
+            preview, current, service_state, root = self._compute_project_rename_preview(company_id, body)
+            if expected_sc_rev is not None and expected_sc_rev != preview["service_costs_revision"]:
+                raise CompanyRegistryError("COMPANY_PROJECTS_CONFLICT", "关联的服务成本记录已变化，请重新预览。", status_code=409)
+            if expected_hash != preview["preview_hash"]:
+                raise CompanyRegistryError("COMPANY_PROJECTS_CONFLICT", "项目数据已变化，请重新预览后再确认重命名。", status_code=409)
+            now = datetime.now().isoformat(timespec="seconds")
+            updated_projects, manual_updated = self._projects.apply_rename(current, preview["from_name"], preview["to_name"], now)
+            atomic_write_json(self._projects.path(root), updated_projects)
+
+            service_costs_updated = 0
+            if preview["sync_service_costs"] and service_state is not None and preview["service_cost_count"] > 0:
+                next_costs = {}
+                for rec_id, row in service_state["costs"].items():
+                    if row["project"] == preview["from_name"]:
+                        next_costs[rec_id] = {**row, "project": preview["to_name"]}
+                        service_costs_updated += 1
+                    else:
+                        next_costs[rec_id] = row
+                write_state(
+                    root,
+                    SERVICE_COST_FILE,
+                    {
+                        "version": 1,
+                        "revision": service_state["revision"] + 1,
+                        "company_id": company_id,
+                        "costs": next_costs,
+                    },
+                )
+
+            return {
+                "ok": True,
+                "from_name": preview["from_name"],
+                "to_name": preview["to_name"],
+                "assignments_revision": updated_projects["revision"],
+                "manual_updated": manual_updated,
+                "remark_count": preview["remark_count"],
+                "merges_into_existing": preview["merges_into_existing"],
+                "service_costs_updated": service_costs_updated,
+            }
 
     # ---- voucher draft review (WS-05 stage 1): the CLI's review workbook in 做账草稿/, edited in place.
     def cost_tax_profile(self, company_id: str, month: str = "") -> dict:

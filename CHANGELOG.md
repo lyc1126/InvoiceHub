@@ -2,6 +2,18 @@
 
 ## 未发布
 
+### 2026-11-23 补齐项目归属全量人工调整、目录批量改项目与项目重命名（WS-03）
+
+- 需求与起点：基于 `codex/workspace-p3@cddafd2`（`1.0.0-beta.1`）响应用户需求：不仅未归属发票，所有已识别发票（含发票备注自动识别的项目）都须支持人工手动调整项目归属，并且项目名称必须支持重命名（及合并到已有项目），同时不修改源发票且保持项目汇总、发票目录、侧栏项目树与成本分析 V2 口径一致。
+- 采用方案：
+  - **受保护数据模型扩展（向后兼容 v1）**：`src/invoice_hub/services/company_projects.py` 扩展 `项目归属.json` 可选字段 `aliases: {原名: 目标名}` 与单票 `unassigned: true`（显式移出至未归属、覆盖备注；空字符串继续清除人工条目并恢复备注）；`apply_rename` 在重命名/合并时同步重写人工归属并单跳折叠 `aliases`（满足 `keys ∩ values == ∅` 无环不变量），损坏/自映射/含环文件 409 拒绝覆盖。
+  - **XML 备注提取与全消费者共享口径**：`projections/cost_analysis.py::analyze_xml_costs` 补齐 XML `<Remark>` 提取 `备注项目名称`；`company_views.py`、`cost_reports.py`、`company_projects.py` 统一调用 `project_fields(..., aliases)`；非监控成本/开具发票目录列表同步挂载 `project` / `project_source`。
+  - **项目重命名预览确认接口**：新增 `POST /api/v1/companies/{company_id}/projects/rename/preview` 与 `POST /api/v1/companies/{company_id}/projects/rename`，在 `PRICING_LOCK -> _projects._lock` 锁序下重验 `revision` 与 `preview_hash`，支持预览人工/备注影响张数、是否与已有项目合并及同步更新 `服务成本归集.json`。
+  - **前端工作台与侧栏交互**：新增 `frontend/src/components/ProjectRenameModal.vue` 供 `CompanyProjects.vue` 与 `WorkspaceSidebar.vue` 侧栏项目节点共用；`CompanyProjects.vue` 展示全量发票归属调整表（来源/项目/关键词筛选、直接改派备注发票、移出未归属、恢复备注）；`DirectoryInvoices.vue` 与 `DirectorySelectionBar.vue` 在成本/开具目录展示项目列并支持单行右键及勾选批量「调整项目…」。同步重建 `web/static/app/` 与更新架构五图、做账规则及 `PRODUCT_BACKLOG.md`。
+- 验证范围与未覆盖项：
+  - 已运行并通过：`tests/test_company_projects.py`（12 项，含 3 项新增回归）、`tests/test_company_views.py`、`tests/test_company_costs.py`、`tests/test_workspace_frontend.py`、`tests/test_development_documentation.py`（16 项）、Ruff、Python `compileall`、Vue `vue-tsc --noEmit`、`vitest run`（20 文件 164 项，含新增 `frontend/tests/project-management.spec.ts`）、`vite build`、`git diff --check`，并重新构建本机 `InvoiceHub.app`。
+  - 未覆盖项：真实默认配置与业务资料实测、正式 Windows BAT、真实前台桌面/原生弹窗及远端新一轮 CI 均待独立验收。
+
 ### 2026-11-23 升级版本号至 1.0.0-beta.1 并重打本机 macOS 开发版 InvoiceHub.app
 
 - 需求与起点：PR #32（`codex/workspace-p3@1d73f5c`，CI run `45174070913` / `45174070835` / `45174070850`）实现 9/9 项远端检查全绿（含 `Windows Python and release contracts`、`macOS ARM64 Python`、`Synthetic browser regressions (Linux)`、`Tauri host Rust (macos-15 / windows-latest)`、`Workspace frontend (Vue)`、`Python static analysis`、`DCO` 与 `macOS reference shell`）。按用户要求在全绿后将源码版本标注升级为 `1.0.0-beta.1`，并重新构建本机 macOS ARM64 开发版 `InvoiceHub.app` 供本机实机验收。

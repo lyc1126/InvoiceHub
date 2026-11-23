@@ -175,3 +175,149 @@ def test_classic_project_uses_filename_family_for_numberless_copy(app, client, t
     result = state.company_views.active_project_fields(payload)
     assert [row['project'] for row in result['items']] == ['同票项目', '同票项目']
     assert all('project' not in row for row in payload['items'])
+
+
+def test_remark_invoice_can_be_manually_reassigned_unassigned_and_restored(app, client, tmp_path: Path):
+    root = tmp_path / "甲公司"
+    (root / "成本发票").mkdir(parents=True)
+    xml = _xml_invoice(N[1], "丙丁建材", "甲公司", [("12E", "1", "1000.00", "130.00", "钢筋")])
+    xml = xml.replace("</EInvoiceData>", "<BasicInformation><Remark>项目名称：备注旧项目</Remark></BasicInformation></EInvoiceData>")
+    (root / "成本发票" / "a.xml").write_text(xml, encoding="utf-8")
+    company_id = _company(client, root)
+    _sync(app, root / "成本发票")
+
+    initial = client.get(f"/api/v1/companies/{company_id}/projects").json()
+    assert initial["checks_ok"] is True
+    assert [row["project"] for row in initial["projects"]] == ["备注旧项目"]
+    assert len(initial["invoices"]) == 1
+    assert initial["invoices"][0]["source"] == "remark" and initial["invoices"][0]["project"] == "备注旧项目"
+
+    url = f"/api/v1/companies/{company_id}/projects/assignments"
+    # 1) Manually reassign a remark-detected invoice to another project.
+    reassigned = client.put(url, json={"revision": 0, "assignments": {N[1]: "人工目标项目"}})
+    assert reassigned.status_code == 200
+    after_reassign = client.get(f"/api/v1/companies/{company_id}/projects").json()
+    assert after_reassign["checks_ok"] is True
+    assert [row["project"] for row in after_reassign["projects"]] == ["人工目标项目"]
+    assert after_reassign["invoices"][0]["source"] == "manual"
+    # Non-monitored directory list also reflects the manual project immediately.
+    dir_rows = client.get(f"/api/v1/companies/{company_id}/directories/cost_invoice_dir/invoices").json()
+    assert dir_rows["items"][0]["project"] == "人工目标项目"
+    assert dir_rows["items"][0]["project_source"] == "manual"
+
+    # 2) Explicitly move the remark-detected invoice to 未归属 (overrides remark!).
+    conflict_req = client.put(url, json={"revision": 1, "assignments": {N[1]: "X"}, "unassigned": [N[1]]})
+    assert conflict_req.status_code == 422
+    unassigned = client.put(url, json={"revision": 1, "unassigned": [N[1]]})
+    assert unassigned.status_code == 200
+    after_unassigned = client.get(f"/api/v1/companies/{company_id}/projects").json()
+    assert after_unassigned["checks_ok"] is True
+    assert [row["project"] for row in after_unassigned["projects"]] == [""]
+    assert after_unassigned["invoices"][0]["source"] == "manual"
+    assert after_unassigned["invoices"][0]["project"] == ""
+
+    # 3) Empty string restores remark-based attribution.
+    restored = client.put(url, json={"revision": 2, "assignments": {N[1]: ""}})
+    assert restored.status_code == 200
+    after_restore = client.get(f"/api/v1/companies/{company_id}/projects").json()
+    assert [row["project"] for row in after_restore["projects"]] == ["备注旧项目"]
+    assert after_restore["invoices"][0]["source"] == "remark"
+
+
+def test_project_rename_preview_confirm_alias_collapse_and_service_cost_sync(app, client, tmp_path: Path):
+    from invoice_hub.services.company_files import write_state
+    from invoice_hub.services.cost_service_costs import SERVICE_COST_FILE
+
+    root = tmp_path / "甲公司"
+    (root / "成本发票").mkdir(parents=True)
+    xml1 = _xml_invoice(N[1], "丙丁建材", "甲公司", [("12E", "1", "1000.00", "130.00", "钢筋")]).replace(
+        "</EInvoiceData>", "<BasicInformation><Remark>项目名称：一期工程</Remark></BasicInformation></EInvoiceData>"
+    )
+    xml2 = _xml_invoice(N[2], "丙丁建材", "甲公司", [("12E", "2", "2000.00", "260.00", "钢筋")])
+    (root / "成本发票" / "a.xml").write_text(xml1, encoding="utf-8")
+    (root / "成本发票" / "b.xml").write_text(xml2, encoding="utf-8")
+    source_snapshot = {p: p.read_bytes() for p in (root / "成本发票").iterdir() if p.is_file()}
+    company_id = _company(client, root)
+    _sync(app, root / "成本发票")
+
+    # Assign N[2] manually to 一期工程 and add one linked service cost row.
+    assert client.put(
+        f"/api/v1/companies/{company_id}/projects/assignments",
+        json={"revision": 0, "assignments": {N[2]: "一期工程"}},
+    ).status_code == 200
+    write_state(
+        root,
+        SERVICE_COST_FILE,
+        {
+            "version": 1,
+            "revision": 1,
+            "company_id": company_id,
+            "costs": {"sc1": {"month": "2026-06", "project": "一期工程", "amount": "500.00", "source": "人工费"}},
+        },
+    )
+
+    preview_url = f"/api/v1/companies/{company_id}/projects/rename/preview"
+    rename_url = f"/api/v1/companies/{company_id}/projects/rename"
+
+    # Reject unknown project / missing confirm / tampered preview_hash.
+    assert client.post(preview_url, json={"revision": 1, "from_name": "不存在项目", "to_name": "新名"}).status_code == 422
+    preview = client.post(preview_url, json={"revision": 1, "from_name": "一期工程", "to_name": "东区一期", "sync_service_costs": True})
+    assert preview.status_code == 200
+    p = preview.json()
+    assert p["manual_count"] == 1 and p["remark_count"] == 1 and p["total_invoices"] == 2
+    assert p["merges_into_existing"] is False and p["service_cost_count"] == 1 and p["service_costs_revision"] == 1
+
+    assert client.post(rename_url, json={**p, "confirm": False}).status_code == 422
+    assert client.post(rename_url, json={**p, "preview_hash": "0" * 64, "confirm": True}).status_code == 409
+
+    # Confirm rename: updates manual entry, stores alias for remark invoice, syncs service cost, never edits source XML.
+    done = client.post(rename_url, json={
+        "revision": 1,
+        "from_name": "一期工程",
+        "to_name": "东区一期",
+        "sync_service_costs": True,
+        "service_costs_revision": 1,
+        "preview_hash": p["preview_hash"],
+        "confirm": True,
+    })
+    assert done.status_code == 200
+    body = done.json()
+    assert body["assignments_revision"] == 2 and body["manual_updated"] == 1 and body["service_costs_updated"] == 1
+    assert source_snapshot == {path: path.read_bytes() for path in source_snapshot}
+
+    after = client.get(f"/api/v1/companies/{company_id}/projects").json()
+    assert after["checks_ok"] is True
+    assert [row["project"] for row in after["projects"]] == ["东区一期"]
+    assert after["aliases"] == {"一期工程": "东区一期"}
+    stored_service = json.loads((root / SERVICE_COST_FILE).read_text(encoding="utf-8"))
+    assert stored_service["revision"] == 2 and stored_service["costs"]["sc1"]["project"] == "东区一期"
+
+    # Directory list (read-only non-monitored) also reflects the renamed project for both remark & manual invoices.
+    dir_rows = client.get(f"/api/v1/companies/{company_id}/directories/cost_invoice_dir/invoices").json()
+    assert sorted(row["project"] for row in dir_rows["items"]) == ["东区一期", "东区一期"]
+
+    # Second rename back to 一期工程 collapses aliases with zero self-alias or cycles!
+    p2 = client.post(preview_url, json={"revision": 2, "from_name": "东区一期", "to_name": "一期工程", "sync_service_costs": False}).json()
+    done2 = client.post(rename_url, json={
+        "revision": 2,
+        "from_name": "东区一期",
+        "to_name": "一期工程",
+        "sync_service_costs": False,
+        "preview_hash": p2["preview_hash"],
+        "confirm": True,
+    })
+    assert done2.status_code == 200 and done2.json()["service_costs_updated"] == 0
+    after2 = client.get(f"/api/v1/companies/{company_id}/projects").json()
+    assert after2["aliases"] == {"东区一期": "一期工程"}
+    assert [row["project"] for row in after2["projects"]] == ["一期工程"]
+    # Service cost was untouched when sync_service_costs=False.
+    assert json.loads((root / SERVICE_COST_FILE).read_text(encoding="utf-8"))["costs"]["sc1"]["project"] == "东区一期"
+
+
+def test_damaged_aliases_in_projects_file_are_refused(app, client, tmp_path: Path):
+    company_id, root = _setup(app, client, tmp_path)
+    path = root / PROJECTS_FILE_NAME
+    cyclic = json.dumps({"version": 1, "revision": 0, "invoices": {}, "aliases": {"A": "B", "B": "A"}})
+    path.write_text(cyclic, encoding="utf-8")
+    assert client.get(f"/api/v1/companies/{company_id}/projects").status_code == 409
+    assert path.read_text(encoding="utf-8") == cyclic

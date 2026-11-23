@@ -13,7 +13,7 @@ from invoice_hub.bank.vouchers import goods_family
 from invoice_hub.projections.cost_analysis import canonical_reference_rows, normalize_spec_text, resolve_item
 from invoice_hub.services.company_costs import PRICING_LOCK, _conflict, _number
 from invoice_hub.services.company_files import read_relative
-from invoice_hub.services.company_projects import project_fields, remark_projects
+from invoice_hub.services.company_projects import project_fields, remark_projects, validate_aliases
 from invoice_hub.services.cost_pricing import decimal_value
 from invoice_hub.services.cost_service_costs import ServiceCostService
 
@@ -25,14 +25,17 @@ def _projects(root):
     try:
         data = json.loads(read_relative(root, "项目归属.json", 2 * 1024 * 1024), object_pairs_hook=unique_object)
     except FileNotFoundError:
-        return {}
+        return {}, {}
     except RecursionError as exc:
         raise ValueError("项目归属文件嵌套过深，未当作空数据。") from exc
     if (not isinstance(data, dict) or type(data.get("version")) is not int or data["version"] != 1
             or type(data.get("revision")) is not int or data["revision"] < 0 or not isinstance(data.get("invoices"), dict)
-            or any(not isinstance(v, dict) or not isinstance(v.get("project"), str) for v in data["invoices"].values())):
+            or any(not isinstance(v, dict) or not isinstance(v.get("project"), str)
+                   or ("unassigned" in v and not isinstance(v.get("unassigned"), bool))
+                   for v in data["invoices"].values())):
         raise ValueError("项目归属文件损坏，未将其当作未归属数据。")
-    return data["invoices"]
+    aliases = validate_aliases(data.get("aliases"))
+    return data["invoices"], aliases
 
 
 def _aggregate(entries, dimension):
@@ -57,7 +60,7 @@ def _aggregate(entries, dimension):
     return result
 
 
-def _service_margin(snapshot, context, costs, start, end, manual, remarks):
+def _service_margin(snapshot, context, costs, start, end, manual, remarks, aliases=None):
     groups = {}
     def group(month, project):
         return groups.setdefault((month, project), {"revenue": ZERO, "cost": ZERO, "income_count": 0,
@@ -75,7 +78,7 @@ def _service_margin(snapshot, context, costs, start, end, manual, remarks):
             continue
         if not start <= month <= end:
             continue
-        fields = project_fields(source["invoice_number"], remarks, manual)
+        fields = project_fields(source["invoice_number"], remarks, manual, aliases)
         bucket = group(month, fields["project"])
         revenue = _number(row.get("金额(除税)"))
         bucket["income_count"] += 1
@@ -124,7 +127,7 @@ def build_margin_report(snapshot, context, costs, start, end):
     inventory = snapshot["inventory"]
     catalog = context["cost_inputs"]["item_catalog"]
     book = context["book"]
-    manual = _projects(context["root"])
+    manual, aliases = _projects(context["root"])
     remarks = remark_projects(context["sale_rows"])
     source_rows = canonical_reference_rows(context["sale_rows"], catalog)
     by_month = {(item["key"], row["month"]): row for item in inventory["items"] for row in item["months"]}
@@ -143,7 +146,7 @@ def build_margin_report(snapshot, context, costs, start, end):
         family, _code, _explicit = resolve_stock(row["内部项目名称"], book.ledger, book.mapping, goods_family)
         key = family + "\x1f" + str(row.get("单位", ""))
         number = str(row.get("发票号码") or "")
-        project = project_fields(number, remarks, manual)["project"]
+        project = project_fields(number, remarks, manual, aliases)["project"]
         batches[(key, month)].append({"month": month, "item": key, "customer": str(row.get("购买方") or ""), "project": project,
                                       "revenue": revenue, "quantity": quantity, "index": index,
                                       "source": {"invoice_number": number, "source_file": row.get("源文件", ""), "date": row.get("开票日期", ""),
@@ -176,7 +179,7 @@ def build_margin_report(snapshot, context, costs, start, end):
                     allocated = cumulative
                 entries.append(entry)
         dimensions = {name: _aggregate(entries, name) for name in ("month", "item", "customer", "project")}
-        service_margin = _service_margin(snapshot, context, costs, start, end, manual, remarks)
+        service_margin = _service_margin(snapshot, context, costs, start, end, manual, remarks, aliases)
         samples = [{**e["source"], "quantity": str(e["quantity"]) if e["quantity"] is not None else None,
                     "revenue": f"{e['revenue']:.2f}", "cost": f"{e['cost']:.2f}" if e["cost"] is not None else None} for e in entries]
     service = defaultdict(lambda: {"amount": ZERO, "sources": []})

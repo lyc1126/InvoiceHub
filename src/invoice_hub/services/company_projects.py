@@ -46,6 +46,48 @@ def _clean(value: object) -> str:
     return " ".join(str(value or "").split())
 
 
+def resolve_project_alias(name: str, aliases: dict[str, str] | None = None) -> str:
+    """Resolve one project name through validated rename aliases without mutating source invoices."""
+    current = _clean(name)
+    if not current or not aliases:
+        return current
+    seen = {current}
+    while current in aliases:
+        nxt = _clean(aliases[current])
+        if not nxt or nxt in seen:
+            break
+        seen.add(nxt)
+        current = nxt
+    return current
+
+
+def validate_aliases(raw: object) -> dict[str, str]:
+    """Validate optional rename map: non-empty <=60-char strings, no self-alias, no cycles."""
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        raise ValueError("aliases 必须是映射对象。")
+    cleaned: dict[str, str] = {}
+    for key, value in raw.items():
+        if not isinstance(key, str) or not isinstance(value, str):
+            raise ValueError("aliases 键值必须是字符串。")
+        src, dst = _clean(key), _clean(value)
+        if not src or not dst or len(src) > MAX_PROJECT_NAME or len(dst) > MAX_PROJECT_NAME:
+            raise ValueError("aliases 项目名称长度无效。")
+        if src == dst or src in cleaned:
+            raise ValueError("aliases 存在自映射或重复名称。")
+        cleaned[src] = dst
+    for start in cleaned:
+        cursor = start
+        seen = {cursor}
+        while cursor in cleaned:
+            cursor = cleaned[cursor]
+            if cursor in seen:
+                raise ValueError("aliases 存在循环映射。")
+            seen.add(cursor)
+    return cleaned
+
+
 def remark_projects(detail_rows: list[dict]) -> dict[str, set[str]]:
     """Invoice number -> project names found in 备注 across that invoice's detail lines."""
     found: dict[str, set[str]] = defaultdict(set)
@@ -57,19 +99,32 @@ def remark_projects(detail_rows: list[dict]) -> dict[str, set[str]]:
     return found
 
 
-def project_fields(number: str, remarks: dict[str, set[str]], manual: dict) -> dict:
-    """Shared display/aggregation precedence; ambiguous remarks never become a guessed project."""
-    names = sorted(remarks.get(number, set()))
+def project_fields(
+    number: str,
+    remarks: dict[str, set[str]],
+    manual: dict,
+    aliases: dict[str, str] | None = None,
+) -> dict:
+    """Shared display/aggregation precedence; manual overrides and rename aliases win over remarks."""
+    names = sorted({resolve_project_alias(name, aliases) for name in remarks.get(number, set()) if _clean(name)})
     saved = manual.get(number)
-    project = _clean(saved.get("project")) if isinstance(saved, dict) else ""
+    if isinstance(saved, dict) and saved.get("unassigned") is True:
+        # User explicitly cleared this invoice out of any remark-detected project.
+        return {"project": "", "project_source": "manual"}
+    if isinstance(saved, dict):
+        project = _clean(saved.get("project"))
+    elif isinstance(saved, str):
+        project = _clean(saved)
+    else:
+        project = ""
     if project:
-        return {"project": project, "project_source": "manual"}
+        return {"project": resolve_project_alias(project, aliases), "project_source": "manual"}
     return {"project": names[0] if len(names) == 1 else "",
             "project_source": "remark" if len(names) == 1 else "conflict" if names else "none"}
 
 
 class ProjectAssignmentStore:
-    """``<company root>/项目归属.json``: manual projects by invoice number, written under a lock."""
+    """``<company root>/项目归属.json``: manual projects and rename aliases, written under a lock."""
 
     def __init__(self) -> None:
         self._lock = threading.RLock()
@@ -81,7 +136,7 @@ class ProjectAssignmentStore:
     def load(self, root: Path) -> dict:
         path = self.path(root)
         if not path.exists():
-            return {"version": PROJECTS_SCHEMA_VERSION, "revision": 0, "invoices": {}}
+            return {"version": PROJECTS_SCHEMA_VERSION, "revision": 0, "invoices": {}, "aliases": {}}
         try:
             payload = json.loads(path.read_text(encoding="utf-8-sig"))
         except (OSError, ValueError) as exc:
@@ -90,41 +145,98 @@ class ProjectAssignmentStore:
                 or not isinstance(payload.get("invoices"), dict) or type(payload.get("revision")) is not int
                 or payload["revision"] < 0
                 or any(not isinstance(row, dict) or not isinstance(row.get("project"), str)
+                       or ("unassigned" in row and not isinstance(row.get("unassigned"), bool))
                        for row in payload["invoices"].values())):
             # A damaged file is kept as it is: overwriting it would lose the user's assignments.
             raise CompanyRegistryError("COMPANY_PROJECTS_UNREADABLE", f"{PROJECTS_FILE_NAME} 格式不正确，未改动。", status_code=409)
-        return payload
+        try:
+            aliases = validate_aliases(payload.get("aliases"))
+        except ValueError as exc:
+            raise CompanyRegistryError("COMPANY_PROJECTS_UNREADABLE", f"{PROJECTS_FILE_NAME} 别名格式不正确，未改动：{exc}", status_code=409) from exc
+        return {**payload, "aliases": aliases}
+
+    @staticmethod
+    def _validate_number(number: object, field: str) -> str:
+        number_text = _clean(number)
+        if not number_text.isdigit() or not (8 <= len(number_text) <= 20):
+            raise CompanyRegistryError("COMPANY_PROJECTS_INVALID", f"发票号码不正确：{number}", field=field)
+        return number_text
 
     def update(self, root: Path, payload: object) -> dict:
         if not isinstance(payload, dict):
             raise CompanyRegistryError("COMPANY_PROJECTS_INVALID", "请求格式不正确。")
         revision = payload.get("revision")
         changes = payload.get("assignments")
+        unassigned_raw = payload.get("unassigned")
         if isinstance(revision, bool) or not isinstance(revision, int):
             raise CompanyRegistryError("COMPANY_PROJECTS_INVALID", "缺少项目归属版本号 revision。", field="revision")
-        if not isinstance(changes, dict) or not changes:
+        if changes is not None and not isinstance(changes, dict):
+            raise CompanyRegistryError("COMPANY_PROJECTS_INVALID", "assignments 格式不正确。", field="assignments")
+        if unassigned_raw is not None and not isinstance(unassigned_raw, list):
+            raise CompanyRegistryError("COMPANY_PROJECTS_INVALID", "unassigned 必须是发票号码列表。", field="unassigned")
+        changes = changes or {}
+        unassigned_raw = unassigned_raw or []
+        if not changes and not unassigned_raw:
             raise CompanyRegistryError("COMPANY_PROJECTS_INVALID", "没有要保存的项目归属。", field="assignments")
         cleaned = {}
         for number, project in changes.items():
-            number_text = _clean(number)
-            if not number_text.isdigit() or not (8 <= len(number_text) <= 20):
-                raise CompanyRegistryError("COMPANY_PROJECTS_INVALID", f"发票号码不正确：{number}", field="assignments")
+            number_text = self._validate_number(number, "assignments")
             if not isinstance(project, str) or len(_clean(project)) > MAX_PROJECT_NAME:
                 raise CompanyRegistryError("COMPANY_PROJECTS_INVALID", f"项目名称不能超过 {MAX_PROJECT_NAME} 个字。", field="assignments")
             cleaned[number_text] = _clean(project)
+        explicit_unassigned: set[str] = set()
+        for number in unassigned_raw:
+            number_text = self._validate_number(number, "unassigned")
+            if number_text in cleaned:
+                raise CompanyRegistryError("COMPANY_PROJECTS_INVALID", f"发票 {number_text} 不能同时指定项目和移出未归属。", field="unassigned")
+            explicit_unassigned.add(number_text)
         with self._lock:
             current = self.load(root)
             if revision != current["revision"]:
                 raise CompanyRegistryError("COMPANY_PROJECTS_CONFLICT", "项目归属已被修改，请刷新后重试。", status_code=409, field="revision")
             now = datetime.now().isoformat(timespec="seconds")
+            aliases = current.get("aliases") or {}
             for number, project in cleaned.items():
                 if project:
-                    current["invoices"][number] = {"project": project, "updated_at": now}
+                    # Keep manual assignments normalized if the user picks a previously renamed name.
+                    current["invoices"][number] = {"project": resolve_project_alias(project, aliases), "updated_at": now}
                 else:  # empty clears the manual value; the remark applies again
                     current["invoices"].pop(number, None)
+            for number in explicit_unassigned:
+                current["invoices"][number] = {"project": "", "unassigned": True, "updated_at": now}
             current["revision"] += 1
             atomic_write_json(self.path(root), current)
             return current
+
+    @staticmethod
+    def apply_rename(current: dict, from_name: str, to_name: str, now: str) -> tuple[dict, int]:
+        """Rewrite manual assignments and collapse rename aliases to 1 hop (keys ∩ values == ∅)."""
+        updated = {
+            "version": PROJECTS_SCHEMA_VERSION,
+            "revision": current["revision"] + 1,
+            "invoices": {},
+            "aliases": {},
+        }
+        manual_updated = 0
+        for number, row in current["invoices"].items():
+            copy = dict(row)
+            if copy.get("unassigned") is not True and _clean(copy.get("project")) == from_name:
+                copy["project"] = to_name
+                copy["updated_at"] = now
+                manual_updated += 1
+            updated["invoices"][number] = copy
+        # Collapse prior aliases targeting from_name and retire any alias keyed by to_name
+        # so to_name is a live canonical name with zero multi-hop chains or cycles.
+        next_aliases: dict[str, str] = {}
+        for src, dst in (current.get("aliases") or {}).items():
+            if src == to_name:
+                continue
+            target = to_name if dst == from_name else dst
+            if src != target:
+                next_aliases[src] = target
+        next_aliases[from_name] = to_name
+        updated["aliases"] = validate_aliases(next_aliases)
+        return updated, manual_updated
 
 
 def build_project_summary(
@@ -133,7 +245,8 @@ def build_project_summary(
     *,
     input_details: list[dict],
     output_details: list[dict],
-    manual: dict[str, str],
+    manual: dict[str, dict | str],
+    aliases: dict[str, str] | None = None,
     granularity: str = "month",
     start: str = "",
     end: str = "",
@@ -156,7 +269,9 @@ def build_project_summary(
                 continue
             number = family_key.split(":", 1)[1] if family_key.startswith("number:") else ""
             found = sorted(remarks.get(number, set()))
-            fields = project_fields(number, remarks, {number: {"project": manual[number]}} if manual.get(number) else {})
+            saved_entry = manual.get(number)
+            manual_arg = {number: saved_entry if isinstance(saved_entry, dict) else {"project": saved_entry}} if saved_entry is not None else {}
+            fields = project_fields(number, remarks, manual_arg, aliases)
             project, source = fields["project"], fields["project_source"]
             if source == "conflict":
                 conflicts += 1
@@ -211,12 +326,14 @@ def build_project_summary(
     if any(not item["assignable"] for item in unassigned):
         warnings.append({"code": "unassignable", "message": "没有发票号码的发票无法人工指定项目。"})
     return {
-        "basis_label": "票面口径：按发票备注的项目名称或人工指定归集；差额不是项目利润。未归属的发票单列，不分摊。",
+        "basis_label": "票面口径：按发票备注的项目名称、项目重命名映射或人工指定归集；差额不是项目利润。未归属的发票单列，不分摊。",
         "granularity": granularity,
         "start": start,
         "end": end,
         "projects": rows,
         "project_names": sorted(name for name in projects if name != UNASSIGNED),
+        "aliases": dict(aliases or {}),
+        "invoices": invoices,
         "unassigned_invoices": unassigned,
         "manual_invoices": [item for item in invoices if item["source"] == "manual"],
         "warnings": warnings,
