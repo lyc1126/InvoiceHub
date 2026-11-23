@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 
-PRODUCT_VERSION = "0.3.0-alpha.2"
+PRODUCT_VERSION = "1.0.0-beta.1"
 PACKAGE_ID = "com.invoicehub.macos.arm64.preview-dmg"
 RECEIPT_SCHEMA_VERSION = 4
 VERIFIER_ID = "verify_tauri_public_preview.py/v2"

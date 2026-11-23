@@ -133,10 +133,10 @@ def test_update_feed_rejects_source_commit_drift_even_when_core_build_id_matches
 
 def test_update_feed_rejects_wrong_prerelease_kind_for_current_channel(tmp_path: Path) -> None:
     feed = _build_update_feed(provenance=_provenance(_artifacts(tmp_path)), published_at="2026-08-02T00:00:00Z")
-    feed["latest_version"] = "0.3.0b1"
-    feed["source"]["tag"] = "v0.3.0b1"
+    feed["latest_version"] = "1.0.0a1"
+    feed["source"]["tag"] = "v1.0.0a1"
 
-    with pytest.raises(UpdateMetadataError, match="alpha 更新通道") as caught:
+    with pytest.raises(UpdateMetadataError, match="beta 更新通道") as caught:
         validate_update_feed(feed)
 
     assert caught.value.code == "UPDATE_VERSION_INVALID"

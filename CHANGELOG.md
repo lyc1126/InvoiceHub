@@ -2,6 +2,17 @@
 
 ## 未发布
 
+### 2026-11-23 升级版本号至 1.0.0-beta.1 并重打本机 macOS 开发版 InvoiceHub.app
+
+- 需求与起点：PR #32（`codex/workspace-p3@1d73f5c`，CI run `45174070913` / `45174070835` / `45174070850`）实现 9/9 项远端检查全绿（含 `Windows Python and release contracts`、`macOS ARM64 Python`、`Synthetic browser regressions (Linux)`、`Tauri host Rust (macos-15 / windows-latest)`、`Workspace frontend (Vue)`、`Python static analysis`、`DCO` 与 `macOS reference shell`）。按用户要求在全绿后将源码版本标注升级为 `1.0.0-beta.1`，并重新构建本机 macOS ARM64 开发版 `InvoiceHub.app` 供本机实机验收。
+- 采用方案：
+  - `src/invoice_hub/version.py` 升级为 `PRODUCT_VERSION = "1.0.0-beta.1"`、`PYTHON_PACKAGE_VERSION = "1.0.0b1"`、`UPDATE_CHANNEL = "beta"`（`UPDATE_FEED_URL` 随通道切至 `/updates/beta/latest.json`）；`src/invoice_hub/release/windows_alpha_metadata.py` 改为跟随 `UPDATE_CHANNEL` 与 `UPDATE_CHANNEL_PRE_RELEASE_KINDS` 校验单平台预发布 Feed。
+  - 通过 `scripts/dev/tauri_version_sync.py --write` 同步 `package.json`、`src-tauri/Cargo.toml`、`src-tauri/tauri.conf.json`、`tauri.alpha.conf.json`、`tauri.public-preview.conf.json`、`tauri.windows-preview.conf.json`，并同步 `src-tauri/tauri.windows.conf.json`、`src-tauri/Cargo.lock`、`scripts/dev/` 与 `macos/InvoiceHubMac/script/` 发布/验包脚本及版本/更新契约测试。
+  - 提交本地 DCO 检查点后使用 `scripts/dev/tauri_dev_app.py build` 重新构建 `src-tauri/target/release/bundle/macos/InvoiceHub.app`，核对 `Info.plist` 与内嵌 `invoicehub-desktop-host.json` 的版本标识为 `1.0.0-beta.1` 且指向当前干净提交。
+- 验证范围与未覆盖项：
+  - 已运行并通过：`tauri_version_sync.py --check`、版本/发布/更新/Tauri/API/文档契约 Python 测试套件、Ruff、`compileall`、Rust `cargo fmt --check` / `cargo clippy --offline --locked --all-targets -- -D warnings` / `cargo test --offline`、`git diff --check`，以及 `InvoiceHub.app` 构建与包内身份元数据核对。
+  - 未覆盖项：本版本升级提交暂仅保留在本地 `codex/workspace-p3`（尚未推送至远端）；本机打包产物为开发版 `InvoiceHub.app`（非签名/公证 DMG 或正式发布包），真实业务金额、正式 Windows BAT、Windows 成品与最终用户前台/原生弹窗验收仍需独立执行。
+
 ### 2026-11-23 补齐新版工作区登记自动读数、合计详情查询、做账排版修复与文案优化
 
 - 需求与起点：基于 `codex/workspace-p3` 响应用户四项新版界面改进需求：(1) 登记已有公司资料夹成功后自动后台读取三类发票目录数据（实时监控、弹窗通知与文件增删改仍以当前监控目录为基准，未监控源目录不写入导出文件）；(2) 发票列表底部操作条「合计详情」补齐与经典版/原型一致的开票项目、规格型号、单位、均价汇总及搜索/税率筛选弹窗；(3) 修复做账页左侧凭证列表多行时上下重叠与右侧分录表摘要列过窄；(4) 优化系统内偏技术术语、拗口的提示文案。

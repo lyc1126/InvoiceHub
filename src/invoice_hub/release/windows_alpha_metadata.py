@@ -20,7 +20,11 @@ from urllib.parse import quote, urlsplit
 from packaging.version import InvalidVersion, Version
 
 from invoice_hub.release.package_manifest import SHA256_PATTERN
-from invoice_hub.release.update_metadata import UpdateMetadataError, api_contract_date
+from invoice_hub.release.update_metadata import (
+    UPDATE_CHANNEL_PRE_RELEASE_KINDS,
+    UpdateMetadataError,
+    api_contract_date,
+)
 from invoice_hub.version import (
     API_CONTRACT_VERSION,
     PRODUCT_VERSION,
@@ -149,15 +153,16 @@ def validate_windows_alpha_feed(
         raise UpdateMetadataError("UPDATE_FEED_INVALID", "Windows alpha 更新元数据 schema_version 无效")
     if payload.get("scope") != WINDOWS_ALPHA_FEED_SCOPE:
         raise UpdateMetadataError("UPDATE_FEED_INVALID", "Windows alpha 更新元数据 scope 无效")
-    if _required_text(payload, "channel") != "alpha" or UPDATE_CHANNEL != "alpha":
-        raise UpdateMetadataError("UPDATE_FEED_INVALID", "Windows alpha 更新通道无效")
+    if _required_text(payload, "channel") != UPDATE_CHANNEL:
+        raise UpdateMetadataError("UPDATE_FEED_INVALID", f"Windows {UPDATE_CHANNEL} 更新通道无效")
     latest_version = _required_text(payload, "latest_version")
     try:
         parsed_version = Version(latest_version)
     except InvalidVersion as exc:
-        raise UpdateMetadataError("UPDATE_VERSION_INVALID", "Windows alpha 版本号无效") from exc
-    if parsed_version.pre is None or parsed_version.pre[0] != "a":
-        raise UpdateMetadataError("UPDATE_VERSION_INVALID", "Windows alpha 必须使用 alpha 预发布版本")
+        raise UpdateMetadataError("UPDATE_VERSION_INVALID", f"Windows {UPDATE_CHANNEL} 版本号无效") from exc
+    expected_pre_kind = UPDATE_CHANNEL_PRE_RELEASE_KINDS.get(UPDATE_CHANNEL)
+    if expected_pre_kind is not None and (parsed_version.pre is None or parsed_version.pre[0] != expected_pre_kind):
+        raise UpdateMetadataError("UPDATE_VERSION_INVALID", f"Windows {UPDATE_CHANNEL} 必须使用 {UPDATE_CHANNEL} 预发布版本")
     published_at = _published_at(payload.get("published_at"))
     minimum_contract = _required_text(payload, "minimum_api_contract")
     api_contract_date(minimum_contract)
@@ -195,7 +200,7 @@ def validate_windows_alpha_feed(
     return {
         "schema_version": WINDOWS_ALPHA_FEED_SCHEMA_VERSION,
         "scope": WINDOWS_ALPHA_FEED_SCOPE,
-        "channel": "alpha",
+        "channel": UPDATE_CHANNEL,
         "latest_version": latest_version,
         "published_at": published_at,
         "minimum_api_contract": minimum_contract,
@@ -236,7 +241,7 @@ def build_windows_alpha_feed(
     feed = {
         "schema_version": WINDOWS_ALPHA_FEED_SCHEMA_VERSION,
         "scope": WINDOWS_ALPHA_FEED_SCOPE,
-        "channel": "alpha",
+        "channel": UPDATE_CHANNEL,
         "latest_version": PRODUCT_VERSION,
         "published_at": published_at,
         "minimum_api_contract": API_CONTRACT_VERSION,

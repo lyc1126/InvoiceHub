@@ -1,5 +1,9 @@
 # InvoiceHub 开发架构与工程导航
 
+## 2026-11-23 版本标注升级为 1.0.0-beta.1
+
+`codex/workspace-p3` 经 PR #32 全量 CI 通过后，单一版本真值 `src/invoice_hub/version.py` 升级为 `PRODUCT_VERSION = "1.0.0-beta.1"`、`PYTHON_PACKAGE_VERSION = "1.0.0b1"`、`UPDATE_CHANNEL = "beta"`，并同步 Tauri 配置、`Cargo.lock`、发布/验包脚本及契约测试；`windows_alpha_metadata.py` 改为跟随 `UPDATE_CHANNEL` 与 `UPDATE_CHANNEL_PRE_RELEASE_KINDS` 校验单平台预发布元数据。稳定 `main` 与正式签名发布基线保持不变，本地重打的 macOS 开发版 `InvoiceHub.app` 仅用于本机实机验收。
+
 ## 2026-11-23 凭证草稿按品目隔离服务金额
 
 BUG-06 在既有成本 V2 开发线接入：`bank/voucher_items.py` 严格读取所选来源的品目表并定位已确认非库存科目；`vouchers.prepare/build_drafts` 在品类聚合前解析别名与类型，服务/费用/资产不进入库存数量、历史数量更正或销项成本。工作区生成与改记入期将完整代际 CSV 和来源目录的状态文件成对传入，CLI 保留根 CSV 的相邻状态文件契约。坏状态、冲突和未知科目不回退货物；缺编码由原审核/导出校验阻断。实现、来源保护与测试见五张地图；稳定 main 与发行成品不随本地修复改变。

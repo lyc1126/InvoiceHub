@@ -5,13 +5,13 @@ from __future__ import annotations
 
 PRODUCT_NAME = "InvoiceHub"
 PRODUCT_DISPLAY_NAME = "一站式发票汇总系统"
-PRODUCT_VERSION = "0.3.0-alpha.2"
-PYTHON_PACKAGE_VERSION = "0.3.0a2"
+PRODUCT_VERSION = "1.0.0-beta.1"
+PYTHON_PACKAGE_VERSION = "1.0.0b1"
 # Formal Windows and macOS artifacts embed exactly this runtime.  Development
 # source mode remains compatible with any supported 3.14 patch release.
 RELEASE_PYTHON_VERSION = "3.14.6"
 RELEASE_TAG = f"v{PRODUCT_VERSION}"
-UPDATE_CHANNEL = "alpha"
+UPDATE_CHANNEL = "beta"
 MACOS_BUILD_NUMBER = "1"
 API_CONTRACT_VERSION = "2026-08-02-release-update-v1"
 

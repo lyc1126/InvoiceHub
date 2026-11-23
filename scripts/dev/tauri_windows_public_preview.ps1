@@ -18,7 +18,7 @@ $releaseRoot = Join-Path $root "src-tauri\target\release"
 
 function Get-IHPreviewConfig {
     $config = Get-Content -LiteralPath $configPath -Raw -Encoding UTF8 | ConvertFrom-Json
-    if ($config.schema_version -ne 1 -or $config.product_version -ne "0.3.0-alpha.2") {
+    if ($config.schema_version -ne 1 -or $config.product_version -ne "1.0.0-beta.1") {
         throw "Windows public-preview configuration is invalid."
     }
     if ($config.package_id -ne "com.invoicehub.windows.x86_64.nsis-preview" -or $config.architecture -ne "x64") {

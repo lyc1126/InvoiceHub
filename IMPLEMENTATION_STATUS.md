@@ -1,5 +1,11 @@
 # IMPLEMENTATION_STATUS
 
+## 2026-11-23 PR #32 CI 全绿、1.0.0-beta.1 版本标注与本机 macOS 开发包重打
+
+当前开发线（精确提交见实时 Git 与 [CHANGELOG](CHANGELOG.md)）已在 PR #32 通过全部 9 项远端 CI 检查（含 `Windows Python and release contracts`、`macOS ARM64 Python`、`Synthetic browser regressions (Linux)` 与双平台 Tauri Rust）。按用户确认的里程碑 1 安排，源码版本真值已升级为 `1.0.0-beta.1`（`PYTHON_PACKAGE_VERSION = "1.0.0b1"`、`UPDATE_CHANNEL = "beta"`），Tauri 配置、`Cargo.lock`、发布/验包脚本及契约测试已同步，并在本地重新构建 macOS ARM64 开发版 `InvoiceHub.app` 供本机实机验收。
+
+该版本升级提交保留在本地开发分支，未推送、未合入 `main` 或发布正式包；稳定主线 `main` 保持不变。真实业务副本对账、正式 Windows BAT、Windows 克隆补验及签名/公证发布成品仍按三轮清单独立推进。
+
 ## 2026-11-23 BUG-06 服务金额与库存隔离
 
 已在既有成本 V2 开发线的本地工作区修正共用草稿入口（精确起点见[分支记录](docs/BRANCH_STATUS.md)）：同票 200 元货物与 30 元服务，库存只计 200，服务按已确认非库存科目单列；缺确认或库存/不可用/矛盾映射时保留 30 元和原票来源、空编码，原审核及整月导出校验继续阻断。两入口都保持借贷 230 元；标准名/别名、销项和历史数量采用同一类型边界，零税额不产生零金额税额行。
