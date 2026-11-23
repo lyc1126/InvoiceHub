@@ -1,5 +1,9 @@
 # 分支整理、main 同步与双平台候选准备
 
+## 2026-11-23 v1.0.0 路线确认与 Draft PR 推送
+
+经用户确认采用“先合入 `main` / Beta 消化当前开发线 → 再逐项补齐 `v1.0.0` 必做项”两步走；双平台验收先以 macOS ARM64 为主，Windows x64 从 GitHub 克隆/拉取 `codex/workspace-p3` 后补验。本轮先在 `8b7d4a1` 固定 `BUG-06` 与既有规划文档，再补充 `v1.0.0` 目标版本排期并推送 `codex/workspace-p3` 至远端、创建 Draft PR，触发 GitHub Actions（Linux 浏览器 E2E、Windows/macOS 套件、Vue 逐字节构建、Windows Rust clippy 摸底）。精确分支引用与 CI 结果以实时 Git 及 PR 页面为准；合入 `main` 仍待验收满意后由用户明确授权。[v1.0.0 排期](PRODUCT_BACKLOG.md#next-delivery)
+
 ## 2026-11-23 BUG-06 本地修复
 
 按已确认规划接续 `codex/workspace-p3@95bad31412102c69c26a3c9fe1db71cdfb1b4753` 的成本 V2 开发线，无新 worktree。开工本地 `main/origin/main` 均为 `ee0f2c2557d2b2a3640e9c00d9b8241581db4409`；本轮未联网更新远端引用。保留五份既有规划文档修改、无关 `pelican-bicycle.html` 和 ignored 配置/运行资料；不将它们当作本轮新增产物。

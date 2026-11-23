@@ -2,6 +2,12 @@
 
 ## 未发布
 
+### 2026-11-23 确认 v1.0.0 发布路线并推进远端 CI 与 Draft PR
+
+- 需求与决策：用户认可 `v1.0.0` 与 `v1.1+` 范围切分（`WS-01`–`08`/`WS-10`/`COST-01`–`06`/`OCR-01`/`ENG-09`/`ENG-01/02/04`/`FEEDBACK-01` 及 `BK-01`/`BANK-01`/`COST-07` 有限收口归入 `v1.0.0`；`AGENT-01`–`04`、完整税务政策引擎 D0–D5、服务器跨公司模块深度消费与装饰皮肤恢复挪至 `v1.1+`/`v1.2+`），并明确双平台验收当前以 macOS 为主、Windows 侧从 GitHub 克隆分支后再验。
+- 执行过程：先以 DCO 显式清单将 `BUG-06` 修复与既有规划文档固定为本地提交 `8b7d4a1`，随后同步更新 [未来工作总览](docs/PRODUCT_BACKLOG.md) 目标版本与两阶段节奏及 [分支状态](docs/BRANCH_STATUS.md)；对 `main..HEAD` 全量差异执行禁止文件、本机路径、敏感凭据与 DCO 核查（0 违规、0 漏签），准备推送 `codex/workspace-p3` 并创建 Draft PR 以运行远端 GitHub Actions CI 并供 Windows 端克隆验证。
+- 验证范围与未覆盖项：纯文档规划提交已通过文档契约与本地链接测试及 `git diff --check`；未合入 `main`、未打正式发行包，真实默认配置、macOS/Windows 成品与远端 CI 结果以 PR 实跑及后续验收记录为准。
+
 ### 2026-11-23 修正服务品目被凭证草稿计入库存
 
 - 按引用开发规划执行首项 BUG-06，接续 `codex/workspace-p3@95bad31412102c69c26a3c9fe1db71cdfb1b4753` 的成本 V2 开发线；开工本地 `main/origin/main` 为 `ee0f2c2`，保留五份既有规划文档修改、无关未跟踪 HTML 和 ignored 配置/运行资料。未新建 worktree；随后按用户授权将本轮修复与既有规划文档以 DCO 显式清单本地提交，未推送、合并或发布。
