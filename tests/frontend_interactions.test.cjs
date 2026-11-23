@@ -163,6 +163,30 @@ test("slow previous invoice preview cannot replace the newly selected invoice", 
   assert.match(h.refs.inboundPreviewMeta.textContent, /^new/);
 });
 
+test("batch inbound selection populates choices in selection_only mode so preview and export work without manual refresh", async () => {
+  const preview = { invoice_number: "inv-batch-1", supplier: "供应商甲", invoice_date: "2026-09-01", total_with_tax: "113.00", rows: [], layout: { column_widths: Array(10).fill(10), minimum_rows: 11 } };
+  const h = documentHarness(async (url) => {
+    if (url.endsWith("/selection")) {
+      return {
+        record_count: 1,
+        invoice_count: 1,
+        items: [{ invoice_number: "inv-batch-1", seller: "供应商甲", row_count: 1, total_with_tax: "113.00", ready: true, selection: { target_id: "current" } }],
+      };
+    }
+    if (url.includes("/documents/inbound/preview")) return preview;
+    if (url.endsWith("/export-status")) return { exists: false };
+    return { ok: true };
+  });
+  h.state.payload = { target_id: "current", selection_only: true, inbound_invoices: [], outbound_invoices: [] };
+  h.state.batch.handoff = { target_id: "current", items: [{ invoice_key: "k1", source_path: "/watch/a.pdf" }] };
+  await h.checkBatchSelection();
+  assert.match(h.refs.inboundSelect.innerHTML, /inv-batch-1/);
+  h.refs.inboundSelect.value = "inv-batch-1";
+  await h.loadPreview("inbound");
+  assert.equal(h.state.inboundPreview.invoice_number, "inv-batch-1");
+  assert.equal(h.refs.exportInboundBtn.disabled, false);
+});
+
 function setup({ settings = false, ownership = null } = {}) {
   const timers = new Map();
   const windowEvents = new Map();

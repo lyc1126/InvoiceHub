@@ -641,14 +641,14 @@ watch(
     </div>
     <template v-if="draft">
       <p class="banner banner--note">
-        参考凭证需人工审核。共 {{ draft.vouchers.length }} 张，已通过 {{ draft.approved }} 张，有问题 {{ draft.blocked }} 张。
-        改动过的凭证（含所属期、记账日期）要重新审核；借贷不平、科目不可用或记账日期不在所属期内时不能审核通过。保存只写这份审核表，导出只写 做账草稿/，都不写 凭证/、不连接账套。
-        <template v-if="draft.books_source">科目按生成时用的 {{ draft.books_source }} 校验。</template>
+        参考凭证需要人工核对（共 {{ draft.vouchers.length }} 张，已通过 {{ draft.approved }} 张，有问题 {{ draft.blocked }} 张）。
+        修改内容或日期后需要重新审核；借贷不平、科目有误或记账日期不在所属期内时不能点“通过”。保存和导出都只写在 做账草稿/ 中，不会改动记账软件。
+        <template v-if="draft.books_source">科目按生成时使用的 {{ draft.books_source }} 核对。</template>
       </p>
       <p v-if="draft.books_error" class="banner banner--error" role="alert">{{ draft.books_error }}</p>
       <p v-if="draft.periods_error" class="banner banner--error" role="alert">{{ draft.periods_error }}</p>
       <details v-for="sheet in draft.sheets ?? []" :key="sheet.name" class="checks">
-        <summary><strong>{{ sheet.name }}</strong> <span class="muted">{{ sheet.rows.length }} 行{{ sheet.truncated ? "（只显示前 2000 行）" : "" }} · 由生成命令写入，只读</span></summary>
+        <summary><strong>{{ sheet.name }}</strong> <span class="muted">{{ sheet.rows.length }} 行{{ sheet.truncated ? "（只显示前 2000 行）" : "" }} · 自动生成，只读</span></summary>
         <table class="grid" :aria-label="sheet.name">
           <thead><tr><th v-for="(column, index) in sheet.columns" :key="index">{{ column }}</th></tr></thead>
           <tbody>
@@ -663,7 +663,7 @@ watch(
       <nav v-if="layout === 'split'" class="voucher-list" aria-label="选择凭证草稿">
         <button v-for="voucher in shown" :key="keyOf(voucher)" type="button" :aria-pressed="keyOf(voucher) === (shown.some(item => keyOf(item) === selectedVoucher) ? selectedVoucher : shown[0] && keyOf(shown[0]))" @click="selectedVoucher = keyOf(voucher)">
           <span class="voucher-list__number">记-{{ voucher.number }}</span><strong>{{ voucher.lines[0]?.summary || '凭证草稿' }}</strong>
-          <span class="tag" :class="voucher.errors.length ? 'tag--danger' : approvalOf(voucher) === '通过' ? 'pill-ok' : 'pill-warn'">{{ voucher.errors.length ? '阻断' : approvalOf(voucher) === '通过' ? '已通过' : '待审核' }}</span>
+          <span class="tag" :class="voucher.errors.length ? 'tag--danger' : approvalOf(voucher) === '通过' ? 'pill-ok' : 'pill-warn'">{{ voucher.errors.length ? '有误' : approvalOf(voucher) === '通过' ? '已通过' : '待审核' }}</span>
           <small>{{ voucher.month }} · {{ money(voucher.debit_total) }}</small>
         </button>
       </nav>
@@ -678,7 +678,7 @@ watch(
       >
         <header class="voucher__head">
           <strong>{{ voucher.month }} · 记-{{ voucher.number }}</strong>
-          <span class="muted">改过的凭证需要保存后重新审核</span>
+          <span class="muted">修改后需保存并重新审核</span>
           <select
             :value="approvalOf(voucher)"
             :disabled="saving || saveUnknown"
@@ -740,12 +740,12 @@ watch(
           <thead><tr><th>摘要</th><th>科目编码</th><th>科目名称</th><th class="num">借方</th><th class="num">贷方</th><th>供应商</th><th>数量</th><th>待处理</th><th>操作</th></tr></thead>
           <tbody>
             <tr v-for="line in linesOf(voucher)" :key="line.row" :class="{ 'row--active': edits[line.row] || line.row < 0 }">
-              <td><input :disabled="saving || saveUnknown" :value="value(line, 'summary')" :aria-label="`第 ${line.row} 行摘要`" @input="edit(line, 'summary', ($event.target as HTMLInputElement).value)"></td>
+              <td><input :disabled="saving || saveUnknown" :value="value(line, 'summary')" class="voucher__summary" :aria-label="`第 ${line.row} 行摘要`" @input="edit(line, 'summary', ($event.target as HTMLInputElement).value)"></td>
               <td><input :disabled="saving || saveUnknown" :value="value(line, 'code')" class="voucher__code" :aria-label="`第 ${line.row} 行科目编码`" @input="edit(line, 'code', ($event.target as HTMLInputElement).value)"></td>
               <td class="muted">{{ line.name }}</td>
               <td><input :disabled="saving || saveUnknown" :value="value(line, 'debit')" class="voucher__amount" inputmode="decimal" :aria-label="`第 ${line.row} 行借方`" @input="edit(line, 'debit', ($event.target as HTMLInputElement).value)"></td>
               <td><input :disabled="saving || saveUnknown" :value="value(line, 'credit')" class="voucher__amount" inputmode="decimal" :aria-label="`第 ${line.row} 行贷方`" @input="edit(line, 'credit', ($event.target as HTMLInputElement).value)"></td>
-              <td><input :disabled="saving || saveUnknown" :value="value(line, 'supplier')" :aria-label="`第 ${line.row} 行供应商`" @input="edit(line, 'supplier', ($event.target as HTMLInputElement).value)"></td>
+              <td><input :disabled="saving || saveUnknown" :value="value(line, 'supplier')" class="voucher__supplier" :aria-label="`第 ${line.row} 行供应商`" @input="edit(line, 'supplier', ($event.target as HTMLInputElement).value)"></td>
               <td class="nowrap">{{ line.qty ? `${line.qty} ${line.unit}` : "" }}</td>
               <td :title="line.basis">{{ line.todo }}</td>
               <td><button type="button" class="ghost" :aria-label="`删除第 ${line.row} 行`" :disabled="saving || saveUnknown || linesOf(voucher).length <= 1" @click="removeLine(voucher, line)">×</button></td>
@@ -753,7 +753,7 @@ watch(
           </tbody>
           <tfoot><tr><th colspan="3">合计 <span :class="totals(voucher).balanced ? 'muted' : 'check--failed'">{{ !totals(voucher).readable ? '金额无法识别' : totals(voucher).balanced ? '借贷平衡' : '借贷不平' }}</span></th><td class="num">{{ totals(voucher).debit }}</td><td class="num">{{ totals(voucher).credit }}</td><td colspan="4"></td></tr></tfoot>
         </table></div>
-        <div class="toolbar"><button type="button" :disabled="saving || saveUnknown || linesOf(voucher).length >= 500" @click="addLine(voucher)">加一行</button><span class="muted">改过的凭证要重新审核；导出时还会校验科目、借贷和重复导出。</span></div>
+        <div class="toolbar"><button type="button" :disabled="saving || saveUnknown || linesOf(voucher).length >= 500" @click="addLine(voucher)">加一行</button><span class="muted">修改后需重新审核；导出前会自动检查科目、借贷平衡和是否重复导出。</span></div>
       </article>
       </div>
       </div>

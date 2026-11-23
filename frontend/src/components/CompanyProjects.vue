@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { companySourceKey } from "../stores/companies";
-import { computed, reactive, ref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 import { ApiError, request } from "../api/client";
 import type { Company, ProjectInvoice, ProjectSummary } from "../api/types";
 import { errorText, money } from "../format";
@@ -77,6 +77,16 @@ async function save(): Promise<void> {
     saving.value = false;
   }
 }
+
+function onCompanyRefreshed(event: Event): void {
+  const detail = (event as CustomEvent).detail;
+  if (!detail?.companyId || detail.companyId === props.company.id) {
+    if (!changed.value.length) void load();
+  }
+}
+
+onMounted(() => window.addEventListener("workspace:company-refreshed", onCompanyRefreshed));
+onBeforeUnmount(() => window.removeEventListener("workspace:company-refreshed", onCompanyRefreshed));
 
 watch(
   () => companySourceKey(props.company, ["cost_invoice_dir", "issued_invoice_dir"]),

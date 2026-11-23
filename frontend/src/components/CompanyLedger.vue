@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { companySourceKey } from "../stores/companies";
-import { reactive, ref, watch } from "vue";
+import { onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 import { request } from "../api/client";
 import type { Company, LedgerPayload, LedgerTotals } from "../api/types";
 import CompanyBankLedger from "./CompanyBankLedger.vue";
@@ -42,6 +42,14 @@ function cells(totals: LedgerTotals): string[] {
   return [String(totals.count), money(totals.pretax), money(totals.tax), money(totals.total)];
 }
 
+function onCompanyRefreshed(event: Event): void {
+  const detail = (event as CustomEvent).detail;
+  if (!detail?.companyId || detail.companyId === props.company.id) void load();
+}
+
+onMounted(() => window.addEventListener("workspace:company-refreshed", onCompanyRefreshed));
+onBeforeUnmount(() => window.removeEventListener("workspace:company-refreshed", onCompanyRefreshed));
+
 watch(
   () => companySourceKey(props.company),
   () => {
@@ -72,7 +80,7 @@ watch(
       <!-- Conservation checks come from the backend; a failing one is shown in red, never hidden. -->
       <!-- Collapsed only while every check holds; any failure opens it. -->
       <details class="checks" :class="{ 'checks--failed': !ledger.checks_ok }" :open="!ledger.checks_ok" role="status">
-        <summary><strong>{{ ledger.checks_ok ? `守恒校验全部成立（${ledger.checks.length} 项）` : "守恒校验不成立，结果不可用" }}</strong></summary>
+        <summary><strong>{{ ledger.checks_ok ? `金额核对一致（${ledger.checks.length} 项）` : "金额核对有出入，结果暂不可用" }}</strong></summary>
         <ul>
           <li v-for="check in ledger.checks" :key="check.code" :class="{ 'check--failed': !check.ok }">
             {{ check.ok ? "✓" : "✗" }} {{ check.message }}

@@ -66,6 +66,7 @@
 
 ## Vue 工作区前端
 
+- 2026-11-23 新版工作区交互补齐与排版守护：目录发票勾选操作条点击「合计详情 ›」通过宽 `WsModal` 完整展示 `selection-summary` 的 `cost_breakdown`（按开票项目+明细税率拆组、规格型号/单位/数量/算术与加权均价表、来源发票预览入口及关键字/税率筛选），筛选只缩窄明细列表、不改顶部总额；做账页分栏 `.voucher-list button` 必须保留 `flex: 0 0 auto`（禁止 `min-height: 0` 在纵向 Flex 滚动容器内压扁行高导致重叠）。登记已有资料夹成功后自动触发 `POST /api/v1/companies/{id}/refresh-data` 并在页面内提供“读取数据 / 更新数据”入口，实时监控、通知与源文件操作继续限定在当前监控目录。
 - 2026-11-14 用户确认的外观隔离：工作区（含 `workspace_embed=1` 经典页）暂停 Ink Pulse、Animal Island；首屏与后续 Vue / 经典读回共同遵循 `api/workspace.py` 的集中名单。不重置保存皮肤、不移除原资产，单独经典页面沿用原设置，浅色 / website-dark / no_skin 保留。下述历史两款皮肤适配与验收要求在重新启用时继续适用；本阶段验收“已隔离且偏好不变”，不得把它写成视觉方案已获用户认可。
 
 - 新界面（多公司工作区及其后续模块）在 `frontend/`（Vue 3 + TypeScript + Pinia + Vue Router）实现；`web/templates` 与 `web/static/js` 的旧页面在对应模块迁移完成前保持原样，不在两套界面里重复实现同一业务规则，业务口径仍以后端 API 为准。

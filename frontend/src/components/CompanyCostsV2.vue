@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { getActivePinia } from "pinia";
 import { request } from "../api/client";
 import { costBase, today, warningText, type CostSnapshot } from "../api/costV2";
 import type { Company } from "../api/types";
 import { errorText } from "../format";
-import { companySourceKey } from "../stores/companies";
+import { companySourceKey, useCompaniesStore } from "../stores/companies";
 import CostAnalysis from "./CostAnalysis.vue";
 import CostInventorySetup from "./CostInventorySetup.vue";
 import CostItems from "./CostItems.vue";
@@ -30,6 +31,7 @@ const TABS: { id: Tab; label: string }[] = [
 // without switching the active monitor directory. Quote, item and rule tabs share one
 // snapshot (revision + rules_revision); every write tab rereads it after a confirmed save.
 const props = withDefaults(defineProps<{ company: Company; active?: boolean }>(), { active: true });
+const companies = getActivePinia() ? useCompaniesStore() : null;
 const tab = ref<Tab>("quote");
 const opened = ref(new Set<Tab>(["quote"]));
 const pricingDate = ref(today());
@@ -37,6 +39,8 @@ const snapshot = ref<CostSnapshot | null>(null);
 const loading = ref(false);
 const error = ref("");
 const base = computed(() => costBase(props.company.id));
+const refreshState = computed(() => companies?.refreshStates[props.company.id]);
+const refreshing = computed(() => refreshState.value?.status === "running");
 // Records and analysis keep their own reads; bumping this after a save tells them to reload.
 const saved = ref(0);
 let generation = 0;
@@ -64,6 +68,15 @@ async function load(): Promise<void> {
 
 function changed(): void { saved.value += 1; void load(); }
 
+function onCompanyRefreshed(event: Event): void {
+  const detail = (event as CustomEvent).detail;
+  if (!detail?.companyId || detail.companyId === props.company.id) void load();
+}
+function refreshSources(): void {
+  void companies?.refreshData(props.company.id, { keys: ["cost_invoice_dir", "issued_invoice_dir"] });
+}
+
+onMounted(() => window.addEventListener("workspace:company-refreshed", onCompanyRefreshed));
 watch(pricingDate, () => { void load(); });
 watch(() => companySourceKey(props.company, ["cost_invoice_dir", "issued_invoice_dir"]), () => {
   // Never keep another company's prices, rules or drafts visible while the new one loads.
@@ -72,7 +85,7 @@ watch(() => companySourceKey(props.company, ["cost_invoice_dir", "issued_invoice
   error.value = "";
   void load();
 }, { immediate: true });
-onBeforeUnmount(() => { disposed = true; generation += 1; });
+onBeforeUnmount(() => { disposed = true; generation += 1; window.removeEventListener("workspace:company-refreshed", onCompanyRefreshed); });
 
 const sourceNotes = computed(() => Object.entries(snapshot.value?.sources ?? {})
   .filter(([, source]) => source.freshness && !["fresh", "monitored"].includes(source.freshness.state))
@@ -84,12 +97,14 @@ const sourceNotes = computed(() => Object.entries(snapshot.value?.sources ?? {})
     <header class="voucher__head cost-v2__head">
       <h3>成本分析 V2</h3>
       <label class="field">计划开票日<input v-model.lazy="pricingDate" type="date" aria-label="计划开票日" :disabled="loading"></label>
-      <button type="button" :disabled="loading" :aria-busy="loading" @click="load">{{ loading ? "读取中…" : "重新读取" }}</button>
+      <button type="button" :disabled="refreshing" :aria-busy="refreshing" @click="refreshSources">{{ refreshing ? "读取中…" : "更新进销发票" }}</button>
+      <button type="button" :disabled="loading" :aria-busy="loading" @click="load">{{ loading ? "刷新中…" : "刷新页面" }}</button>
     </header>
-    <p class="overview-notice">报价与分析读取本公司进销发票的上次完整汇总；品目归类须预览确认，会同步更新品目表与兼容工作簿。成本按品类月末一次加权，规格不分摊成本。</p>
+    <p v-if="refreshing" class="banner banner--note" role="status" aria-busy="true">{{ refreshState?.message || "正在后台读取发票数据…" }}</p>
+    <p class="overview-notice">报价与分析基于本公司进销发票的最新数据；品目归类需确认后保存，成本按品类月末加权平均。</p>
     <p v-if="error" class="banner banner--error" role="alert">{{ error }}</p>
     <template v-if="snapshot">
-      <p v-if="!snapshot.complete" class="banner banner--note" role="status">来源投影不完整或已过期：结存成本显示为未知，报价会标“待核对”，不回退历史均价。</p>
+      <p v-if="!snapshot.complete" class="banner banner--note" role="status">部分发票目录未读取或有变动（来源投影不完整）：当前结存成本暂无法计算，报价会标“待核对”，可点上方“更新进销发票”。</p>
       <ul v-if="sourceNotes.length || snapshot.warnings.length" class="warnings"><li v-for="note in [...sourceNotes, ...snapshot.warnings.map(warningText)]" :key="note">{{ note }}</li></ul>
     </template>
     <div class="tabs" role="tablist" aria-label="成本分析 V2 内容">

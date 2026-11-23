@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { request } from "../api/client";
 import type { Company, LedgerPayload, ProjectSummary } from "../api/types";
 import { errorText, money, wan } from "../format";
-import { companySourceKey } from "../stores/companies";
+import { companySourceKey, useCompaniesStore } from "../stores/companies";
 import { useWorkspaceStore } from "../stores/workspace";
 import WorkspaceIcon from "./WorkspaceIcon.vue";
 import CompanyTax from "./CompanyTax.vue";
@@ -11,7 +11,10 @@ import OverviewDocuments from "./OverviewDocuments.vue";
 
 const props = withDefaults(defineProps<{ company: Company; active?: boolean }>(), { active: true });
 const emit = defineEmits<{ section: [name: "directories" | "ledger" | "projects" | "settings"] }>();
+const companies = useCompaniesStore();
 const workspace = useWorkspaceStore();
+const refreshState = computed(() => companies.refreshStates[props.company.id]);
+const refreshing = computed(() => refreshState.value?.status === "running");
 const ledger = ref<LedgerPayload | null>(null);
 const projects = ref<ProjectSummary | null>(null);
 const period = ref("all");
@@ -65,11 +68,20 @@ async function load(): Promise<void> {
   loading.value = false;
 }
 
+function onCompanyRefreshed(event: Event): void {
+  const detail = (event as CustomEvent).detail;
+  if (!detail?.companyId || detail.companyId === props.company.id) void load();
+}
+function refreshInvoices(): void {
+  void companies.refreshData(props.company.id);
+}
+
+onMounted(() => window.addEventListener("workspace:company-refreshed", onCompanyRefreshed));
 watch(() => companySourceKey(props.company), () => {
   ledger.value = null; projects.value = null; void load();
 }, { immediate: true });
 watch(period, () => { ledger.value = null; projects.value = null; void load(); });
-onBeforeUnmount(() => { ++generation; controller?.abort(); });
+onBeforeUnmount(() => { ++generation; controller?.abort(); window.removeEventListener("workspace:company-refreshed", onCompanyRefreshed); });
 </script>
 
 <template>
@@ -80,12 +92,14 @@ onBeforeUnmount(() => { ++generation; controller?.abort(); });
       </div>
     </div>
     <div class="overview-notice">
-      <span>资料夹结构{{ complete === company.subdirs.length ? "完备" : "待补充" }}（{{ complete }}/{{ company.subdirs.length }}）：{{ company.subdirs.filter(item => item.status === "present").map(item => item.label).join("、") || "尚未找到资料目录" }}。</span>
+      <span>资料夹结构{{ complete === company.subdirs.length ? "齐全" : "待补充" }}（{{ complete }}/{{ company.subdirs.length }}）：{{ company.subdirs.filter(item => item.status === "present").map(item => item.label).join("、") || "尚未找到资料目录" }}。</span>
+      <button type="button" :disabled="refreshing" :aria-busy="refreshing" @click="refreshInvoices">{{ refreshing ? "读取中…" : "更新发票数据" }}</button>
       <button type="button" @click="emit('section', 'directories')">查看资料夹</button>
     </div>
-    <p class="overview-notice"><span>票面口径：由本公司各目录已识别的发票汇总，<b>不是会计利润，也不是应纳税额</b>。未识别或待核对的发票不计入。</span></p>
+    <p v-if="refreshing" class="banner banner--note" role="status" aria-busy="true">{{ refreshState?.message || "正在后台读取发票数据…" }}</p>
+    <p class="overview-notice"><span>票面口径：按本公司各目录已识别的发票统计，<b>不是会计利润，也不是应纳税额</b>；未识别或待核对的发票暂不计入。</span></p>
     <p v-if="error" class="banner banner--error" role="alert">{{ error }}</p>
-    <p v-if="ledger && !ledger.checks_ok" class="banner banner--error" role="alert">守恒校验不成立，结果不可用。{{ (ledger.checks ?? []).filter(item => !item.ok).map(item => item.message).join("；") }}</p>
+    <p v-if="ledger && !ledger.checks_ok" class="banner banner--error" role="alert">金额核对有出入，结果暂不可用。{{ (ledger.checks ?? []).filter(item => !item.ok).map(item => item.message).join("；") }}</p>
     <section class="overview-section" aria-label="票面指标">
       <div class="overview-kpis">
         <div class="overview-kpi overview-kpi--key"><span>销项收入（不含税）</span><strong :title="totals && ledger?.checks_ok ? money(totals.output.pretax) : undefined">{{ totals && ledger?.checks_ok ? wan(totals.output.pretax) : "—" }}</strong><small>开具发票票面</small></div>
@@ -93,12 +107,12 @@ onBeforeUnmount(() => { ++generation; controller?.abort(); });
         <div class="overview-kpi overview-kpi--key"><span>票面毛利</span><strong :title="totals && ledger?.checks_ok ? money(totals.face_difference_pretax) : undefined">{{ totals && ledger?.checks_ok ? wan(totals.face_difference_pretax) : "—" }}</strong><small>销项与进项不含税差额</small></div>
         <div class="overview-kpi"><span>销项税额</span><strong :title="totals && ledger?.checks_ok ? money(totals.output.tax) : undefined">{{ totals && ledger?.checks_ok ? wan(totals.output.tax) : "—" }}</strong><small>已识别发票税额</small></div>
         <div class="overview-kpi"><span>可抵扣进项税额</span><strong>{{ company.current_taxpayer_type === 'small_scale' ? "不适用" : "—" }}</strong><small>{{ company.current_taxpayer_type === 'small_scale' ? "小规模纳税人不抵扣" : "以抵扣清单核对为准" }}</small></div>
-        <div class="overview-kpi"><span>发票张数</span><strong>{{ totals && ledger?.checks_ok ? `进 ${totals.input.count} / 销 ${totals.output.count}` : "—" }}</strong><small>按同票家族去重</small></div>
+        <div class="overview-kpi"><span>发票张数</span><strong>{{ totals && ledger?.checks_ok ? `进 ${totals.input.count} / 销 ${totals.output.count}` : "—" }}</strong><small>同一张票多格式只算一次</small></div>
       </div>
       <CompanyTax :company="company" :start="range.start" :end="range.end" compact />
     </section>
     <section class="overview-section">
-      <header class="overview-section__head"><div><h3>按月</h3><p>每一行都可追溯到当月的源发票。</p></div><button type="button" @click="emit('section', 'ledger')">查看完整账簿</button></header>
+      <header class="overview-section__head"><div><h3>按月</h3><p>每一行都可对照当月的原始发票。</p></div><button type="button" @click="emit('section', 'ledger')">查看完整账簿</button></header>
       <div class="overview-table-wrap"><table class="grid" aria-label="按月票面汇总">
         <thead><tr><th>月份</th><th class="num">销项收入</th><th class="num">进项成本</th><th class="num">票面毛利</th><th class="num">销项税额</th><th class="num">进项票面税额</th><th class="num">张数（进 / 销）</th><th>状态</th></tr></thead>
         <tbody><tr v-for="row in ledger?.periods ?? []" :key="row.period"><td>{{ row.period }}</td><td class="num">{{ money(row.output.pretax) }}</td><td class="num">{{ money(row.input.pretax) }}</td><td class="num">{{ money(row.face_difference_pretax) }}</td><td class="num">{{ money(row.output.tax) }}</td><td class="num">{{ money(row.input.tax) }}</td><td class="num">{{ row.input.count }} / {{ row.output.count }}</td><td><span class="tag" :class="ledger?.checks_ok ? 'pill-ok' : 'tag--danger'">{{ ledger?.checks_ok ? "已汇总" : "待核对" }}</span></td></tr>
@@ -114,6 +128,6 @@ onBeforeUnmount(() => { ++generation; controller?.abort(); });
       </tbody></table></div>
     </section>
     <OverviewDocuments :company="company" :start="range.start" :end="range.end" :active="active" />
-    <section class="overview-section"><header class="overview-section__head"><div><h3>资料目录</h3><p>原始文件保留在公司资料夹，选择目录查看与追溯。</p></div></header><div class="overview-sources"><button v-for="dir in company.subdirs" :key="dir.key" type="button" :disabled="dir.status !== 'present'" @click="workspace.open({ kind: 'directory', companyId: company.id, dirKey: dir.key })"><WorkspaceIcon :name="dir.key === 'bank_flow_dir' ? 'bank' : 'folder'" />{{ dir.label }}<small>{{ dir.status === 'present' ? '打开 ›' : '缺失' }}</small></button></div></section>
+    <section class="overview-section"><header class="overview-section__head"><div><h3>资料目录</h3><p>原始文件保存在公司资料夹里，点下方目录即可查看。</p></div></header><div class="overview-sources"><button v-for="dir in company.subdirs" :key="dir.key" type="button" :disabled="dir.status !== 'present'" @click="workspace.open({ kind: 'directory', companyId: company.id, dirKey: dir.key })"><WorkspaceIcon :name="dir.key === 'bank_flow_dir' ? 'bank' : 'folder'" />{{ dir.label }}<small>{{ dir.status === 'present' ? '打开 ›' : '缺失' }}</small></button></div></section>
   </section>
 </template>

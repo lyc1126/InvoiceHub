@@ -19,6 +19,10 @@ function refreshFromEvent(): void {
   if (viewActive.value) void loadInvoices(invoicesPage.value);
   else stale = true;
 }
+function onCompanyRefreshed(event: Event): void {
+  const detail = (event as CustomEvent).detail;
+  if (!detail?.companyId || detail.companyId === props.company.id) refreshFromEvent();
+}
 watch(viewActive, (active) => { if (active && stale) { stale = false; void loadInvoices(invoicesPage.value); } });
 const tagFilter = ref("");
 // Prototype filters; all are applied by the server before sorting/paging (WEB_UI rule).
@@ -90,6 +94,11 @@ function previewSelected(): void {
   // Preserve every selected source format, not the family-de-duplicated amount count.
   // preview-jobs alone validates these homepage identities against the active watch_dir.
   previewing.value = { target_id: invoices.value!.directory.target_id, items: selectedItems.value.map((item) => ({ ...item })) };
+}
+
+function previewSingle(item: SelectedInvoice): void {
+  if (!sourceActions.value || invoicesLoading.value) return;
+  previewing.value = { target_id: invoices.value!.directory.target_id, items: [{ ...item }] };
 }
 
 const queryFilters = () => [
@@ -318,6 +327,7 @@ function tagTitle(id: string): string {
 
 onMounted(() => {
   window.addEventListener("workspace:invoices-updated", refreshFromEvent);
+  window.addEventListener("workspace:company-refreshed", onCompanyRefreshed);
   if (!tagStore.definitions) void tagStore.load();
 });
 
@@ -335,7 +345,7 @@ watch(
 );
 // A preview is a snapshot of this exact selection; changing it releases its heartbeat.
 watch(() => JSON.stringify(selectedItems.value), () => { previewing.value = null; });
-onBeforeUnmount(() => { clearTimeout(keywordTimer); listGeneration += 1; selectionGeneration += 1; window.removeEventListener("workspace:invoices-updated", refreshFromEvent); });
+onBeforeUnmount(() => { clearTimeout(keywordTimer); listGeneration += 1; selectionGeneration += 1; window.removeEventListener("workspace:invoices-updated", refreshFromEvent); window.removeEventListener("workspace:company-refreshed", onCompanyRefreshed); });
 </script>
 
 <template>
@@ -347,16 +357,16 @@ onBeforeUnmount(() => { clearTimeout(keywordTimer); listGeneration += 1; selecti
         <div class="overview-kpi"><span>全部记录</span><strong>{{ invoices.stats.all.total }}</strong><small>已识别 {{ invoices.stats.all.recognized }} 张</small></div>
         <div class="overview-kpi"><span>待核对</span><strong>{{ invoices.stats.all.needs_review }}</strong><small>金额或字段未识别</small></div>
         <div class="overview-kpi"><span>同票其他格式</span><strong>{{ invoices.stats.all.duplicates }}</strong><small>合计时只计一次</small></div>
-        <div class="overview-kpi"><span>当前筛选合计</span><strong>{{ !invoices.stats.filtered ? "—" : money(String(invoices.stats.filtered.total_amount)) }}</strong><small>价税合计 · 同票去重 · 计入 {{ invoices.stats.filtered?.total_amount_valid_count ?? "—" }} 张<template v-if="invoices.stats.filtered?.total_amount_missing_count"> · 缺金额 {{ invoices.stats.filtered.total_amount_missing_count }} 张未计</template><template v-if="invoices.stats.filtered?.total_amount_conflict_count"> · 多格式金额不一 {{ invoices.stats.filtered.total_amount_conflict_count }} 张未计</template></small></div>
+        <div class="overview-kpi"><span>当前筛选合计</span><strong>{{ !invoices.stats.filtered ? "—" : money(String(invoices.stats.filtered.total_amount)) }}</strong><small>价税合计 · 同票只算一次 · 计入 {{ invoices.stats.filtered?.total_amount_valid_count ?? "—" }} 张<template v-if="invoices.stats.filtered?.total_amount_missing_count"> · 缺金额 {{ invoices.stats.filtered.total_amount_missing_count }} 张未计</template><template v-if="invoices.stats.filtered?.total_amount_conflict_count"> · 多格式金额不一 {{ invoices.stats.filtered.total_amount_conflict_count }} 张未计</template></small></div>
       </div>
       <div class="overview-section__head dir-list-head">
         <div>
           <h3>发票列表 <span class="muted">· {{ invoices.count }} 张</span> <span v-if="invoices.read_only" class="tag">只读 · 上次汇总</span></h3>
-          <p>可直接打开本地文件或进入详情手工修订。{{ selectable ? "勾选后底部出现合计与批量操作；" : "" }}右键一行（或 Shift+F10）可以打标签{{ selectable ? "，在已勾选的行上右键给全部勾选的发票打标签" : "" }}。</p>
+          <p>{{ selectable ? "勾选后底部会出现合计详情和批量操作；" : "" }}右键一行（或按 Shift+F10）可以打标签{{ selectable ? "，在已勾选的行上右键可批量打标签" : "" }}。</p>
         </div>
       </div>
-      <p v-if="invoices.read_only" class="muted">非监控目录可勾选并批量打标签；预览、打印、改名或删除请先设为监控目录。</p>
-      <p v-if="!invoices.directory.projection.summary_exists" class="muted">这个目录还没有汇总过。</p>
+      <p v-if="invoices.read_only" class="muted">未设为监控的目录可以直接查看、勾选并批量打标签；如需预览原票、打印或删除文件，请先设为监控目录。</p>
+      <p v-if="!invoices.directory.projection.summary_exists" class="muted">这个目录还没读取过发票，点上方“读取数据”即可查看。</p>
       <p v-if="invoices.tags_error" class="banner banner--error" role="alert">标签读取失败，未显示：{{ invoices.tags_error }}</p>
       <div class="filters">
         <label class="field">关键字<input v-model="keyword" aria-label="关键字" :placeholder="dirKey === 'issued_invoice_dir' ? '购买方 / 发票号 / 文件名' : '销售方 / 发票号 / 文件名'" @input="keywordChanged"></label>
@@ -487,6 +497,7 @@ onBeforeUnmount(() => { clearTimeout(keywordTimer); listGeneration += 1; selecti
         :selecting-all="selectingAll || invoicesLoading"
         @clear="clearSelection"
         @preview="previewSelected"
+        @preview-item="previewSingle"
         @select-all="selectAll"
         @changed="afterChange"
       />

@@ -119,8 +119,9 @@ def router() -> APIRouter:
         return await _call(lambda: _state(request).companies.delete_company(company_id, revision))
 
     @routes.get("/api/v1/companies/{company_id}/subdirs/plan")
-    async def company_subdir_plan(request: Request, company_id: str):
-        return await _call(lambda: _state(request).companies.subdir_plan(company_id))
+    async def company_subdir_plan(request: Request, company_id: str, keys: str = Query("")):
+        parsed = [item.strip() for item in keys.split(",") if item.strip()] if keys.strip() else None
+        return await _call(lambda: _state(request).companies.subdir_plan(company_id, keys=parsed))
 
     @routes.post("/api/v1/companies/{company_id}/subdirs/create")
     async def create_company_subdirs(request: Request, company_id: str):
@@ -133,6 +134,19 @@ def router() -> APIRouter:
         return await _call(
             lambda: _state(request).company_views.company_directories(company_id, check_freshness=check_freshness)
         )
+
+    @routes.get("/api/v1/companies/{company_id}/refresh-data")
+    async def company_refresh_status(request: Request, company_id: str):
+        return await _call(lambda: _state(request).company_views.refresh.status(company_id))
+
+    @routes.post("/api/v1/companies/{company_id}/refresh-data")
+    async def refresh_company_data(request: Request, company_id: str):
+        _require_same_origin_write(request)
+        payload = await _json_body(request)
+        body = payload if isinstance(payload, dict) else {}
+        keys = body.get("keys")
+        force = bool(body.get("force", False))
+        return await _call(lambda: _state(request).company_views.refresh.start(company_id, keys=keys, force=force))
 
     @routes.get("/api/v1/companies/{company_id}/directories/{key}/invoices")
     async def company_directory_invoices(

@@ -78,7 +78,7 @@
 
 `parse-cache.sqlite3/raw` 仅存 key(kind+源路径)、五元元数据(dev/inode/size/mtime_ns/ctime_ns)、digest、parser version、原始 JSON、verified 时间。未变复用；变更或每日/显式 verify 重新 hash；full 强制 parse；坏库隔离重建、坏条目重取。同票纠偏和人工覆盖在复制原始结果之后执行，不污染 raw。删除退出新投影，不删除原票或人工 JSON。
 
-`projection-manifest.json` v1 记录 source、root_identity、generation、files SHA256、last_complete_at、scan_complete、coverage。完整扫描/生成/源与人工版本复核后，仅原子替换 manifest；`projection-generations/<generation>/` 保存完整普通 CSV/XLSX 与成本 CSV/XLSX/状态（可缺首次状态）。source 按解析后的规范路径存储/比较，兼容旧清单的系统别名，不同根仍拒绝；目录设备/inode 保护保持独立。单次读取绑定同一 manifest，缺失/损坏不回退混合副本。固定文件只作导出，`projection-export-receipt.json` 证明已成功的导出版本；中断后未知手改拒绝覆盖。人工保存按变化类别复制未变投影后发布新代际。原始缓存可丢弃；人工字段、期初与已开快照不可按缓存清理。
+`projection-manifest.json` v1 记录 source、root_identity、generation、files SHA256、source_exported（缺省为 true；非监控公司目录只读读取发布时为 false，跳过向源目录复制成本导出副本且 `recover_exports` 不回填源目录）、last_complete_at、scan_complete、coverage。完整扫描/生成/源与人工版本复核后，仅原子替换 manifest；`projection-generations/<generation>/` 保存完整普通 CSV/XLSX 与成本 CSV/XLSX/状态（可缺首次状态）。source 按解析后的规范路径存储/比较，兼容旧清单的系统别名，不同根仍拒绝；目录设备/inode 保护保持独立。单次读取绑定同一 manifest，缺失/损坏不回退混合副本。固定文件只作导出，`projection-export-receipt.json` 证明已成功的导出版本；中断后未知手改拒绝覆盖。人工保存按变化类别复制未变投影后发布新代际。原始缓存可丢弃；人工字段、期初与已开快照不可按缓存清理。
 
 SourceProfile 与 TargetProfile 独立：source_id/entry_id 为不透明 32 位 hex；profile 含协议/主机/根/已确认指纹/预算/显式公司角色绑定/revision/epoch，snapshot 含完整条目清单与已下载副本索引。连接、同步和快照状态分开，重启 running 变 interrupted/unknown。每源单任务、全局 2，30 秒无进展超时，取消/断连 epoch 拒绝迟到提交。磁盘提交先于内存快照/汇总指针。
 

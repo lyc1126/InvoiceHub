@@ -80,6 +80,7 @@ def test_tauri_startup_surface_uses_the_pinned_host_only_opener_and_empty_webvie
     cargo = tomllib.loads((ROOT / "src-tauri" / "Cargo.toml").read_text(encoding="utf-8"))
     lock = tomllib.loads((ROOT / "src-tauri" / "Cargo.lock").read_text(encoding="utf-8"))
     main = (ROOT / "src-tauri" / "src" / "main.rs").read_text(encoding="utf-8")
+    lib = (ROOT / "src-tauri" / "src" / "lib.rs").read_text(encoding="utf-8")
     capability = json.loads(
         (ROOT / "src-tauri" / "capabilities" / "no-webview-ipc.json").read_text(encoding="utf-8")
     )
@@ -92,7 +93,9 @@ def test_tauri_startup_surface_uses_the_pinned_host_only_opener_and_empty_webvie
     assert ".open_js_links_on_click(false)" in main
     assert "tauri_plugin_opener::init()" not in main
     assert "app.opener()" in main
-    assert ".open_url(invoicehub_desktop::backend_origin(), None::<&str>)" in main
+    # Browser launch opens the Vue workspace entry while staying pinned to the fixed localhost origin.
+    assert ".open_url(invoicehub_desktop::backend_workspace_url(), None::<&str>)" in main
+    assert 'format!("{}/workspace/", backend_origin())' in lib
     assert capability["permissions"] == []
     assert "opener:" not in "\n".join(capability["permissions"])
 

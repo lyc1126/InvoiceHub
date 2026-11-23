@@ -10,7 +10,17 @@ from invoice_hub.storage import generations
 from invoice_hub.storage.parse_cache import ParseCache, identity, scan_files, signature
 
 
-def rebuild_generation(state, cost, summary_builder, progress, *, full=False, verify=False, outbound=None):
+def rebuild_generation(
+    state,
+    cost,
+    summary_builder,
+    progress,
+    *,
+    full=False,
+    verify=False,
+    outbound=None,
+    export_to_source: bool = True,
+):
     workspace, source = state.workspace_dir, state.watch_dir
     previous = generations.current(workspace, source)
     generations.recover_exports(workspace, source)
@@ -49,7 +59,14 @@ def rebuild_generation(state, cost, summary_builder, progress, *, full=False, ve
         if any((signature(Path(path)) if Path(path).exists() else None) != stamp for path, stamp in before.items()):
             raise ValueError("生成期间工作簿或手改状态变化；已保留改动，请重新汇总。")
         progress.report("publishing", "正在发布完整结果", percent=95)
-        published = generations.publish(workspace, source, stage, expected=previous.get("generation", ""), coverage=cache.stats())
+        published = generations.publish(
+            workspace,
+            source,
+            stage,
+            expected=previous.get("generation", ""),
+            coverage=cache.stats(),
+            export_to_source=export_to_source,
+        )
         state.save_processed(processed)
         cost._save_tax_dependency()
         summary.update(summary_csv=str(state.summary_csv), summary_xlsx=str(state.summary_xlsx))

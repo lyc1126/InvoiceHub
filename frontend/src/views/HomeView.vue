@@ -136,12 +136,12 @@ onMounted(() => {
                 <CompanyProjects :company="companyOf(tab)!" :focus="tab.project" />
               </section>
               <section v-else-if="tab.kind === 'compare' && tab.relation === SAME_NUMBER" :aria-label="title(tab)">
-                <header class="detail-header"><h2>⇄ 同号检查：{{ title(tab) }}</h2><p class="muted">两个没有勾稽关系的发票目录只比对发票号码；只读，不改任何文件。</p></header>
+                <header class="detail-header"><h2>⇄ 同号检查：{{ title(tab) }}</h2><p class="muted">核对这两个目录里有没有相同或重复的发票号码；只读，不会修改任何文件。</p></header>
                 <CompanySameNumber v-if="otherCompanyOf(tab)" :company="companyOf(tab)!" :dir-key="tab.dirKey!" :other-company="otherCompanyOf(tab)!" :other-dir-key="tab.otherDirKey!" :active="tab.id === workspace.activeId" />
                 <p v-else class="muted">另一家公司已删除。</p>
               </section>
               <section v-else-if="tab.kind === 'compare'" :aria-label="title(tab)">
-                <header class="detail-header"><h2>⇄ {{ title(tab) }}</h2><p class="muted">同一公司的两类资料按勾稽关系核对；只读，不改任何文件。</p></header>
+                <header class="detail-header"><h2>⇄ {{ title(tab) }}</h2><p class="muted">核对同一家公司的两类资料是否对得上；只读，不会修改任何文件。</p></header>
                 <CompanyCompare :company="companyOf(tab)!" :relation="tab.relation" :active="tab.id === workspace.activeId" />
               </section>
             </template>

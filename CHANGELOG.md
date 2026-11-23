@@ -2,6 +2,26 @@
 
 ## 未发布
 
+### 2026-11-23 补齐新版工作区登记自动读数、合计详情查询、做账排版修复与文案优化
+
+- 需求与起点：基于 `codex/workspace-p3` 响应用户四项新版界面改进需求：(1) 登记已有公司资料夹成功后自动后台读取三类发票目录数据（实时监控、弹窗通知与文件增删改仍以当前监控目录为基准，未监控源目录不写入导出文件）；(2) 发票列表底部操作条「合计详情」补齐与经典版/原型一致的开票项目、规格型号、单位、均价汇总及搜索/税率筛选弹窗；(3) 修复做账页左侧凭证列表多行时上下重叠与右侧分录表摘要列过窄；(4) 优化系统内偏技术术语、拗口的提示文案。
+- 采用方案：
+  - **非监控目录按需/自动只读读取**：`storage/generations.py::publish` 新增 `export_to_source: bool = True` 并在 `projection-manifest.json` 记录 `source_exported`，`recover_exports` 跳过 `source_exported=False` 代际以防向未监控源目录写文件；`projections/incremental.py::rebuild_generation` 透传该参数；新增独立领域服务 `src/invoice_hub/services/company_refresh.py::CompanyDataRefreshService` 与 `POST/GET /api/v1/companies/{company_id}/refresh-data` 路由，在目标 profile 写锁下后台增量构建三类发票目录并发布至本机 `runtime/targets/<id>/workspace/`，跳过当前活动 `watch_dir`、不切监控、不弹通知，完成后发 `company.data_refreshed` SSE 事件。前端在登记已有资料夹成功后自动触发读取，并在公司总览、目录页、成本分析 V2 提供“读取数据 / 更新数据”入口与自动重载。
+  - **勾选合计详情宽弹窗**：`frontend/src/components/DirectorySelectionBar.vue` 消费现有 `POST /api/v1/invoices/selection-summary` 返回的完整 `cost_breakdown`，点击「合计详情 ›」打开宽 `WsModal`，展示三项总额卡、告警提示、关键字搜索与税率筛选（不改变顶部勾选总额）、按开票项目+明细税率拆组的数量/除税/价税合计及规格型号算术/加权均价表，以及可点击跳转原票预览的来源列表。
+  - **做账页凭证列表与表格排版修复**：`frontend/src/prototype.css` 为 `.voucher-list button` 补齐 `flex: 0 0 auto; width: 100%; align-items: center;`，根除 `min-height: 0` 在 `max-height: 70dvh` 纵向 Flex 容器中被压缩导致的上下行重叠；移除 `.voucher-workbench .voucher__lines` 的 `display: block` 并为摘要/供应商列补足最小宽度。
+  - **缺失子目录单独创建、同标签页返回按钮、原始凭证标签防截断与单据批量预览修复**：
+    - `company_registry.py::subdir_plan/create_subdirs` 与 `/api/v1/companies/{id}/subdirs/plan|create` 支持可选 `keys` 单独预览与创建单个缺失空目录；`WorkspaceSidebar.vue` 缺失目录的 `…` / 右键菜单新增「创建此文件夹…」（`WsModal` 预览确认），`CompanyDirectories.vue` 缺失目录行新增「创建文件夹」按钮。
+    - `CompanyPanel.vue` 维护同标签页内分区历史栈并在页头显示 `<` 返回按钮与当前分区面包屑，切换目录/账簿/项目/设置后可一键返回上一页。
+    - `OverviewDocuments.vue` 与 `prototype.css` 为 `.overview-doc__meta .tag` 固定 `flex: 0 0 auto` 并将长项目名限制在 `.overview-doc__project` 内省略，修复「已对流水」胶囊被长项目名挤扁截断的问题。
+    - `web/static/js/page-documents.js`（版本升级至 `20261123-batch-preview-1`）修复 `/documents?batch=inbound` 在 `selection_only=true` 模式下 `inbound_invoices` 为空导致点击批量行「预览」时下拉框选不中发票、无法显示预览与导出的缺陷；`App.vue` 跳转 `/documents?batch=inbound` 时同步选中监控公司确保嵌入帧立即可见。
+  - **添加/设置公司纳税人身份生效月份日历化**：[MonthPicker.vue](frontend/src/components/MonthPicker.vue) 支持 `disabled`/`placeholder` 并将年月弹层 `Teleport` 至 `body`（`z-index: 85`）避免被弹窗裁切；[CompanyCreateForm.vue](frontend/src/components/CompanyCreateForm.vue) 与 [CompanySettings.vue](frontend/src/components/CompanySettings.vue) 的「生效月份」均改为使用 `MonthPicker` 日历面板选择年月，解决 macOS WKWebView 下原生 `<input type="month">` 退化为空白文本框的问题。
+  - **平实文案优化**：调整 `FRESHNESS_MESSAGES`、`FRESHNESS_LABELS` 及工作区总览、账簿、目录、做账凭证、成本 V2、侧栏核对提示中“守恒校验 / 同票家族 / 勾稽关系 / 阻断 / 由生成命令写入”等偏术语表达为更直白的日常说明，同时保留票面口径与只读边界事实。
+  - **同步 Tauri 浏览器启动契约测试**：修正 `tests/test_tauri_lifecycle_contract.py::test_tauri_startup_surface_uses_the_pinned_host_only_opener_and_empty_webview_capability`（此前 `e77d2fa` 切到 `backend_workspace_url()` 后导致 PR #32 在 macOS/Windows Python 均仅余该 1 项失败），改为同时校验 `main.rs` 调用 `backend_workspace_url()` 且 `lib.rs` 将其固定在 `backend_origin()` 下。
+  - 同步重建并更新 `web/static/app/` 前端产物，以及 `FILE_MAP.md`、`INTERFACES_AND_FLOWS.md`、`DATA_AND_ALGORITHMS.md`、`BOOKKEEPING.md`、`WEB_UI.md`。
+- 验证范围与未覆盖项：
+  - 已运行并全部通过：本机 macOS 全量 `pytest`、`tests/test_tauri_lifecycle_contract.py`（17 项）、`tests/test_company_refresh.py`（新增）、`tests/test_development_documentation.py`（16 项）、Ruff、Python `compileall`、`node --test tests/*.test.cjs`（40 项）、Vue `vue-tsc --noEmit`、`vitest run`（19 文件 161 项，含新增 `selection-summary-and-refresh.spec.ts`）、`vite build`（三份产物逐字节复现）及 `git diff --check`。
+  - 未覆盖项：未执行真实默认业务目录实测、正式 Windows BAT、真实桌面浏览器前台/原生选择器弹窗与 Tauri 打包成品验收，需在重启本机服务或重新打包后复核。
+
 ### 2026-11-23 将 Tauri 默认启动入口切换至新版工作区并收尾 Windows 单测
 
 - 需求与现场：macOS 本机 Tauri 实机验收发现桌面窗口启动默认打开经典首页 `/`，且经典页顶栏无进入 `/workspace/` 的入口；同时 PR #32 `c5d84b0` 远端 CI 中 7/8 项全绿（含首次全过的 Linux Playwright 浏览器 E2E 双向各 3 轮与 macOS Python 全量），`Windows Python` 仅余 1 项 `test_company_receipts.py::test_changes_during_parse_are_not_cached`（1,517 passed / 1 failed）。

@@ -558,3 +558,23 @@ export interface CompanyDetection {
   subdirs: { key: string; label: string; relative_path: string; status: SubdirStatus; path: string; file_count: number | null; suggested_action: string; candidates?: string[]; selection_required?: boolean }[];
   plan_hash: string;
 }
+
+export interface CompanyRefreshDirStatus {
+  status: "pending" | "running" | "done" | "skipped_missing" | "skipped_active" | "failed" | "cancelled";
+  label: string;
+  count: number;
+  error: string;
+}
+
+export interface CompanyRefreshState {
+  ok?: boolean;
+  company_id: string;
+  job_id: string;
+  status: "idle" | "running" | "completed" | "failed";
+  keys: string[];
+  current_key: string;
+  current_label: string;
+  message: string;
+  directories: Record<string, CompanyRefreshDirStatus>;
+  updated_at: string;
+}

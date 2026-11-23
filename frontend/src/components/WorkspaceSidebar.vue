@@ -2,16 +2,18 @@
 import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import WorkspaceIcon from "./WorkspaceIcon.vue";
+import WsModal from "./WsModal.vue";
 import { MODULES, type ModuleId } from "../modules";
 import { useModulesStore } from "../stores/modules";
 import { skinBypassRequested } from "../appearance";
-import { request } from "../api/client";
-import type { Company, CompanySubdir, ProjectSummary } from "../api/types";
+import { ApiError, request } from "../api/client";
+import type { Company, CompanySubdir, ProjectSummary, SubdirPlan } from "../api/types";
 import { errorText } from "../format";
 import { INVOICE_DIRS, SAME_NUMBER, relationFor } from "../relations";
 import { companySourceKey, useCompaniesStore } from "../stores/companies";
 import { useSystemStore } from "../stores/system";
 import { SIDEBAR_DEFAULT, clampSidebar, useWorkspaceStore } from "../stores/workspace";
+import { toast } from "../toast";
 
 // Workspace sidebar (WS-01): 置顶 and 公司 › 项目 / 目录. Clicking a node opens it as a home tab;
 // right click, the row's ⋯ button or Shift+F10 opens the same menu (pin, pick for a comparison).
@@ -176,9 +178,9 @@ function compareState(node: SidebarNode): { ok: boolean; reason: string; relatio
   const relation = sameCompany ? relationFor(base.dirKey, node.dirKey ?? "") : null;
   if (relation) return { ok: true, reason: relation.label, relation: relation.id };
   if (INVOICE_DIRS.includes(base.dirKey) && INVOICE_DIRS.includes(node.dirKey ?? "")) {
-    return { ok: true, reason: "同号发票检查（不做勾稽关联）", relation: SAME_NUMBER };
+    return { ok: true, reason: "检查两个目录是否有相同发票号", relation: SAME_NUMBER };
   }
-  return { ok: false, reason: sameCompany ? "这两类资料之间没有勾稽关系" : "不同公司之间只能对发票目录做同号检查" };
+  return { ok: false, reason: sameCompany ? "这两类资料不能直接配对核对" : "不同公司之间只能核对发票目录的相同票号" };
 }
 
 function pickForCompare(node: SidebarNode): void {
@@ -208,6 +210,43 @@ function isBase(node: SidebarNode): boolean {
 // ---- context menu
 const menu = ref<{ node: SidebarNode; x: number; y: number; origin: HTMLElement | null } | null>(null);
 const menuEl = ref<HTMLElement | null>(null);
+
+// ---- single missing subfolder creation (preview -> confirm -> mkdir only)
+const createModal = ref<{ companyId: string; companyName: string; dirKey: string; label: string; plan: SubdirPlan | null; loading: boolean; busy: boolean; error: string } | null>(null);
+
+async function startCreateSubdir(node: SidebarNode): Promise<void> {
+  if (node.kind !== "directory" || !node.dirKey) return;
+  closeMenu(false);
+  const state = { companyId: node.company.id, companyName: node.company.name, dirKey: node.dirKey, label: node.label, plan: null as SubdirPlan | null, loading: true, busy: false, error: "" };
+  createModal.value = state;
+  try {
+    const plan = await companies.subdirPlan(node.company.id, [node.dirKey]);
+    if (createModal.value === state) createModal.value = { ...state, plan, loading: false };
+  } catch (cause) {
+    if (createModal.value === state) createModal.value = { ...state, loading: false, error: errorText(cause) };
+  }
+}
+
+async function confirmCreateSubdir(): Promise<void> {
+  const current = createModal.value;
+  if (!current?.plan || current.busy) return;
+  current.busy = true;
+  current.error = "";
+  try {
+    const result = await companies.createSubdirs(current.companyId, current.plan.plan_hash, [current.dirKey]);
+    if (result.failed.length) {
+      current.error = result.failed.map((item) => item.message).join("；");
+      current.busy = false;
+      return;
+    }
+    createModal.value = null;
+    window.dispatchEvent(new CustomEvent("workspace:company-refreshed", { detail: { companyId: current.companyId } }));
+    toast(`已创建空文件夹「${current.label}」`, "info", 3000);
+  } catch (cause) {
+    current.error = cause instanceof ApiError && cause.code === "COMPANY_PLAN_STALE" ? "目录状态已变化，请关闭后重新打开预览。" : errorText(cause);
+    current.busy = false;
+  }
+}
 
 function openMenu(node: SidebarNode, event: MouseEvent | KeyboardEvent): void {
   const origin = (event.currentTarget as HTMLElement | null) ?? null;
@@ -324,7 +363,7 @@ onBeforeUnmount(() => {
     <button type="button" class="ws-add" aria-haspopup="dialog" @click="workspace.createOpen = true; emit('opened')"><WorkspaceIcon name="building" />添加公司资料夹</button>
     <button type="button" class="ws-add" @click="emit('server')"><svg class="hub-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="12" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M12 15v4m-6 2h12M4 18h3m10 0h3" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>服务器链接（试验版）</button>
     <p v-if="workspace.compareBase" class="ws-compare-hint" role="status">
-      已选择 {{ nodesById.get(`dir:${workspace.compareBase.companyId}:${workspace.compareBase.dirKey}`)?.label ?? "目录" }} 进行比较：在另一个目录上选“与已选项进行比较”：同一公司有勾稽关系的做核对，发票目录之间做同号检查。
+      已选 {{ nodesById.get(`dir:${workspace.compareBase.companyId}:${workspace.compareBase.dirKey}`)?.label ?? "目录" }} 进行核对，请到另一个目录点“与已选项进行比较”（关联资料核对账目，其他发票目录检查重复票号）。
       <button type="button" class="link" @click="workspace.compareBase = null">取消</button>
     </p>
 
@@ -485,6 +524,12 @@ onBeforeUnmount(() => {
       </button>
       <template v-if="menu.node.kind === 'directory'">
         <button
+          v-if="menu.node.subdir?.status === 'missing'"
+          type="button"
+          role="menuitem"
+          @click="startCreateSubdir(menu.node)"
+        >创建此文件夹…</button>
+        <button
           v-if="!isBase(menu.node)"
           type="button"
           role="menuitem"
@@ -503,5 +548,31 @@ onBeforeUnmount(() => {
         <p v-if="workspace.compareBase && !isBase(menu.node) && !compareState(menu.node).ok" class="muted ws-menu__note">{{ compareState(menu.node).reason }}</p>
       </template>
     </div>
+
+    <WsModal
+      v-if="createModal"
+      :title="`创建缺失文件夹 · ${createModal.label}`"
+      :subtitle="`${createModal.companyName} · 只新建空文件夹，不会移动、删除或改写任何已有文件。`"
+      @close="!createModal.busy && (createModal = null)"
+    >
+      <p v-if="createModal.loading" class="muted" aria-busy="true">正在核对目录路径…</p>
+      <p v-if="createModal.error" class="banner banner--error" role="alert">{{ createModal.error }}</p>
+      <template v-if="createModal.plan">
+        <div class="overview-table-wrap"><table class="grid">
+          <thead><tr><th>类型</th><th>子目录路径</th><th>处理</th></tr></thead>
+          <tbody>
+            <tr v-for="item in createModal.plan.items" :key="item.key" :class="{ 'row--danger': item.action === 'blocked' }">
+              <td>{{ item.label }}</td>
+              <td class="path mono">{{ item.relative_path }}</td>
+              <td>{{ { create: "新建空文件夹", exists: "已存在，跳过", blocked: "无法创建" }[item.action] }}<span v-if="item.reason" class="muted">：{{ item.reason }}</span></td>
+            </tr>
+          </tbody>
+        </table></div>
+        <div class="actions">
+          <button type="button" class="primary" :disabled="createModal.busy || !createModal.plan.create_count" :aria-busy="createModal.busy" @click="confirmCreateSubdir">{{ createModal.busy ? "创建中…" : "确认创建" }}</button>
+          <button type="button" class="ghost" :disabled="createModal.busy" @click="createModal = null">取消</button>
+        </div>
+      </template>
+    </WsModal>
   </aside>
 </template>

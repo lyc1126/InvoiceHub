@@ -137,14 +137,30 @@
     const selected = select.value;
     select.innerHTML = `<option value="">${app.escapeHtml(placeholder)}</option>`
       + (items || []).map((item) => `<option value="${app.escapeHtml(item.invoice_number)}" ${item.blocked ? "disabled" : ""}>${app.escapeHtml(optionLabel(item))}${item.blocked ? " · 明细冲突，待核对" : ""}</option>`).join("");
-    if ([...select.options].some((option) => option.value === selected)) {
+    if ([...(select.options || [])].some((option) => option.value === selected)) {
       select.value = selected;
     }
   }
 
+  function choiceItems(kind) {
+    const loaded = state.payload?.[`${kind}_invoices`] || [];
+    if (loaded.length || kind !== "inbound" || !state.batch.items.length) return loaded;
+    // In selection_only=true batch mode the full inbound list is intentionally skipped on initial
+    // load; expose the validated batch items in the dropdown so row Preview + single Export work
+    // immediately without forcing a manual "刷新列表" first.
+    return state.batch.items
+      .filter((item) => item && item.invoice_number)
+      .map((item) => ({
+        invoice_number: item.invoice_number,
+        seller: item.seller || "",
+        blocked: !item.ready,
+        label: [item.invoice_number, item.seller].filter(Boolean).join(" · "),
+      }));
+  }
+
   function renderInvoiceChoices(kind) {
     const select = refs[`${kind}Select`];
-    const all = state.payload?.[`${kind}_invoices`] || [];
+    const all = choiceItems(kind);
     const query = app.qs(`#${kind}InvoiceSearch`).value.trim().toLocaleLowerCase();
     const matches = all.filter(item => !query || [item.invoice_number, item.seller].some(value => String(value || "").toLocaleLowerCase().includes(query)));
     const pages = Math.max(1, Math.ceil(matches.length / 100));
@@ -441,6 +457,8 @@
       state.batch.loading = false;
       app.setBusy(refs.batchCheck, false);
       renderBatch();
+      renderInvoiceChoices("inbound");
+      updateControls();
     }
   }
 
@@ -879,12 +897,20 @@
       const button = event.target.closest("[data-batch-preview]");
       if (!button) return;
       const item = state.batch.items[Number(button.dataset.batchPreview)];
+      if (!item || !item.invoice_number) return;
+      if (state.active !== "inbound") updateTabs("inbound");
       app.qs("#inboundInvoiceSearch").value = item.invoice_number;
       state.listPages.inbound = 1;
       renderInvoiceChoices("inbound");
+      if (![...(refs.inboundSelect.options || [])].some((option) => option.value === item.invoice_number)) {
+        const option = document.createElement("option");
+        option.value = item.invoice_number;
+        option.textContent = optionLabel(item);
+        refs.inboundSelect.appendChild(option);
+      }
       refs.inboundSelect.value = item.invoice_number;
       await loadPreview("inbound");
-      refs.inboundPreviewTable.closest(".document-preview-panel").scrollIntoView({ block: "start", behavior: "auto" });
+      refs.inboundPreviewTable.closest(".document-preview-panel")?.scrollIntoView({ block: "start", behavior: "auto" });
     });
     window.addEventListener("beforeunload", (event) => {
       if (state.batch.running) { event.preventDefault(); event.returnValue = ""; }

@@ -81,6 +81,18 @@ function navigate(path: string, force = false): void {
   if (recovery.value) url.searchParams.set("no_skin", "1");
   const item = moduleForPath(url.pathname);
   if (item && force) {
+    // Batch inbound handoff targets the active monitored directory; make sure the Documents
+    // module has that company selected so the embedded classic frame is visible immediately.
+    if (item.id === "documents" && url.searchParams.get("batch") === "inbound") {
+      const monitored = companies.companies.find((entry) => entry.monitored);
+      if (monitored) {
+        modules.select("documents", {
+          kind: monitored.monitored_subdir_key ? "directory" : "company",
+          companyId: monitored.id,
+          dirKey: monitored.monitored_subdir_key ?? undefined,
+        });
+      }
+    }
     modules.open(item.id, `${url.pathname}${url.search}${url.hash}`);
     void router.push({ name: item.id, query: recovery.value ? { no_skin: "1" } : {} });
   } else void router.push(`${url.pathname}${url.search}${url.hash}`);
@@ -108,6 +120,17 @@ onMounted(() => {
     stream.onopen = () => { eventError.value = false; if (opened) refreshData(); opened = true; };
     stream.onerror = () => { eventError.value = true; };
     for (const type of ["settings.watch_dir_updated", "monitor.started", "monitor.stopped", "monitor.sync_completed", "bridge.rebuild_completed", "invoice.changed", "cost_analysis.updated"]) stream.addEventListener(type, refreshData);
+    stream.addEventListener("company.data_refreshed", (event) => {
+      try {
+        const parsed = JSON.parse((event as MessageEvent).data || "{}");
+        const companyId = parsed?.payload?.company_id;
+        if (typeof companyId === "string" && companyId) {
+          window.dispatchEvent(new CustomEvent("workspace:company-refreshed", { detail: { companyId } }));
+        }
+      } catch {
+        // Ignore malformed SSE payload; polling already updates state.
+      }
+    });
   }
 });
 onBeforeUnmount(() => { ++navigation; stream?.close(); clearTimeout(eventTimer); window.removeEventListener("workspace:navigate", handoff); });
@@ -126,15 +149,25 @@ function focusModalFrame(): void { document.querySelector<HTMLIFrameElement>(".m
 // Power opens the shell's own confirm in place (prototype); it no longer switches to Settings.
 const shutdownOpen = ref(false);
 // Registration result goes to a toast (prototype feedback) and the new company opens as a home tab.
+// Registering an existing folder also starts a background read-only scan so invoice data is ready to view
+// immediately without switching the active monitored directory.
 function onCompanyCreated(sources: Record<string, string>): void {
   workspace.createOpen = false;
   const id = companies.selectedId;
   if (!id) return;
   const created = Object.values(sources).filter((value) => value === "created").length;
   const detected = Object.values(sources).filter((value) => value === "detected" || value === "standard").length;
-  toast(created ? "已新建工作区并登记，六类空目录已创建；监控目录保持原样。" : `已登记。识别到 ${detected} 个已有子目录，其余可在“目录”里补建。`, "info", 4000);
+  const isNewWorkspace = created > 0 && detected === 0;
+  toast(
+    isNewWorkspace
+      ? "已新建工作区并登记，六类空目录已创建；当前监控目录保持不变。"
+      : `已登记。识别到 ${detected} 个已有子目录，正在后台读取发票数据…`,
+    "info",
+    4000,
+  );
   workspace.open({ kind: "company", companyId: id });
   if (route.name !== "home") navigate("/");
+  if (!isNewWorkspace) void companies.refreshData(id, { silent: true });
 }
 function showShutdown(): void { shutdownOpen.value = true; }
 </script>

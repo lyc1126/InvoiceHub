@@ -1013,7 +1013,7 @@ def test_documents_page_contract() -> None:
     assert ">打开该文件</button>" in html
     assert "app.css?v=20261116-project-column" in html
     assert "common.js?v=20261114-workspace-skin-isolation-1" in html
-    assert "page-documents.js?v=20261009-progressive-3" in html
+    assert "page-documents.js?v=20261123-batch-preview-1" in html
     assert "large-lists.css?v=20260907-large-list-1" in html
     assert 'id="documentIndexStop"' in html
     assert 'id="documentIndexResume"' in html

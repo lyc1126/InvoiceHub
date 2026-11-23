@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import WorkspaceIcon from "./WorkspaceIcon.vue";
+import WsModal from "./WsModal.vue";
 import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { request } from "../api/client";
 import { errorText, money } from "../format";
@@ -18,20 +19,57 @@ export interface TrashFile { name: string; status: string; message?: string }
 export interface TrashJob { job_id: string; state: string; trashed_count: number; files: TrashFile[] }
 
 interface Metric { value?: number | string; valid_invoice_count?: number; conflict_invoice_count?: number; missing_invoice_count?: number }
+interface BreakdownSpec {
+  project_name?: string;
+  specification?: string;
+  unit?: string;
+  quantity_total?: number | string | null;
+  arithmetic_average_unit_price_pretax?: number | string | null;
+  arithmetic_average_unit_price_with_tax?: number | string | null;
+  weighted_average_unit_price_pretax?: number | string | null;
+  weighted_average_unit_price_with_tax?: number | string | null;
+}
+interface BreakdownSource {
+  invoice_key: string;
+  source_path: string;
+  file_name?: string;
+  invoice_number?: string;
+  target_id?: string;
+}
+interface BreakdownProject {
+  project_name?: string;
+  display_project_name?: string;
+  tax_rate?: string;
+  display_tax_rate?: string;
+  quantity_total?: number | string | null;
+  amount_pretax_total?: number | string | null;
+  total_with_tax?: number | string | null;
+  specs?: BreakdownSpec[];
+  source_invoices?: BreakdownSource[];
+}
+interface CostBreakdown {
+  available?: boolean;
+  matched_invoice_count?: number;
+  unmatched_invoice_count?: number;
+  detail_count?: number;
+  projects?: BreakdownProject[];
+}
 interface Summary {
   selection: { record_count: number; invoice_count: number; collapsed_record_count: number };
   totals: { pretax_amount: Metric; tax_amount: Metric; total_with_tax: Metric };
-  cost_breakdown?: { unmatched_invoice_count?: number };
+  cost_breakdown?: CostBreakdown;
 }
 
 const props = defineProps<{ items: SelectedInvoice[]; targetId: string; total: number; selectingAll: boolean }>();
 // `changed` hands the finished job up: the list reloads and keeps showing every file's result.
-const emit = defineEmits<{ clear: []; selectAll: []; changed: [job: TrashJob]; preview: [] }>();
+const emit = defineEmits<{ clear: []; selectAll: []; changed: [job: TrashJob]; preview: []; previewItem: [item: SelectedInvoice] }>();
 
 const summary = ref<Summary | null>(null);
 const summaryError = ref("");
 const summaryLoading = ref(false);
 const details = ref(false);
+const detailQuery = ref("");
+const detailTaxRate = ref("all");
 const notice = ref<{ tone: "ok" | "error"; text: string } | null>(null);
 const busy = ref(false);
 // An open delete plan belongs to the selection it was prepared for; changing the selection drops it.
@@ -46,17 +84,82 @@ const METRICS = [
 ] as const;
 
 const amount = (metric?: Metric) => money(metric?.value === undefined ? "" : Number(metric.value).toFixed(2));
+const numMoney = (value: number | string | null | undefined) => (value === null || value === undefined || value === "" ? "—" : money(Number(value).toFixed(2)));
+const numQty = (value: number | string | null | undefined) => {
+  if (value === null || value === undefined || value === "") return "—";
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return String(value);
+  return parsed.toLocaleString("zh-CN", { maximumFractionDigits: 3 });
+};
+const summarySubtitle = computed(() => {
+  const sel = summary.value?.selection;
+  if (!sel) return "";
+  return sel.record_count > sel.invoice_count
+    ? `已汇总 ${sel.invoice_count} 张发票（含 ${sel.record_count} 个文件，重复格式已去重）`
+    : `已汇总 ${sel.invoice_count} 张发票`;
+});
+const breakdownProjects = computed(() => summary.value?.cost_breakdown?.projects ?? []);
+const availableTaxRates = computed(() => {
+  const seen = new Set<string>();
+  const out: { value: string; label: string }[] = [];
+  for (const project of breakdownProjects.value) {
+    const value = project.tax_rate || "missing";
+    if (seen.has(value)) continue;
+    seen.add(value);
+    out.push({ value, label: value === "missing" ? "税率未识别" : value });
+  }
+  return out;
+});
+// Filtering inside the breakdown modal only narrows the project/spec list; top headline totals
+// always remain the full selected-invoice totals (WEB_UI selection summary rule).
+const filteredProjects = computed(() => {
+  const q = detailQuery.value.trim().toLocaleLowerCase();
+  const rate = detailTaxRate.value;
+  return breakdownProjects.value.filter((project) => {
+    const projectRate = project.tax_rate || "missing";
+    if (rate !== "all" && projectRate !== rate) return false;
+    if (!q) return true;
+    const terms = [
+      project.project_name,
+      project.display_project_name,
+      ...(project.specs ?? []).flatMap((spec) => [spec.specification, spec.unit]),
+      ...(project.source_invoices ?? []).flatMap((source) => [source.invoice_number, source.file_name]),
+    ];
+    return terms.some((term) => String(term || "").toLocaleLowerCase().includes(q));
+  });
+});
+
+function groupQuantityText(project: BreakdownProject): string {
+  const units = [...new Set((project.specs ?? []).map((spec) => (spec.unit || "").trim()).filter(Boolean))];
+  if (units.length > 1) return "多种单位，见下表";
+  const qty = numQty(project.quantity_total);
+  return units.length === 1 && qty !== "—" ? `${qty} ${units[0]}` : qty;
+}
+
+function openDetails(): void {
+  if (!summary.value) return;
+  detailQuery.value = "";
+  detailTaxRate.value = "all";
+  details.value = true;
+}
+
+function previewSource(source: BreakdownSource): void {
+  if (!source.invoice_key || !source.source_path) return;
+  details.value = false;
+  emit("previewItem", { invoice_key: source.invoice_key, source_path: source.source_path });
+}
+
 const warnings = computed(() => {
   const value = summary.value;
   if (!value) return [];
   const out: string[] = [];
-  if (value.selection.collapsed_record_count) out.push(`已按同票家族折叠 ${value.selection.collapsed_record_count} 条重复格式记录，金额每张只计一次。`);
+  if (value.selection.collapsed_record_count) out.push(`同一张票有多个格式文件，已自动合并 ${value.selection.collapsed_record_count} 条重复记录，金额每张只算一次。`);
   for (const [key, label] of METRICS) {
     const metric = value.totals[key];
-    if (metric.conflict_invoice_count) out.push(`${label}有 ${metric.conflict_invoice_count} 张同票金额冲突，未计入该项合计。`);
-    if (metric.missing_invoice_count) out.push(`${label}有 ${metric.missing_invoice_count} 张缺少合法金额，未计入该项合计。`);
+    if (metric.conflict_invoice_count) out.push(`${label}有 ${metric.conflict_invoice_count} 张同一发票号金额不一致，未计入合计。`);
+    if (metric.missing_invoice_count) out.push(`${label}有 ${metric.missing_invoice_count} 张缺少有效金额，未计入合计。`);
   }
-  if (value.cost_breakdown?.unmatched_invoice_count) out.push(`有 ${value.cost_breakdown.unmatched_invoice_count} 张发票未匹配到当前成本明细。`);
+  if (value.cost_breakdown?.unmatched_invoice_count) out.push(`有 ${value.cost_breakdown.unmatched_invoice_count} 张发票暂未匹配到开票明细，上方总金额仍按票头有效金额汇总。`);
   return out;
 });
 
@@ -66,11 +169,16 @@ async function loadSummary(): Promise<void> {
   summaryError.value = "";
   try {
     const payload = await request<Summary>("/api/v1/invoices/selection-summary", { method: "POST", body: { items: props.items } });
-    if (current === summaryRequest) summary.value = payload;
+    if (current === summaryRequest) {
+      summary.value = payload;
+      const rates = new Set((payload.cost_breakdown?.projects ?? []).map((project) => project.tax_rate || "missing"));
+      if (detailTaxRate.value !== "all" && !rates.has(detailTaxRate.value)) detailTaxRate.value = "all";
+    }
   } catch (cause) {
     // A 409 means the list changed under the selection; the old numbers must not stay visible.
     if (current === summaryRequest) {
       summary.value = null;
+      details.value = false;
       summaryError.value = errorText(cause);
     }
   } finally {
@@ -85,6 +193,7 @@ watch(
     trash.value = null;
     if (!props.items.length) {
       summary.value = null;
+      details.value = false;
       return;
     }
     summaryTimer = setTimeout(() => void loadSummary(), 250);
@@ -185,7 +294,7 @@ onBeforeUnmount(() => clearTimeout(summaryTimer));
          borderless icon actions, and "select all filtered" + close at the far end. -->
     <div class="selection-bar__main">
       <span class="sb-count">已勾选 <b>{{ summary?.selection.invoice_count ?? items.length }}</b> 张<small v-if="summary && summary.selection.record_count > summary.selection.invoice_count">（{{ summary.selection.record_count }} 条记录）</small></span>
-      <button type="button" class="sb-sum" :aria-expanded="details" :aria-busy="summaryLoading" :disabled="!summary" @click="details = !details">
+      <button type="button" class="sb-sum" aria-haspopup="dialog" :aria-expanded="details" :aria-busy="summaryLoading" :disabled="!summary" @click="openDetails">
         <span>价税合计</span><strong>{{ summaryLoading && !summary ? "计算中…" : amount(summary?.totals.total_with_tax) }}</strong><em>合计详情 ›</em>
       </button>
       <span class="sb-sep" aria-hidden="true" />
@@ -200,15 +309,94 @@ onBeforeUnmount(() => clearTimeout(summaryTimer));
     </div>
     <p v-if="summaryError" class="banner banner--error" role="alert">合计未能计算：{{ summaryError }}</p>
     <p v-if="notice" class="banner" :class="notice.tone === 'ok' ? 'banner--ok' : 'banner--error'" role="status">{{ notice.text }}</p>
-    <div v-if="details && summary" class="selection-bar__details" aria-label="合计详情">
-      <dl>
-        <template v-for="[key, label] in METRICS" :key="key">
-          <dt>{{ label }}</dt>
-          <dd>{{ amount(summary.totals[key]) }} <span class="muted">有效计入 {{ summary.totals[key].valid_invoice_count ?? 0 }} 张</span></dd>
-        </template>
-      </dl>
-      <ul v-if="warnings.length" class="warnings warnings--compact"><li v-for="text in warnings" :key="text">{{ text }}</li></ul>
-    </div>
+    <WsModal v-if="details && summary" title="已勾选发票合计详情" :subtitle="summarySubtitle" :wide="true" @close="details = false">
+      <div class="sum-cards" aria-label="勾选发票金额合计">
+        <div v-for="[key, label] in METRICS" :key="key" class="sum-card">
+          <span>{{ label }}</span>
+          <strong>{{ amount(summary.totals[key]) }}</strong>
+          <small>有效计入 {{ summary.totals[key].valid_invoice_count ?? 0 }} 张</small>
+        </div>
+      </div>
+      <ul v-if="warnings.length" class="warnings warnings--compact" role="status">
+        <li v-for="text in warnings" :key="text">{{ text }}</li>
+      </ul>
+      <div class="overview-section__head sum-breakdown-head">
+        <div>
+          <h3>合计发票明细</h3>
+          <p>按开票项目、税率与规格型号汇总，支持搜索和按税率筛选。</p>
+        </div>
+        <span class="muted">
+          {{ summary.cost_breakdown?.matched_invoice_count ?? 0 }} 张已匹配 / {{ summary.cost_breakdown?.unmatched_invoice_count ?? 0 }} 张无明细 / {{ summary.cost_breakdown?.detail_count ?? 0 }} 条明细
+        </span>
+      </div>
+      <div class="filters">
+        <label class="field sum-search">搜索明细
+          <input v-model="detailQuery" aria-label="搜索明细" placeholder="开票项目、规格型号、单位、发票号或文件名">
+        </label>
+        <label class="field">税率
+          <select v-model="detailTaxRate" aria-label="按税率筛选">
+            <option value="all">全部税率</option>
+            <option v-for="item in availableTaxRates" :key="item.value" :value="item.value">{{ item.label }}</option>
+          </select>
+        </label>
+      </div>
+      <p class="muted sum-filter-meta">显示 {{ filteredProjects.length }} / {{ breakdownProjects.length }} 个项目税率分组 · 顶部总金额始终按全部勾选发票计算</p>
+      <div v-if="filteredProjects.length" class="sum-groups" role="region" aria-label="合计发票明细规格列表">
+        <section v-for="project in filteredProjects" :key="`${project.project_name ?? ''}|${project.tax_rate ?? ''}`" class="sum-group">
+          <header class="sum-group__head">
+            <strong>{{ project.display_project_name || project.project_name || "未识别项目" }}</strong>
+            <span class="tag">{{ project.display_tax_rate || project.tax_rate || "税率未识别" }}</span>
+            <details v-if="project.source_invoices?.length" class="sum-sources">
+              <summary>{{ project.source_invoices.length }} 个来源</summary>
+              <ul>
+                <li v-for="source in project.source_invoices" :key="source.invoice_key">
+                  <button type="button" class="link" @click="previewSource(source)">
+                    <span class="mono">{{ source.invoice_number || "未识别发票号" }}</span>
+                    <span>{{ source.file_name || "源文件" }}</span>
+                  </button>
+                </li>
+              </ul>
+            </details>
+            <span class="muted sum-group__specs">{{ project.specs?.length ?? 0 }} 个规格</span>
+          </header>
+          <div class="sum-group__stats">
+            <div><span>数量合计</span><strong>{{ groupQuantityText(project) }}</strong></div>
+            <div><span>除税总计</span><strong>{{ numMoney(project.amount_pretax_total) }}</strong></div>
+            <div><span>价税合计</span><strong>{{ numMoney(project.total_with_tax) }}</strong></div>
+          </div>
+          <div class="overview-table-wrap">
+            <table class="grid">
+              <thead>
+                <tr>
+                  <th>规格型号</th>
+                  <th>单位</th>
+                  <th class="num">数量</th>
+                  <th class="num">算术均价(除税)</th>
+                  <th class="num">算术均价(含税)</th>
+                  <th class="num">加权均价(除税)</th>
+                  <th class="num">加权均价(含税)</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="(spec, index) in project.specs ?? []" :key="`${spec.specification ?? ''}|${spec.unit ?? ''}|${index}`">
+                  <td>{{ spec.specification || "未填规格" }}</td>
+                  <td>{{ spec.unit || "—" }}</td>
+                  <td class="num">{{ numQty(spec.quantity_total) }}</td>
+                  <td class="num">{{ numMoney(spec.arithmetic_average_unit_price_pretax) }}</td>
+                  <td class="num">{{ numMoney(spec.arithmetic_average_unit_price_with_tax) }}</td>
+                  <td class="num">{{ numMoney(spec.weighted_average_unit_price_pretax) }}</td>
+                  <td class="num">{{ numMoney(spec.weighted_average_unit_price_with_tax) }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+      </div>
+      <div v-else class="empty-state">
+        <b>{{ breakdownProjects.length ? "没有符合条件的明细" : "暂无可用的开票明细" }}</b>
+        <span>{{ breakdownProjects.length ? "可以换个关键字或切换税率筛选再看看。" : "本次勾选的发票还没匹配到货品项目和规格明细。" }}</span>
+      </div>
+    </WsModal>
     <div v-if="trash" class="selection-bar__trash" role="alertdialog" aria-label="删除所选文件">
       <p>{{ trash.status }}</p>
       <template v-if="trash.job">

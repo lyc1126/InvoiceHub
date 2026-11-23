@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { ApiError, request } from "../api/client";
 import type { Company, CompanyDirectory, DirectoriesPayload, SubdirCreateResult, SubdirPlan } from "../api/types";
 import { FRESHNESS_LABELS, SUBDIR_STATUS_LABELS, errorText } from "../format";
@@ -7,14 +7,18 @@ import { companySourceKey, useCompaniesStore } from "../stores/companies";
 import { useWorkspaceStore } from "../stores/workspace";
 import WatchSwitchConfirm from "./WatchSwitchConfirm.vue";
 
+const INVOICE_KEYS = new Set(["cost_invoice_dir", "issued_invoice_dir", "expense_reimbursement_dir"]);
 const props = defineProps<{ company: Company }>();
 const companies = useCompaniesStore();
 const workspace = useWorkspaceStore();
+const refreshState = computed(() => companies.refreshStates[props.company.id]);
+const refreshing = computed(() => refreshState.value?.status === "running");
 
 const directories = ref<CompanyDirectory[]>([]);
 const loading = ref(false);
 const error = ref("");
 const plan = ref<SubdirPlan | null>(null);
+const planKeys = ref<string[] | undefined>(undefined);
 const planBusy = ref(false);
 const planResult = ref<SubdirCreateResult | null>(null);
 const switchTarget = ref<CompanyDirectory | null>(null);
@@ -38,14 +42,17 @@ async function loadDirectories(): Promise<void> {
   }
 }
 
-async function previewSubdirs(): Promise<void> {
+async function previewSubdirs(keys?: string[]): Promise<void> {
   planBusy.value = true;
   planResult.value = null;
   error.value = "";
   try {
     const sourceKey = companySourceKey(props.company);
-    const next = await companies.subdirPlan(props.company.id);
-    if (sourceKey === companySourceKey(props.company)) plan.value = next;
+    const next = await companies.subdirPlan(props.company.id, keys);
+    if (sourceKey === companySourceKey(props.company)) {
+      plan.value = next;
+      planKeys.value = keys?.length ? [...keys] : undefined;
+    }
   } catch (cause) {
     error.value = errorText(cause);
   } finally {
@@ -58,12 +65,14 @@ async function confirmSubdirs(): Promise<void> {
   planBusy.value = true;
   error.value = "";
   try {
-    planResult.value = await companies.createSubdirs(props.company.id, plan.value.plan_hash);
+    planResult.value = await companies.createSubdirs(props.company.id, plan.value.plan_hash, planKeys.value);
     plan.value = null;
+    planKeys.value = undefined;
     await loadDirectories();
   } catch (cause) {
     error.value = cause instanceof ApiError && cause.code === "COMPANY_PLAN_STALE" ? "目录状态在预览后变了，请重新预览。" : errorText(cause);
     plan.value = null;
+    planKeys.value = undefined;
   } finally {
     planBusy.value = false;
   }
@@ -78,6 +87,22 @@ async function switched(): Promise<void> {
 function openDirectory(item: CompanyDirectory): void {
   workspace.open({ kind: "directory", companyId: props.company.id, dirKey: item.key });
 }
+
+function readDirectory(item?: CompanyDirectory): void {
+  if (item) {
+    void companies.refreshData(props.company.id, { keys: [item.key], force: item.freshness.state !== "never_built" });
+  } else {
+    void companies.refreshData(props.company.id);
+  }
+}
+
+function onCompanyRefreshed(event: Event): void {
+  const detail = (event as CustomEvent).detail;
+  if (!detail?.companyId || detail.companyId === props.company.id) void loadDirectories();
+}
+
+onMounted(() => window.addEventListener("workspace:company-refreshed", onCompanyRefreshed));
+onBeforeUnmount(() => window.removeEventListener("workspace:company-refreshed", onCompanyRefreshed));
 
 watch(
   () => `${companySourceKey(props.company)}/${props.company.monitored}/${props.company.monitored_subdir_key ?? ""}`,
@@ -95,11 +120,13 @@ watch(
 <template>
   <section aria-label="子目录">
     <div class="toolbar">
-      <button type="button" :disabled="loading" :aria-busy="loading" @click="loadDirectories">{{ loading ? "检查中…" : "重新检查" }}</button>
-      <button v-if="company.missing_subdir_count" type="button" :disabled="planBusy" @click="previewSubdirs">
+      <button type="button" :disabled="loading" :aria-busy="loading" @click="loadDirectories">{{ loading ? "检查中…" : "检查变动" }}</button>
+      <button v-if="company.missing_subdir_count" type="button" :disabled="planBusy" @click="previewSubdirs()">
         补建缺失子目录（{{ company.missing_subdir_count }}）
       </button>
+      <button type="button" :disabled="refreshing" :aria-busy="refreshing" @click="readDirectory()">{{ refreshing ? "读取中…" : "读取全部发票" }}</button>
     </div>
+    <p v-if="refreshing" class="banner banner--note" role="status" aria-busy="true">{{ refreshState?.message || "正在后台读取发票数据…" }}</p>
     <p v-if="error" class="banner banner--error" role="alert">{{ error }}</p>
 
     <div v-if="plan" class="panel" aria-label="补建预览">
@@ -142,7 +169,9 @@ watch(
           </td>
           <td class="row-actions">
             <button v-if="item.status === 'present'" type="button" @click="openDirectory(item)">查看发票</button>
+            <button v-if="item.status === 'present' && !item.active && INVOICE_KEYS.has(item.key)" type="button" :disabled="refreshing" @click="readDirectory(item)">{{ item.freshness.state === "never_built" ? "读取数据" : "更新数据" }}</button>
             <button v-if="item.status === 'present' && !item.active" type="button" @click="switchTarget = item">设为监控目录</button>
+            <button v-if="item.status === 'missing'" type="button" :disabled="planBusy" @click="previewSubdirs([item.key])">创建文件夹</button>
           </td>
         </tr>
       </tbody>

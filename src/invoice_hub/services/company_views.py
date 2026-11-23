@@ -40,6 +40,7 @@ from invoice_hub.services.company_deduction import DeductionListReader, build_de
 from invoice_hub.services.company_inventory import build_inventory_check, read_book_inputs
 from invoice_hub.services.company_payroll import read_payroll, save_confirmed as save_payroll_months
 from invoice_hub.services.company_projects import ProjectAssignmentStore, build_project_summary, project_fields, remark_projects
+from invoice_hub.services.company_refresh import CompanyDataRefreshService
 from invoice_hub.services.company_same_number import INVOICE_DIR_KEYS, build_same_number_check
 from invoice_hub.services.company_settlement import build_settlement_check
 from invoice_hub.services import company_vouchers
@@ -73,11 +74,11 @@ _MONTH_TEXT = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
 FRESHNESS_MAX_ENTRIES = 20_000
 FRESHNESS_MAX_SECONDS = 2.0
 FRESHNESS_MESSAGES = {
-    "monitored": "当前监控目录，由监控自动保持最新。",
-    "fresh": "与上次汇总一致。",
-    "stale": "目录内发票已变化，需重新汇总（设为监控目录后会自动汇总）。",
-    "never_built": "还没有汇总过，设为监控目录后会自动汇总。",
-    "unknown": "无法确认是否最新：缺少上次汇总的文件记录或目录过大。",
+    "monitored": "当前监控目录，新发票会自动读取。",
+    "fresh": "已是最新数据。",
+    "stale": "文件夹里的发票有变动，点“更新数据”即可重新汇总（设为监控目录会自动更新）。",
+    "never_built": "还没读取过数据，点“读取数据”即可直接查看（设为监控目录会自动更新）。",
+    "unknown": "暂时无法确认是不是最新，可以点“更新数据”重新读取。",
     "missing_dir": "目录不存在或不可用。",
 }
 
@@ -197,6 +198,15 @@ class CompanyViewService:
         self._tags = InvoiceTagStore(Path(registry.registry_path).parent / TAG_DEFINITIONS_NAME)
         # Move plans and journals of misfiled source files (WS-05): runtime state, never business data.
         self._moves = SourceMoveService(Path(registry.registry_path).parent / "source-moves")
+        # Read-only background invoice refresh for non-monitored company folders; never switches watch_dir.
+        self.refresh = CompanyDataRefreshService(
+            registry=registry,
+            config=self._config,
+            active_profile=self._active_profile,
+            repo=repo,
+            db_path=db_path,
+            freshness_check=directory_freshness,
+        )
 
     @property
     def config(self) -> AppConfig:

@@ -250,18 +250,18 @@ describe("workspace home", () => {
     await payroll.trigger("contextmenu");
     let compare = wrapper.findAll('.ws-sidebar [role="menu"] button').find((item) => item.text() === "与已选项进行比较")!;
     expect(compare.attributes("disabled")).toBeDefined();
-    expect(wrapper.get(".ws-menu__note").text()).toBe("这两类资料之间没有勾稽关系");
+    expect(wrapper.get(".ws-menu__note").text()).toBe("这两类资料不能直接配对核对");
     await wrapper.get('.ws-sidebar [role="menu"]').trigger("keydown", { key: "Escape" });
     // Another company's invoice folder only gets the same-number check; its other folders are refused.
     const otherIssued = wrapper.findAll(".ws-children .ws-node").filter((item) => item.attributes("aria-label") === "开具发票")[1]!;
     await otherIssued.trigger("contextmenu");
     compare = wrapper.findAll('.ws-sidebar [role="menu"] button').find((item) => item.text() === "与已选项进行比较")!;
     expect(compare.attributes("disabled")).toBeUndefined();
-    expect(compare.attributes("title")).toBe("同号发票检查（不做勾稽关联）");
+    expect(compare.attributes("title")).toBe("检查两个目录是否有相同发票号");
     await wrapper.get('.ws-sidebar [role="menu"]').trigger("keydown", { key: "Escape" });
     const otherPayroll = wrapper.findAll(".ws-children .ws-node").filter((item) => item.attributes("aria-label") === "工资社保")[1]!;
     await otherPayroll.trigger("contextmenu");
-    expect(wrapper.get(".ws-menu__note").text()).toBe("不同公司之间只能对发票目录做同号检查");
+    expect(wrapper.get(".ws-menu__note").text()).toBe("不同公司之间只能核对发票目录的相同票号");
     await wrapper.get('.ws-sidebar [role="menu"]').trigger("keydown", { key: "Escape" });
     // Same company, related pair: the row offers ⇄ directly and opens a compare tab with that relation.
     const issued = wrapper.findAll(".ws-children .ws-row").find((item) => item.find('.ws-node[aria-label="开具发票"]').exists())!;

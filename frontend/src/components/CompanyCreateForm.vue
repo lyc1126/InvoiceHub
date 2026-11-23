@@ -4,6 +4,7 @@ import { request } from "../api/client";
 import type { CompanyDetection, CompanyPayload, CompanySetupJob, TaxpayerType } from "../api/types";
 import { errorText, SUBDIR_STATUS_LABELS } from "../format";
 import { useCompaniesStore } from "../stores/companies";
+import MonthPicker from "./MonthPicker.vue";
 
 const emit = defineEmits<{ created: [sources: Record<string, string>]; cancel: [] }>();
 const companies = useCompaniesStore();
@@ -273,7 +274,7 @@ onBeforeUnmount(() => {
           <label><input v-model="taxpayerChoice" type="radio" name="taxpayer" value="general" required :disabled="busy || !!registrationHash">一般纳税人</label>
           <label><input v-model="taxpayerChoice" type="radio" name="taxpayer" value="small_scale" :disabled="busy || !!registrationHash">小规模纳税人</label>
           <label><input v-model="taxpayerChoice" type="radio" name="taxpayer" value="later" :disabled="busy || !!registrationHash">稍后设置</label>
-          <input v-if="form.taxpayer_type" v-model="form.effective_from" type="month" aria-label="生效月份" :disabled="busy || !!registrationHash">
+          <MonthPicker v-if="form.taxpayer_type" v-model="form.effective_from" label="生效月份" placeholder="选择生效年月" :disabled="busy || !!registrationHash" />
         </span>
       </fieldset>
       <fieldset v-if="mode === 'new'" class="field">

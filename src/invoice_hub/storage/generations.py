@@ -73,6 +73,10 @@ def recover_exports(workspace: Path, source: Path) -> None:
     data = current(workspace, source)
     if not data:
         return
+    # Read-only company refreshes publish generations solely into the local workspace without
+    # touching the unmonitored source folder; never copy them back into source on recovery.
+    if data.get("source_exported") is False:
+        return
     if data["root_identity"] != identity(source):
         raise ValueError("来源根身份已变化，未恢复导出或覆盖文件。")
     receipt_path = Path(workspace) / "projection-export-receipt.json"
@@ -110,7 +114,15 @@ def candidate(workspace: Path):
             shutil.rmtree(path)
 
 
-def publish(workspace: Path, source: Path, stage: Path, *, expected: str = "", coverage: dict | None = None) -> dict:
+def publish(
+    workspace: Path,
+    source: Path,
+    stage: Path,
+    *,
+    expected: str = "",
+    coverage: dict | None = None,
+    export_to_source: bool = True,
+) -> dict:
     previous = current(workspace, source)
     if previous.get("generation", "") != expected:
         raise ValueError("完整代际已变化，迟到结果未发布。")
@@ -125,24 +137,40 @@ def publish(workspace: Path, source: Path, stage: Path, *, expected: str = "", c
     generation = uuid.uuid4().hex
     target = stage.parent / generation
     stage.rename(target)
-    data = {"version": 1, "generation": generation, "source": str(Path(source).resolve()), "root_identity": identity(source),
-            "files": hashes, "last_complete_at": utc_now_text(), "scan_complete": True, "coverage": coverage or {}}
+    data = {
+        "version": 1,
+        "generation": generation,
+        "source": str(Path(source).resolve()),
+        "root_identity": identity(source),
+        "files": hashes,
+        "source_exported": bool(export_to_source),
+        "last_complete_at": utc_now_text(),
+        "scan_complete": True,
+        "coverage": coverage or {},
+    }
     # Export failures cannot make API readers consume half of two generations.
     # The pointer is authoritative; each export is independently replaceable and rebuildable.
     atomic_write_json(Path(workspace) / "projection-manifest.json", data)
     warnings = []
-    for name in hashes:
+    exported_hashes = {}
+    for name, digest in hashes.items():
+        if not export_to_source and name not in SUMMARY + OPTIONAL:
+            continue
         output = (Path(workspace) if name in SUMMARY + OPTIONAL else Path(source)) / name
         temporary = output.with_name("." + output.name + "." + generation + ".tmp")
         try:
             shutil.copyfile(target / name, temporary)
             temporary.replace(output)
+            exported_hashes[name] = digest
         except OSError:
             warnings.append(name)
         finally:
             temporary.unlink(missing_ok=True)
     if not warnings:
-        atomic_write_json(Path(workspace) / "projection-export-receipt.json", {"generation": generation, "files": hashes})
+        atomic_write_json(
+            Path(workspace) / "projection-export-receipt.json",
+            {"generation": generation, "files": exported_hashes, "source_exported": bool(export_to_source)},
+        )
     return {**data, "export_warnings": warnings}
 
 

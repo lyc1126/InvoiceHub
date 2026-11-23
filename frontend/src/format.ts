@@ -18,9 +18,9 @@ export const SUBDIR_STATUS_LABELS: Record<SubdirStatus, string> = {
 export const FRESHNESS_LABELS: Record<FreshnessState, string> = {
   monitored: "监控中",
   fresh: "最新",
-  stale: "已过期",
-  never_built: "未汇总",
-  unknown: "无法确认",
+  stale: "有变动",
+  never_built: "未读取",
+  unknown: "待确认",
   missing_dir: "目录缺失",
   not_checked: "未检查",
 };

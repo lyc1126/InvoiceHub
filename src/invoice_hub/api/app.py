@@ -135,6 +135,7 @@ def create_app(
         try:
             yield
         finally:
+            await run_in_threadpool(state.company_views.refresh.close)
             await run_in_threadpool(sources.close)
             await run_in_threadpool(temporary.close)
             await run_in_threadpool(state._document_index.close)

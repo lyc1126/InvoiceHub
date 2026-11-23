@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch } from "vue";
+import { computed, ref, watch } from "vue";
 import type { Company } from "../api/types";
 import CompanyCompare from "./CompanyCompare.vue";
 import CompanyDirectories from "./CompanyDirectories.vue";
@@ -17,7 +17,7 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "directories", label: "目录" },
   { id: "ledger", label: "发票账簿" },
   { id: "projects", label: "项目" },
-  { id: "compare", label: "勾稽" },
+  { id: "compare", label: "账目核对" },
   { id: "vouchers", label: "凭证草稿" },
   { id: "payroll", label: "工资社保" },
   { id: "settings", label: "设置" },
@@ -27,14 +27,30 @@ const TABS: { id: Tab; label: string }[] = [
 // mounted (hidden) so its filters, results and scroll survive switching sections or tabs.
 const props = withDefaults(defineProps<{ company: Company; notice?: string; active?: boolean }>(), { active: true });
 const tab = ref<Tab>("overview");
+const history = ref<Tab[]>([]);
 const tools = ref<HTMLDetailsElement>();
-function selectTab(value: Tab): void { tab.value = value; if (tools.value) tools.value.open = false; }
+const currentTabLabel = computed(() => TABS.find((item) => item.id === tab.value)?.label ?? "");
+const canGoBack = computed(() => history.value.length > 0 || tab.value !== "overview");
+function selectTab(value: Tab): void {
+  if (value !== tab.value) {
+    history.value.push(tab.value);
+    if (history.value.length > 20) history.value.shift();
+    tab.value = value;
+  }
+  if (tools.value) tools.value.open = false;
+}
+function goBack(): void {
+  const previous = history.value.pop();
+  tab.value = previous ?? "overview";
+  if (tools.value) tools.value.open = false;
+}
 const opened = ref(new Set<Tab>(["overview", "directories", "settings"]));
 watch(tab, (value) => opened.value.add(value));
 watch(
   () => props.company.id,
   () => {
     tab.value = "overview";
+    history.value = [];
   },
 );
 </script>
@@ -42,7 +58,15 @@ watch(
 <template>
   <section class="company-detail" :aria-label="company.name">
     <header class="detail-header">
-      <h2>{{ company.name }} <span class="tag">{{ company.current_taxpayer_label }}</span></h2>
+      <div class="detail-header__title-row">
+        <button v-if="canGoBack" type="button" class="company-back" aria-label="返回上一页" title="返回上一页" @click="goBack">
+          <svg class="hub-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 6l-6 6 6 6" /></svg>
+        </button>
+        <div class="detail-header__heading">
+          <p v-if="tab !== 'overview'" class="crumb">{{ company.name }} › {{ currentTabLabel }}</p>
+          <h2>{{ company.name }} <span class="tag">{{ company.current_taxpayer_label }}</span></h2>
+        </div>
+      </div>
       <p class="muted path">{{ company.root_path }}</p>
     </header>
     <p v-if="notice" class="banner banner--ok" role="status">{{ notice }}</p>
@@ -62,7 +86,7 @@ watch(
     </div>
     </details>
     <div v-show="tab === 'overview'" id="company-panel-overview" role="tabpanel" aria-labelledby="company-tab-overview">
-      <CompanyOverview :company="company" :active="props.active && tab === 'overview'" @section="tab = $event" />
+      <CompanyOverview :company="company" :active="props.active && tab === 'overview'" @section="selectTab($event)" />
     </div>
     <div v-show="tab === 'directories'" id="company-panel-directories" role="tabpanel" aria-labelledby="company-tab-directories">
       <CompanyDirectories :company="company" />

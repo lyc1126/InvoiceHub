@@ -3,6 +3,7 @@ import { nextTick, ref, watch } from "vue";
 import type { Company, CostWorkbookRefresh, TaxpayerPeriod } from "../api/types";
 import { errorText } from "../format";
 import { useCompaniesStore } from "../stores/companies";
+import MonthPicker from "./MonthPicker.vue";
 
 const props = defineProps<{ company: Company }>();
 const companies = useCompaniesStore();
@@ -30,6 +31,10 @@ function workbookNotice(refresh: CostWorkbookRefresh | undefined): string {
 }
 
 async function save(): Promise<void> {
+  if (periods.value.some((item) => !item.effective_from)) {
+    error.value = "请选择每条纳税人身份的生效月份。";
+    return;
+  }
   busy.value = true;
   error.value = "";
   notice.value = "";
@@ -84,7 +89,7 @@ watch(() => props.company.id, () => {
       <legend>纳税人身份</legend>
       <p class="muted">成本开票参考按本月生效的身份计算；未设置时不会默认按一般纳税人。</p>
       <div v-for="(period, index) in periods" :key="index" class="field-row">
-        <input v-model="period.effective_from" type="month" required aria-label="生效月份">
+        <MonthPicker v-model="period.effective_from" label="生效月份" placeholder="选择生效年月" :disabled="busy" />
         <span class="muted">起为</span>
         <select v-model="period.taxpayer_type" aria-label="纳税人类型">
           <option value="general">一般纳税人</option>

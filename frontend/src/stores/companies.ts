@@ -6,12 +6,14 @@ import type {
   CompanyDeletePayload,
   CompanyListPayload,
   CompanyPayload,
+  CompanyRefreshState,
   CompanySetupInput,
   CompanySetupJob,
   SubdirCreateResult,
   SubdirPlan,
   TaxpayerPeriod,
 } from "../api/types";
+import { toast } from "../toast";
 
 export interface NewCompany {
   name: string;
@@ -43,6 +45,8 @@ export const useCompaniesStore = defineStore("companies", () => {
   const selectedId = ref<string | null>(null);
   const loading = ref(false);
   const error = ref("");
+  const refreshStates = ref<Record<string, CompanyRefreshState>>({});
+  const refreshTimers = new Map<string, ReturnType<typeof setTimeout>>();
   let generation = 0;
 
   const companies = computed<Company[]>(() => list.value?.companies ?? []);
@@ -106,16 +110,19 @@ export const useCompaniesStore = defineStore("companies", () => {
     return result;
   }
 
-  function subdirPlan(id: string): Promise<SubdirPlan> {
-    return request<SubdirPlan>(`/api/v1/companies/${encodeURIComponent(id)}/subdirs/plan`);
+  function subdirPlan(id: string, keys?: string[]): Promise<SubdirPlan> {
+    const query = keys?.length ? `?keys=${encodeURIComponent(keys.join(","))}` : "";
+    return request<SubdirPlan>(`/api/v1/companies/${encodeURIComponent(id)}/subdirs/plan${query}`);
   }
 
-  async function createSubdirs(id: string, planHash: string): Promise<SubdirCreateResult> {
+  async function createSubdirs(id: string, planHash: string, keys?: string[]): Promise<SubdirCreateResult> {
     // The plan hash binds what the user confirmed; any change since the preview is a
     // COMPANY_PLAN_STALE error and needs a new preview, never a silent retry.
+    const body: Record<string, unknown> = { plan_hash: planHash, confirm: true };
+    if (keys?.length) body.keys = keys;
     const result = await request<SubdirCreateResult>(`/api/v1/companies/${encodeURIComponent(id)}/subdirs/create`, {
       method: "POST",
-      body: { plan_hash: planHash, confirm: true },
+      body,
       acceptPartial: true,
     });
     await load();
@@ -142,5 +149,60 @@ export const useCompaniesStore = defineStore("companies", () => {
     await load();
   }
 
-  return { planSetup, getSetup, confirmSetup, acceptSetup, list, companies, selected, selectedId, loading, error, load, create, update, remove, subdirPlan, createSubdirs };
+  function stopRefreshPoll(companyId: string): void {
+    const timer = refreshTimers.get(companyId);
+    if (timer !== undefined) {
+      clearTimeout(timer);
+      refreshTimers.delete(companyId);
+    }
+  }
+
+  async function pollRefresh(companyId: string, silent: boolean): Promise<void> {
+    stopRefreshPoll(companyId);
+    try {
+      const state = await request<CompanyRefreshState>(`/api/v1/companies/${encodeURIComponent(companyId)}/refresh-data`);
+      refreshStates.value = { ...refreshStates.value, [companyId]: state };
+      if (state.status === "running") {
+        refreshTimers.set(companyId, setTimeout(() => void pollRefresh(companyId, silent), 600));
+        return;
+      }
+      window.dispatchEvent(new CustomEvent("workspace:company-refreshed", { detail: { companyId } }));
+      if (!silent && state.message) toast(state.message, state.status === "failed" ? "error" : "info", 3600);
+    } catch {
+      stopRefreshPoll(companyId);
+    }
+  }
+
+  async function refreshData(
+    companyId: string,
+    options: { keys?: string[]; force?: boolean; silent?: boolean } = {},
+  ): Promise<CompanyRefreshState | null> {
+    stopRefreshPoll(companyId);
+    const body: Record<string, unknown> = {};
+    if (options.keys?.length) body.keys = options.keys;
+    if (options.force) body.force = true;
+    try {
+      const state = await request<CompanyRefreshState>(`/api/v1/companies/${encodeURIComponent(companyId)}/refresh-data`, {
+        method: "POST",
+        body,
+      });
+      refreshStates.value = { ...refreshStates.value, [companyId]: state };
+      if (state.status === "running") {
+        refreshTimers.set(companyId, setTimeout(() => void pollRefresh(companyId, Boolean(options.silent)), 500));
+      } else {
+        window.dispatchEvent(new CustomEvent("workspace:company-refreshed", { detail: { companyId } }));
+        if (!options.silent && state.message) toast(state.message, state.status === "failed" ? "error" : "info", 3600);
+      }
+      return state;
+    } catch (cause) {
+      if (!options.silent) toast(`无法读取数据：${cause instanceof Error ? cause.message : String(cause)}`, "error", 4000);
+      return null;
+    }
+  }
+
+  return {
+    planSetup, getSetup, confirmSetup, acceptSetup,
+    list, companies, selected, selectedId, loading, error, refreshStates,
+    load, create, update, remove, subdirPlan, createSubdirs, refreshData,
+  };
 });

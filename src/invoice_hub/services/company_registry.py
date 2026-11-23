@@ -486,14 +486,37 @@ class CompanyRegistryService:
 
     # ---- missing subfolders: preview -> confirm -> mkdir only --------------------------------
 
-    def _plan(self, registry: dict, company: dict, *, snapshots: dict | None = None) -> dict:
+    def _normalize_plan_keys(self, raw_keys: object) -> list[str]:
+        if raw_keys is None:
+            return list(STANDARD_SUBDIRS)
+        if not isinstance(raw_keys, list) or not raw_keys:
+            raise _invalid("子目录键列表不能为空。", "keys")
+        selected: list[str] = []
+        for raw in raw_keys:
+            key = str(raw or "").strip()
+            if key not in STANDARD_SUBDIRS:
+                raise _invalid(f"未知的子目录类型：{key}", "keys")
+            if key not in selected:
+                selected.append(key)
+        return [key for key in STANDARD_SUBDIRS if key in selected]
+
+    def _plan(
+        self,
+        registry: dict,
+        company: dict,
+        *,
+        snapshots: dict | None = None,
+        keys: list[str] | None = None,
+    ) -> dict:
+        target_keys = self._normalize_plan_keys(keys)
         root = self._registered_root(company["root_dir"])
         items = []
         if snapshots is None:
-            snapshots = {key: subdir_snapshot(root, company["subdirs"][key]) for key in STANDARD_SUBDIRS}
+            snapshots = {key: subdir_snapshot(root, company["subdirs"][key]) for key in target_keys}
         if next(iter(snapshots.values()))["."][0] != "present":
             blocked_reason = "公司资料夹不存在或不是文件夹。"
-            for key, (label, _hints) in STANDARD_SUBDIRS.items():
+            for key in target_keys:
+                label = STANDARD_SUBDIRS[key][0]
                 relative = company["subdirs"].get(key) or label
                 items.append({"key": key, "label": label, "relative_path": relative, "path": str(root / relative),
                               "action": "blocked", "reason": blocked_reason})
@@ -503,7 +526,8 @@ class CompanyRegistryService:
                 "outside_root": "该路径是链接或指向公司资料夹外，不会创建。",
                 "unreadable": "无法读取该路径。",
             }
-            for key, (label, _hints) in STANDARD_SUBDIRS.items():
+            for key in target_keys:
+                label = STANDARD_SUBDIRS[key][0]
                 relative = company["subdirs"].get(key) or label
                 path = root / relative
                 status = next(reversed(snapshots[key].values()))[0]
@@ -528,21 +552,23 @@ class CompanyRegistryService:
             "plan_hash": plan_hash,
         }
 
-    def subdir_plan(self, company_id: str) -> dict:
+    def subdir_plan(self, company_id: str, *, keys: list[str] | None = None) -> dict:
         with self._lock:
             registry = self._load()
-            return self._plan(registry, self._find(registry, company_id))
+            return self._plan(registry, self._find(registry, company_id), keys=keys)
 
     def create_subdirs(self, company_id: str, payload: object) -> dict:
         payload = payload if isinstance(payload, dict) else {}
         if payload.get("confirm") is not True:
             raise CompanyRegistryError("COMPANY_CONFIRM_REQUIRED", "请先确认要创建的子目录。", field="confirm")
+        raw_keys = payload.get("keys")
+        target_keys = self._normalize_plan_keys(raw_keys)
         with self._lock:
             registry = self._load()
             company = self._find(registry, company_id)
             root = self._registered_root(company["root_dir"])
-            snapshots = {key: subdir_snapshot(root, company["subdirs"][key]) for key in STANDARD_SUBDIRS}
-            plan = self._plan(registry, company, snapshots=snapshots)
+            snapshots = {key: subdir_snapshot(root, company["subdirs"][key]) for key in target_keys}
+            plan = self._plan(registry, company, snapshots=snapshots, keys=raw_keys)
             # A same-named replacement is a different directory. Bind existing prefix
             # identities as well as actions before handing the plan to filesystem writes.
             if str(payload.get("plan_hash") or "") != plan["plan_hash"]:
