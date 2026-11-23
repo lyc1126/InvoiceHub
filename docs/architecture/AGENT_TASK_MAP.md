@@ -1,5 +1,11 @@
 # InvoiceHub Agent 工程任务导航
 
+## 2026-11-23 BUG-06 服务品目与凭证库存
+
+先读[做账规则](rules/BOOKKEEPING.md)、[成本规则](rules/COST_ANALYSIS.md)、[页面规则](rules/WEB_UI.md)及本页银行/公司/成本任务行。入口为 `bank/voucher_items.py`、`vouchers.prepare/build_drafts` 和 `company_views._voucher_invoice_inputs → company_vouchers.generate_draft/rebook_invoice`；不从服务毛利文件生成分录，不扩展完整服务科目引擎。
+
+最低运行 `test_voucher_item_types`、`test_bank_vouchers`、`test_company_voucher_generate`、`test_company_vouchers`、`test_company_inventory`、`test_company_views`、成本 V2 与 API/文档相邻回归、Ruff 和 Python 编译；跨模块改动跑全量 pytest。覆盖混合票 200+30、精确映射/习惯和别名、不可用/库存/矛盾科目、整月导出拦截、纯货物兼容、历史及混合销项数量、代际与来源映射切换、改记入期、坏/未来状态和生成期间目录替换。隔离浏览器核对服务行金额、缺编码审核拒绝、确认科目通过及浅深/390/no_skin；现有 P3/成本浏览器做相邻回归。真实默认配置、Windows BAT、正式前台、原生选择器、Tauri/打包与真实账套另验。
+
 <a id="task-browser-e2e"></a>
 
 ## 2026-11-22 ENG-05 合成浏览器门禁

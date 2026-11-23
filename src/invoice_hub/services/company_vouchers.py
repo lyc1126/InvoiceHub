@@ -722,7 +722,8 @@ def _generation_for(root: Path, name: str) -> tuple[dict, bool]:
             "ledger": newest_ledger_snapshot(root)}, False
 
 
-def rebook_invoice(root: Path, name: str, body: dict, *, bank_dir: Path | None = None, invoice_csv: Path | None = None) -> dict:
+def rebook_invoice(root: Path, name: str, body: dict, *, bank_dir: Path | None = None, invoice_csv: Path | None = None,
+                   reference_status: Path | None = None) -> dict:
     """`{revision, number, month ('' = back to the issue month), reason}`: correct where an invoice is booked, then regenerate."""
     import json
     from invoice_hub.bank.vouchers import PERIOD_OVERRIDES_FILE
@@ -750,12 +751,14 @@ def rebook_invoice(root: Path, name: str, body: dict, *, bank_dir: Path | None =
         (root / DRAFT_DIR).mkdir(exist_ok=True)
         _atomic(root / DRAFT_DIR / PERIOD_OVERRIDES_FILE,
                 lambda tmp: tmp.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8"))
-    generated = generate_draft(root, {**params, "confirm": True}, bank_dir=bank_dir, invoice_csv=invoice_csv)
+    generated = generate_draft(root, {**params, "confirm": True}, bank_dir=bank_dir, invoice_csv=invoice_csv,
+                               reference_status=reference_status)
     return {"periods_revision": state["revision"], "generation_remembered": remembered,
             "out_of_range": bool(month) and not params["from"] <= month <= params["to"], "generated": generated}
 
 
-def generate_draft(root: Path, body: dict, *, bank_dir: Path | None = None, invoice_csv: Path | None = None) -> dict:
+def generate_draft(root: Path, body: dict, *, bank_dir: Path | None = None, invoice_csv: Path | None = None,
+                   reference_status: Path | None = None) -> dict:
     """`{from, to, month_end?: true, booked?: [序时账_*.txt], ledger?: 科目表_*.json, confirm: true}` -> the CLI's draft."""
     from invoice_hub.bank.vouchers import CompanyPaths, prepare
     from invoice_hub.bank.voucher_cli import NOTES
@@ -785,6 +788,7 @@ def generate_draft(root: Path, body: dict, *, bank_dir: Path | None = None, invo
             paths = CompanyPaths.discover(root, bank_dir=bank_dir)
             if invoice_csv is not None:
                 paths.invoice_csv = invoice_csv
+            paths.reference_status = reference_status
             if ledger:
                 # A read-back snapshot only replaces where accounts come from; 凭证/科目表.json is not touched.
                 paths.ledger = readback / ledger

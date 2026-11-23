@@ -20,8 +20,10 @@ from typing import Any
 
 from .ledger import Ledger, load_aux_values, load_mapping_rules
 from .stock_mapping import journal_stock, read_setup, resolve_stock
+from .voucher_items import STATUS_FILE, non_stock_account, read_catalog
 from .models import StatementRow, money
 from .workpaper import Analysis, BuildOptions, WorkpaperInput, analyze, discover, load_directory, parties_from_invoice_csv
+from invoice_hub.projections.cost_analysis import ITEM_TYPE_GOODS, ITEM_TYPE_LABELS, resolve_item
 
 ZERO = Decimal("0.00")
 TAX_PATHS = {
@@ -525,16 +527,16 @@ class DraftBuilder:
         self.missing: dict[str, str] = {}  # 待补科目/档案 → 说明
 
     def line(self, side: str, path: str, amount: Decimal, *, slot: str = "", supplier: str = "",
-             child_of: str = "", child_name: str = "", note: str = "") -> DraftLine:
-        code = ""
-        if slot and slot in self.habits and self.ledger.is_usable(self.habits[slot].get("code", "")):
+             child_of: str = "", child_name: str = "", note: str = "", confirmed_code: str = "") -> DraftLine:
+        code = confirmed_code
+        if not code and slot and slot in self.habits and self.ledger.is_usable(self.habits[slot].get("code", "")):
             code = self.habits[slot]["code"]
             supplier = self.habits[slot].get("supplier", supplier) or supplier
-        elif child_of:
+        elif not code and child_of:
             code = self.ledger.find_child_containing(child_of, child_name)
             if not code:
                 self.missing[f"科目：{child_of} 下新增明细“{child_name}”"] = note or "科目表中没有对应往来明细"
-        elif path:
+        elif not code and path:
             code = self.ledger.find(path)
             if not code:
                 self.missing[f"科目：{path}"] = note or "科目表中没有此科目或不是唯一末级"
@@ -657,6 +659,7 @@ def build_drafts(
     month_end_dates: bool = False,
     period_overrides: dict[str, dict] | None = None,
     stock_setup: dict | None = None,
+    item_catalog: dict[str, dict] | None = None,
 ) -> DraftResult:
     own = {s.account_name for s in data.statements}
     months = _months(month_from, month_to)
@@ -667,8 +670,17 @@ def build_drafts(
     booked_months = {line.month for line in booked}
     read_months = {line.month for line in booked_all}
     b = DraftBuilder(ledger, aux, rules, habits, own)
+    def item_identity(item):
+        return resolve_item(item_catalog or {}, item["item"])
+
     def stock_resolution(name):
         return resolve_stock(name, ledger, stock_setup, goods_family)
+
+    def item_stock(item):
+        identity = item_identity(item)
+        if identity["type"] != ITEM_TYPE_GOODS:
+            return identity["standard_name"], "", False
+        return stock_resolution(identity["standard_name"])
     from invoice_hub.bank.salary import confirmed_details, summarize
     salaries = confirmed_details(tax_data)
 
@@ -736,7 +748,9 @@ def build_drafts(
     for inv in sales:
         output_tax[book_month[inv.number]] += inv.tax
         for item in inv.items:
-            _family, code, _explicit = stock_resolution(item["item"])
+            if item_identity(item)["type"] != ITEM_TYPE_GOODS:
+                continue
+            _family, code, _explicit = item_stock(item)
             if code and item["qty"] is not None:
                 sold[book_month[inv.number]][code] += item["qty"]
             else:
@@ -751,35 +765,59 @@ def build_drafts(
 
     # 1. 销项发票：确认收入与销项税额。成本结转需要出库数量与库存单价，不在此自动生成。
     for inv in sales:
-        families = sorted({goods_family(i["item"]) for i in inv.items})
+        families = sorted({item_stock(i)[0] for i in inv.items})
+        non_stock = [f"{i['item']}（{ITEM_TYPE_LABELS[item_identity(i)['type']]}）除税 {i['net']:.2f}：不参与货物出库和销售成本结转"
+                     for i in inv.items if item_identity(i)["type"] != ITEM_TYPE_GOODS]
         b.add(DraftVoucher(
             inv_date(inv), f"销售{_goods_word(families)}-{abbr(inv.buyer)}", f"销项发票 {inv.number}", "高",
             [
                 # 往来户名按科目实际启用的维度带上（有的账套应收账款挂“供应商”维度），未启用时 line() 自动丢弃
                 b.line("借", "应收账款/*", inv.gross, slot=f"inv-ar:{inv.buyer}", supplier=inv.buyer),
                 b.line("贷", "主营业务收入", inv.net, slot=f"inv-revenue:{inv.buyer}"),
-                b.line("贷", P_OUTPUT, inv.tax),
+                *([b.line("贷", P_OUTPUT, inv.tax)] if inv.tax else []),
             ],
-            [f"销项发票 {inv.number}：{'、'.join(families)}；成本见本月“结转销售成本”凭证"], carry_note(inv),
+            [f"销项发票 {inv.number}：{'、'.join(families)}；货物成本见本月“结转销售成本”凭证", *non_stock], carry_note(inv),
             order=ORDER_SALE, evidence_ref=invoice_ref(inv), event_date=inv.issue_date,
         ))
 
     # 2. 进项发票：存货/费用/资产 + 进项税额（或待认证）+ 应付（燃油走预付油卡）。
     for inv in purchases:
-        groups: dict[str, Decimal] = defaultdict(lambda: ZERO)
-        quantities: dict[str, tuple[Decimal | None, str]] = {}
+        groups: dict[tuple[str, str], Decimal] = defaultdict(lambda: ZERO)
+        quantities: dict[tuple[str, str], tuple[Decimal | None, str]] = {}
+        originals: dict[tuple[str, str], set[str]] = defaultdict(set)
         for item in inv.items:
-            family, _code, _explicit = stock_resolution(item["item"])
-            groups[family] += item["net"]
-            qty, unit = quantities.get(family, (ZERO, item["unit"]))
+            identity = item_identity(item)
+            family, _code, _explicit = item_stock(item)
+            key = (identity["type"], family)
+            # The company catalog decides type before family aggregation. Otherwise
+            # a service containing a steel name contaminates stock, quantities and COGS.
+            groups[key] += item["net"]
+            originals[key].add(item["item"])
+            qty, unit = quantities.get(key, (ZERO, item["unit"]))
             # 同一品类单位一致时才累计数量；缺数量或单位不一致就留空，让人工按入库单填，不拼凑。
-            quantities[family] = ((qty + item["qty"]) if qty is not None and item["qty"] is not None and unit == item["unit"] else None, unit)
+            quantities[key] = ((qty + item["qty"]) if qty is not None and item["qty"] is not None and unit == item["unit"] else None, unit)
         lines, basis, todo, confidence = [], [], carry_note(inv), "高"
-        for family, amount in groups.items():
-            rule = next((r for r in rules if r.get("match_seller") == inv.seller and r.get("match_internal_project") == family), None)
+        for (kind, family), amount in groups.items():
             slot = f"inv-goods:{inv.seller}:{family}"
-            explicit_code = next((stock_resolution(i["item"])[1] for i in inv.items
-                                  if stock_resolution(i["item"])[0] == family and stock_resolution(i["item"])[2]), "")
+            if kind != ITEM_TYPE_GOODS:
+                code, reason = non_stock_account(
+                    name=family, originals=originals[(kind, family)], seller=inv.seller, ledger=ledger,
+                    rules=rules, habits=habits, stock_setup=stock_setup, legacy_family=goods_family,
+                )
+                label = f"{ITEM_TYPE_LABELS[kind]}：{family}"
+                if code:
+                    lines.append(b.line("借", "", amount, slot=slot, supplier=inv.seller, confirmed_code=code))
+                else:
+                    # A blank code preserves the invoice amount and balance while
+                    # the shared review/export validator blocks this unresolved voucher.
+                    lines.append(DraftLine("借", "", label, money(amount), slot=slot))
+                    b.missing[f"科目：{label}"] = reason
+                    todo.append(f"{label}：{reason}")
+                basis.append(f"{'、'.join(sorted(originals[(kind, family)]))} → {label}，除税 {amount:.2f}；{reason}")
+                continue
+            rule = next((r for r in rules if r.get("match_seller") == inv.seller and r.get("match_internal_project") == family), None)
+            explicit_code = next((item_stock(i)[1] for i in inv.items
+                                  if item_identity(i)["type"] == kind and item_stock(i)[0] == family and item_stock(i)[2]), "")
             if explicit_code:
                 # Pricing, the stock comparison and drafts consume the same confirmed
                 # account. A conflicting manual habit/rule must be resolved, never silently replaced.
@@ -806,35 +844,46 @@ def build_drafts(
                 lines.append(DraftLine("借", code, ledger.full_name(code), money(amount), slot=slot))
                 basis.append("电梯：项目用、待转售，记库存商品")
             else:
-                lines.append(b.line("借", f"库存商品/{family}", amount, slot=slot, note="库存商品下没有该品类明细"))
+                # A mapped sibling can make resolve_stock return the full account
+                # name for an implicit match. Reuse that code instead of looking
+                # up an impossible 库存商品/库存商品_品类 path.
+                code = next((item_stock(i)[1] for i in inv.items if item_stock(i)[0] == family), "")
+                if ledger.is_usable(habits.get(slot, {}).get("code", "")):
+                    code = ""  # Keep the existing explicit habit priority for goods.
+                lines.append(b.line("借", f"库存商品/{family}", amount, slot=slot,
+                                    note="库存商品下没有该品类明细", confirmed_code=code))
                 basis.append(f"{family}：按品类记库存商品（沿用账套按品类设明细的习惯）")
             if lines[-1].name.startswith("库存商品"):  # 账套库存商品按数量核算（Q2 凭证带吨数）
-                lines[-1].qty, lines[-1].unit = quantities[family]
+                lines[-1].qty, lines[-1].unit = quantities[(kind, family)]
         lines.sort(key=lambda l: l.code or "~")  # 同一张票的多个品类按科目编码排列，和账套科目表顺序一致
         deduct_month, reason = _input_policy(inv, tax_data, month_status, output_tax)
         basis.append(reason)
         booked_in = book_month[inv.number]
         if deduct_month != NOT_DEDUCTED and deduct_month and deduct_month <= booked_in:
             # 入账当月或之前已抵扣：入账时直接记进项税额；只有当月抵扣的才计入当月进项（之前月份的已在当月申报里）
-            lines.append(b.line("借", P_INPUT, inv.tax))
+            if inv.tax:
+                lines.append(b.line("借", P_INPUT, inv.tax))
             if deduct_month == booked_in:
                 input_deducted[booked_in] += inv.tax
             if month_status.get(booked_in) != "已申报":
                 todo.append("申报前在税局完成该发票用途确认（勾选）")
         else:
-            lines.append(b.line("借", P_PENDING_INPUT, inv.tax))
+            # Zero-tax invoices still carry their full net/gross amount, but a
+            # zero-value tax entry would fail the shared positive-amount validator.
+            if inv.tax:
+                lines.append(b.line("借", P_PENDING_INPUT, inv.tax))
             target = "" if deduct_month == NOT_DEDUCTED else (
                 deduct_month or next((m for m in months if month_status.get(m) != "已申报" and m not in booked_months), ""))
-            if target:
+            if target and inv.tax:
                 pending_by_month[target].append(inv)
-        fuel_only = any(stock_resolution(i["item"])[0] == "燃油" for i in inv.items) and len(groups) == 1
+        fuel_only = (ITEM_TYPE_GOODS, "燃油") in groups and len(groups) == 1
         if fuel_only:
             lines.append(b.line("贷", "预付账款", inv.gross, slot=f"inv-ap:{inv.seller}"))
             basis.append("油卡加油发票：冲减预付油卡款")
         else:
             lines.append(b.line("贷", "应付账款/*", inv.gross, slot=f"inv-ap:{inv.seller}", supplier=inv.seller))
         b.add(DraftVoucher(
-            inv_date(inv), "加油费-" + abbr(inv.seller) if fuel_only else f"购{_goods_word(list(groups))}-{abbr(inv.seller)}",
+            inv_date(inv), "加油费-" + abbr(inv.seller) if fuel_only else f"购{_goods_word([name for _, name in groups])}-{abbr(inv.seller)}",
             f"进项发票 {inv.number}", confidence, lines, basis, todo, order=ORDER_PURCHASE, evidence_ref=invoice_ref(inv),
             event_date=inv.issue_date,
         ))
@@ -873,7 +922,7 @@ def build_drafts(
                 continue
             sign = -1 if inv.seller in own else 1
             for item in inv.items:
-                _family, code, _explicit = stock_resolution(item["item"])
+                _family, code, _explicit = item_stock(item)
                 if code and item["qty"] is not None:
                     by_invoice[code] += sign * item["qty"]
                     # 范围前开票、却记入本草稿某月的票（补记到首月或人工调整记入期），其数量在当月购销里计算，
@@ -1196,6 +1245,7 @@ class CompanyPaths:
     aux: Path
     rules: Path
     template: Path
+    reference_status: Path | None = None
 
     @classmethod
     def discover(cls, company: Path, bank_dir: Path | None = None) -> "CompanyPaths":
@@ -1217,6 +1267,8 @@ def prepare(paths: CompanyPaths, out_dir: Path, month_from: str, month_to: str, 
         raise ValueError("缺少 凭证/科目表.json：请先从捷锐采集科目表")
     if not paths.invoice_csv.exists():
         raise ValueError("缺少 成本发票明细.csv")
+    status_path = paths.reference_status or paths.invoice_csv.parent / STATUS_FILE
+    item_catalog, catalog_revision = read_catalog(status_path)
     ledger = Ledger.load(paths.ledger)
     stock_setup = read_setup(paths.company, ledger)
     from invoice_hub.services.company_bank_layouts import company_profiles
@@ -1248,6 +1300,8 @@ def prepare(paths: CompanyPaths, out_dir: Path, month_from: str, month_to: str, 
         ledger=ledger, aux=load_aux_values(paths.aux), rules=load_mapping_rules(paths.rules),
         habits=habits, month_from=month_from, month_to=month_to,
         booked=booked, sources=SourceIndex(data, paths.company), month_end_dates=month_end_dates,
-        period_overrides=period_overrides, stock_setup=stock_setup,
+        period_overrides=period_overrides, stock_setup=stock_setup, item_catalog=item_catalog,
     )
+    if read_catalog(status_path)[1] != catalog_revision:
+        raise ValueError("品目表或来源目录在生成期间变化，请重新生成；未覆盖凭证审核表。")
     return data, analysis, result, tax_path, created

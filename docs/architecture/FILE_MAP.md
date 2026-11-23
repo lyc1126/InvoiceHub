@@ -1,5 +1,14 @@
 # InvoiceHub 完整文件地图
 
+## 2026-11-23 服务品目与凭证库存隔离
+
+| 文件 | 职责与联动 |
+|---|---|
+| `src/invoice_hub/bank/voucher_items.py` | 有界、无链接严格读取来源品目表，携带目录身份/原字节供生成前后复核；精确确认非库存科目，冲突留待补。 |
+| `src/invoice_hub/bank/vouchers.py` | 按类型/别名先分组再生成，服务与库存数量、历史更正、销项成本隔离；零税额票不生成零金额税额行。 |
+| `src/invoice_hub/services/company_views.py`、`company_vouchers.py` | 将公司完整代际明细与同来源状态路径一起传给共用生成及改记入期入口。 |
+| `tests/test_voucher_item_types.py` | 混合票、两入口对照、确认/冲突、审核导出、销项/历史、旧档案、坏状态、来源/目录替换和 API 改记入期回归。 |
+
 ## 2026-11-22 合成浏览器门禁
 
 | 文件 | 职责与联动 |

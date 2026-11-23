@@ -76,8 +76,9 @@ def test_voucher_invoice_source_uses_complete_generation(app, client, tmp_path, 
     (root / '成本发票明细.csv').write_text('legacy stale copy')
     (cost / '成本发票明细.csv').write_text('export copy not authoritative')
     seen = []
-    def generate(folder, body, *, bank_dir=None, invoice_csv=None):
+    def generate(folder, body, *, bank_dir=None, invoice_csv=None, reference_status=None):
         seen.append(invoice_csv)
+        assert reference_status == cost / "成本开票状态.json"
         assert 'projection-generations' in invoice_csv.parts
         assert '10000000000000000001' in invoice_csv.read_text(encoding='utf-8-sig')
         return {'name': 'synthetic'}

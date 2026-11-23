@@ -6,6 +6,7 @@
 
 - 适用问题：成本明细、金额校验、成本三件套、加价率与已开快照。
 - 服务毛利与服务凭证是独立流程：当前服务成本记录只用于明确来源的分析，不生成账套分录；后续科目归集衔接按 [COST-07](../../PRODUCT_BACKLOG.md#cost-07) 评估，不能将服务毛利记录视作已入账成本。
+- BUG-06（2026-11-23）：凭证草稿已在聚合前复用品目表标准名与类型，显式服务不再按名称中的货物词进入库存；缺确认科目留待补并阻断审核/导出。此保护仅消费原票和已确认科目，不把服务分析文件视作记账依据；完整规则见[做账规则](BOOKKEEPING.md)。
 - 代码与验收定位：projections/cost_analysis.py、projections/costs.py、services/costs.py；数据算法第 8—9 节、任务导航第 5 节。Python 模块目录（extraction/projections/monitoring/services/bookkeeping/runners/platform/release）相对 `src/invoice_hub/`，其余路径相对仓库根。
 - 开票参考成本基数、品名别名、销项数量比对、库存核对和定价规则的进度见 [COST-01—06](../../PRODUCT_BACKLOG.md#cost-01) 和[成本分析 V2 设计](../../COST_ANALYSIS_V2_DESIGN.md)。公司税率与含税成本的真实金额复验见 [BUG-01](../../PRODUCT_BACKLOG.md#bug-01)。
 - 导航：[任务入口](../AGENT_TASK_MAP.md#task-costs) · [架构总入口](../../DEVELOPMENT_ARCHITECTURE.md) · [文件地图](../FILE_MAP.md) · [接口与流程](../INTERFACES_AND_FLOWS.md) · [数据与算法](../DATA_AND_ALGORITHMS.md) · [设计原因](../COMMENT_RATIONALE_MAP.md)。

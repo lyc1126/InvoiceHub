@@ -660,16 +660,20 @@ class CompanyViewService:
             raise company_vouchers.VoucherDraftError("VOUCHER_DRAFT_INVALID", "银行流水目录不可用，请核对公司目录映射。")
         return Path(subdir["path"])
 
-    def _voucher_invoice_csv(self, company: dict) -> Path | None:
+    def _voucher_invoice_inputs(self, company: dict) -> dict:
         subdir, profile = self._directory(company, "cost_invoice_dir")
         if subdir["status"] != "present":
-            return None
+            return {}
         workspace, source = Path(profile.workspace_dir), Path(profile.watch_dir)
         manifest = generations.current(workspace, source)
         path = generations.resolve(workspace, source, "成本发票明细.csv", manifest)
-        # Workspace drafts bind to the same immutable projection as company views.
-        # Only pre-generation companies retain the CLI's legacy root CSV fallback.
-        return path if manifest or path.is_file() else None
+        # The immutable CSV lives in the workspace generation, but its company
+        # catalog remains in the mapped source. Pass them together, never guess
+        # a catalog from the generation's parent or another company's active target.
+        return {"invoice_csv": path, "reference_status": source / "成本开票状态.json"} if manifest or path.is_file() else {}
+
+    def _voucher_invoice_csv(self, company: dict) -> Path | None:
+        return self._voucher_invoice_inputs(company).get("invoice_csv")
 
     def generate_voucher_draft(self, company_id: str, body: object) -> dict:
         # Only on the user's confirm: writes 做账草稿/ the way `voucher_cli draft` does, backing up an existing table.
@@ -677,7 +681,7 @@ class CompanyViewService:
         if not isinstance(body, dict):
             raise company_vouchers.VoucherDraftError("VOUCHER_DRAFT_INVALID", "请求格式不对。")
         return {"ok": True, **company_vouchers.generate_draft(self._company_root(company), body, bank_dir=self._voucher_bank_dir(company),
-                                                            invoice_csv=self._voucher_invoice_csv(company))}
+                                                            **self._voucher_invoice_inputs(company))}
 
     def voucher_draft(self, company_id: str, name: str) -> dict:
         company = self._registry.get_company(company_id)["company"]
@@ -743,7 +747,7 @@ class CompanyViewService:
         if not isinstance(body, dict):
             raise company_vouchers.VoucherDraftError("VOUCHER_DRAFT_INVALID", "请求格式不对。")
         return {"ok": True, **company_vouchers.rebook_invoice(self._company_root(company), name, body, bank_dir=self._voucher_bank_dir(company),
-                                                            invoice_csv=self._voucher_invoice_csv(company))}
+                                                            **self._voucher_invoice_inputs(company))}
 
     def export_voucher_draft(self, company_id: str, name: str, body: object) -> dict:
         # Only on the user's confirm; files go to the company folder's 做账草稿/, for manual import into the books.
