@@ -16,7 +16,7 @@ def test_ten_thousand_files_only_parse_five_changes(tmp_path, monkeypatch):
     source, workspace = tmp_path / 'source', tmp_path / 'workspace'
     source.mkdir()
     for index in range(10000):
-        (source / f'{index}.xml').write_text(str(index))
+        (source / f'{index}.xml').write_text(str(index), encoding="utf-8")
     calls = []
     def parse(path):
         calls.append(path.name)
@@ -30,9 +30,9 @@ def test_ten_thousand_files_only_parse_five_changes(tmp_path, monkeypatch):
         summary.build_summary(source, workspace, cache=cache)
     assert calls == []
     for index in range(10000, 10003):
-        (source / f'{index}.xml').write_text(str(index))
+        (source / f'{index}.xml').write_text(str(index), encoding="utf-8")
     for index in (1, 2):
-        (source / f'{index}.xml').write_text('changed')
+        (source / f'{index}.xml').write_text('changed', encoding="utf-8")
     (source / '3.xml').unlink()
     with ParseCache(workspace) as cache:
         incremental = summary.build_summary(source, workspace, cache=cache)
@@ -44,12 +44,12 @@ def test_ten_thousand_files_only_parse_five_changes(tmp_path, monkeypatch):
 
 def test_equal_length_time_replacement_and_parser_version(tmp_path):
     path = tmp_path / 'a.xml'
-    path.write_text('alpha')
-    parse = lambda: {'text': path.read_text()}
+    path.write_text('alpha', encoding="utf-8")
+    parse = lambda: {'text': path.read_text(encoding="utf-8")}
     with ParseCache(tmp_path) as cache:
         assert cache.read('test', path, 'v1', parse) == {'text': 'alpha'}
     stamp = path.stat()
-    path.write_text('bravo')
+    path.write_text('bravo', encoding="utf-8")
     os.utime(path, ns=(stamp.st_atime_ns, stamp.st_mtime_ns))
     with ParseCache(tmp_path, verify=True) as cache:
         assert cache.read('test', path, 'v1', parse) == {'text': 'bravo'}
@@ -62,7 +62,7 @@ def test_failed_candidate_keeps_complete_generation_and_manual_fields(tmp_path, 
     profile = target_profile_for(load_config(tmp_path))
     state = MonitorState(profile)
     path = state.watch_dir / 'a.xml'
-    path.write_text(_sample_xml())
+    path.write_text(_sample_xml(), encoding="utf-8")
     sync = MonitorSynchronizer(state)
     assert sync.run_sync('startup', force=True)['ok']
     previous = generations.current(state.workspace_dir)
@@ -70,7 +70,7 @@ def test_failed_candidate_keeps_complete_generation_and_manual_fields(tmp_path, 
     content = stable.read_bytes()
     manual = {str(path): {'source_path': str(path), 'fields': {'销售方': '人工名称'}, 'updated_at': ''}}
     state.save_manual_overrides(manual)
-    (state.watch_dir / 'b.xml').write_text(_sample_xml())
+    (state.watch_dir / 'b.xml').write_text(_sample_xml(), encoding="utf-8")
     def fail(*args, **kwargs):
         raise OSError('injected')
     monkeypatch.setattr('invoice_hub.projections.incremental.CostProjectionService.rebuild', fail)
@@ -95,28 +95,28 @@ def test_manifest_refuses_late_publication_and_damage(tmp_path):
     workspace = tmp_path / 'workspace'
     with generations.candidate(workspace) as stage:
         for name in generations.SUMMARY + generations.COST[:2]:
-            (stage / name).write_text('synthetic')
+            (stage / name).write_text('synthetic', encoding="utf-8")
         published = generations.publish(workspace, source, stage)
     with generations.candidate(workspace) as stage:
         with pytest.raises(ValueError, match='迟到'):
             generations.publish(workspace, source, stage, expected='old')
     assert generations.current(workspace)['generation'] == published['generation']
-    (workspace / 'projection-manifest.json').write_text('{"version":999}')
+    (workspace / 'projection-manifest.json').write_text('{"version":999}', encoding="utf-8")
     with pytest.raises(ValueError, match='损坏'):
         generations.resolve(workspace, source, '发票汇总.csv')
 
 
 def test_raw_cache_damage_rebuilds_without_losing_manual_json(tmp_path):
     path = tmp_path / 'a.xml'
-    path.write_text('synthetic')
-    (tmp_path / 'manual_overrides.json').write_text('{"keep":true}')
+    path.write_text('synthetic', encoding="utf-8")
+    (tmp_path / 'manual_overrides.json').write_text('{"keep":true}', encoding="utf-8")
     (tmp_path / 'parse-cache.sqlite3').write_bytes(b'broken sqlite')
     with ParseCache(tmp_path) as cache:
         assert cache.read('test', path, 'v1', lambda: {'ok': True}) == {'ok': True}
         cache.db.execute("UPDATE raw SET payload='[]'")
         cache.db.commit()
         assert cache.read('test', path, 'v1', lambda: {'repaired': True}) == {'repaired': True}
-    assert (tmp_path / 'manual_overrides.json').read_text() == '{"keep":true}'
+    assert (tmp_path / 'manual_overrides.json').read_text(encoding="utf-8") == '{"keep":true}'
 
 
 def test_generation_source_aliases_share_identity_but_other_roots_are_rejected(tmp_path):
@@ -129,11 +129,11 @@ def test_generation_source_aliases_share_identity_but_other_roots_are_rejected(t
     workspace = tmp_path / 'workspace'
     with generations.candidate(workspace) as stage:
         for name in generations.SUMMARY + generations.COST[:2]:
-            (stage / name).write_text('synthetic')
+            (stage / name).write_text('synthetic', encoding="utf-8")
         published = generations.publish(workspace, alias / 'source', stage)
     assert published['source'] == str(source.resolve())
     assert generations.current(workspace, source)['generation'] == published['generation']
-    assert generations.resolve(workspace, alias / 'source', '发票汇总.csv').read_text() == 'synthetic'
+    assert generations.resolve(workspace, alias / 'source', '发票汇总.csv').read_text(encoding="utf-8") == 'synthetic'
     # A pre-normalization manifest can contain the alias spelling; keep it readable.
     manifest = workspace / 'projection-manifest.json'
     published['source'] = str(alias / 'source')
@@ -156,7 +156,7 @@ def test_export_failure_recovery_and_manifest_content_validation(tmp_path, monke
     def publish(value, expected=''):
         with generations.candidate(workspace) as stage:
             for name in names:
-                (stage / name).write_text(value)
+                (stage / name).write_text(value, encoding="utf-8")
             return generations.publish(workspace, source, stage, expected=expected)
     first = publish('first')
     real_copy = generations.shutil.copyfile
@@ -167,12 +167,12 @@ def test_export_failure_recovery_and_manifest_content_validation(tmp_path, monke
     monkeypatch.setattr(generations.shutil, 'copyfile', fail_export)
     second = publish('second', first['generation'])
     assert len(second['export_warnings']) == 4
-    assert (workspace / '发票汇总.csv').read_text() == 'first'
-    assert generations.resolve(workspace, source, '发票汇总.csv').read_text() == 'second'
+    assert (workspace / '发票汇总.csv').read_text(encoding="utf-8") == 'first'
+    assert generations.resolve(workspace, source, '发票汇总.csv').read_text(encoding="utf-8") == 'second'
     monkeypatch.setattr(generations.shutil, 'copyfile', real_copy)
     generations.recover_exports(workspace, source)
-    assert (workspace / '发票汇总.csv').read_text() == 'second'
+    assert (workspace / '发票汇总.csv').read_text(encoding="utf-8") == 'second'
     stable = generations.resolve(workspace, source, '发票汇总.csv')
-    stable.write_text('damaged')
+    stable.write_text('damaged', encoding="utf-8")
     with pytest.raises(ValueError, match='损坏'):
         generations.resolve(workspace, source, '发票汇总.csv')

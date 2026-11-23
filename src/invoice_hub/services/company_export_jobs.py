@@ -24,8 +24,6 @@ def _path(root: Path, token: str) -> Path:
 
 
 def _sync(path: Path) -> None:
-    with path.open("rb") as stream:
-        os.fsync(stream.fileno())
     if os.name != "nt":
         descriptor = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
         try:
@@ -41,7 +39,7 @@ def get_export_job(root: Path, name: str, token: str) -> dict:
     try:
         if path.is_symlink() or path.stat().st_size > 2_000_000:
             raise ValueError()
-        job = json.loads(path.read_text())
+        job = json.loads(path.read_text(encoding="utf-8"))
         if not isinstance(job, dict) or job.get("name") != name or job.get("state") not in {"unknown", "completed", "rejected"}:
             raise ValueError()
         return job
@@ -61,7 +59,7 @@ def run_export_job(root: Path, name: str, body: dict) -> dict:
     path.parent.mkdir(parents=True, exist_ok=True)
     intent = {"name": name, "request_id": token, "state": "unknown", "message": "执行结果待核对，请读取结果；不会重复导出。"}
     try:
-        with path.open("x") as stream:
+        with path.open("x", encoding="utf-8") as stream:
             json.dump(intent, stream, ensure_ascii=False)
             stream.flush()
             os.fsync(stream.fileno())

@@ -65,8 +65,6 @@ class CompanySetupService:
     def _save(self, job: dict) -> None:
         path = self._path(job["job_id"])
         atomic_write_json(path, job)
-        with path.open("rb") as stream:
-            os.fsync(stream.fileno())
         self._sync_directory()
 
     def _load(self, job_id: str) -> dict:

@@ -88,9 +88,9 @@ def test_core_identity_ignores_editable_install_metadata_but_tracks_source(tmp_p
     original = deterministic_build_id(root)
     metadata = root / "src/invoice_hub.egg-info/PKG-INFO"
     metadata.parent.mkdir()
-    metadata.write_text("local editable install metadata\n")
+    metadata.write_text("local editable install metadata\n", encoding="utf-8")
     assert deterministic_build_id(root) == original
-    (root / "src/invoice_hub/module.py").write_text("VALUE = 2\n")
+    (root / "src/invoice_hub/module.py").write_text("VALUE = 2\n", encoding="utf-8")
     assert deterministic_build_id(root) != original
 
 

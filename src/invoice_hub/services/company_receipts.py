@@ -132,7 +132,9 @@ class CompanyReceiptService:
             except OSError as exc:
                 raise self._changed() from exc
             job = self.renderer.create_job([FilePreviewSource(source, source.relative_to(bank).as_posix())])
-            self._jobs[job.job_id] = (company_id, scope, source, signatures)
+            # Bind content SHA-256 alongside stat so equal-size replacements with
+            # restored mtime still invalidate jobs on Windows (where st_ctime_ns is birthtime).
+            self._jobs[job.job_id] = (company_id, scope, source, signatures, receipt.source_sha256)
             while len(self._jobs) > 8:
                 self._jobs.popitem(last=False)
             self._validate(company_id, job.job_id)
@@ -151,6 +153,11 @@ class CompanyReceiptService:
         bank, scope = self._context(company_id)
         if binding[1] != scope or self._source(bank, binding[2])[1] != binding[3]:
             raise self._changed()
+        try:
+            if file_sha256(binding[2]) != binding[4]:
+                raise self._changed()
+        except OSError as exc:
+            raise self._changed() from exc
 
     def page(self, company_id: str, job_id: str, page: int):
         with self._lock:

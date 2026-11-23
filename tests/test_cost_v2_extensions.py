@@ -128,7 +128,7 @@ def test_ledger_change_requires_explicit_rebinding(env):
     _app, client, root, _cid, url = env
     path = ledger_file(root)
     put_setup(client, url, setup())
-    data = json.loads(path.read_text())
+    data = json.loads(path.read_text(encoding="utf-8"))
     data["accounts"][2]["name"] = "新定制材料"
     path.write_text(json.dumps(data), encoding="utf-8")
     assert client.get(url).status_code == 422
@@ -223,7 +223,7 @@ def test_archive_and_service_corruption_preserved(env):
     _app, client, root, _cid, url = env
     archive(client, url)
     path = root / RECORDS_FILE
-    data = json.loads(path.read_text())
+    data = json.loads(path.read_text(encoding="utf-8"))
     data["records"]["quote-1"]["content"]["customer"] = "篡改"
     path.write_text(json.dumps(data), encoding="utf-8")
     assert client.get(url + "/records").status_code == 422
@@ -286,7 +286,7 @@ def test_draft_core_and_company_comparison_share_confirmed_accounts(tmp_path, en
     response = client.get(f"/api/v1/companies/{cid}/compare", params={"a": "cost_invoice_dir", "b": "issued_invoice_dir", "end": "2026-07"})
     assert response.status_code == 200, response.text
     assert response.json()["items"][0]["account_code"] == "140502"
-    raw = json.loads(path.read_text())
+    raw = json.loads(path.read_text(encoding="utf-8"))
     raw["accounts"][2]["name"] = "改过名称"
     path.write_text(json.dumps(raw), encoding="utf-8")
     assert client.get(f"/api/v1/companies/{cid}/compare", params={"a": "cost_invoice_dir", "b": "issued_invoice_dir"}).status_code == 409
@@ -296,7 +296,7 @@ def test_cent_allocation_by_customer_project_retains_category_cost(env):
     app, client, root, _cid, url = env
     for number, buyer, spec, qty in [("3", "客户甲", "12E", "5"), ("5", "客户乙", "14E", "1")]:
         path = invoice(root, "开具发票", number, "2026-07-20", qty, "700", "91", spec=spec)
-        path.write_text(path.read_text().replace("<BuyerName>甲公司</BuyerName>", f"<BuyerName>{buyer}</BuyerName>"), encoding="utf-8")
+        path.write_text(path.read_text(encoding="utf-8").replace("<BuyerName>甲公司</BuyerName>", f"<BuyerName>{buyer}</BuyerName>"), encoding="utf-8")
     (root / "项目归属.json").write_text(json.dumps({"version": 1, "revision": 1, "invoices": {
         "3".zfill(20): {"project": "项目甲"}, "5".zfill(20): {"project": "项目乙"}}}), encoding="utf-8")
     invoice(root, "成本发票", "6", "2026-07-03", "1", "1", "0.13")
@@ -339,7 +339,7 @@ def test_archive_structure_checked_even_when_checksum_is_recomputed(env):
     _app, client, root, _cid, url = env
     archive(client, url)
     path = root / RECORDS_FILE
-    data = json.loads(path.read_text())
+    data = json.loads(path.read_text(encoding="utf-8"))
     row = data["records"]["quote-1"]
     row["content"]["result"]["items"][0]["warnings"] = [None]
     row["content_hash"] = _hash(row["content"])
@@ -354,5 +354,5 @@ def test_overlapping_book_exports_are_not_counted_twice(env):
     journals(root)
     put_setup(client, url, setup())
     folder = root / "做账草稿/账套读回"
-    (folder / "序时账_重叠.txt").write_text((folder / "序时账_合成.txt").read_text(), encoding="utf-8")
+    (folder / "序时账_重叠.txt").write_text((folder / "序时账_合成.txt").read_text(encoding="utf-8"), encoding="utf-8")
     assert snapshot(client, url)["book_reconciliation"]["state"] == "needs_review"

@@ -26,7 +26,7 @@ class HandoffTests(unittest.TestCase):
         self.base = Path(self.temp.name)
         self.workspace = self.base / "workspace"
         self.workspace.mkdir()
-        (self.workspace / "example.txt").write_text("synthetic source\n")
+        (self.workspace / "example.txt").write_text("synthetic source\n", encoding="utf-8")
         self.private = self.base / "private"
         self.prefix = ["--state-root", str(self.private), "--project", "Example"]
         self.store = handoff.Store(self.private, "Example")
@@ -81,7 +81,7 @@ class HandoffTests(unittest.TestCase):
 
     def test_file_drift_is_reported_and_requires_explicit_reconciliation(self):
         self.initialize()
-        (self.workspace / "example.txt").write_text("changed\n")
+        (self.workspace / "example.txt").write_text("changed\n", encoding="utf-8")
         result = json.loads(self.cli("check", "--task", "work", code=3))
         self.assertEqual(result["changed_files"], ["example.txt"])
         self.cli("claim", "--task", "work", "--actor", "agent-b", "--expect-revision", "1",
@@ -92,14 +92,14 @@ class HandoffTests(unittest.TestCase):
 
     def test_snapshot_does_not_store_source_contents_or_follow_symlinks(self):
         secret = self.base / "outside.txt"
-        secret.write_text("PRIVATE-CONTENT-NOT-IN-CHECKPOINT")
+        secret.write_text("PRIVATE-CONTENT-NOT-IN-CHECKPOINT", encoding="utf-8")
         try:
             (self.workspace / "link").symlink_to(secret)
         except OSError:
             self.skipTest("symlink creation unavailable")
         snap = handoff.snapshot(self.workspace, ["link"], no_git=True)
         self.assertEqual(snap["files"]["link"]["kind"], "symlink")
-        self.assertNotIn(secret.read_text(), json.dumps(snap))
+        self.assertNotIn(secret.read_text(encoding="utf-8"), json.dumps(snap))
 
     def test_private_state_cannot_be_inside_workspace_or_another_git_repository(self):
         self.prefix = ["--state-root", str(self.workspace / "ignored"), "--project", "Example"]
@@ -128,7 +128,7 @@ class HandoffTests(unittest.TestCase):
         self.assertFalse(result["current_projection_matches"])
         self.cli("repair", "--task", "work")
         self.assertEqual(json.loads(self.cli("list"))["tasks"][0]["revision"], 2)
-        self.assertIn("Revision: 2", (self.store.task_dir("work") / "CURRENT.md").read_text())
+        self.assertIn("Revision: 2", (self.store.task_dir("work") / "CURRENT.md").read_text(encoding="utf-8"))
 
     def test_truncated_tail_requires_repair_and_preserves_exact_backup(self):
         self.initialize()
@@ -154,7 +154,7 @@ class HandoffTests(unittest.TestCase):
     def test_bad_notes_do_not_replace_valid_history(self):
         self.initialize()
         candidate = self.base / "candidate.json"
-        candidate.write_text('{"goal":"oops","goal":"duplicate"}')
+        candidate.write_text('{"goal":"oops","goal":"duplicate"}', encoding="utf-8")
         self.cli("checkpoint", "--task", "work", "--actor", "agent-a", "--expect-revision", "1",
                  "--input", str(candidate), code=2)
         self.assertEqual(self.store.load("work")["revision"], 1)
@@ -213,7 +213,7 @@ class HandoffTests(unittest.TestCase):
         self.initialize()
         notes = self.store.load("work")["notes"]
         candidate = self.private / "Example/notes.json"
-        candidate.write_text(json.dumps(notes))
+        candidate.write_text(json.dumps(notes), encoding="utf-8")
         paths = [self.store.task_dir("work") / name for name in ("CURRENT.md", "EVENTS.jsonl")]
         paths += [self.private / "Example/INDEX.json"]
         before = {p: (p.read_bytes(), p.stat().st_mtime_ns) for p in paths}
@@ -238,7 +238,7 @@ class HandoffTests(unittest.TestCase):
         state = self.store.load("work")
         state["notes"]["constraints"] = ["constraint " + str(i) + ":" + "很重要" * 300 for i in range(12)]
         candidate = self.private / "Example/notes.json"
-        candidate.write_text(json.dumps(state["notes"]))
+        candidate.write_text(json.dumps(state["notes"]), encoding="utf-8")
         self.cli("checkpoint", "--task", "work", "--actor", "agent-a", "--expect-revision", "1", "--input", str(candidate))
         text = self.cli("resume", "--task", "work", "--max-chars", "2000")
         self.assertLessEqual(len(text.rstrip()), 2000)
@@ -280,7 +280,7 @@ class HandoffTests(unittest.TestCase):
     def test_one_task_update_preserves_other_current_files(self):
         self.initialize()
         other = self.base / "other"
-        other.mkdir(); (other / "example.txt").write_text("another task")
+        other.mkdir(); (other / "example.txt").write_text("another task", encoding="utf-8")
         self.cli("init", "--task", "second", "--workspace", str(other), "--title", "Second", "--goal", "Other",
                  "--actor", "agent-b", "--no-git", "--scope", "example.txt")
         other_current = self.store.task_dir("second") / "CURRENT.md"
@@ -296,7 +296,7 @@ class HandoffTests(unittest.TestCase):
         candidate = self.private / "Example/notes.json"
         notes = self.store.load("work")["notes"]
         notes["next_steps"] = ["Continue the precise task"]
-        candidate.write_text(json.dumps(notes))
+        candidate.write_text(json.dumps(notes), encoding="utf-8")
         self.cli("release", "--task", "work", "--actor", "agent-a", "--expect-revision", "1",
                  "--input", str(candidate), "--processes-checked")
         self.assertEqual(self.store.load("work")["revision"], 2)
@@ -330,7 +330,7 @@ class HandoffTests(unittest.TestCase):
         self.initialize()
         second = self.base / "second-workspace"
         second.mkdir()
-        (second / "example.txt").write_text("synthetic\n")
+        (second / "example.txt").write_text("synthetic\n", encoding="utf-8")
         command = [sys.executable, str(SCRIPT), "--state-root", str(self.private),
                    "--project", "Another", "init", "--task", "second", "--workspace", str(second),
                    "--title", "Second", "--goal", "Check root mutex", "--actor", "agent-b",
@@ -442,7 +442,7 @@ class HandoffTests(unittest.TestCase):
         self.initialize()
         second = self.base / "workspace-two"
         second.mkdir()
-        (second / "example.txt").write_text("synthetic source\n")
+        (second / "example.txt").write_text("synthetic source\n", encoding="utf-8")
         self.register_other_project(second)
         self.cli("check", "--task", "work")
 
@@ -464,9 +464,9 @@ class GitCheckpointTests(unittest.TestCase):
         self.workspace.mkdir()
         self.git("init", "-q")
         self.git("symbolic-ref", "HEAD", "refs/heads/synthetic-main")
-        (self.workspace / "tracked.txt").write_text("one\n")
-        (self.workspace / ".gitignore").write_text("ignored.txt\n")
-        (self.workspace / "ignored.txt").write_text("synthetic ignored\n")
+        (self.workspace / "tracked.txt").write_text("one\n", encoding="utf-8")
+        (self.workspace / ".gitignore").write_text("ignored.txt\n", encoding="utf-8")
+        (self.workspace / "ignored.txt").write_text("synthetic ignored\n", encoding="utf-8")
         self.git("add", "tracked.txt", ".gitignore")
         self.git("commit", "-q", "-m", "synthetic baseline")
         self.private = self.base / "private"
@@ -514,9 +514,9 @@ class GitCheckpointTests(unittest.TestCase):
     def test_staged_only_change_trips_the_git_fingerprint_without_worktree_drift(self):
         self.initialize()
         recorded = self.store.load("work")["snapshot"]["fingerprint"]
-        (self.workspace / "tracked.txt").write_text("two\n")
+        (self.workspace / "tracked.txt").write_text("two\n", encoding="utf-8")
         self.git("add", "tracked.txt")
-        (self.workspace / "tracked.txt").write_text("one\n")
+        (self.workspace / "tracked.txt").write_text("one\n", encoding="utf-8")
         result = json.loads(self.cli("check", "--task", "work", code=3))
         self.assertEqual(result["changed_files"], [])
         self.assertFalse(result["git_matches"])
@@ -531,10 +531,10 @@ class GitCheckpointTests(unittest.TestCase):
 
     def test_untracked_files_are_drift_while_ignored_changes_are_invisible(self):
         self.initialize()
-        (self.workspace / "added.txt").write_text("synthetic\n")
+        (self.workspace / "added.txt").write_text("synthetic\n", encoding="utf-8")
         self.assertEqual(json.loads(self.cli("check", "--task", "work", code=3))["changed_files"],
                          ["added.txt"])
-        (self.workspace / "ignored.txt").write_text("changed but still ignored\n")
+        (self.workspace / "ignored.txt").write_text("changed but still ignored\n", encoding="utf-8")
         self.assertEqual(json.loads(self.cli("check", "--task", "work", code=3))["changed_files"],
                          ["added.txt"])
 

@@ -46,7 +46,7 @@ def test_mounted_scan_summary_preview_offline_and_incremental(service, tmp_path)
     sid = source(service, root)
     (root / '子目录').mkdir()
     path = root / '子目录/a.xml'
-    path.write_text(_sample_xml())
+    path.write_text(_sample_xml(), encoding="utf-8")
     original = path.read_bytes()
     service.start(sid, 'scan')
     assert wait(service, sid)['connection'] == 'online'
@@ -86,8 +86,8 @@ def test_listing_readable_count_uses_whole_subtree_not_filter_or_metadata(servic
     sid = source(service, root)
     for name in ['empty', 'unsupported', 'readable/nested']:
         (root / name).mkdir(parents=True)
-    (root / 'unsupported/readme.txt').write_text('synthetic')
-    (root / 'readable/nested/a.XML').write_text(_sample_xml())
+    (root / 'unsupported/readme.txt').write_text('synthetic', encoding="utf-8")
+    (root / 'readable/nested/a.XML').write_text(_sample_xml(), encoding="utf-8")
     (root / 'readable/picture.png').write_bytes(b'synthetic metadata only')
     service.start(sid, 'scan')
     assert wait(service, sid)['sync'] == 'idle'
@@ -107,7 +107,7 @@ def test_listing_readable_count_uses_whole_subtree_not_filter_or_metadata(servic
 def test_incomplete_scan_keeps_snapshot_and_rejects_root_replacement(service, tmp_path):
     root = tmp_path / 'share'
     sid = source(service, root)
-    (root / 'a.xml').write_text(_sample_xml())
+    (root / 'a.xml').write_text(_sample_xml(), encoding="utf-8")
     service.start(sid, 'scan')
     before = wait(service, sid)['generation']
     (root / 'escape').symlink_to(tmp_path, target_is_directory=True)
@@ -141,9 +141,9 @@ def test_restart_recovers_unknown_without_fabricating_empty_snapshot(service, tm
     sid = source(service, tmp_path / 'share')
     service.start(sid, 'scan')
     generation = wait(service, sid)['generation']
-    payload = json.loads(service.registry.read_text())
+    payload = json.loads(service.registry.read_text(encoding="utf-8"))
     payload['sources'][0]['sync'] = 'downloading'
-    service.registry.write_text(json.dumps(payload))
+    service.registry.write_text(json.dumps(payload), encoding="utf-8")
     restored = SourceService(service.root, previews=service.previews, companies=service.companies)
     try:
         state = restored.get(sid)
@@ -171,7 +171,7 @@ def test_unnumbered_remote_invoices_keep_distinct_opaque_families(service, tmp_p
     sid = source(service, root)
     xml = _sample_xml().replace('<invoiceNo>25322000000043426430</invoiceNo>', '')
     for name in ('a.xml', 'b.xml'):
-        (root / name).write_text(xml)
+        (root / name).write_text(xml, encoding="utf-8")
     service.start(sid, 'scan')
     wait(service, sid)
     service.start(sid, 'summary')
@@ -192,7 +192,7 @@ def test_rejects_unsafe_names(name):
 def test_source_isolation_fingerprints_and_no_uri_as_path(service, tmp_path):
     root = tmp_path / 'share'
     one, two = source(service, root), source(service, root)
-    (root / 'a.xml').write_text(_sample_xml())
+    (root / 'a.xml').write_text(_sample_xml(), encoding="utf-8")
     for sid in (one, two):
         service.start(sid, 'scan')
         wait(service, sid)
@@ -220,10 +220,10 @@ def test_mounted_copy_rejects_changed_file(service, tmp_path):
     root = tmp_path / 'share'
     root.mkdir()
     path = root / 'a.xml'
-    path.write_text('before')
+    path.write_text('before', encoding="utf-8")
     adapter = Mounted({'root': str(root)})
     entry = adapter.entries(lambda _: None)[0]
-    path.write_text('after')
+    path.write_text('after', encoding="utf-8")
     with pytest.raises(SourceError, match='版本'):
         adapter.copy(entry, tmp_path / 'copy.part', lambda _: None)
 
@@ -237,7 +237,7 @@ def test_source_http_origin_limits_no_monitor_switch_or_local_preview_escape(tmp
         service = app.state.server_sources
         root = tmp_path / 'share'
         root.mkdir()
-        (root / 'a.xml').write_text(_sample_xml())
+        (root / 'a.xml').write_text(_sample_xml(), encoding="utf-8")
         body = {'protocol': 'mounted', 'root': str(root), 'name': '合成共享'}
         assert client.post('/api/v1/sources', json=body, headers={'Origin': 'https://evil.invalid'}).status_code == 403
         assert client.post('/api/v1/sources', json={**body, 'password': 'not-accepted'}).status_code == 422

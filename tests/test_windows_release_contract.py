@@ -827,7 +827,7 @@ def test_windows_repackage_initializer_runs_in_a_fresh_pwsh_process(tmp_path: Pa
 @pytest.mark.skipif(os.name != "nt", reason="Windows PowerShell integration test")
 def test_windows_repackage_initializer_rejects_insufficient_free_disk(tmp_path: Path) -> None:
     root, commit = _windows_repackage_repository(tmp_path, include_remote_ref=True)
-    config = json.loads((root / "docs/release/WINDOWS_REPACKAGE_CONFIG.json").read_text())
+    config = json.loads((root / "docs/release/WINDOWS_REPACKAGE_CONFIG.json").read_text(encoding="utf-8"))
     minimum_free_bytes = int(config["minimum_free_disk_gib"]) * 1024**3
 
     completed = _run_windows_repackage_initializer(

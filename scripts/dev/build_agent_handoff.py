@@ -154,7 +154,7 @@ def copy_verified_runtime(package_path, destination, platform, expected_sha256):
 
 def package(source_root, platform, archive, output, *, runtime_package=None, runtime_package_sha256=None):
     source_root = source_root.resolve(strict=True)
-    script = (source_root / "scripts/dev/agent_handoff.py").read_text()
+    script = (source_root / "scripts/dev/agent_handoff.py").read_text(encoding="utf-8")
     version = re.search(r'^VERSION = "([0-9]+\.[0-9]+\.[0-9]+)"$', script, re.M)
     if not version:
         raise ValueError("tool version missing")
@@ -233,7 +233,7 @@ def package(source_root, platform, archive, output, *, runtime_package=None, run
             if pending.exists():
                 pending.unlink()
     checksum = sha(target)
-    target.with_suffix(".zip.sha256").write_text(f"{checksum}  {target.name}\n")
+    target.with_suffix(".zip.sha256").write_text(f"{checksum}  {target.name}\n", encoding="utf-8")
     return {"archive": str(target), "sha256": checksum, "bytes": target.stat().st_size, "platform": platform}
 
 

@@ -27,9 +27,9 @@ class PackageTests(unittest.TestCase):
             target = self.source / relative
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes((ROOT / relative).read_bytes())
-        (self.source / "CURRENT.md").write_text("SYNTHETIC-PRIVATE-NOT-PACKAGED")
+        (self.source / "CURRENT.md").write_text("SYNTHETIC-PRIVATE-NOT-PACKAGED", encoding="utf-8")
         (self.source / "config").mkdir()
-        (self.source / "config/private.json").write_text("SYNTHETIC-PRIVATE-NOT-PACKAGED")
+        (self.source / "config/private.json").write_text("SYNTHETIC-PRIVATE-NOT-PACKAGED", encoding="utf-8")
 
     def runtime(self, platform, members=None):
         path = self.base / builder.RUNTIMES[platform]["archive"]
@@ -79,7 +79,7 @@ class PackageTests(unittest.TestCase):
             original = builder.package(self.source, "windows-x64", archive, self.base / "old")
             cached = Path(original["archive"])
             source = self.source / "docs/AGENT_HANDOFF.md"
-            source.write_text("new public documentation\n")
+            source.write_text("new public documentation\n", encoding="utf-8")
             for wrong in (None, "0" * 64):
                 with self.assertRaisesRegex(ValueError, "trusted SHA"):
                     builder.package(self.source, "windows-x64", None, self.base / "new",

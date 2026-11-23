@@ -63,7 +63,9 @@ def list_files(directory: Path, suffixes: tuple[str, ...]) -> tuple[dict[str, tu
                         continue
                     if len(signatures) >= BANK_MAX_FILES:
                         return signatures, False
-                    stat = entry.stat(follow_symlinks=False)
+                    # Use os.lstat rather than DirEntry.stat so Windows populates real
+                    # (st_dev, st_ino) matching Path.lstat() checks in bank_layouts.
+                    stat = os.lstat(entry.path)
                     # Receipt references must expire even after equal-size replacements with
                     # restored mtime; the folder cache cannot reuse the previous PDF's fields.
                     signatures[entry.path] = (stat.st_mtime_ns, stat.st_size, stat.st_ctime_ns, stat.st_dev, stat.st_ino)

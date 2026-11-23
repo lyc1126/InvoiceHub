@@ -46,5 +46,5 @@ def test_refresh_mutation_is_confined_to_the_explicit_dev_fixture(tmp_path, monk
         assert response.is_success
         assert response.headers["cache-control"] == "no-store"
         assert 'refs.invoiceBody.innerHTML = state.invoiceItems.map(rowHtml).join("");' in response.text
-    production = (ROOT / "web/static/js/page-index.js").read_text()
+    production = (ROOT / "web/static/js/page-index.js").read_text(encoding="utf-8")
     assert 'refs.invoiceBody.innerHTML = state.invoiceItems.map(rowHtml).join("");' not in production

@@ -179,7 +179,7 @@ def test_ledger_api_reads_both_folders_and_respects_manual_overrides(app, client
     profile = target_profile_for(app.state.invoice_hub.config, root / "成本发票")
     summary_rows = (Path(profile.workspace_dir) / "发票汇总.csv").read_text(encoding="utf-8-sig")
     source_path = next(line.split(",") for line in summary_rows.splitlines() if "b.xml" in line)
-    path_value = next(value for value in source_path if value.endswith("b.xml") and "/" in value)
+    path_value = next(value for value in source_path if value.endswith("b.xml") and any(sep in value for sep in ("/", "\\")))
     (Path(profile.state_dir) / "manual_overrides.json").write_text(
         json.dumps({"version": 1, "items": {path_value: {"fields": {"开票金额": "999.00"}}}}, ensure_ascii=False), encoding="utf-8")
     edited = client.get(f"/api/v1/companies/{company_id}/ledger").json()

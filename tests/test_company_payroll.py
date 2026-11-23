@@ -267,7 +267,7 @@ def test_payroll_confirmation_waits_for_draft_generation_lock(tmp_path, monkeypa
         with _EXPORT_LOCK:
             future = pool.submit(save_confirmed, root, _confirmation(revision))
             assert not entered.wait(0.1)
-            assert "社保明细" not in json.loads((root / "做账草稿" / "申报数据.json").read_text())
+            assert "社保明细" not in json.loads((root / "做账草稿" / "申报数据.json").read_text(encoding="utf-8"))
         assert future.result(timeout=5)["saved"] == ["2026-08"]
 
 

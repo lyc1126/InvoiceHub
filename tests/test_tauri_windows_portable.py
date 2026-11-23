@@ -23,11 +23,11 @@ def test_stage_publish_retries_only_bounded_windows_sharing_errors(monkeypatch, 
 
     source, target = tmp_path / "payload", tmp_path / "stage"
     source.mkdir()
-    (source / "proof.txt").write_text("complete")
+    (source / "proof.txt").write_text("complete", encoding="utf-8")
     monkeypatch.setattr(Path, "rename", busy_then_success)
     publish(target, source)
     assert len(calls) == 3
-    assert (target / "proof.txt").read_text() == "complete"
+    assert (target / "proof.txt").read_text(encoding="utf-8") == "complete"
 
     for code, expected in [(5, 20), (87, 1)]:
         calls.clear()

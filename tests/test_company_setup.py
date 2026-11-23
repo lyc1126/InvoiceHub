@@ -68,9 +68,9 @@ def test_existing_file_and_changed_registry_invalidate_the_plan(context):
     _app, client, parent = context
     job = plan(client, parent).json()
     target = parent / "新公司"
-    target.write_text("synthetic existing content")
+    target.write_text("synthetic existing content", encoding="utf-8")
     assert confirm(client, job).status_code == 422
-    assert target.read_text() == "synthetic existing content"
+    assert target.read_text(encoding="utf-8") == "synthetic existing content"
     target.unlink()
     other = parent / "已登记公司"
     other.mkdir()
@@ -105,14 +105,14 @@ def test_interrupted_claim_is_query_only_and_corrupt_job_is_preserved(context):
     app, client, parent = context
     job = plan(client, parent).json()
     service = app.state.invoice_hub.companies.setup
-    service._intent(job["job_id"]).write_text(job["plan_hash"])
+    service._intent(job["job_id"]).write_text(job["plan_hash"], encoding="utf-8")
     assert client.get(f"/api/v1/companies/setup-jobs/{job['job_id']}").json()["state"] == "unknown"
     assert confirm(client, job).json()["state"] == "unknown"
     assert list(parent.iterdir()) == []
     record = service._path(job["job_id"])
-    record.write_text('{"schema_version":999}')
+    record.write_text('{"schema_version":999}', encoding="utf-8")
     assert client.get(f"/api/v1/companies/setup-jobs/{job['job_id']}").status_code == 409
-    assert record.read_text() == '{"schema_version":999}'
+    assert record.read_text(encoding="utf-8") == '{"schema_version":999}'
     assert client.get("/api/v1/companies/setup-jobs/not-a-job").status_code == 404
 
 
@@ -214,12 +214,12 @@ def test_incomplete_nested_record_is_preserved_and_rejected(context):
     app, client, parent = context
     job = plan(client, parent).json()
     record = app.state.invoice_hub.companies.setup._path(job["job_id"])
-    raw = json.loads(record.read_text())
+    raw = json.loads(record.read_text(encoding="utf-8"))
     del raw["binding"]["input"]["name"]
     saved = json.dumps(raw, ensure_ascii=False)
-    record.write_text(saved)
+    record.write_text(saved, encoding="utf-8")
     assert client.get(f"/api/v1/companies/setup-jobs/{job['job_id']}").status_code == 409
-    assert record.read_text() == saved and list(parent.iterdir()) == []
+    assert record.read_text(encoding="utf-8") == saved and list(parent.iterdir()) == []
 
 
 @pytest.mark.parametrize("damage", ["binding", "duplicate_item", "timestamp", "signature", "created_paths", "bool_schema"])
@@ -228,7 +228,7 @@ def test_corrupt_nested_job_cannot_be_read_or_confirmed(context, damage):
     job = plan(client, parent).json()
     service = app.state.invoice_hub.companies.setup
     record = service._path(job["job_id"])
-    raw = json.loads(record.read_text())
+    raw = json.loads(record.read_text(encoding="utf-8"))
     if damage == "binding": raw["binding"]["input"]["subdirs"]["bank_flow_dir"] = "../outside"
     elif damage == "duplicate_item": raw["binding"]["items"][1] = raw["binding"]["items"][0]
     elif damage == "timestamp": raw["created_at"] = float("nan")
@@ -238,11 +238,11 @@ def test_corrupt_nested_job_cannot_be_read_or_confirmed(context, damage):
         raw["created_signatures"] = {"../outside": [1, 123]}
     elif damage == "bool_schema": raw["schema_version"] = True
     original = json.dumps(raw, ensure_ascii=False)
-    record.write_text(original)
+    record.write_text(original, encoding="utf-8")
     for response in (client.get(f"/api/v1/companies/setup-jobs/{job['job_id']}"), confirm(client, job)):
         assert response.status_code == 409
         assert response.json()["error"]["code"] == "COMPANY_SETUP_STATE_INVALID"
-    assert record.read_text() == original and list(parent.iterdir()) == []
+    assert record.read_text(encoding="utf-8") == original and list(parent.iterdir()) == []
     assert not service._intent(job["job_id"]).exists()
 
 

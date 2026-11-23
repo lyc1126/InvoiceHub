@@ -1,6 +1,7 @@
 """Bounded reads and atomic JSON replacement within an explicitly registered company root."""
 from __future__ import annotations
 
+import errno
 import json
 import os
 import secrets
@@ -42,8 +43,9 @@ def read_relative(root: Path, relative: str, limit: int = 20 * 1024 * 1024) -> b
             fd = os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=descriptor)
         else:
             path = root / relative
+            # Match POSIX O_NOFOLLOW (OSError/ELOOP -> HTTP 409) instead of ValueError (422).
             if path.is_symlink() or (hasattr(path, "is_junction") and path.is_junction()):
-                raise ValueError("文件链接不可读取。")
+                raise OSError(errno.ELOOP, "文件链接不可读取。", str(path))
             fd = os.open(path, os.O_RDONLY | getattr(os, "O_BINARY", 0))
         with os.fdopen(fd, "rb") as handle:
             before = os.fstat(handle.fileno())

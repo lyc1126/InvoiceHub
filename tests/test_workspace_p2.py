@@ -119,10 +119,10 @@ def test_bank_profile_save_and_automatic_next_file(env):
     statement = data.data.statements[0]
     assert str(statement.opening) == "100.00" and str(statement.closing) == "95.25"
     # New bytes, same header: profile is reused, but every balance is revalidated.
-    path.write_text(path.read_text().replace("2026-06", "2026-07"))
+    path.write_text(path.read_text(encoding="utf-8").replace("2026-06", "2026-07"), encoding="utf-8")
     again = app.state.invoice_hub.company_views._bank_reader.read(folder)
     assert again.data.statements[0].period_start.month == 7
-    path.write_text(path.read_text().replace("95.25", "95.26"))
+    path.write_text(path.read_text(encoding="utf-8").replace("95.25", "95.26"), encoding="utf-8")
     bad = app.state.invoice_hub.company_views._bank_reader.read(folder)
     assert not bad.data.statements and any(i.level == "错误" for i in bad.data.issues)
 
@@ -145,7 +145,7 @@ def test_bank_rejects_arbitrary_paths_changed_sources_and_mappings(env):
     assert client.post(base + "/preview", json={"file_ref": str(path)}).status_code == 409
     body = {"mapping": {**preview["guessed_mapping"], "balance": 0}, "revision": 0, "layout_hash": preview["layout_hash"]}
     assert client.post(base, json=body).status_code == 409
-    path.write_text(path.read_text().replace("95.25", "95.26"))
+    path.write_text(path.read_text(encoding="utf-8").replace("95.25", "95.26"), encoding="utf-8")
     assert client.post(base + "/preview", json={"file_ref": ref}).status_code == 409
     assert not (root / "银行版式.json").exists()
 
@@ -154,7 +154,7 @@ def test_safe_reads_reject_parent_and_leaf_links(tmp_path):
     root = tmp_path / "root"
     outside = tmp_path / "outside"
     root.mkdir(); outside.mkdir()
-    (outside / "secret.csv").write_text("synthetic")
+    (outside / "secret.csv").write_text("synthetic", encoding="utf-8")
     (root / "link").symlink_to(outside, target_is_directory=True)
     (root / "leaf").symlink_to(outside / "secret.csv")
     for name in ("link/secret.csv", "leaf", "../outside/secret.csv"):
@@ -213,11 +213,11 @@ def test_tax_rejects_dirty_amounts(env, value):
 def test_tax_damaged_state_is_preserved(env):
     _, client, company, root, _ = env
     raw = json.dumps({"version": 1, "revision": 1, "months": {"2026-01": {"vat": "broken"}}})
-    (root / TAX_FILE).write_text(raw)
+    (root / TAX_FILE).write_text(raw, encoding="utf-8")
     base = f"/api/v1/companies/{company}/vat-filing"
     assert client.get(base).status_code == 422
     assert client.put(base, json={"revision": 1, "months": {"2026-01": {"vat": {"source": ""}}}}).status_code == 422
-    assert (root / TAX_FILE).read_text() == raw
+    assert (root / TAX_FILE).read_text(encoding="utf-8") == raw
 
 
 def test_flow_unknown_for_parse_errors_and_uncovered_months():
@@ -306,7 +306,7 @@ def test_tax_linked_state_and_replaced_root_are_rejected(env, monkeypatch):
     from invoice_hub.services import company_tax
     _, client, company, root, _ = env
     outside = root.parent / "outside.json"
-    outside.write_text('{"version":1,"revision":0,"months":{}}')
+    outside.write_text('{"version":1,"revision":0,"months":{}}', encoding="utf-8")
     (root / TAX_FILE).symlink_to(outside)
     base = f"/api/v1/companies/{company}/vat-filing"
     assert client.put(base, json={"revision": 0, "months": {"2026-01": {"vat": {}}}}).status_code == 409
@@ -318,7 +318,7 @@ def test_tax_linked_state_and_replaced_root_are_rejected(env, monkeypatch):
         return original(directory, name, data, **kwargs)
     monkeypatch.setattr(company_tax, "write_state", swap)
     assert client.put(base, json={"revision": 0, "months": {"2026-01": {"vat": {}}}}).status_code == 422
-    assert not (root / TAX_FILE).exists() and outside.read_text().startswith('{"version"')
+    assert not (root / TAX_FILE).exists() and outside.read_text(encoding="utf-8").startswith('{"version"')
 
 
 @pytest.mark.parametrize("suffix", [".xlsx", ".pdf"])
@@ -335,7 +335,7 @@ def test_linked_bank_profile_is_diagnostic_and_new_routes_require_same_origin(en
     app, client, company, root, folder = env
     _csv(folder)
     external = root.parent / "layout.json"
-    external.write_text('{}')
+    external.write_text('{}', encoding="utf-8")
     (root / "银行版式.json").symlink_to(external)
     result = app.state.invoice_hub.company_views._bank_reader.read(folder)
     assert result.data is None and "版式档案不可读" in result.error

@@ -117,7 +117,7 @@ def test_component_integrity_rejects_tampered_jar(tmp_path, monkeypatch):
     (component / "lib/ofd-preview.jar").write_bytes(b"modified")
     (component / "component.json").write_text(json.dumps({"schema_version": 1, "engine": "ofdrw-2.4.0",
         "source_fingerprint": ofd.COMPONENT_SOURCE_FINGERPRINT, "java_major": 21, "platform": "macos-arm64",
-        "files": {"lib/ofd-preview.jar": hashlib.sha256(b"original").hexdigest()}}))
+        "files": {"lib/ofd-preview.jar": hashlib.sha256(b"original").hexdigest()}}), encoding="utf-8")
     monkeypatch.setattr(ofd, "_platform_id", lambda: "macos-arm64")
     with pytest.raises(ofd.OFDPreviewError, match="ofd_renderer_unavailable"):
         ofd.OFDRenderer(component)._component()
@@ -132,7 +132,7 @@ def test_component_verification_cache_invalidates_on_file_changes(tmp_path, monk
     manifest = {"schema_version": 1, "engine": "ofdrw-2.4.0", "java_major": 21,
                 "platform": "macos-arm64", "source_fingerprint": ofd.COMPONENT_SOURCE_FINGERPRINT,
                 "files": {name: hashlib.sha256(content).hexdigest() for name, content in files.items()}}
-    (component / "component.json").write_text(json.dumps(manifest))
+    (component / "component.json").write_text(json.dumps(manifest), encoding="utf-8")
     monkeypatch.setattr(ofd, "_platform_id", lambda: "macos-arm64")
     original_read = Path.read_bytes
     reads = []
@@ -153,7 +153,7 @@ def test_component_verification_cache_invalidates_on_file_changes(tmp_path, monk
     jar.write_bytes(b"jar")
     assert renderer._component() == expected
     manifest["source_fingerprint"] = "wrong"
-    (component / "component.json").write_text(json.dumps(manifest))
+    (component / "component.json").write_text(json.dumps(manifest), encoding="utf-8")
     with pytest.raises(ofd.OFDPreviewError, match="ofd_renderer_unavailable"):
         renderer._component()
 
@@ -173,7 +173,7 @@ def test_worker_timeout_cleans_temp_and_does_not_inherit_secrets(tmp_path, monke
         assert kwargs["timeout"] == 25
         assert "-Djava.security.manager=default" in command
         assert source.as_posix() not in command
-        policy = (kwargs["cwd"] / "preview.policy").read_text()
+        policy = (kwargs["cwd"] / "preview.policy").read_text(encoding="utf-8")
         assert "SocketPermission" not in policy and '"execute"' not in policy
         raise subprocess.TimeoutExpired(command, 25)
     monkeypatch.setattr(ofd.subprocess, "run", run)

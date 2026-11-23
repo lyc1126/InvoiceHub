@@ -186,7 +186,7 @@ def test_local_routes_same_origin_limits_and_no_network_on_configuration(tmp_pat
     monkeypatch.setattr(BackgroundSyncService, "run_background_diagnostics", lambda *a, **k: None)
     monkeypatch.setenv("INVOICE_HUB_FEEDBACK_URL", "https://feedback.example.test")
     config = tmp_path / "fixture.json"
-    config.write_text(json.dumps({"watch_dir": "empty", "runtime_dir": "runtime"}))
+    config.write_text(json.dumps({"watch_dir": "empty", "runtime_dir": "runtime"}), encoding="utf-8")
     app = create_app(tmp_path, config_path=str(config))
     calls = []
     app.state.feedback.transport = lambda method, url, receipt, data: (calls.append(method) or (200, {"request_id": data["request_id"], "state": "submitted", "issue_number": 9}))

@@ -452,8 +452,8 @@
 
 ### ENG-01 Windows Rust clippy 清零后改为阻断
 
-- 优先级 / 状态 / 目标版本：P2 / 待评估 / 待定
-- 问题与证据：`cfg(windows)` 代码（Windows marker store、Win32 进程/端口诊断等）从未经过 clippy；macOS 上已清零并以 `-D warnings` 阻断，Windows 作业暂只报告。
+- 优先级 / 状态 / 目标版本：P2 / 已排期（已采集 PR #32 首轮警告清单） / v1.0.0
+- 问题与证据：`cfg(windows)` 代码（Windows marker store、Win32 进程/端口诊断等）此前未经 clippy；macOS 上已清零并以 `-D warnings` 阻断，Windows 作业暂只报告。2026-11-23 PR #32 首轮 CI（run `45119681382`）仅报告 3 条 dead-code 警告：`method prepare_relaunch is never used`、`variants BackendUnavailable, BackendShutdownFailed, and StateTransitionRejected are never constructed`、`fields app_handle and runtime_gate are never read`。
 - 方案：读取首轮 Windows CI 的 clippy 输出，逐条修复或局部 `allow` 并说明原因。
 - 验收标准：`ci.yml` 中 Windows 的 `clippy_flags` 改为 `-D warnings` 且 CI 通过；修复不改变 marker store 的 no-reparse/handle-relative 语义，Rust 合约测试全过。
 - 影响范围：`src-tauri/src/`（Windows 分支）、`.github/workflows/ci.yml`、TAURI_HOST 规则。

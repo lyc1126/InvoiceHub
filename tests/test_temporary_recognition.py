@@ -63,8 +63,8 @@ def test_missing_or_changed_source_never_returns_cached_results(tmp_path, change
         path.unlink()
         source(tmp_path)
     else:
-        text = path.read_text().replace("339.00", "999.00")
-        path.write_text(text)
+        text = path.read_text(encoding="utf-8").replace("339.00", "999.00")
+        path.write_text(text, encoding="utf-8")
         os.utime(path, ns=(before.st_atime_ns, before.st_mtime_ns))
     result = svc.get(job["id"])
     assert result["unavailable"] == [path.name]
@@ -95,9 +95,9 @@ def test_selection_settings_and_identity_guards(tmp_path):
 def test_restart_marks_partial_job_interrupted(tmp_path):
     directory = tmp_path / "cache"; directory.mkdir()
     path = directory / ("session-" + "a" * 32 + ".json")
-    path.write_text(json.dumps({"status": "running", "completed": 0}))
+    path.write_text(json.dumps({"status": "running", "completed": 0}), encoding="utf-8")
     TemporaryRecognitionService(directory, tmp_path)
-    assert json.loads(path.read_text())["status"] == "interrupted"
+    assert json.loads(path.read_text(encoding="utf-8"))["status"] == "interrupted"
 
 
 def test_api_picker_cancel_source_loss_and_origin(tmp_path, monkeypatch):
@@ -204,7 +204,7 @@ def test_preview_draft_text_and_pages_recover_expiry_without_source_mutation(tmp
     xml_id, pdf_id = [item["id"] for item in files]
     original = path.read_bytes()
     assert svc.preview(xml_id)["type"] == "text"
-    assert svc.preview(xml_id, text=True)["text"] == path.read_text()
+    assert svc.preview(xml_id, text=True)["text"] == path.read_text(encoding="utf-8")
     assert str(tmp_path) not in json.dumps(svc.preview(xml_id))
     assert svc.preview(pdf_id)["pages"] == 2
     page = svc.preview(pdf_id, page=2)
@@ -226,7 +226,7 @@ def test_preview_history_validates_entire_thread_and_membership(tmp_path):
     job = finish(svc, svc.start(ids))
     svc.close()
     svc = TemporaryRecognitionService(tmp_path / "cache", tmp_path)
-    assert svc.preview(ids[0], job["id"], text=True)["text"] == a.read_text()
+    assert svc.preview(ids[0], job["id"], text=True)["text"] == a.read_text(encoding="utf-8")
     with pytest.raises(TemporaryRecognitionError):
         svc.preview("f" * 32, job["id"])
     # Even previewing a surviving member cannot bypass an invalid thread.
@@ -242,7 +242,7 @@ def test_preview_rejects_same_stat_changes_and_changes_during_render(tmp_path, m
     token = svc.register([str(path)])[0]["id"]
     svc.preview(token, text=True)
     stat = path.stat()
-    path.write_text(path.read_text().replace("339.00", "999.00"))
+    path.write_text(path.read_text(encoding="utf-8").replace("339.00", "999.00"), encoding="utf-8")
     os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns))
     with pytest.raises(TemporaryRecognitionError):
         svc.preview(token, text=True)
@@ -262,7 +262,7 @@ def test_preview_api_opaque_authority_and_safe_content(tmp_path, monkeypatch):
     from test_file_preview import _write_pdf
     with _client(tmp_path, monkeypatch) as client:
         path = source(tmp_path)
-        path.write_text('<invoice><script>alert("unsafe")</script></invoice>')
+        path.write_text('<invoice><script>alert("unsafe")</script></invoice>', encoding="utf-8")
         svc = client.app.state.temporary_recognition
         assert svc._previews is client.app.state.invoice_hub._file_preview_service
         token = svc.register([str(path)])[0]["id"]
@@ -289,9 +289,9 @@ def test_temporary_preview_frontend_assets_and_safe_copy_contract():
     from pathlib import Path
     root = Path(__file__).parents[1]
     for name in ("index", "settings"):
-        html = (root / f"web/templates/{name}.html").read_text()
+        html = (root / f"web/templates/{name}.html").read_text(encoding="utf-8")
         assert "temporary-recognition.js?v=20261009-temporary-8" in html
         assert "temporary-recognition.css?v=20261009-temporary-8" in html
-    script = (root / "web/static/js/temporary-recognition.js").read_text()
+    script = (root / "web/static/js/temporary-recognition.js").read_text(encoding="utf-8")
     assert "innerHTML" not in script
     assert "[...row.cells].slice(0, 9)" in script  # Preview action must not leak into Excel cells.

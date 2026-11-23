@@ -254,7 +254,7 @@ def test_unsigned_taxes_never_present_vat_as_all_tax_total(env):
     assert payload["tax_total"]["snapshot_id"] == payload["snapshot_id"]
     assert all(row["estimate"]["amount"] is None for row in payload["rows"][1:])
     assert "income" not in {item["tax_type"] for item in payload["tax_total"]["missing"]}
-    assert json.loads((root / "税费记录.json").read_text())["revision"] == 1
+    assert json.loads((root / "税费记录.json").read_text(encoding="utf-8"))["revision"] == 1
 
 
 def test_unsigned_rule_examples_and_review_gate():

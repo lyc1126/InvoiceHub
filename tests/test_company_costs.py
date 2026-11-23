@@ -156,7 +156,7 @@ def test_competing_saves_have_one_winner_and_hash_tampering_is_rejected(env):
             return exc.status_code
     with ThreadPoolExecutor(max_workers=2) as pool:
         assert sorted(pool.map(lambda _: save(), range(2))) == [1, 409]
-    assert json.loads((root / "成本发票" / RULE_FILE).read_text())["revision"] == 1
+    assert json.loads((root / "成本发票" / RULE_FILE).read_text(encoding="utf-8"))["revision"] == 1
 
 
 @pytest.mark.parametrize("raw", ["{broken", '{"version":2,"revision":1,"pricing":{}}',
@@ -164,16 +164,16 @@ def test_competing_saves_have_one_winner_and_hash_tampering_is_rejected(env):
 def test_corrupt_rules_fail_closed_without_replacement(env, raw):
     _app, client, root, _cid, url = env
     path = root / "成本发票" / RULE_FILE
-    path.write_text(raw)
+    path.write_text(raw, encoding="utf-8")
     assert client.get(url).status_code == 422
-    assert path.read_text() == raw
+    assert path.read_text(encoding="utf-8") == raw
 
 
 def test_rule_file_is_company_bound_and_unavailable_directory_cannot_redirect_save(env, tmp_path):
     _app, client, root, _cid, url = env
     body = confirm(client, url, proposal(snapshot(client, url)))
     path = root / "成本发票" / RULE_FILE
-    path.write_text(json.dumps({"version": 1, "revision": 1, "pricing": {"company_id": "another", "rules": {}}}))
+    path.write_text(json.dumps({"version": 1, "revision": 1, "pricing": {"company_id": "another", "rules": {}}}), encoding="utf-8")
     assert client.get(url).status_code == 422
     path.unlink()
     original = root / "成本发票"
@@ -212,10 +212,10 @@ def test_bad_generation_is_not_replaced_with_export_copy(env):
     app, client, root, _cid, url = env
     profile = target_profile_for(app.state.invoice_hub.config, root / "成本发票")
     manifest = Path(profile.workspace_dir) / "projection-manifest.json"
-    manifest.write_text("{broken")
+    manifest.write_text("{broken", encoding="utf-8")
     before = _tree(root)
     assert client.get(url).status_code == 422
-    assert manifest.read_text() == "{broken" and _tree(root) == before
+    assert manifest.read_text(encoding="utf-8") == "{broken" and _tree(root) == before
 
 
 @pytest.mark.parametrize("body", [[], None, {"extra": 1}, {"pricing_date": []}, {"pricing_date": "2026-02-30"}])
@@ -281,11 +281,11 @@ def test_other_company_and_changed_quote_cannot_reuse_confirmation(env, tmp_path
 def test_links_and_changes_during_snapshot_are_rejected(env, tmp_path, monkeypatch):
     app, client, root, cid, url = env
     external = tmp_path / "unrelated.json"
-    external.write_text("do not change")
+    external.write_text("do not change", encoding="utf-8")
     rule = root / "成本发票" / RULE_FILE
     rule.symlink_to(external)
     assert client.get(url).status_code in {409, 422}
-    assert external.read_text() == "do not change"
+    assert external.read_text(encoding="utf-8") == "do not change"
     rule.unlink()
     import invoice_hub.services.company_costs as costs
     original = costs.build_inventory_check
@@ -370,7 +370,7 @@ def test_market_reference_is_per_quote_and_confirmation_binds_its_evidence(env):
     assert client.put(url + "/rules", json={**saving, "lines": [changed]}).status_code == 409
     assert _tree(root) == before
     assert client.put(url + "/rules", json=saving).status_code == 200
-    assert "合成行情甲" not in (root / "成本发票" / RULE_FILE).read_text()
+    assert "合成行情甲" not in (root / "成本发票" / RULE_FILE).read_text(encoding="utf-8")
     reread = snapshot(client, url)
     after = _tree(root)
     request = {"revision": reread["revision"], "pricing_date": reread["pricing_date"], "lines": [line]}

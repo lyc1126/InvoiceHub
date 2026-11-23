@@ -53,9 +53,9 @@ def test_trash_confirmation_exact_selection_and_idempotence(selection_env):
     assert result.json()["state"] == "completed"
     assert moved == ["a.xml"]
     assert not paths[0].exists() and paths[1].exists() and paths[2].exists()
-    paths[0].write_text("replacement must survive")
+    paths[0].write_text("replacement must survive", encoding="utf-8")
     assert client.post(url, json={"confirmed": True}).json() == result.json()
-    assert paths[0].read_text() == "replacement must survive"
+    assert paths[0].read_text(encoding="utf-8") == "replacement must survive"
     assert "path" not in result.json()["files"][0]
     assert client.get(url.removesuffix("/confirm")).json() == result.json()
 
@@ -64,7 +64,7 @@ def test_trash_confirmation_exact_selection_and_idempotence(selection_env):
 def test_confirmation_revalidates_all_before_any_move(selection_env, change):
     client, state, paths, moved, prepare = selection_env
     job = prepare(("a.xml", "b.xml")).json()
-    if change == "replace": paths[2].write_text("different source")
+    if change == "replace": paths[2].write_text("different source", encoding="utf-8")
     elif change == "remove": paths[2].unlink()
     elif change == "target": state._active_profile.id = "another-target"
     else:
@@ -231,7 +231,7 @@ def test_confirmed_trash_flows_into_existing_projection_sync_and_keeps_manual_fi
     import fitz
     from test_monitoring import _sample_xml
     for path in (paths[0], paths[2]):
-        path.write_text(_sample_xml())
+        path.write_text(_sample_xml(), encoding="utf-8")
     with fitz.open() as pdf:
         pdf.new_page().insert_text((50, 50), 'Synthetic invoice')
         paths[1].write_bytes(pdf.tobytes())

@@ -45,7 +45,7 @@ def company_at(folder: Path, rows: list[dict] | None = None) -> Path:
     write_details(root / "成本发票明细.csv", rows or [GOODS, FEE])
     write_catalog(root)
     path = root / "凭证/科目表.json"
-    data = json.loads(path.read_text())
+    data = json.loads(path.read_text(encoding="utf-8"))
     data["accounts"] += [{"code": "560208", "name": "检测费", "is_leaf": True},
                          {"code": "5401", "name": "主营业务成本", "is_leaf": True}]
     path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
@@ -150,7 +150,7 @@ def test_stock_or_unusable_confirmations_never_restore_service_inventory(tmp_pat
         code = {"disabled": "9999", "unknown": "9998", "non_leaf": "5602", "disagreement": "560208"}.get(conflict, "140501")
         if conflict == "disabled":
             path = root / "凭证/科目表.json"
-            data = json.loads(path.read_text())
+            data = json.loads(path.read_text(encoding="utf-8"))
             data["accounts"].append({"code": "9999", "name": "已停用科目", "is_leaf": True, "enabled": False})
             path.write_text(json.dumps(data), encoding="utf-8")
         rules = [{"match_seller": SUPPLIER, "match_internal_project": "盘螺" if conflict == "old_family" else SERVICE,
@@ -206,7 +206,7 @@ def test_corrupt_or_future_catalog_is_preserved_and_generation_refused(tmp_path,
     with pytest.raises(VoucherDraftError) as failed:
         generate_draft(root, BODY)
     assert failed.value.code == "VOUCHER_DRAFT_GENERATE_FAILED"
-    assert status.read_text() == content and not (root / "做账草稿" / NAME).exists()
+    assert status.read_text(encoding="utf-8") == content and not (root / "做账草稿" / NAME).exists()
 
 
 @pytest.mark.parametrize("replace_directory", [False, True])

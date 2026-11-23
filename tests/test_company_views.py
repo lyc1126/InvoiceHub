@@ -58,7 +58,7 @@ def _company(client, root: Path, revision: int = 0, **extra) -> str:
 
 
 def _tree(root: Path) -> dict[str, tuple[int, int]]:
-    return {str(path.relative_to(root)): (path.stat().st_mtime_ns, path.stat().st_size) for path in sorted(root.rglob("*"))}
+    return {path.relative_to(root).as_posix(): (path.stat().st_mtime_ns, path.stat().st_size) for path in sorted(root.rglob("*"))}
 
 
 def _by_key(payload: dict) -> dict[str, dict]:
@@ -73,8 +73,8 @@ def test_voucher_invoice_source_uses_complete_generation(app, client, tmp_path, 
     _invoice(cost, 'a.xml', '10000000000000000001')
     cid = _company(client, root)
     _sync(app, cost)
-    (root / '成本发票明细.csv').write_text('legacy stale copy')
-    (cost / '成本发票明细.csv').write_text('export copy not authoritative')
+    (root / '成本发票明细.csv').write_text('legacy stale copy', encoding="utf-8")
+    (cost / '成本发票明细.csv').write_text('export copy not authoritative', encoding="utf-8")
     seen = []
     def generate(folder, body, *, bank_dir=None, invoice_csv=None, reference_status=None):
         seen.append(invoice_csv)
@@ -196,7 +196,7 @@ def test_directory_date_sort_runs_before_pagination(app, client, company_root, a
     for name, number, day in (("early.xml", "10000000000000000003", "2026-05-01"),
                               ("late.xml", "10000000000000000004", "2026-07-01")):
         path = _invoice(folder, name, number)
-        path.write_text(path.read_text().replace("<IssueDate>2026-06-30</IssueDate>", f"<IssueDate>{day}</IssueDate>"))
+        path.write_text(path.read_text(encoding="utf-8").replace("<IssueDate>2026-06-30</IssueDate>", f"<IssueDate>{day}</IssueDate>"), encoding="utf-8")
     if active:
         app.state.invoice_hub.update_settings({"watch_dir": str(folder)})
     _sync(app, folder)
@@ -378,7 +378,7 @@ def test_cost_identity_lookup_rejects_linked_status_and_directory(client, tmp_pa
     folder.mkdir(parents=True)
     company_id = _company(client, root)
     outside = tmp_path / '另一公司状态.json'
-    outside.write_text('{"tax_profile":{"output_tax_rate":"0.03"}}')
+    outside.write_text('{"tax_profile":{"output_tax_rate":"0.03"}}', encoding="utf-8")
     (folder / '成本开票状态.json').symlink_to(outside)
     url = f'/api/v1/companies/{company_id}/cost-tax-profile'
     assert client.get(url).status_code == 409

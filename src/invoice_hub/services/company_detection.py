@@ -92,8 +92,6 @@ class CompanyDetectionService:
     def _save(self, job: dict) -> None:
         path = self._path(job["plan_hash"])
         atomic_write_json(path, job)
-        with path.open("rb") as stream:
-            os.fsync(stream.fileno())
         if os.name != "nt":
             descriptor = os.open(self.directory, os.O_RDONLY | os.O_DIRECTORY)
             try:
@@ -111,7 +109,7 @@ class CompanyDetectionService:
             try:
                 if path.is_symlink() or path.stat().st_size > 65536:
                     raise ValueError()
-                job = json.loads(path.read_text())
+                job = json.loads(path.read_text(encoding="utf-8"))
                 if (not isinstance(job, dict) or job.get("plan_hash") != plan_hash
                         or job.get("state") not in {"creating", "registering", "completed", "failed"}
                         or not isinstance(job.get("created"), list)
@@ -163,7 +161,7 @@ class CompanyDetectionService:
                 raise _error("公司清单已达到数量上限。")
             self.directory.mkdir(parents=True, exist_ok=True)
             try:
-                with path.with_suffix(".started").open("x") as stream:
+                with path.with_suffix(".started").open("x", encoding="utf-8") as stream:
                     stream.write(plan_hash)
                     stream.flush()
                     os.fsync(stream.fileno())

@@ -27,7 +27,7 @@ def service_rows(env):
             ("11", "2026-07-15", "项目甲", "1000"), ("12", "2026-07-16", "项目乙", "2000"),
             ("13", "2026-07-17", "", "300"), ("14", "2026-07-18", "项目丙", "500")]:
         path = invoice(root, "开具发票", number, day, "1", amount, "0", name="合成施工服务", spec="")
-        path.write_text(path.read_text().replace("<Quantity>1</Quantity>", "<Quantity></Quantity>"), encoding="utf-8")
+        path.write_text(path.read_text(encoding="utf-8").replace("<Quantity>1</Quantity>", "<Quantity></Quantity>"), encoding="utf-8")
     (root / "项目归属.json").write_text(json.dumps({"version": 1, "revision": 1, "invoices": {
         number.zfill(20): {"project": project} for number, project in [("10", "项目甲"), ("11", "项目甲"), ("12", "项目乙"), ("14", "项目丙")]
     }}), encoding="utf-8")
@@ -96,9 +96,9 @@ def test_item_types_guards_preserve_snapshots_and_foreign_catalog_fields(env):
     response = client.post("/api/v1/cost-analysis/reference-status", json={"items": [{"key": key, "invoiced_quantity": "2", "reference_markup_rate_percent": "12"}]})
     assert response.status_code == 200
     path = root / "成本发票/成本开票状态.json"
-    old = json.loads(path.read_text())
+    old = json.loads(path.read_text(encoding="utf-8"))
     body, _preview = put_types(client, url, {"螺纹钢": "service"})
-    changed = json.loads(path.read_text())
+    changed = json.loads(path.read_text(encoding="utf-8"))
     assert changed["items"] == old["items"]  # leaving goods preserves the old issued snapshot
     assert changed["reference_markup_rate"] == old["reference_markup_rate"]
     assert client.put(url + "/item-types", json=body).status_code == 409
@@ -126,7 +126,7 @@ def test_item_type_alias_group_keeps_original_alias_and_tax(env):
     invoice(root, "成本发票", "15", "2026-07-10", "1", "100", "0", name="别名钢")
     _sync(app, root / "成本发票")
     path = root / "成本发票/成本开票状态.json"
-    data = json.loads(path.read_text())
+    data = json.loads(path.read_text(encoding="utf-8"))
     alias = {"standard_name": "螺纹钢", "type": "goods", "output_tax_rate_percent": "3"}
     data["item_catalog"] = {"version": 1, "items": {"别名钢": alias,
         "螺纹钢": {"standard_name": "螺纹钢", "type": "goods", "output_tax_rate_percent": "1"}}}
@@ -137,7 +137,7 @@ def test_item_type_alias_group_keeps_original_alias_and_tax(env):
         "types": {"别名钢": "goods", "螺纹钢": "service"}}).status_code == 422
     assert _tree(root) == before
     put_types(client, url, {"别名钢": "service"})
-    saved = json.loads(path.read_text())["item_catalog"]["items"]
+    saved = json.loads(path.read_text(encoding="utf-8"))["item_catalog"]["items"]
     assert saved["别名钢"] == alias
     assert saved["螺纹钢"]["type"] == "service" and saved["螺纹钢"]["output_tax_rate_percent"] == "1"
     assert all(r["type"] == "service" for r in client.get(url + "/item-types").json()["items"])
@@ -183,7 +183,7 @@ def test_uniform_actual_markup_uses_period_and_original_month_cost(env, varied):
 def test_unknown_cost_does_not_form_uniform_markup(env):
     app, client, root, _cid, url = env
     path = invoice(root, "开具发票", "5", "2026-06-22", "1", "140", "0")
-    path.write_text(path.read_text().replace("<Quantity>1</Quantity>", "<Quantity></Quantity>"), encoding="utf-8")
+    path.write_text(path.read_text(encoding="utf-8").replace("<Quantity>1</Quantity>", "<Quantity></Quantity>"), encoding="utf-8")
     _sync(app, root / "开具发票")
     report = client.get(url + "/price-monitor", params={"end": "2026-06"}).json()
     assert report["uniform_markup"]["state"] == "needs_review"

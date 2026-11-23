@@ -51,7 +51,7 @@ def test_first_rows_visible_before_last_invoice_finishes(tmp_path, monkeypatch, 
     with _client(tmp_path, monkeypatch) as client:
         state = client.app.state.invoice_hub
         for i in range(3):
-            (tmp_path / "发票文件" / f"{i}.xml").write_text(_cost_xml_text(str(10000000000000000000 + i)))
+            (tmp_path / "发票文件" / f"{i}.xml").write_text(_cost_xml_text(str(10000000000000000000 + i)), encoding="utf-8")
         results = []
         worker = threading.Thread(target=lambda: results.append(state.monitor.bridge_rebuild()))
         worker.start()
@@ -169,7 +169,7 @@ def test_outbound_partial_preview_and_status_reuse(tmp_path, monkeypatch):
         root = tmp_path / "发票文件"
         source = root / "out.xml"
         number = "10000000000000000013"
-        source.write_text(_cost_xml_text(number))
+        source.write_text(_cost_xml_text(number), encoding="utf-8")
         monkeypatch.setattr(state.settings, "outbound_invoice_dir_text", lambda: str(root))
         monkeypatch.setattr(state.documents, "document_state", lambda **kw: {
             "outbound_invoices": [{"invoice_number": number, "source_files": [str(source)]}],
@@ -184,7 +184,7 @@ def test_outbound_partial_preview_and_status_reuse(tmp_path, monkeypatch):
         assert response.status_code == 400 and "临时预览" in response.json()["detail"]
         def changing(*args, **kwargs):
             preview = original(*args, **kwargs)
-            source.write_text(_cost_xml_text(number) + "\n")
+            source.write_text(_cost_xml_text(number) + "\n", encoding="utf-8")
             return preview
         monkeypatch.setattr(module, "build_outbound_preview", changing)
         with pytest.raises(module.DocumentError, match="变化"):

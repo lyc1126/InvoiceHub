@@ -76,7 +76,7 @@ def recover_exports(workspace: Path, source: Path) -> None:
     if data["root_identity"] != identity(source):
         raise ValueError("来源根身份已变化，未恢复导出或覆盖文件。")
     receipt_path = Path(workspace) / "projection-export-receipt.json"
-    receipt = json.loads(receipt_path.read_text()) if receipt_path.exists() else {}
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8")) if receipt_path.exists() else {}
     if receipt.get("generation") == data["generation"]:
         return
     for name, digest in data["files"].items():

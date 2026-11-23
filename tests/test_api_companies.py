@@ -97,7 +97,7 @@ def test_writes_require_the_current_revision(client, tmp_path):
     ("make_root", "field"),
     [
         (lambda base: base / "不存在", "root_dir"),
-        (lambda base: (base / "文件.txt").write_text("x") and base / "文件.txt", "root_dir"),
+        (lambda base: (base / "文件.txt").write_text("x", encoding="utf-8") and base / "文件.txt", "root_dir"),
     ],
 )
 def test_root_must_be_an_existing_folder(client, tmp_path, make_root, field):
@@ -302,7 +302,7 @@ def test_cross_origin_registry_writes_are_rejected(client, tmp_path):
 def test_detect_is_read_only_and_registration_only_creates_selected(client, tmp_path):
     root = tmp_path / '检测公司'
     (root / '成本发票').mkdir(parents=True)
-    (root / '成本发票' / '保留.txt').write_text('synthetic')
+    (root / '成本发票' / '保留.txt').write_text('synthetic', encoding="utf-8")
     before = {str(path.relative_to(root)) for path in root.rglob('*')}
     detected = client.post('/api/v1/companies/detect', json={'root_dir': str(root)}).json()
     assert detected['root_status'] == 'present'
@@ -315,7 +315,7 @@ def test_detect_is_read_only_and_registration_only_creates_selected(client, tmp_
     assert response.status_code == 200, response.text
     assert response.json()['state'] == 'completed'
     assert (root / '银行流水').is_dir() and not (root / '开具发票').exists()
-    assert (root / '成本发票' / '保留.txt').read_text() == 'synthetic'
+    assert (root / '成本发票' / '保留.txt').read_text(encoding="utf-8") == 'synthetic'
     # Replaying a lost response reads the durable result, never registers twice.
     assert client.post('/api/v1/companies', json=payload).json()['company']['id'] == response.json()['company']['id']
     assert len(client.get('/api/v1/companies').json()['companies']) == 1

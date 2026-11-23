@@ -75,7 +75,7 @@ def test_salary_confirmation_uses_source_rows_keeps_other_keys_and_cas(env):
     body = confirmation(data, rows=[{"gross": "1.00", "name": "forged"}])
     response = client.put(url, json=body)
     assert response.status_code == 200, response.text
-    saved = json.loads(tax.read_text())
+    saved = json.loads(tax.read_text(encoding="utf-8"))
     assert saved["保留字段"] == {"合成": True} and saved["月度增值税"] == {}
     entry = saved["工资明细"]["2026-08"]
     assert entry["rows"][0]["name"] == "甲乙丙" and entry["totals"]["gross"] == "10000.00"
@@ -83,7 +83,7 @@ def test_salary_confirmation_uses_source_rows_keeps_other_keys_and_cas(env):
     fresh = client.get(url).json()
     assert fresh["confirmed"]["2026-08"]["source_current"]
     assert client.put(url, json={"revision": fresh["tax_revision"], "month": "2026-08", "remove": True}).status_code == 200
-    assert json.loads(tax.read_text())["工资明细"] == {}
+    assert json.loads(tax.read_text(encoding="utf-8"))["工资明细"] == {}
 
 
 def test_same_month_candidates_are_explicit_and_never_added(env):
@@ -93,7 +93,7 @@ def test_same_month_candidates_are_explicit_and_never_added(env):
     assert len(data["candidates"]) == 2
     selected = next(i for i, item in enumerate(data["candidates"]) if item["headcount"] == 1)
     assert client.put(url, json=confirmation(data, selected)).status_code == 200
-    assert json.loads(tax.read_text())["工资明细"]["2026-08"]["totals"]["gross"] == "6000.00"
+    assert json.loads(tax.read_text(encoding="utf-8"))["工资明细"]["2026-08"]["totals"]["gross"] == "6000.00"
 
 
 @pytest.mark.parametrize("change", [{"candidate_id": "forged"}, {"source_revision": "old"}, {"expense_path": ""},
@@ -111,7 +111,7 @@ def test_changed_source_or_mapping_invalidates_preview(env):
     data = client.get(url).json()
     workbook(source, [ROWS[0]])
     assert client.put(url, json=confirmation(data)).status_code == 409
-    assert "工资明细" not in json.loads(tax.read_text())
+    assert "工资明细" not in json.loads(tax.read_text(encoding="utf-8"))
     data = client.get(url).json()
     (root / "新工资").mkdir()
     registry = client.get("/api/v1/companies").json()
@@ -165,7 +165,7 @@ def test_footer_and_multiple_sheets_are_checked(tmp_path):
 def test_damaged_salary_data_blocks_salary_social_and_cli_without_overwrite(env, broken):
     from invoice_hub.bank.vouchers import load_tax_file
     client, _, tax, _, url, company = env
-    tax.write_text(json.dumps({"工资明细": broken}))
+    tax.write_text(json.dumps({"工资明细": broken}), encoding="utf-8")
     before = tax.read_bytes()
     assert client.get(url).status_code == 409
     assert client.get(f"/api/v1/companies/{company}/payroll").status_code == 409
@@ -185,11 +185,11 @@ def test_source_links_are_not_read_and_external_tax_edit_is_kept(env, app, monke
     original = CompanySalaryService._scan
     def changed(self, company_id):
         result = original(self, company_id)
-        tax.write_text(json.dumps({"外部修改": True}))
+        tax.write_text(json.dumps({"外部修改": True}), encoding="utf-8")
         return result
     monkeypatch.setattr(CompanySalaryService, "_scan", changed)
     assert client.put(url, json=confirmation(data)).status_code == 409
-    assert json.loads(tax.read_text()) == {"外部修改": True}
+    assert json.loads(tax.read_text(encoding="utf-8")) == {"外部修改": True}
 
 
 def test_confirmed_salary_generates_gross_accrual_and_rejects_changed_evidence(tmp_path, monkeypatch):
@@ -202,10 +202,10 @@ def test_confirmed_salary_generates_gross_accrual_and_rejects_changed_evidence(t
     monkeypatch.setattr("invoice_hub.services.background_sync.BackgroundSyncService.run_background_diagnostics", lambda *a, **k: None)
     root = bank_company(tmp_path, invoices=[PURCHASE, SALE])
     accounts = root / "凭证" / "科目表.json"
-    ledger = json.loads(accounts.read_text())
+    ledger = json.loads(accounts.read_text(encoding="utf-8"))
     ledger["accounts"] += [{"code": "221101", "name": "应付职工工资", "is_leaf": True, "enabled": True},
                             {"code": "560201", "name": "管理人员职工薪酬", "is_leaf": True, "enabled": True}]
-    accounts.write_text(json.dumps(ledger))
+    accounts.write_text(json.dumps(ledger), encoding="utf-8")
     args = {"from": "2026-07", "to": "2026-08", "confirm": True}
     generate_draft(root, args)
     assert not any("计提8月工资" in str(row["摘要"]) for row in _review(root))
@@ -267,14 +267,14 @@ def test_salary_preserves_explicit_allocations_and_validates_saved_schema(env):
     data = client.get(url).json()
     assert not data["candidates"][0]["needs_expense_path"]
     assert client.put(url, json=confirmation(data, expense_path="")).status_code == 200
-    saved = json.loads(tax.read_text())
+    saved = json.loads(tax.read_text(encoding="utf-8"))
     assert salary.summarize(saved["工资明细"]["2026-08"]["rows"])["allocations"] == [
         {"expense_path": "制造费用/工资", "amount": "4000.00"},
         {"expense_path": "管理费用/管理人员职工薪酬", "amount": "6000.00"}]
     for field, value in (("source", None), ("rows", [{"name": {"bad": True}}])):
         broken = json.loads(json.dumps(saved))
         broken["工资明细"]["2026-08"][field] = value
-        tax.write_text(json.dumps(broken))
+        tax.write_text(json.dumps(broken), encoding="utf-8")
         before = tax.read_bytes()
         assert client.get(url).status_code == 409
         assert tax.read_bytes() == before
@@ -303,13 +303,13 @@ def test_salary_accrual_missing_accounts_booked_month_and_social_do_not_double_d
     source = workbook(root / "工资社保" / "工资.xlsx")
     generate_draft(root, {"from": "2026-07", "to": "2026-08", "confirm": True})
     tax_path = root / "做账草稿" / "申报数据.json"
-    tax = json.loads(tax_path.read_text())
+    tax = json.loads(tax_path.read_text(encoding="utf-8"))
     rows = salary.normalize_rows(salary.read_workbook(source.read_bytes())[0]["rows"], require_expense=True, expense_path="管理费用/工资")
     import hashlib
     tax["工资明细"] = {"2026-08": {"schema_version": 1, "source": "工资.xlsx", "source_file": "工资社保/工资.xlsx",
         "source_sha256": hashlib.sha256(source.read_bytes()).hexdigest(), "rows": rows, "totals": salary.summarize(rows)["totals"]}}
     tax["社保明细"] = {"2026-08": {"单位部分": "1500.00", "个人部分": "800.00", "来源": "明确的合成应缴明细"}}
-    tax_path.write_text(json.dumps(tax))
+    tax_path.write_text(json.dumps(tax), encoding="utf-8")
     generate_draft(root, {"from": "2026-07", "to": "2026-08", "confirm": True})
     reviewed = read_review_xlsx(root / "做账草稿" / "凭证草稿_2026-07_2026-08.xlsx")
     wages = next(v for v in reviewed if "计提8月工资" in v.lines[0]["summary"])

@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 @pytest.fixture(scope='module')
 def prototype():
-    html = (ROOT / 'docs/design/workspace-sidebar-prototype.html').read_text()
+    html = (ROOT / 'docs/design/workspace-sidebar-prototype.html').read_text(encoding="utf-8")
     between = lambda start, end: html[html.index(start):html.index(end, html.index(start))]
     code = '\n'.join([
         between('const COMPANIES = [', 'const N = {}'),

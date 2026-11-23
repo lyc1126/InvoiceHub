@@ -2,6 +2,16 @@
 
 ## 未发布
 
+### 2026-11-23 修复 PR #32 远端 CI 与 Windows 跨平台兼容性问题
+
+- 需求与现场：PR #32（`codex/workspace-p3@0502541`）首轮 GitHub Actions（run `45119681382`）中 `DCO`、`ruff`、`macOS ARM64 Python`、`Tauri Rust (macos-15 / windows-latest)` 与 `macOS reference shell` 均已通过，同时暴露 2 个 Linux Node 作业配置问题及 138 项 Windows Python 兼容性失败（另有 3 条 Windows Rust clippy dead-code 警告已登记至 [ENG-01](docs/PRODUCT_BACKLOG.md#eng-01)）。
+- 根因与修复：
+  - **Linux Vue / 浏览器 CI（`.github/workflows/ci.yml`）**：`actions/setup-node@v5` 默认开启 `package-manager-cache: true`，在 `corepack enable` 执行前检测根 `pnpm-lock.yaml` 并调用 `pnpm` 失败；两处显式配置 `package-manager-cache: false`。
+  - **Windows 只读句柄 `fsync` 失败（`EBADF`）**：`storage/files.py::atomic_write_json` 改为在 `os.replace` 前对可写临时文件 `flush + os.fsync`，移除 `company_setup.py`、`company_detection.py`、`company_export_jobs.py` 在替换后以 `"rb"` 打开并调用 `os.fsync` 的非 Windows 安全写法。
+  - **Windows UTF-8 编码缺失（`charmap`）**：为 `storage/generations.py`、`company_detection.py`、`company_export_jobs.py`、`scripts/dev/build_agent_handoff.py`、`scripts/dev/build_ofd_preview.py` 及 26 个测试文件中的 `read_text/write_text/open` 显式补齐 `encoding="utf-8"`。
+  - **Windows 文件身份与符号链接异常对齐**：`company_bank.py::list_files` 改用 `os.lstat(entry.path)`，解决 Windows `DirEntry.stat()` 返回 `(0, 0)` 而与 `company_bank_layouts.py` 的 `Path.lstat()` 不一致导致 `BANK_LAYOUT_STALE`；`company_files.py::read_relative` 在 Windows 符号链接/联结分支改抛 `OSError(errno.ELOOP, ...)` 以匹配 POSIX `O_NOFOLLOW` 的 HTTP 409 语义；`company_receipts.py` 预览任务同时绑定原文件 `source_sha256`，解决 Windows `st_ctime_ns` 为创建时间导致同大小同 mtime 替换未失效的问题；`tests/test_company_views.py::_tree` 统一 `.as_posix()`、`tests/test_company_ledger.py` 兼容 `\` 路径分隔符。
+- 验证范围与未覆盖项：本机 macOS 通过 `ruff`、`compileall`、27 个受影响测试文件（含文档契约与 macOS 发布契约）及 `git diff --check`；本轮修改将按 DCO 提交并推送更新 PR #32，远端 Windows Python、Linux Vue 与 Linux 浏览器 E2E 实际通过以 PR #32 新一轮 GitHub Actions 运行结果为准；真实 Windows/macOS 成品验收仍按各自清单独立推进。
+
 ### 2026-11-23 确认 v1.0.0 发布路线并推进远端 CI 与 Draft PR
 
 - 需求与决策：用户认可 `v1.0.0` 与 `v1.1+` 范围切分（`WS-01`–`08`/`WS-10`/`COST-01`–`06`/`OCR-01`/`ENG-09`/`ENG-01/02/04`/`FEEDBACK-01` 及 `BK-01`/`BANK-01`/`COST-07` 有限收口归入 `v1.0.0`；`AGENT-01`–`04`、完整税务政策引擎 D0–D5、服务器跨公司模块深度消费与装饰皮肤恢复挪至 `v1.1+`/`v1.2+`），并明确双平台验收当前以 macOS 为主、Windows 侧从 GitHub 克隆分支后再验。
