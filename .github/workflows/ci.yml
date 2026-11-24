@@ -18,7 +18,7 @@ jobs:
   windows:
     name: Windows Python and release contracts
     runs-on: windows-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
         with:

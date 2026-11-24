@@ -101,6 +101,7 @@ class CostItemTypeService:
                 self.pricing.views._cost_service(context["profiles"]["input"]).save_reference_status(
                     {"items": [], "item_catalog": {"items": candidate}})
                 result, _context, verified = self._read(company_id)
-                if verified != candidate:
+                analysis_catalog = self.pricing.views._cost_service(context["profiles"]["input"]).read_only_inputs()["item_catalog"]
+                if verified != candidate or analysis_catalog != candidate:
                     raise _conflict("品目归类保存结果未知，请读取结果，不要重复提交。")
                 return {**result, "changed": True}

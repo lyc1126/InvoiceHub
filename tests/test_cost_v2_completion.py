@@ -206,3 +206,41 @@ def test_alias_hints_keep_spec_grade_units_and_source_evidence(env):
     assert set(row["names"]) == {"螺纹钢", "抗震螺纹钢"} and row["spec"] == "12E" and row["unit"] == "吨"
     assert any(i["invoice_number"] == "10".zfill(20) for s in row["sources"] for i in s["invoices"])
     assert _tree(root) == before
+
+
+def test_item_type_classification_publishes_generation_when_source_not_exported(env):
+    """Non-monitored company refreshed with export_to_source=False must immediately reflect service types in V2."""
+    app, client, root, cid, url = env
+    cost_dir = root / "成本发票"
+    out_dir = root / "开具发票"
+    # Remove any source-side CSV/XLSX so the company matches a fresh export_to_source=False refresh.
+    for extra in ("成本发票明细.csv", "成本发票汇总.xlsx"):
+        (cost_dir / extra).unlink(missing_ok=True)
+        (out_dir / extra).unlink(missing_ok=True)
+    path = invoice(root, "开具发票", "31", "2026-07-15", "1", "800", "0", name="免导出服务项", spec="")
+    path.write_text(path.read_text(encoding="utf-8").replace("<Quantity>1</Quantity>", "<Quantity></Quantity>"), encoding="utf-8")
+    (root / "项目归属.json").write_text(
+        json.dumps({"version": 1, "revision": 1, "invoices": {"31".zfill(20): {"project": "项目丁"}}}),
+        encoding="utf-8",
+    )
+    # Build workspace-only generations via CompanyDataRefreshService (export_to_source=False).
+    refresh_resp = client.post(f"/api/v1/companies/{cid}/refresh-data", json={"force": True})
+    assert refresh_resp.status_code == 200, refresh_resp.text
+    job = refresh_resp.json()
+    for _ in range(100):
+        if job["status"] in ("completed", "failed", "cancelled"):
+            break
+        job = client.get(f"/api/v1/companies/{cid}/refresh-data").json()
+    assert job["status"] == "completed", job
+    assert not (cost_dir / "成本发票明细.csv").exists()
+    assert not (cost_dir / "成本发票汇总.xlsx").exists()
+
+    put_types(client, url, {"免导出服务项": "service"})
+
+    # Source folder still has no exported CSV/XLSX, while V2 analysis immediately sees the service item.
+    assert not (cost_dir / "成本发票明细.csv").exists()
+    assert not (cost_dir / "成本发票汇总.xlsx").exists()
+    report = client.get(url + "/analysis", params={"end": "2026-07"}).json()
+    rows = {(r["month"], r["project"]): r for r in report["service_margin"]["rows"]}
+    assert ("2026-07", "项目丁") in rows
+    assert rows["2026-07", "项目丁"]["revenue"] == "800.00"

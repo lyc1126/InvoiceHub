@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-import hashlib
 import copy
+import hashlib
 import re
+import shutil
 from functools import wraps
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
@@ -592,6 +593,46 @@ class CostProjectionService:
         return rows
 
     def _refresh_workbook_from_current_detail(self, reference_markup_rate: object) -> None:
+        # Non-monitored company folders built via CompanyDataRefreshService use
+        # export_to_source=False, so watch_dir has no fixed CSV/XLSX. Republish a new
+        # manifest-bound generation in workspace so V2 read_only_inputs/read_pricing_inputs
+        # immediately consume the updated catalog/status without writing CSV/XLSX to source.
+        manifest = generations.current(self.workspace_dir, self.watch_dir) if self.output_dir == self.watch_dir else {}
+        if manifest and not manifest.get("source_exported", True):
+            gen_detail = generations.resolve(self.workspace_dir, self.watch_dir, COST_DETAIL_CSV_NAME, manifest)
+            if not gen_detail.exists():
+                return
+            detail_rows = read_csv_rows(gen_detail)
+            gen_summary = generations.resolve(self.workspace_dir, self.watch_dir, COST_SUMMARY_XLSX_NAME, manifest)
+            checks = self._read_workbook_sheet("发票校验", CHECK_HEADERS, path=gen_summary)
+            with generations.candidate(self.workspace_dir) as stage:
+                for name in generations.SUMMARY + generations.OPTIONAL + (generations.COST[0],):
+                    existing = generations.resolve(self.workspace_dir, self.watch_dir, name, manifest)
+                    if existing.exists():
+                        shutil.copyfile(existing, stage / name)
+                if self.status_json.exists():
+                    shutil.copyfile(self.status_json, stage / generations.COST[2])
+                _write_workbook(
+                    stage / generations.COST[1],
+                    detail_rows,
+                    checks,
+                    status_items=_read_reference_status(self.status_json),
+                    reference_markup_rate=reference_markup_rate,
+                    tax_profile=self._tax_profile(),
+                    outbound_items=self._outbound_items(),
+                    item_catalog=self._item_catalog(),
+                    exclusions=self._exclusions(),
+                )
+                generations.publish(
+                    self.workspace_dir,
+                    self.watch_dir,
+                    stage,
+                    expected=manifest["generation"],
+                    coverage=manifest["coverage"],
+                    export_to_source=False,
+                    parser_versions=manifest.get("parser_versions") if isinstance(manifest.get("parser_versions"), dict) else None,
+                )
+            return
         if not self.detail_csv.exists():
             return
         detail_rows = read_csv_rows(self.detail_csv)
@@ -772,8 +813,19 @@ class CostProjectionService:
         item_catalog = parse_item_catalog(payload.get("item_catalog")) if catalog_changed else self._item_catalog()
         exclusions_changed = "reference_exclusions" in payload
         requested_exclusions = parse_reference_exclusions(payload.get("reference_exclusions")) if exclusions_changed else None
-        checks = self._read_workbook_sheet("发票校验", CHECK_HEADERS)
-        detail_rows = read_csv_rows(self.detail_csv)
+        detail_path = self.detail_csv
+        summary_path = self.summary_xlsx
+        if self.output_dir == self.watch_dir and not detail_path.exists():
+            manifest = generations.current(self.workspace_dir, self.watch_dir)
+            if manifest:
+                gen_detail = generations.resolve(self.workspace_dir, self.watch_dir, COST_DETAIL_CSV_NAME, manifest)
+                gen_summary = generations.resolve(self.workspace_dir, self.watch_dir, COST_SUMMARY_XLSX_NAME, manifest)
+                if gen_detail.exists():
+                    detail_path = gen_detail
+                if gen_summary.exists():
+                    summary_path = gen_summary
+        checks = self._read_workbook_sheet("发票校验", CHECK_HEADERS, path=summary_path)
+        detail_rows = read_csv_rows(detail_path)
         if catalog_changed:
             current = self._migrate_statuses_to_catalog(detail_rows, current, checks, tax_profile, item_catalog)
         reference_rows = self._build_reference_rows(
@@ -910,14 +962,15 @@ class CostProjectionService:
             migrated.pop(key, None)
         return migrated
 
-    def _read_workbook_sheet(self, sheet_name: str, headers: list[str]) -> list[dict]:
-        if not self.summary_xlsx.exists():
+    def _read_workbook_sheet(self, sheet_name: str, headers: list[str], *, path: Path | None = None) -> list[dict]:
+        target = path or self.summary_xlsx
+        if not target.exists():
             return []
         wb = None
         try:
             from openpyxl import load_workbook
 
-            wb = load_workbook(self.summary_xlsx, data_only=True, read_only=True)
+            wb = load_workbook(target, data_only=True, read_only=True)
             if sheet_name not in wb.sheetnames:
                 return []
             ws = wb[sheet_name]

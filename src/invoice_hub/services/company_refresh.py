@@ -198,9 +198,10 @@ class CompanyDataRefreshService:
         try:
             for key in target_keys:
                 with self._guard:
-                    if self._closed:
-                        self._update_dir(company_id, job_id, key, status="cancelled", error="服务正在关闭")
-                        continue
+                    closed = self._closed
+                if closed:
+                    self._update_dir(company_id, job_id, key, status="cancelled", error="服务正在关闭")
+                    continue
                 try:
                     company = self._registry.get_company(company_id)["company"]
                 except CompanyRegistryError:
