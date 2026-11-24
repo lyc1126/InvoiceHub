@@ -103,7 +103,7 @@
 | WS-06 非监控批量标签 | DirectoryInvoices、invoice_tags、公司目录列表；做账/页面规则 | directory-preview.spec.ts、invoice_tags/company_views；跨页/全选/清单刷新，源文件动作仍禁用；真实点击/键盘打开菜单，选择条不得遮挡，窗口边界可达 |
 | WS-07 期初、历史身份和确定性匹配 | company_opening、company_views/settlement/inventory、targets/companies、cost_analysis/costs；做账/成本规则 | test_company_opening、workspace_prototype_ledger、company_ledger/settlement/inventory/views、summary_and_costs；坏文件保留、覆盖期、历史未知、预付款及身份到期 |
 | WS-08 原始解析与完整代际 | parse_cache、generations、incremental → monitor/手动重建 → invoice_list/costs/documents/company_views/company_vouchers | test_incremental_projections、monitoring、progressive_loading、summary_and_costs、documents、selection_workflow、company_voucher_generate/API；10,000 文件、增删改与全量一致、路径别名与异根拒绝、失败/手改/导出恢复/迟到结果 |
-| WS-09 来源与隔离预览 | source_adapters/source_cache、source_worker/SourceService、api/routes/sources → ServerSourcesPanel | test_server_sources、test_sftp_source、server-sources.spec.ts、file_preview/API；源隔离、取消/超时/重启、无号票、坏包/版本/指纹、失败先落盘、租约与只读边界 |
+| WS-09 来源与隔离预览 | source_adapters/source_cache、source_worker/SourceService、api/routes/sources → stores/sources、ServerConnectModal、ServerSourcesPanel、ServerDirectoryPanel/SelectionBar/PreviewDrawer | test_server_sources、test_sftp_source、server-sources.spec.ts、file_preview/API；源隔离、按目录范围汇总、混合目录容错、多维筛选排序/勾选拆组/批量预览租约、取消/超时/重启、无号票、坏包/版本/指纹、失败先落盘与只读边界 |
 
 跨模块收尾跑绝对 `PYTHONPATH="$PWD/src"` 的完整 pytest、Ruff、Python 编译、Vue typecheck/test/build、Node 交互、文档契约/本地链接与 diff 检查。隔离合成 localhost 的真实浏览器核对浅/深/390px/no_skin、非监控标签、来源目录/汇总/预览、侧栏拖宽与两种面板边界、控制台及迟到响应；不读取真实默认配置。真实 SMB/SFTP/SSH Agent、Windows BAT、正式前台拉起、原生选择器、Tauri/打包成品分别记录，未执行不得宣称通过。可靠游标、公司模块消费和历史缓存容量治理仍见后续待办。
 

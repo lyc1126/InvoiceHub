@@ -43,13 +43,22 @@ class Settings(Payload):
 class Job(Payload):
     kind: Literal["probe", "scan", "download", "summary"]
     entry_id: str = Field(default="", max_length=32)
+    entry_ids: list[str] = Field(default_factory=list, max_length=100)
+    parent_id: str = Field(default="", max_length=32)
     full: StrictBool = False
     verify: StrictBool = False
 
 
 class Preview(Payload):
-    entry_id: str = Field(max_length=32)
+    entry_id: str = Field(default="", max_length=32)
+    entry_ids: list[str] = Field(default_factory=list, max_length=100)
     allow_stale: StrictBool = False
+
+
+class SelectionSummary(Payload):
+    entry_ids: list[str] = Field(min_length=1, max_length=1000)
+    parent_id: str = Field(default="", max_length=32)
+    generation: str = Field(default="", max_length=32)
 
 
 def router(service, require_write, require_picker):
@@ -66,6 +75,10 @@ def router(service, require_write, require_picker):
     @routes.get("")
     def sources():
         return run(service.list)
+
+    @routes.get("/mounted-shares")
+    def mounted_shares():
+        return run(service.mounted_shares)
 
     @routes.post("")
     def add(payload: Profile, request: Request):
@@ -119,8 +132,38 @@ def router(service, require_write, require_picker):
         return {"ok": True, **run(lambda: service.entries(sid, parent_id, page, keyword))}
 
     @routes.get("/{sid}/summary")
-    def summary(sid: str, parent_id: str = Query(default="", max_length=32)):
-        return {"ok": True, **run(lambda: service.summary(sid, parent_id))}
+    def summary(
+        sid: str,
+        parent_id: str = Query(default="", max_length=32),
+        page: int = Query(default=1, ge=1, le=1000),
+        page_size: int = Query(default=200, ge=1, le=200),
+        keyword: str = Query(default="", max_length=200),
+        file_ext: str = Query(default="", max_length=16),
+        status: str = Query(default="", max_length=32),
+        invoice_type: str = Query(default="", max_length=64),
+        date_sort: Literal["", "asc", "desc"] = Query(default=""),
+    ):
+        return {
+            "ok": True,
+            **run(
+                lambda: service.summary(
+                    sid,
+                    parent_id,
+                    page=page,
+                    page_size=page_size,
+                    keyword=keyword,
+                    file_ext=file_ext,
+                    status=status,
+                    invoice_type=invoice_type,
+                    date_sort=date_sort,
+                )
+            ),
+        }
+
+    @routes.post("/{sid}/selection-summary")
+    def selection_summary(sid: str, payload: SelectionSummary, request: Request):
+        require_write(request)
+        return run(lambda: service.selection_summary(sid, **payload.model_dump()))
 
     @routes.delete("/{sid}/cache")
     def clear(sid: str, request: Request):
@@ -132,9 +175,18 @@ def router(service, require_write, require_picker):
         require_write(request)
         return {"ok": True, **run(lambda: service.preview(sid, **payload.model_dump()))}
 
+    @routes.post("/{sid}/previews/{job_id}/keep-alive")
+    def keep_alive(sid: str, job_id: str, request: Request):
+        require_write(request)
+        return run(lambda: service.keep_alive_preview(sid, job_id))
+
     @routes.get("/{sid}/previews/{job_id}/text")
     def text(sid: str, job_id: str):
         return {"ok": True, "text": run(lambda: service.preview_content(sid, job_id))}
+
+    @routes.get("/{sid}/previews/{job_id}/files/{file_number}/text")
+    def file_text(sid: str, job_id: str, file_number: int):
+        return Response(run(lambda: service.preview_content(sid, job_id, file_number=file_number)), media_type="text/plain; charset=utf-8", headers={"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"})
 
     @routes.delete("/{sid}/previews/{job_id}")
     def release(sid: str, job_id: str, request: Request):
@@ -144,5 +196,9 @@ def router(service, require_write, require_picker):
     @routes.get("/{sid}/previews/{job_id}/pages/{page}")
     def page(sid: str, job_id: str, page: int):
         return Response(run(lambda: service.preview_content(sid, job_id, page)), media_type="image/png", headers={"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"})
+
+    @routes.get("/{sid}/previews/{job_id}/files/{file_number}/pages/{page}")
+    def file_page(sid: str, job_id: str, file_number: int, page: int):
+        return Response(run(lambda: service.preview_content(sid, job_id, page, file_number=file_number)), media_type="image/png", headers={"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"})
 
     return routes

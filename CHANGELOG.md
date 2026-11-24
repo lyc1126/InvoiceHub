@@ -2,6 +2,17 @@
 
 ## 未发布
 
+### 2026-11-24 优化 SMB 服务器链接体验并补齐主工作区只读原生汇总、筛选、勾选合计与批量预览（WS-09）
+
+- 需求与起点：基于 `codex/workspace-p3@30f06a6` 响应用户实测反馈：当前 SMB 试验版连接与浏览形态与原型差距较大，大共享盘下全根扫描/汇总易受无关目录和非发票 PDF 影响，且缺少原生发票汇总表、多维筛选、勾选合计拆组与批量原票预览。经用户确认采用「右侧轻量目录浏览 + 主工作区标签页铺开原生发票工作台（方案 A）」的一期设计。
+- 采用方案：
+  - **已挂载共享发现与按目录范围增量汇总**：`storage/source_adapters/__init__.py` 新增只读 `discover_mounted_shares()`（枚举系统已挂载网络共享卷，不主动发起挂载）并细化大共享盘枚举进度上报；`services/source_worker.py` 支持按 `parent_id` 仅拉取/解析所选子目录、自动跳过 macOS `._*` 伴随文件，并在混合目录出现非发票 PDF 成本解析异常时保留票头汇总且显式返回 `cost_error`，二次一致性核对同步收敛至当前子树，避免无关项目变动打断当前目录汇总；同步支持单任务批量下载 `entry_ids`（上限 100）。
+  - **后端原生筛选/排序/分页、勾选合计与批量来源预览**：`services/sources.py` 与 `api/routes/sources.py` 新增 `GET /api/v1/sources/mounted-shares`、`POST /api/v1/sources/{sid}/selection-summary`、`POST /api/v1/sources/{sid}/previews/{job_id}/keep-alive` 及多文件预览内容路由 `files/{file_number}/text|pages/{page}`；扩展 `GET /api/v1/sources/{sid}/summary` 支持本目录或最近祖先汇总匹配、服务端全量 `keyword`/`file_ext`/`status`/`invoice_type`/`date_sort` 筛选排序、分页及原生四项统计 `invoice_stats`；勾选合计复用 `selection_family_key` 与 `selection_cost_breakdown`，继续严格绑定不透明 `entry_id`、汇总代际与来源隔离预览租约，不写入服务器、不切换活动监控目录。
+  - **独立连接弹窗、原型对齐右侧栏与主工作区只读发票视图**：新增 `stores/sources.ts`、`ServerConnectModal.vue`（`WsModal` 共享文件夹 / SSH-SFTP 双分页、自动发现已挂载共享与收藏管理，无密码框）、重构 `ServerSourcesPanel.vue`（顶部目录/文件横向标签与蓝色进度条、目录级「汇总此目录」及一键打开主工作区入口）；在 `stores/workspace.ts` 与 `HomeView.vue` 新增 `server-dir` 标签并接入 `ServerDirectoryPanel.vue`、`ServerSelectionBar.vue` 与 `ServerPreviewDrawer.vue`（4 KPI 卡、多维筛选排序分页、显示列自定义、TSV 复制、勾选合计详情宽弹窗与 100 文件分组缩略图批量原票预览）。重建 `web/static/app/` 并同步架构五图与 `WEB_UI.md`。
+- 验证范围与未覆盖项：
+  - 已运行并通过：`tests/test_server_sources.py`、`tests/test_sftp_source.py`、`tests/test_file_preview.py`、`tests/test_api_contract.py`、`tests/test_workspace_frontend.py`、`tests/test_frontend_contract.py`、`tests/test_development_documentation.py`、Ruff、Python `compileall`、Vue `vue-tsc --noEmit`、`vitest run`（20 文件 168 项）、`vite build`、`git diff --check`。
+  - 未覆盖项：未覆盖真实 SMB/VPN 局域网共享与 SSH Agent 实服联调、真实默认配置、正式 Windows BAT、浏览器前台拉起、系统原生目录选择器与 Tauri 打包产物；本轮未推送远端或合并 `main`。
+
 ### 2026-11-24 调整工作区发票列表标签色点尺寸、标签列紧凑宽度与工具栏按钮间距
 
 - 需求与起点：基于 `codex/workspace-p3@4d229dc` 响应用户反馈：工作区发票列表左侧标签色点偏小且与销售方列之间空白显得过宽；同时一并修正目录工具栏中「重新汇总」与「检查变动」按钮分散排版的问题。

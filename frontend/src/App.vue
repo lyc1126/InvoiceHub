@@ -16,8 +16,10 @@ import { useWorkspaceStore } from "./stores/workspace";
 import WsModal from "./components/WsModal.vue";
 import ShutdownDialog from "./components/ShutdownDialog.vue";
 import CompanyCreateForm from "./components/CompanyCreateForm.vue";
+import ServerConnectModal from "./components/ServerConnectModal.vue";
 import ServerSourcesPanel from "./components/ServerSourcesPanel.vue";
 import FeedbackDialog from "./components/FeedbackDialog.vue";
+import { useSourcesStore } from "./stores/sources";
 import { toast } from "./toast";
 import { toastMessage } from "./toast";
 
@@ -25,6 +27,7 @@ const system = useSystemStore();
 const companies = useCompaniesStore();
 const workspace = useWorkspaceStore();
 const modules = useModulesStore();
+const sourcesStore = useSourcesStore();
 const route = useRoute();
 const router = useRouter();
 const recovery = computed(() => skinBypassRequested(route.query.no_skin));
@@ -49,6 +52,39 @@ function closeFeedback(): void {
   if (route.query.feedback) { const query = { ...route.query }; delete query.feedback; void router.replace({ query }); }
 }
 const serverOpen = ref(false);
+const serverConnectOpen = ref(false);
+
+async function openServerEntry(): Promise<void> {
+  sidebarOpen.value = false;
+  const list = sourcesStore.sources.length ? sourcesStore.sources : await sourcesStore.load();
+  if (!list.length) {
+    serverConnectOpen.value = true;
+  } else {
+    serverOpen.value = true;
+  }
+}
+
+function onServerConnected(sourceId: string): void {
+  sourcesStore.selectedId = sourceId;
+  serverOpen.value = true;
+}
+
+function openServerWorkspaceTab(payload: { sourceId: string; parentId: string; sourceName: string; dirName: string }): void {
+  workspace.open({
+    kind: "server-dir",
+    sourceId: payload.sourceId,
+    parentId: payload.parentId,
+    sourceLabel: payload.sourceName,
+    dirLabel: payload.dirName,
+  });
+  serverOpen.value = false;
+  if (route.name !== "home") navigate("/");
+}
+
+function openServerPanelFor(sourceId: string): void {
+  sourcesStore.selectedId = sourceId;
+  serverOpen.value = true;
+}
 const scroll: Record<string, number> = {};
 let previous = "";
 let navigation = 0;
@@ -189,7 +225,7 @@ function showShutdown(): void { shutdownOpen.value = true; }
       <a class="rail-link rail-link--classic" :href="classicHref('/')" title="返回经典界面">经典界面</a>
       <button class="rail-power" type="button" aria-label="关闭系统" title="关闭系统" @click="showShutdown"><WorkspaceIcon name="power" /></button>
     </nav>
-    <WorkspaceSidebar @opened="sidebarOpen = false" @server="serverOpen = true; sidebarOpen = false" @keydown.escape="sidebarOpen = false" />
+    <WorkspaceSidebar @opened="sidebarOpen = false" @server="openServerEntry" @keydown.escape="sidebarOpen = false" />
     <div v-if="sidebarOpen" class="ws-backdrop" aria-hidden="true" @click="sidebarOpen = false" />
     <!-- Matches the active classic dialog's in-frame backdrop; the frame itself sits above it. -->
     <div v-if="classic && moduleDimmed" class="ws-module-scrim" aria-hidden="true" @click="focusModalFrame" />
@@ -199,7 +235,7 @@ function showShutdown(): void { shutdownOpen.value = true; }
       <p v-if="eventError" class="banner banner--note" role="status">系统事件连接已断开，正在重连；当前页面保留上次状态。</p>
       <!-- Attached v-show caches preserve browsing contexts as well as Vue state.
            Home tabs belong only to home; other modules never render its tab strip. -->
-      <HomeView v-if="modules.visits.has('home')" v-show="shown === 'home'" :active="shown === 'home'" :sidebar-open="sidebarOpen" @toggle-sidebar="sidebarOpen = !sidebarOpen" />
+      <HomeView v-if="modules.visits.has('home')" v-show="shown === 'home'" :active="shown === 'home'" :sidebar-open="sidebarOpen" @toggle-sidebar="sidebarOpen = !sidebarOpen" @open-server-panel="openServerPanelFor" />
       <!-- Kept mounted (v-show inside the dialog host) so the queue and settings draft survive closing. -->
       <WsModal v-if="modules.visits.has('temporary')" :open="route.name === 'temporary'" :escape="false" title="临时识别" subtitle="识别零散发票，结果只在本窗口，不写入任何公司档案。" :wide="true" @close="closeTemporary">
         <TemporaryRecognitionView :active="route.name === 'temporary'" :refresh="modules.refresh.temporary ?? 0" @exit="closeTemporary" />
@@ -207,10 +243,16 @@ function showShutdown(): void { shutdownOpen.value = true; }
       <template v-for="item in MODULES" :key="item.id">
         <WorkspaceModule v-if="modules.visits.has(item.id)" v-show="shown === item.id" :module="item.id" :path="item.path" :label="item.label" :active="shown === item.id" :recovery="recovery" @navigate="navigate" @appearance="appearance?.syncFromServer()" @state-changed="refreshData" />
       </template>
-      <ServerSourcesPanel :open="serverOpen" @close="serverOpen = false" />
+      <ServerSourcesPanel
+        :open="serverOpen"
+        @close="serverOpen = false"
+        @open-connect="serverConnectOpen = true"
+        @open-workspace="openServerWorkspaceTab"
+      />
     </main>
     <ShutdownDialog v-if="shutdownOpen" @close="shutdownOpen = false" />
     <FeedbackDialog v-if="feedbackVisited" :open="feedbackOpen" @close="closeFeedback" />
+    <ServerConnectModal :open="serverConnectOpen" @close="serverConnectOpen = false" @connected="onServerConnected" />
     <WsModal v-if="workspace.createOpen" title="添加公司资料夹" subtitle="登记已有公司资料夹，或在空位置新建标准工作区。" @close="workspace.createOpen = false">
       <CompanyCreateForm @created="onCompanyCreated" @cancel="workspace.createOpen = false" />
     </WsModal>

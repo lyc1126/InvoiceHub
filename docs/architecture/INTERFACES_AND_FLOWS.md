@@ -122,22 +122,27 @@ POST/PUT 同源、流式请求最多 2 MiB，顶层对象和字段严格校验�
 
 | 方法与路由 | 请求 / 返回与边界 |
 | --- | --- |
-| `GET /api/v1/sources` | 收藏、连接/同步/快照状态和协议能力；password、remote_write、change_cursor 均为 false |
+| `GET /api/v1/sources` | 收藏、连接/同步/快照状态、已汇总范围 `summarized_scopes` 和协议能力；password、remote_write、change_cursor 均为 false |
+| `GET /api/v1/sources/mounted-shares` | 只读枚举系统当前已挂载网络共享卷（macOS `/sbin/mount`、Windows 远程映射盘、Linux `/proc/mounts`），不主动发起网络挂载 |
 | `POST /api/v1/sources` | 名称、mounted 或 sftp 配置；只登记，不连接、不建立公司统计归属 |
 | `POST /api/v1/sources/pick` | 原生选择已挂载共享目录，只返回路径草稿；不可用返回脱敏 503 |
 | `GET /api/v1/sources/{sid}` | 查询状态、任务阶段/真实计数、代际、时效、覆盖能力与未接入模块 |
 | `PATCH /api/v1/sources/{sid}` | 带 revision 保存预算及显式公司/进销项角色上下文；运行中或版本变化拒绝 |
 | `DELETE /api/v1/sources/{sid}` | 带 revision 忘记来源；运行中或活动预览租约阻断，仅清本机来源缓存 |
 | `POST /api/v1/sources/{sid}/fingerprint` | 带 revision 显式确认已读取的主机指纹；候选变化拒绝 |
-| `POST /api/v1/sources/{sid}/tasks` | probe/scan/download/summary，download 只接受 entry_id；full/verify 控制解析/内容核验 |
+| `POST /api/v1/sources/{sid}/tasks` | probe/scan/download/summary；download 支持单 `entry_id` 或批量 `entry_ids`（上限 100）；summary 支持可选 `parent_id` 按子目录增量汇总，full/verify 控制解析/内容核验 |
 | `POST /api/v1/sources/{sid}/cancel` | 请求取消独立 worker，保留完整快照和已完成副本 |
 | `POST /api/v1/sources/{sid}/disconnect` | 取消并切离线，epoch 拒绝迟到提交，不删除完整结果 |
-| `GET /api/v1/sources/{sid}/entries` | parent_id、keyword、page；200 项分页，返回面包屑及当前目录含子目录的 `scope.files/bytes/readable_files`；可读数含受支持预览格式、与筛选和分页无关，不支持文件仍列元信息 |
-| `GET /api/v1/sources/{sid}/summary` | parent_id 限定完整汇总的票面记录/账簿；标注完整时间和 stale，不冒充已接入公司模块 |
+| `GET /api/v1/sources/{sid}/entries` | parent_id、keyword、page；200 项分页，返回面包屑、条目缓存态 `cached` 及当前目录含子目录的 `scope.files/bytes/readable_files`；可读数含受支持预览格式、与筛选和分页无关，不支持文件仍列元信息 |
+| `GET /api/v1/sources/{sid}/summary` | 按 `parent_id` 匹配本目录或最近祖先完整汇总，支持服务端全量 `keyword`/`file_ext`/`status`/`invoice_type`/`date_sort` 筛选排序与 `page`/`page_size` 分页，返回原生四项统计 `invoice_stats`、账簿、`cost_error` 与 `stale`，不冒充已接入公司模块 |
+| `POST /api/v1/sources/{sid}/selection-summary` | 按勾选 `entry_ids`（上限 1000）与 `generation` 核对同票去重除税/税额/价税合计及 `selection_cost_breakdown` 成本拆组；代际不符返回 409 |
 | `DELETE /api/v1/sources/{sid}/cache` | 显式清本机原始副本；任务和活动预览租约存在时拒绝，不改源文件或人工状态 |
-| `POST /api/v1/sources/{sid}/previews` | entry_id、allow_stale；只接受完整校验副本，离线须明确同意，返回来源绑定租约 |
-| `GET /api/v1/sources/{sid}/previews/{job_id}/text` | XML 安全纯文本，拒绝来源/revision/条目版本失效及其它来源作业 |
-| `GET /api/v1/sources/{sid}/previews/{job_id}/pages/{page}` | 受限 PNG renderer，private/no-store，不开放本机路径 |
+| `POST /api/v1/sources/{sid}/previews` | 支持单 `entry_id` 或批量 `entry_ids`（上限 100）与 `allow_stale`；只接受完整校验副本，离线须明确同意，返回来源绑定租约、多文件清单与 `keep_alive_url` |
+| `POST /api/v1/sources/{sid}/previews/{job_id}/keep-alive` | 复核来源租约/revision/条目版本后刷新闲置 TTL |
+| `GET /api/v1/sources/{sid}/previews/{job_id}/text` | 单文件 XML 安全纯文本，拒绝来源/revision/条目版本失效及其它来源作业 |
+| `GET /api/v1/sources/{sid}/previews/{job_id}/files/{file_number}/text` | 多文件预览指定序号 XML 安全纯文本（`text/plain`，`private, no-store`），校验来源租约与条目版本 |
+| `GET /api/v1/sources/{sid}/previews/{job_id}/pages/{page}` | 单文件受限 PNG renderer，`private, no-store`，不开放本机路径 |
+| `GET /api/v1/sources/{sid}/previews/{job_id}/files/{file_number}/pages/{page}` | 多文件预览指定序号受限 PNG renderer，`private, no-store`，校验来源租约与条目版本 |
 | `DELETE /api/v1/sources/{sid}/previews/{job_id}` | 关闭/切换释放对应租约，不能释放本地或其它来源作业 |
 
 每来源一个任务、全局最多两个，网络 I/O 在可终止 spawn worker；30 秒无进展超时，health/cancel 不等待网络。完整枚举失败不是空目录或删除，来源发布先落盘再提升内存指针；重启中断显式未知。SFTP 仅系统 SSH Agent 和核对后的主机密钥，标准 v3 弱版本不能证明远端原子快照。公司绑定仅身份上下文，公司/成本/做账/税费模块仍未消费该来源；真实服务器、平台及成品另验。

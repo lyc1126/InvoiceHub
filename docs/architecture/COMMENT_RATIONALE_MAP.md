@@ -83,6 +83,7 @@
 - `SourceService.preview_content/release_preview` / `file_preview.release_job` / `ServerSourcesPanel`：离线需用户明确同意，租约绑定来源/revision/条目版本；关闭与切换只释放对应来源作业，不放宽本地活动目录权限。无号票使用不透明 entry_id 作为来源家族。守护 server_sources、sftp_source、server-sources.spec.ts 与原 file_preview/API 相邻回归。
 
 - `SourceService.entries` / `ServerSourcesPanel.load`：子树可读计数独立于筛选/分页，只有元信息的文件不能暗示有可读票面；收藏重开先恢复绑定/预算，避免默认值被再次保存覆盖。离线文件及标签入口明确提示副本。守护完整子树计数与 `server-sources.spec.ts` 的元信息、恢复及离线测试。
+- `source_worker.summarize` / `SourceService.summary` / `ServerDirectoryPanel`（2026-11-24）：真实 SMB 共享常为多项目混合盘，因此支持按 `parent_id` 仅拉取/解析所选子目录、跳过 macOS `._*` 伴随文件，并在单个非发票 PDF 成本明细失败时保留票头汇总并显式返回 `cost_error`（二次一致性校验亦限定在当前子树，避免无关项目变动打断当前目录）；`selection_summary` 与批量 `previews` 继续严格绑定不透明 `entry_id`、代际与来源租约，不放宽本地 `watch_dir` 权限。守护 `test_server_sources.py` 与 `frontend/tests/server-sources.spec.ts`。
 
 - `DirectoryInvoices.focusTagMenu` / `.tag-menu`：批量选择条位于层级 20，菜单须在其上且在异步标记加载后再次约束窗口边界，否则真实指针会被选择条截获或菜单逃出窄屏；单元测试覆盖边界坐标，浏览器实际点击验证保存。
 - `DirectoryInvoices` 的 `.invoice-party__text` 与 `workspace.hiddenInvoiceColumns`：`table-layout: auto` 下直接给 `<td>` 设 `max-width` 易被 `white-space: nowrap` 的固有宽度忽略，单条超长单位名会撑宽整列导致销售方与购买方间出现大段空白，故用 `inline-block` 子元素限宽省略并保留完整文本与 `title`；隐藏列按 `dirKey` 存 `localStorage` 使成本发票隐藏购买方不误影响开具发票，且始终保留至少 1 列防止空表。守护 `frontend/tests/directory-preview.spec.ts`。

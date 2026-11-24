@@ -257,3 +257,99 @@ def test_source_http_origin_limits_no_monitor_switch_or_local_preview_escape(tmp
         assert client.delete(f'/api/v1/sources/{sid}/cache').status_code == 200
         assert client.delete(f'/api/v1/sources/{sid}?revision=1').status_code == 200
         assert (root / 'a.xml').exists()
+
+
+def test_scoped_summary_filters_sort_selection_and_batch_preview(service, tmp_path):
+    root = tmp_path / 'share'
+    sid = source(service, root)
+    (root / '项目A/发票').mkdir(parents=True)
+    (root / '项目B').mkdir(parents=True)
+    xml_1 = _sample_xml()
+    xml_2 = (
+        _sample_xml()
+        .replace('25322000000043426430', '25322000000043426431')
+        .replace('2026-05-23', '2026-08-15')
+        .replace('示例销售方有限公司', '乙材料供应有限公司')
+    )
+    (root / '项目A/发票/inv1.xml').write_text(xml_1, encoding='utf-8')
+    (root / '项目A/发票/inv2.xml').write_text(xml_2, encoding='utf-8')
+    # macOS AppleDouble sidecar must be skipped during invoice summary, and a broken non-invoice PDF
+    # must not discard the valid header summary of the folder.
+    (root / '项目A/发票/._inv1.pdf').write_bytes(b'appledouble')
+    (root / '项目A/发票/说明文件.pdf').write_bytes(b'not-a-valid-pdf')
+    (root / '项目B/other.xml').write_text(xml_2, encoding='utf-8')
+
+    service.start(sid, 'scan')
+    assert wait(service, sid)['connection'] == 'online'
+    proj_a = next(item for item in service.entries(sid)['items'] if item['name'] == '项目A')
+    proj_b = next(item for item in service.entries(sid)['items'] if item['name'] == '项目B')
+    inv_dir = next(item for item in service.entries(sid, proj_a['id'])['items'] if item['name'] == '发票')
+
+    # Summarize ONLY 项目A/发票; 项目B remains unsummarized and untouched.
+    service.start(sid, 'summary', parent_id=inv_dir['id'])
+    done = wait(service, sid)
+    assert done['sync'] == 'idle', done
+    assert service.summary(sid, proj_b['id'])['available'] is False
+
+    scoped = service.summary(sid, inv_dir['id'], page=1, page_size=50, date_sort='desc')
+    assert scoped['available'] is True
+    assert scoped['total_count'] == 3  # inv1.xml, inv2.xml, 说明文件.pdf (._inv1.pdf skipped)
+    assert scoped['invoice_stats']['all']['total'] == 3
+    assert scoped['invoice_stats']['all']['recognized'] == 2
+    assert scoped['invoice_stats']['all']['needs_review'] == 1
+    assert scoped['items'][0]['invoice_date'] == '2026-08-15'
+    assert scoped['items'][1]['invoice_date'] == '2026-05-23'
+
+    filtered = service.summary(sid, inv_dir['id'], keyword='乙材料', file_ext='.xml', status='已识别')
+    assert filtered['count'] == 1
+    assert filtered['invoice_stats']['filtered']['total'] == 1
+    assert filtered['invoice_stats']['all']['total'] == 3
+
+    # Selection summary deduplicates families and validates summary generation.
+    entry_ids = [item['entry_id'] for item in scoped['items'] if item['file_format'] == 'XML']
+    sel = service.selection_summary(sid, entry_ids=entry_ids, parent_id=inv_dir['id'], generation=scoped['generation'])
+    assert sel['selection']['invoice_count'] == 2
+    assert sel['totals']['total_with_tax']['valid_invoice_count'] == 2
+    with pytest.raises(SourceError, match='代际'):
+        service.selection_summary(sid, entry_ids=entry_ids, parent_id=inv_dir['id'], generation='0' * 32)
+
+    # Batch multi-file preview and keep-alive work on cached source files.
+    preview = service.preview(sid, entry_ids=entry_ids)
+    assert preview['record_count'] == 2 and len(preview['files']) == 2
+    assert 'Invoice' in service.preview_content(sid, preview['job_id'], file_number=2)
+    assert service.keep_alive_preview(sid, preview['job_id'])['ok'] is True
+    service.release_preview(sid, preview['job_id'])
+
+
+def test_batch_download_and_mounted_shares_http_routes(tmp_path):
+    from fastapi.testclient import TestClient
+    from invoice_hub.api.app import create_app
+
+    app = create_app(tmp_path / 'app')
+    with TestClient(app) as client:
+        shares = client.get('/api/v1/sources/mounted-shares')
+        assert shares.status_code == 200
+        assert shares.headers['cache-control'] == 'private, no-store'
+        assert isinstance(shares.json()['shares'], list)
+
+        root = tmp_path / 'share'
+        root.mkdir()
+        (root / 'a.xml').write_text(_sample_xml(), encoding='utf-8')
+        (root / 'b.xml').write_text(_sample_xml().replace('25322000000043426430', '25322000000043426439'), encoding='utf-8')
+        sid = client.post('/api/v1/sources', json={'protocol': 'mounted', 'root': str(root), 'name': '合成批量'}).json()['source']['id']
+        service = app.state.server_sources
+        service.start(sid, 'scan')
+        wait(service, sid)
+        ids = [item['id'] for item in service.entries(sid)['items']]
+
+        res = client.post(f'/api/v1/sources/{sid}/tasks', json={'kind': 'download', 'entry_ids': ids})
+        assert res.status_code == 200
+        assert wait(service, sid)['sync'] == 'idle'
+
+        prev = client.post(f'/api/v1/sources/{sid}/previews', json={'entry_ids': ids})
+        assert prev.status_code == 200
+        payload = prev.json()
+        assert payload['record_count'] == 2
+        assert client.get(f"/api/v1/sources/{sid}/previews/{payload['job_id']}/files/2/text").status_code == 200
+        assert client.post(f"/api/v1/sources/{sid}/previews/{payload['job_id']}/keep-alive").status_code == 200
+        assert client.delete(f"/api/v1/sources/{sid}/previews/{payload['job_id']}").status_code == 200

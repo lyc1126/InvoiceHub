@@ -13,18 +13,130 @@ import subprocess
 import threading
 import time
 import uuid
+from decimal import Decimal
 from pathlib import Path, PurePosixPath
 
 from invoice_hub.domain.models import utc_now_text
-from invoice_hub.services.file_preview import DOCUMENT_EXTENSIONS, PREVIEW_IMAGE_EXTENSIONS, FilePreviewError, FilePreviewSource
+from invoice_hub.extraction import is_valid_money
+from invoice_hub.extraction.classification import CLASSIFICATION_STATUS_OK
+from invoice_hub.projections.cost_analysis import selection_cost_breakdown
+from invoice_hub.services.file_preview import (
+    DOCUMENT_EXTENSIONS,
+    MAX_PREVIEW_SELECTION_RECORDS,
+    PREVIEW_IMAGE_EXTENSIONS,
+    PREVIEW_JOB_TTL_SECONDS,
+    FilePreviewError,
+    FilePreviewSource,
+)
+from invoice_hub.services.invoice_selection import (
+    invoice_number_from_filename,
+    selection_family_key,
+    selection_money_value,
+)
 from invoice_hub.services.source_worker import worker
 from invoice_hub.storage.files import atomic_write_json
-from invoice_hub.storage.source_adapters import SourceError
+from invoice_hub.storage.source_adapters import SourceError, discover_mounted_shares
 from invoice_hub.storage.source_cache import DEFAULT_BUDGET, cache_path
 
 RUNNING = {"connecting", "scanning", "downloading", "parsing", "publishing"}
 BLOCKED = {"auth_required", "host_key_changed", "root_changed"}
 READABLE_EXTENSIONS = DOCUMENT_EXTENSIONS | PREVIEW_IMAGE_EXTENSIONS | {".ofd", ".xml"}
+
+
+def _normalize_summary_item(raw: dict) -> dict:
+    item = dict(raw)
+    name = str(item.get("source_file") or Path(str(item.get("relative") or "")).name)
+    item.setdefault("invoice_key", str(item.get("entry_id") or ""))
+    item.setdefault("source_file", name)
+    if not item.get("file_format"):
+        suffix = Path(name).suffix.lower().lstrip(".")
+        item["file_format"] = suffix.upper() if suffix in {"pdf", "ofd", "xml"} else ""
+    item.setdefault("business_type", "")
+    item.setdefault("classification_status", "")
+    item.setdefault("classification_issue", "")
+    item.setdefault("duplicate", False)
+    if not item.get("status"):
+        if item["duplicate"]:
+            item["status"] = "重复发票"
+        elif item["classification_status"] and item["classification_status"] != CLASSIFICATION_STATUS_OK:
+            item["status"] = "待核对"
+        elif str(item.get("seller") or "").strip() and str(item.get("invoice_number") or "").strip() and is_valid_money(str(item.get("amount") or "")):
+            item["status"] = "已识别"
+        else:
+            item["status"] = "待核对"
+    return item
+
+
+def _invoice_stats(items: list[dict]) -> dict:
+    # Match InvoiceListService._invoice_stats: one family contributes only when face amounts agree.
+    families: dict[str, set[Decimal]] = {}
+    for item in items:
+        values = families.setdefault(selection_family_key(item), set())
+        if (value := selection_money_value(item.get("amount"))) is not None:
+            values.add(value)
+    valid = [next(iter(values)) for values in families.values() if len(values) == 1]
+    return {
+        "total": len(items),
+        "recognized": sum(1 for item in items if item.get("status") == "已识别"),
+        "needs_review": sum(1 for item in items if item.get("status") == "待核对"),
+        "duplicates": sum(1 for item in items if item.get("duplicate")),
+        "total_amount": format(sum(valid, Decimal("0")).quantize(Decimal("0.01")), ".2f"),
+        "total_amount_valid_count": len(valid),
+        "total_amount_missing_count": sum(not values for values in families.values()),
+        "total_amount_conflict_count": sum(len(values) > 1 for values in families.values()),
+    }
+
+
+def _selection_metric_total(families: list[list[dict]], field: str) -> dict:
+    total = Decimal("0")
+    valid_invoice_count = 0
+    missing_invoice_count = 0
+    conflict_invoice_count = 0
+    for family_items in families:
+        values = {
+            value
+            for item in family_items
+            if (value := selection_money_value(item.get(field))) is not None
+        }
+        if not values:
+            missing_invoice_count += 1
+        elif len(values) > 1:
+            conflict_invoice_count += 1
+        else:
+            total += next(iter(values))
+            valid_invoice_count += 1
+    return {
+        "value": float(total.quantize(Decimal("0.01"))),
+        "valid_invoice_count": valid_invoice_count,
+        "missing_invoice_count": missing_invoice_count,
+        "conflict_invoice_count": conflict_invoice_count,
+    }
+
+
+def _selection_cost_family(sid: str, family_key: str, items: list[dict]) -> dict:
+    invoice_numbers = []
+    for item in items:
+        number = str(item.get("invoice_number") or "").strip()
+        if number and number not in invoice_numbers:
+            invoice_numbers.append(number)
+    if not invoice_numbers:
+        for item in items:
+            number = invoice_number_from_filename(item)
+            if number and number not in invoice_numbers:
+                invoice_numbers.append(number)
+    return {
+        "family_key": family_key,
+        "source_invoices": [{
+            "invoice_key": str(item["entry_id"]),
+            "source_path": str(item["entry_id"]),
+            "file_name": str(item.get("source_file") or ""),
+            "invoice_number": str(item.get("invoice_number") or ""),
+            "target_id": sid,
+        } for item in items],
+        "invoice_numbers": invoice_numbers,
+        "source_paths": [str(item["entry_id"]) for item in items],
+        "source_files": [str(item.get("source_file") or "") for item in items],
+    }
 
 
 class SourceService:
@@ -99,12 +211,19 @@ class SourceService:
         result = {key: value for key, value in profile.items() if key not in {"host_key", "candidate_keys"}}
         result["fingerprints"] = list(profile.get("candidate_keys", {}))
         snapshot = self.snapshots.get(profile["id"], {})
+        summaries = dict(profile.get("summaries") or {})
+        if profile.get("summary") and "" not in summaries:
+            summaries[""] = profile["summary"]
         result.update(snapshot="none" if not snapshot else "current" if profile["connection"] == "online" and not profile.get("error") and profile["sync"] == "idle" else "unknown",
                       generation=snapshot.get("generation", ""), last_complete_at=snapshot.get("last_complete_at", ""),
                       scan_complete=bool(snapshot), coverage=snapshot.get("strength", ""),
                       cached_count=len(snapshot.get("cached", {})), entry_count=len(snapshot.get("entries", [])),
+                      summarized_scopes=sorted(summaries),
                       modules={"source_summary": True, "company_modules": False})
         return result
+
+    def mounted_shares(self):
+        return {"ok": True, "shares": discover_mounted_shares()}
 
     def list(self):
         with self.lock:
@@ -159,7 +278,7 @@ class SourceService:
             budget = payload.get("cache_budget", profile["cache_budget"])
             if type(budget) is not int or not 64 * 1024**2 <= budget <= 10 * 1024**3:
                 raise SourceError("缓存预算须在 64 MiB—10 GiB。")
-            profile.update(binding=binding, cache_budget=budget, revision=profile["revision"] + 1, summary="")
+            profile.update(binding=binding, cache_budget=budget, revision=profile["revision"] + 1, summary="", summaries={})
             self._save()
             return self._public(profile)
 
@@ -173,7 +292,7 @@ class SourceService:
             self._save()
             return self._public(profile)
 
-    def start(self, sid, kind, *, entry_id="", full=False, verify=False):
+    def start(self, sid, kind, *, entry_id="", entry_ids=None, parent_id="", full=False, verify=False):
         with self.lock:
             profile = self._get(sid)
             if sid in self.tasks:
@@ -190,10 +309,30 @@ class SourceService:
             data = {"entries": snapshot.get("entries", []), "cached": snapshot.get("cached", {}),
                     "generation": snapshot.get("generation", ""), "verify": verify, "full": full}
             if kind == "download":
-                data["entry"] = self._entry(sid, entry_id)
-                if data["entry"]["kind"] != "file":
-                    raise SourceError("请选择文件。")
-                data["cached"] = snapshot.get("cached", {}).get(entry_id)
+                batch_ids = list(dict.fromkeys(entry_ids or []))
+                if batch_ids:
+                    if len(batch_ids) > MAX_PREVIEW_SELECTION_RECORDS:
+                        raise SourceError(f"单次最多下载 {MAX_PREVIEW_SELECTION_RECORDS} 个文件。")
+                    batch_entries = []
+                    for item_id in batch_ids:
+                        entry = self._entry(sid, item_id)
+                        if entry["kind"] != "file":
+                            raise SourceError("请选择文件。")
+                        batch_entries.append(entry)
+                    data["download_entries"] = batch_entries
+                    data["cached_map"] = {e["id"]: snapshot.get("cached", {}).get(e["id"]) for e in batch_entries}
+                else:
+                    data["entry"] = self._entry(sid, entry_id)
+                    if data["entry"]["kind"] != "file":
+                        raise SourceError("请选择文件。")
+                    data["cached"] = snapshot.get("cached", {}).get(entry_id)
+            elif kind == "summary" and parent_id:
+                parent = self._entry(sid, parent_id)
+                if parent["kind"] != "directory":
+                    raise SourceError("请选择目录。")
+                data["scope_parent_id"] = parent_id
+                data["scope_prefix"] = parent["relative"] + "/"
+                data["scope_name"] = parent["name"]
             binding = profile.get("binding")
             if binding:
                 company = self.companies.get_company(binding["company_id"])["company"]
@@ -306,10 +445,21 @@ class SourceService:
             if data["generation"] != snapshot.get("generation"):
                 raise SourceError("来源代际已变化，迟到任务未发布。", "revision_conflict")
             if kind == "download":
-                snapshot.setdefault("cached", {})[data["entry"]["id"]] = result["cached"]
+                if "cached_map" in result:
+                    snapshot.setdefault("cached", {}).update(result["cached_map"])
+                else:
+                    snapshot.setdefault("cached", {})[data["entry"]["id"]] = result["cached"]
             else:
                 snapshot["cached"] = result["cached"]
-                updated["summary"] = result["summary"]["generation"]
+                scope_parent_id = str(result.get("scope_parent_id") or "")
+                generation = result["summary"]["generation"]
+                summaries = dict(updated.get("summaries") or {})
+                if updated.get("summary") and "" not in summaries:
+                    summaries[""] = updated["summary"]
+                summaries[scope_parent_id] = generation
+                updated["summaries"] = summaries
+                if not scope_parent_id:
+                    updated["summary"] = generation
             updated.update(connection="online", sync="idle", last_verified_at=utc_now_text())
         if snapshot:
             atomic_write_json(self._dir(sid) / "snapshot.json", snapshot)
@@ -334,80 +484,273 @@ class SourceService:
                 return entry
         raise SourceError("文件条目不存在或清单已变化，请刷新。", "not_found")
 
+    def _breadcrumbs(self, sid, parent_id=""):
+        profile = self._get(sid)
+        entries = self.snapshots[sid].get("entries", [])
+        crumbs = [{"id": "", "name": profile["name"]}]
+        if not parent_id:
+            return crumbs, ""
+        parent = self._entry(sid, parent_id)
+        if parent["kind"] != "directory":
+            raise SourceError("请选择目录。")
+        prefix = parent["relative"] + "/"
+        ancestors = [
+            {"id": e["id"], "name": e["name"], "depth": e["relative"].count("/")}
+            for e in entries
+            if e["kind"] == "directory" and prefix.startswith(e["relative"] + "/")
+        ]
+        ancestors.sort(key=lambda item: item["depth"])
+        crumbs.extend({"id": item["id"], "name": item["name"]} for item in ancestors)
+        return crumbs, prefix
+
+    def _resolve_summary(self, sid, parent_id=""):
+        profile = self._get(sid)
+        crumbs, prefix = self._breadcrumbs(sid, parent_id)
+        summaries = dict(profile.get("summaries") or {})
+        if profile.get("summary") and "" not in summaries:
+            summaries[""] = profile["summary"]
+        # Prefer the narrowest summary covering parent_id (exact scope first, then nearest ancestor).
+        chosen_scope = ""
+        generation = ""
+        for crumb in reversed(crumbs):
+            candidate = summaries.get(crumb["id"])
+            if candidate:
+                chosen_scope = crumb["id"]
+                generation = candidate
+                break
+        if not generation:
+            return None, crumbs, prefix, chosen_scope, ""
+        if not re.fullmatch(r"[a-f0-9]{32}", generation):
+            raise SourceError("汇总代际无效。", "cache_damaged")
+        root = self._dir(sid) / "summary-generations" / generation
+        if root.is_symlink() or root.parent.is_symlink():
+            raise SourceError("汇总缓存路径无效。", "cache_damaged")
+        return self._read(root / "view.json"), crumbs, prefix, chosen_scope, generation
+
     def entries(self, sid, parent_id="", page=1, keyword=""):
         with self.lock:
             profile = self._get(sid)
-            prefix = ""
-            if parent_id:
-                parent = self._entry(sid, parent_id)
-                if parent["kind"] != "directory":
-                    raise SourceError("请选择目录。")
-                prefix = parent["relative"] + "/"
-            entries = self.snapshots[sid].get("entries", [])
+            crumbs, prefix = self._breadcrumbs(sid, parent_id)
+            snapshot = self.snapshots[sid]
+            entries = snapshot.get("entries", [])
+            cached_map = snapshot.get("cached", {})
             scoped = [e for e in entries if e["relative"].startswith(prefix)]
             children = [e for e in scoped if "/" not in e["relative"][len(prefix):] and keyword.casefold() in e["name"].casefold()]
             children.sort(key=lambda e: (e["kind"] != "directory", e["name"]))
-            crumbs = [{"id": "", "name": profile["name"]}]
-            if prefix:
-                crumbs += [{"id": e["id"], "name": e["name"]} for e in entries if e["kind"] == "directory" and prefix.startswith(e["relative"] + "/")]
-                crumbs[1:] = sorted(crumbs[1:], key=lambda e: next(x["relative"].count("/") for x in entries if x["id"] == e["id"]))
-            return {"source": self._public(profile), "items": children[(page-1)*200:page*200], "count": len(children), "page": page,
+            page_items = [
+                {**item, "cached": bool(item["kind"] == "file" and cached_map.get(item["id"], {}).get("version") == item["version"])}
+                for item in children[(page - 1) * 200:page * 200]
+            ]
+            return {"source": self._public(profile), "items": page_items, "count": len(children), "page": page,
                     "breadcrumbs": crumbs, "scope": {"files": sum(e["kind"] == "file" for e in scoped),
                     # Count the complete subtree, not the filtered page: metadata-only files
                     # remain visible but must not imply readable invoice/preview content.
                     "readable_files": sum(e["kind"] == "file" and Path(e["name"]).suffix.casefold() in READABLE_EXTENSIONS for e in scoped),
                     "bytes": sum(e["size"] for e in scoped if e["kind"] == "file")}}
 
-    def summary(self, sid, parent_id=""):
+    def summary(self, sid, parent_id="", *, page=1, page_size=200, keyword="", file_ext="", status="", invoice_type="", date_sort=""):
         with self.lock:
             profile = self._get(sid)
-            generation = profile.get("summary")
-            if not generation:
-                return {"available": False, "message": "尚无完整汇总，请连接后汇总。"}
-            if not re.fullmatch(r"[a-f0-9]{32}", generation):
-                raise SourceError("汇总代际无效。", "cache_damaged")
-            root = self._dir(sid) / "summary-generations" / generation
-            if root.is_symlink() or root.parent.is_symlink():
-                raise SourceError("汇总缓存路径无效。", "cache_damaged")
-            result = self._read(root / "view.json")
-            prefix = self._entry(sid, parent_id)["relative"] + "/" if parent_id else ""
-            items = [e for e in result["items"] if e["relative"].startswith(prefix)]
-            from invoice_hub.services.company_ledger import build_invoice_ledger
-            return {"available": True, "generation": generation, "last_complete_at": result["last_complete_at"],
-                    "stale": result["source_generation"] != self.snapshots[sid].get("generation") or profile["connection"] != "online",
-                    "items": items[:200], "count": len(items), "ledger": build_invoice_ledger(items, []), "scope": result["scope"], "stats": result["stats"]}
+            result, crumbs, prefix, scope_parent_id, generation = self._resolve_summary(sid, parent_id)
+            if result is None:
+                return {"available": False, "message": "尚无完整汇总，请连接后汇总。", "breadcrumbs": crumbs,
+                        "scope_parent_id": parent_id, "scope_name": crumbs[-1]["name"]}
+            snapshot = self.snapshots[sid]
+            entry_versions = {e["id"]: e["version"] for e in snapshot.get("entries", [])}
+            cached_map = snapshot.get("cached", {})
+            scoped_items = [_normalize_summary_item(e) for e in result.get("items", []) if e["relative"].startswith(prefix)]
+            kw = keyword.strip().casefold()
+            ext = file_ext.strip().casefold()
+            st = status.strip()
+            inv_type = invoice_type.strip()
 
-    def preview(self, sid, entry_id, *, allow_stale=False):
+            def matches(item: dict) -> bool:
+                if kw and not any(kw in str(item.get(k) or "").casefold() for k in ("seller", "buyer", "invoice_number", "source_file", "relative")):
+                    return False
+                if ext and not str(item.get("source_file") or "").casefold().endswith(ext):
+                    return False
+                if st and item.get("status") != st:
+                    return False
+                if inv_type and item.get("invoice_type") != inv_type:
+                    return False
+                return True
+
+            filtered = [item for item in scoped_items if matches(item)]
+            if date_sort in {"asc", "desc"}:
+                with_date = [item for item in filtered if str(item.get("invoice_date") or "").strip()]
+                without_date = [item for item in filtered if not str(item.get("invoice_date") or "").strip()]
+                with_date.sort(key=lambda item: (str(item.get("invoice_date") or ""), str(item.get("relative") or "")), reverse=date_sort == "desc")
+                filtered = with_date + without_date
+
+            offset = (page - 1) * page_size
+            page_items = [
+                {
+                    **item,
+                    "cached": bool(
+                        item["entry_id"] in entry_versions
+                        and cached_map.get(item["entry_id"], {}).get("version") == entry_versions[item["entry_id"]]
+                    ),
+                }
+                for item in filtered[offset:offset + page_size]
+            ]
+            from invoice_hub.services.company_ledger import build_invoice_ledger
+            return {
+                "available": True,
+                "generation": generation,
+                "source_generation": result.get("source_generation", ""),
+                "last_complete_at": result["last_complete_at"],
+                "stale": result["source_generation"] != snapshot.get("generation") or profile["connection"] != "online",
+                "items": page_items,
+                "count": len(filtered),
+                "total_count": len(scoped_items),
+                "page": page,
+                "page_size": page_size,
+                "breadcrumbs": crumbs,
+                "scope_parent_id": scope_parent_id,
+                "scope_name": crumbs[-1]["name"],
+                "invoice_stats": {"all": _invoice_stats(scoped_items), "filtered": _invoice_stats(filtered)},
+                "cost_failed_count": int(result.get("cost_failed_count") or 0),
+                "cost_error": str(result.get("cost_error") or ""),
+                "ledger": build_invoice_ledger(scoped_items, []),
+                "scope": result["scope"],
+                "stats": result["stats"],
+            }
+
+    def selection_summary(self, sid, *, entry_ids, parent_id="", generation=""):
+        with self.lock:
+            result, _crumbs, prefix, _scope_parent_id, active_generation = self._resolve_summary(sid, parent_id)
+            if result is None:
+                raise SourceError("尚无完整汇总，请先汇总目录。", "not_found")
+            if generation and generation != active_generation:
+                raise SourceError("汇总代际已变化，请刷新列表后重新勾选。", "revision_conflict")
+            if not isinstance(entry_ids, list) or not entry_ids:
+                raise SourceError("请至少勾选一张发票。")
+            if len(entry_ids) > 1000:
+                raise SourceError("单次最多汇总 1000 条发票记录。")
+            unique_ids = list(dict.fromkeys(str(item).strip() for item in entry_ids if str(item).strip()))
+            if len(unique_ids) != len(entry_ids):
+                raise SourceError("勾选列表中包含无效或重复条目。")
+            scoped = {
+                str(e["entry_id"]): _normalize_summary_item(e)
+                for e in result.get("items", [])
+                if e["relative"].startswith(prefix)
+            }
+            selected_items = []
+            for eid in unique_ids:
+                item = scoped.get(eid)
+                if item is None:
+                    raise SourceError("勾选内容已过期，请刷新列表后重新勾选。", "revision_conflict")
+                selected_items.append(item)
+            grouped: dict[str, list[dict]] = {}
+            for item in selected_items:
+                grouped.setdefault(selection_family_key(item), []).append(item)
+            families = list(grouped.values())
+            cost_families = [_selection_cost_family(sid, key, items) for key, items in grouped.items()]
+            return {
+                "ok": True,
+                "generation": active_generation,
+                "selection": {
+                    "record_count": len(selected_items),
+                    "invoice_count": len(families),
+                    "collapsed_record_count": len(selected_items) - len(families),
+                },
+                "totals": {
+                    "pretax_amount": _selection_metric_total(families, "pretax_amount"),
+                    "tax_amount": _selection_metric_total(families, "tax_amount"),
+                    "total_with_tax": _selection_metric_total(families, "amount"),
+                },
+                "cost_breakdown": selection_cost_breakdown(result.get("cost_rows") or [], cost_families),
+            }
+
+    def preview(self, sid, entry_id="", *, entry_ids=None, allow_stale=False):
         with self.lock:
             profile = self._get(sid)
             if profile["connection"] in BLOCKED:
                 raise SourceError("来源身份或认证需重新核对，旧预览授权已阻断。", profile["connection"])
-            entry = self._entry(sid, entry_id)
-            info = self.snapshots[sid].get("cached", {}).get(entry_id)
-            if not info or info["version"] != entry["version"]:
-                raise SourceError("尚无完整离线副本，请连接后下载。", "not_cached")
+            ids = list(dict.fromkeys(entry_ids)) if entry_ids else ([entry_id] if entry_id else [])
+            if not ids:
+                raise SourceError("请选择需要预览的文件。")
+            if len(ids) > MAX_PREVIEW_SELECTION_RECORDS:
+                raise SourceError(f"单次最多预览 {MAX_PREVIEW_SELECTION_RECORDS} 个源文件。")
             stale = profile["connection"] != "online"
             if stale and not allow_stale:
                 raise SourceError("当前离线，请明确选择查看上次核验的副本。", "offline")
-            path = cache_path(self._dir(sid), info)
-            job = self.previews.create_job([FilePreviewSource(path, entry["name"])])
-            self.leases[job.job_id] = (sid, entry_id, copy.deepcopy(info), profile["revision"])
-            file = job.files[0]
-            return {"job_id": job.job_id, "preview_type": file.preview_type, "page_count": file.page_count, "reason": file.reason,
-                    "stale": stale, "verified_at": info["verified_at"], "source_id": sid, "entry_id": entry_id}
+            cached_map = self.snapshots[sid].get("cached", {})
+            preview_sources = []
+            lease_entries = []
+            for item_id in ids:
+                entry = self._entry(sid, item_id)
+                info = cached_map.get(item_id)
+                if not info or info["version"] != entry["version"]:
+                    raise SourceError("尚无完整离线副本，请连接后下载。", "not_cached")
+                path = cache_path(self._dir(sid), info)
+                preview_sources.append(FilePreviewSource(path, entry["name"]))
+                lease_entries.append((item_id, copy.deepcopy(info)))
+            job = self.previews.create_job(preview_sources)
+            self.leases[job.job_id] = (sid, lease_entries, profile["revision"])
+            first_file = job.files[0]
+            first_id, first_info = lease_entries[0]
+            files_payload = [
+                {
+                    "file_number": item.file_number,
+                    "entry_id": lease_entries[idx][0],
+                    "name": item.display_name,
+                    "preview_type": item.preview_type,
+                    "page_count": item.page_count,
+                    "reason": item.reason,
+                    "stale": stale,
+                    "verified_at": lease_entries[idx][1]["verified_at"],
+                    "page_url_template": f"/api/v1/sources/{sid}/previews/{job.job_id}/files/{item.file_number}/pages/{{page_number}}",
+                    "text_url": f"/api/v1/sources/{sid}/previews/{job.job_id}/files/{item.file_number}/text",
+                }
+                for idx, item in enumerate(job.files)
+            ]
+            return {
+                "job_id": job.job_id,
+                "preview_type": first_file.preview_type,
+                "page_count": first_file.page_count,
+                "reason": first_file.reason,
+                "stale": stale,
+                "verified_at": first_info["verified_at"],
+                "source_id": sid,
+                "entry_id": first_id,
+                "record_count": len(files_payload),
+                "idle_timeout_seconds": PREVIEW_JOB_TTL_SECONDS,
+                "keep_alive_url": f"/api/v1/sources/{sid}/previews/{job.job_id}/keep-alive",
+                "files": files_payload,
+            }
 
-    def preview_content(self, sid, job_id, page=None):
-        with self.lock:
-            lease = self.leases.get(job_id)
-            profile = self._get(sid)
-            if not lease or lease[0] != sid or lease[3] != profile["revision"] or profile["connection"] in BLOCKED:
-                raise SourceError("来源预览授权已失效。", "not_found")
-            entry = self._entry(sid, lease[1])
-            if lease[2]["version"] != entry["version"]:
+    def _verify_preview_lease(self, sid, job_id, file_number=None):
+        lease = self.leases.get(job_id)
+        profile = self._get(sid)
+        if not lease or lease[0] != sid or lease[2] != profile["revision"] or profile["connection"] in BLOCKED:
+            raise SourceError("来源预览授权已失效。", "not_found")
+        entries = lease[1]
+        if file_number is not None:
+            if file_number < 1 or file_number > len(entries):
+                raise SourceError("预览文件不存在。", "not_found")
+            eid, info = entries[file_number - 1]
+            entry = self._entry(sid, eid)
+            if info["version"] != entry["version"]:
                 raise SourceError("来源文件版本已变化，请重新打开。", "source_changed")
+        else:
+            for eid, info in entries:
+                entry = self._entry(sid, eid)
+                if info["version"] != entry["version"]:
+                    raise SourceError("来源文件版本已变化，请重新打开。", "source_changed")
+
+    def preview_content(self, sid, job_id, page=None, *, file_number=1):
+        with self.lock:
+            self._verify_preview_lease(sid, job_id, file_number=file_number)
         if page is not None:
-            return self.previews.get_page(job_id, 1, page).content
-        return self.previews.get_text(job_id, 1).content
+            return self.previews.get_page(job_id, file_number, page).content
+        return self.previews.get_text(job_id, file_number).content
+
+    def keep_alive_preview(self, sid, job_id):
+        with self.lock:
+            self._verify_preview_lease(sid, job_id)
+        job = self.previews.get_job(job_id, renew=True)
+        return {"ok": True, "job_id": job.job_id, "expires_at": job.expires_at}
 
     def clear_cache(self, sid):
         with self.lock:

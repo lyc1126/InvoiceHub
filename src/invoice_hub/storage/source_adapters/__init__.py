@@ -2,12 +2,82 @@
 import os
 import re
 import stat
+import subprocess
+import sys
+import time
 from pathlib import Path
 
 from invoice_hub.storage.parse_cache import identity, signature
 
 MAX_FILE = 64 * 1024 * 1024
 MAX_ENTRIES = 100000
+_MACOS_NETWORK_FS = {"smbfs", "afpfs", "nfs", "webdav"}
+_LINUX_NETWORK_FS = {"cifs", "smb3", "nfs", "nfs4"}
+_MACOS_MOUNT_LINE = re.compile(r"^(.+?)\s+on\s+(.+?)\s+\(([^,)]+)")
+
+
+def discover_mounted_shares() -> list[dict[str, str]]:
+    """List OS-mounted network shares (read-only metadata) without initiating new network mounts."""
+    shares: list[dict[str, str]] = []
+    seen: set[str] = set()
+
+    def add_share(path_text: str, remote: str, fs_type: str) -> None:
+        normalized = str(Path(path_text))
+        if not normalized or normalized in seen:
+            return
+        seen.add(normalized)
+        name = Path(normalized).name or normalized
+        shares.append({"name": name, "path": normalized, "remote": remote, "fs_type": fs_type})
+
+    if sys.platform == "darwin":
+        try:
+            proc = subprocess.run(["/sbin/mount"], capture_output=True, text=True, timeout=3, check=False)
+            for line in proc.stdout.splitlines():
+                matched = _MACOS_MOUNT_LINE.match(line.strip())
+                if not matched:
+                    continue
+                remote, mount_point, fs_type = matched.group(1), matched.group(2), matched.group(3).lower()
+                if fs_type in _MACOS_NETWORK_FS and mount_point.startswith("/Volumes/"):
+                    add_share(mount_point, remote, fs_type)
+        except OSError:
+            pass
+    elif os.name == "nt":
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            kernel32 = ctypes.windll.kernel32
+            mpr = ctypes.windll.mpr
+            drive_mask = kernel32.GetLogicalDrives()
+            for index in range(26):
+                if not (drive_mask & (1 << index)):
+                    continue
+                letter = f"{chr(65 + index)}:"
+                root = f"{letter}\\"
+                if kernel32.GetDriveTypeW(root) != 4:  # DRIVE_REMOTE
+                    continue
+                buf_len = wintypes.DWORD(1024)
+                buf = ctypes.create_unicode_buffer(1024)
+                remote = ""
+                if mpr.WNetGetConnectionW(letter, buf, ctypes.byref(buf_len)) == 0:
+                    remote = buf.value
+                add_share(root, remote, "smb")
+        except Exception:
+            pass
+    else:
+        mounts_file = Path("/proc/mounts")
+        if mounts_file.is_file():
+            try:
+                for line in mounts_file.read_text(encoding="utf-8", errors="ignore").splitlines():
+                    parts = line.split()
+                    if len(parts) >= 3 and parts[2].lower() in _LINUX_NETWORK_FS:
+                        mount_point = parts[1].replace("\\040", " ")
+                        add_share(mount_point, parts[0], parts[2].lower())
+            except OSError:
+                pass
+
+    shares.sort(key=lambda item: (item["name"].casefold(), item["path"]))
+    return shares
 
 
 class SourceError(ValueError):
@@ -58,6 +128,7 @@ class Mounted:
 
     def entries(self, report):
         rows, pending = [], [(self.root, "", 0)]
+        last_report = time.monotonic()
         while pending:
             directory, parent, depth = pending.pop()
             if depth > 64:
@@ -83,8 +154,10 @@ class Mounted:
                         raise SourceError("来源超过 100000 项，请登记更小的根目录。")
                     if folder:
                         pending.append((path, rel, depth + 1))
-                    if len(rows) % 100 == 0:
+                    now = time.monotonic()
+                    if len(rows) % 50 == 0 or now - last_report >= 0.5:
                         report({"phase": "scanning", "enumerated": len(rows)})
+                        last_report = now
             if identity(directory) != before:
                 raise SourceError("扫描期间目录身份变化。", "root_changed")
         if identity(self.root) != self.root_identity:

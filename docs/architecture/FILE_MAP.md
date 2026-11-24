@@ -117,14 +117,19 @@
 | `src/invoice_hub/storage/parse_cache.py` | 原始解析 SQLite、元数据/强 hash/版本失效、损坏重建及完整扫描 |
 | `src/invoice_hub/storage/generations.py` | 普通+成本完整代际、manifest、兼容导出回执与中断恢复 |
 | `src/invoice_hub/projections/incremental.py` | 源/手改前后复核，组合 summary/cost 候选后发布 |
-| `src/invoice_hub/storage/source_adapters/__init__.py` | 只读挂载共享适配及可移植路径/文件边界 |
+| `src/invoice_hub/storage/source_adapters/__init__.py` | 只读挂载共享适配、系统已挂载共享卷发现及可移植路径/文件边界 |
 | `src/invoice_hub/storage/source_adapters/sftp.py` | 固定 OpenSSH SFTP v3 wire、指纹及只读操作 |
 | `src/invoice_hub/storage/source_cache.py` | 原始副本预算、hash 校验、完整 part 原子提交 |
-| `src/invoice_hub/services/source_worker.py` | spawn 来源 I/O、下载与已有解析器的只读汇总 |
-| `src/invoice_hub/services/sources.py` | 独立 SourceProfile、任务取消/epoch、清单代际、来源预览租约 |
-| `src/invoice_hub/api/routes/sources.py` | 来源 API、同源写入与原生 picker 门禁，不透明条目授权 |
-| `frontend/src/components/ServerSourcesPanel.vue` | 收藏/指纹、目录与文件右栏、范围汇总及离线预览 |
-| `frontend/tests/server-sources.spec.ts` | 来源面板状态、只读边界与预览释放 |
+| `src/invoice_hub/services/source_worker.py` | spawn 来源 I/O、单/批量下载与按目录范围的只读票头/成本汇总（混合目录容错、跳过 `._*`） |
+| `src/invoice_hub/services/sources.py` | 独立 SourceProfile、按目录汇总与多维筛选/排序/分页、勾选合计拆组、多文件预览租约与续租 |
+| `src/invoice_hub/api/routes/sources.py` | 来源 API、已挂载共享枚举、同源写入与原生 picker 门禁，不透明条目授权 |
+| `frontend/src/stores/sources.ts` | 服务器来源共享 Pinia 状态（收藏列表、挂载卷发现、任务同步通知） |
+| `frontend/src/components/ServerConnectModal.vue` | 独立 `WsModal` 服务器连接弹窗（SMB 挂载共享自动发现/收藏/SSH Agent 配置，无密码输入） |
+| `frontend/src/components/ServerSourcesPanel.vue` | 右侧轻量文件浏览与单文件标签预览栏、按目录增量汇总及一键打开主工作区入口 |
+| `frontend/src/components/ServerDirectoryPanel.vue` | 主工作区只读服务器目录标签（原生 4 KPI、多维筛选排序分页、显示列自定义、TSV 复制、勾选与批量预览编排） |
+| `frontend/src/components/ServerSelectionBar.vue` | 服务器只读勾选操作条与宽弹窗「合计详情」（同票去重金额 + 成本明细拆组，无写操作） |
+| `frontend/src/components/ServerPreviewDrawer.vue` | 来源隔离的多文件原票预览抽屉（100 文件分组、缩略图、XML 纯文本、闲置续租与关闭释放租约） |
+| `frontend/tests/server-sources.spec.ts` | 来源面板、连接弹窗、主工作区视图、筛选/勾选合计/批量预览与只读边界测试 |
 | `tests/test_company_opening.py` | 期初结构、损坏保留、历史购入身份与预付款边界 |
 | `tests/test_workspace_prototype_ledger.py` | 直接执行原型纯生成器，逐月票面/流水/抵扣及库存对照 |
 | `tests/test_incremental_projections.py` | 10,000 文件差分、强校验、失败代际、导出恢复 |

@@ -7,9 +7,11 @@ import CompanyProjects from "../components/CompanyProjects.vue";
 import CompanySameNumber from "../components/CompanySameNumber.vue";
 import DirectoryPanel from "../components/DirectoryPanel.vue";
 import InvoiceTagsEditor from "../components/InvoiceTagsEditor.vue";
+import ServerDirectoryPanel from "../components/ServerDirectoryPanel.vue";
 import WorkspaceIcon from "../components/WorkspaceIcon.vue";
 import { RELATIONS, SAME_NUMBER } from "../relations";
 import { useCompaniesStore } from "../stores/companies";
+import { useSourcesStore } from "../stores/sources";
 import { useSystemStore } from "../stores/system";
 import { type WorkspaceTab, tabId, useWorkspaceStore } from "../stores/workspace";
 
@@ -17,8 +19,9 @@ import { type WorkspaceTab, tabId, useWorkspaceStore } from "../stores/workspace
 // filters, results and scroll survive switching; closing a tab drops that cache. The tab's
 // `refresh` counter is part of its key, so "hi." rebuilds only the active one.
 const companies = useCompaniesStore();
+const sources = useSourcesStore();
 const props = withDefaults(defineProps<{ active?: boolean; sidebarOpen?: boolean }>(), { active: true, sidebarOpen: false });
-defineEmits<{ toggleSidebar: [] }>();
+const emit = defineEmits<{ toggleSidebar: []; openServerPanel: [sourceId: string] }>();
 provide(VIEW_ACTIVE, computed(() => props.active));
 const system = useSystemStore();
 const workspace = useWorkspaceStore();
@@ -28,6 +31,11 @@ const otherCompanyOf = (tab: WorkspaceTab) => companies.companies.find((item) =>
 const dirLabel = (company: { subdirs: { key: string; label: string }[] }, key?: string) => company.subdirs.find((item) => item.key === key)?.label ?? key ?? "";
 
 function title(tab: WorkspaceTab): string {
+  if (tab.kind === "server-dir") {
+    const srcName = sources.byId(tab.sourceId ?? "")?.name || tab.sourceLabel || "服务器";
+    const sub = tab.dirLabel && tab.dirLabel !== srcName ? ` · ${tab.dirLabel}` : "";
+    return `${srcName}${sub}`;
+  }
   const company = companyOf(tab);
   if (tab.kind === "new-company") return "添加公司资料夹";
   if (tab.kind === "tags") return "发票标签";
@@ -50,7 +58,7 @@ function title(tab: WorkspaceTab): string {
 // Stable DOM ids per tab (indexes shift when a tab closes).
 const domId = (tab: WorkspaceTab) => tab.id.replace(/[^A-Za-z0-9_-]/g, (char) => `_${char.codePointAt(0)!.toString(36)}`);
 
-const ICONS: Record<WorkspaceTab["kind"], string> = { company: "building", directory: "folder", project: "project", compare: "compare", "new-company": "plus", tags: "pick" };
+const ICONS: Record<WorkspaceTab["kind"], string> = { company: "building", directory: "folder", project: "project", compare: "compare", "new-company": "plus", tags: "pick", "server-dir": "server" };
 
 
 function onTabKey(event: KeyboardEvent, index: number): void {
@@ -67,7 +75,7 @@ function onTabKey(event: KeyboardEvent, index: number): void {
   document.getElementById(`ws-tab-${domId(tabs[next]!)}`)?.focus();
 }
 
-// A tab whose company was deleted closes itself instead of showing stale data.
+// A tab whose company or server source was deleted closes itself instead of showing stale data.
 watch(
   () => companies.list,
   (list) => {
@@ -83,6 +91,18 @@ watch(
     }
   },
   { immediate: true },
+);
+
+watch(
+  () => sources.sources,
+  (list) => {
+    if (!list.length && sources.loading) return;
+    for (const tab of [...workspace.tabs]) {
+      if (tab.kind === "server-dir" && tab.sourceId && !sources.byId(tab.sourceId) && !sources.loading) {
+        workspace.close(tab.id);
+      }
+    }
+  },
 );
 
 const monitoredCompany = computed(() => companies.companies.find((item) => item.monitored) ?? null);
@@ -128,6 +148,13 @@ onMounted(() => {
         <template v-for="tab in workspace.tabs" :key="`${tab.id}#${tab.refresh}`">
           <div v-show="tab.id === workspace.activeId" :id="`ws-panel-${domId(tab)}`" role="tabpanel" :aria-labelledby="`ws-tab-${domId(tab)}`">
             <InvoiceTagsEditor v-if="tab.kind === 'tags'" />
+            <ServerDirectoryPanel
+              v-else-if="tab.kind === 'server-dir' && tab.sourceId"
+              :source-id="tab.sourceId"
+              :parent-id="tab.parentId ?? ''"
+              :active="tab.id === workspace.activeId"
+              @open-panel="emit('openServerPanel', $event)"
+            />
             <template v-else-if="companyOf(tab)">
               <CompanyPanel v-if="tab.kind === 'company'" :company="companyOf(tab)!" :active="tab.id === workspace.activeId" />
               <DirectoryPanel v-else-if="tab.kind === 'directory'" :company="companyOf(tab)!" :dir-key="tab.dirKey!" />

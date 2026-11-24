@@ -6,7 +6,7 @@ import { computed, ref, watch } from "vue";
 // other modules keep their own state. Pins, width and expanded companies are UI preferences of
 // this browser profile (localStorage), never business data: losing them changes no amount.
 
-export type TabKind = "company" | "directory" | "project" | "compare" | "new-company" | "tags";
+export type TabKind = "company" | "directory" | "project" | "compare" | "new-company" | "tags" | "server-dir";
 
 export interface WorkspaceTab {
   id: string;
@@ -18,6 +18,11 @@ export interface WorkspaceTab {
   // Same-number check (WS-04): the second folder, possibly of another company.
   otherCompanyId?: string;
   otherDirKey?: string;
+  // Read-only server directory view (WS-09 Option A).
+  sourceId?: string;
+  parentId?: string;
+  sourceLabel?: string;
+  dirLabel?: string;
   // Bumped by a double click on "hi.": the tab's view is rebuilt and reloads, other tabs keep theirs.
   refresh: number;
 }
@@ -92,6 +97,9 @@ function hiddenColumnsMap(value: unknown): Record<string, InvoiceColumnKey[]> {
 }
 
 export function tabId(tab: Omit<WorkspaceTab, "id" | "refresh">): string {
+  if (tab.kind === "server-dir") {
+    return ["server-dir", tab.sourceId ?? "", tab.parentId ?? ""].join(":");
+  }
   const parts = [tab.kind, tab.companyId ?? "", tab.dirKey ?? "", tab.project ?? "", tab.relation ?? ""];
   if (tab.otherCompanyId || tab.otherDirKey) parts.push(tab.otherCompanyId ?? "", tab.otherDirKey ?? "");
   return parts.join(":");
