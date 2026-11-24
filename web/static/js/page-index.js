@@ -4,12 +4,20 @@ const state = {
   pendingWatchDir: "",
   watchDirDirty: false,
   refreshGeneration: 0,
+  refreshWarning: false,
   hasInvoiceSnapshot: false,
   selectedInvoices: new Map(),
   invoiceItems: [],
+  invoiceRows: new Map(),
   invoicePage: 1,
+  invoiceCount: 0,
+  invoiceRevision: "",
+  invoiceProvisional: false,
+  invoiceRequest: 0,
   targetId: "",
   dateSort: "",
+  selectionSummaryPayload: null,
+  filePreviewTargetId: "",
   selectionSummaryRequestId: 0,
   selectionSummaryLoading: false,
   selectionSummaryReturnFocus: null,
@@ -400,6 +408,7 @@ async function refreshSyncProgress() {
     // Polling it separately keeps progress visible during long PDF/OFD/XML parsing.
     const payload = await app.api("/api/v1/bridge/progress");
     renderSyncProgress(payload);
+    if (payload?.status === "running" || state.invoiceProvisional) void loadInvoices(state.refreshGeneration).catch(() => {});
     if (payload?.status === "running" || payload?.background_sync_status === "running" || state.syncProgressAwaitingStart) {
       state.syncProgressPolling = true;
       scheduleSyncProgressPoll();
@@ -555,7 +564,7 @@ function renderInvoiceRefreshFailure(error) {
   const message = `发票列表刷新失败：${refreshErrorMessage(error)}`;
   if (!state.hasInvoiceSnapshot) {
     const diagnostic = `${message}。暂无可保留的发票列表，请稍后刷新。`;
-    refs.invoiceBody.innerHTML = `<tr><td colspan="10"><span role="status" aria-live="polite">${app.escapeHtml(diagnostic)}</span></td></tr>`;
+    refs.invoiceBody.innerHTML = `<tr><td colspan="11"><span role="status" aria-live="polite">${app.escapeHtml(diagnostic)}</span></td></tr>`;
     refs.tableMeta.textContent = "发票列表暂时不可用";
   }
   return state.hasInvoiceSnapshot
@@ -673,7 +682,7 @@ function updateSelectedInvoiceTotal() {
 }
 
 function selectableInvoiceCount() {
-  return state.invoiceItems.filter((item) => String(item.invoice_key ?? "") && String(item.source_path || item.file_path || "").trim()).length;
+  return state.invoiceProvisional ? 0 : state.invoiceCount;
 }
 
 function updateSelectionControls() {
@@ -701,7 +710,7 @@ function updateSelectionControls() {
 }
 
 function invoiceActionMenuItems() {
-  return [refs.previewSelectedInvoicesBtn, refs.printSelectedInvoicesBtn, refs.batchInboundDocumentsBtn].filter(Boolean);
+  return [refs.previewSelectedInvoicesBtn, refs.printSelectedInvoicesBtn, refs.batchInboundDocumentsBtn, document.getElementById("trashSelectedInvoicesBtn")].filter(Boolean);
 }
 
 function prepareBatchInboundDocuments() {
@@ -865,7 +874,6 @@ function rowHtml(item) {
   const invoiceKey = String(item.invoice_key ?? "");
   const amount = invoiceAmountValue(item.amount);
   const selectable = Boolean(invoiceKey && String(item.source_path || item.file_path || "").trim());
-  const selected = selectable && state.selectedInvoices.has(invoiceKey);
   const fileFormat = fileFormatLabel(item);
   const fileFormatTone = fileFormat === "未知" ? "unknown" : fileFormat.toLowerCase();
   const invoiceType = String(item.invoice_type || "").trim();
@@ -882,6 +890,7 @@ function rowHtml(item) {
       <td class="table__seller" title="${app.escapeHtml(item.seller || "--")}">${app.escapeHtml(app.text(item.seller))}${fileName}</td>
       <td class="table__format"><span class="format-badge format-badge--${app.escapeHtml(fileFormatTone)}">${app.escapeHtml(fileFormat)}</span></td>
       <td class="table__number">${app.escapeHtml(app.text(item.invoice_number))}</td>
+      <td title="${app.escapeHtml(({ manual: '人工指定', remark: '发票备注', conflict: '备注项目不一致，请到公司项目页指定', unavailable: '项目归属无法读取，请到公司项目页核对' })[item.project_source] || '未归属')}">${app.escapeHtml(item.project || (item.project_source === 'unavailable' ? '无法读取' : '未归属'))}</td>
       <td class="table__classification">
         <div class="invoice-classification">
           ${invoiceTypePill(invoiceType)}
@@ -903,45 +912,100 @@ function rowHtml(item) {
         </div>
       </td>
       <td class="table__select">
-        <input class="invoice-checkbox" type="checkbox" data-invoice-select="${app.escapeHtml(invoiceKey)}" data-invoice-amount="${app.escapeHtml(amount === null ? "" : String(amount))}" aria-label="${app.escapeHtml(checkboxLabel)}"${selected ? " checked" : ""}${selectable ? "" : " disabled"}>
+        <input class="invoice-checkbox" type="checkbox" data-invoice-select="${app.escapeHtml(invoiceKey)}" data-invoice-amount="${app.escapeHtml(amount === null ? "" : String(amount))}" aria-label="${app.escapeHtml(checkboxLabel)}"${selectable ? "" : " disabled"}>
       </td>
     </tr>`;
 }
 
+function syncVisibleInvoiceSelection() {
+  refs.invoiceBody.querySelectorAll("[data-invoice-select]").forEach((input) => {
+    input.checked = state.selectedInvoices.has(input.dataset.invoiceSelect);
+  });
+  updateSelectedInvoiceTotal();
+}
+
+function reconcileInvoiceRows(items) {
+  const next = new Map();
+  // Position keys may be reused after projection rebuilds. Reuse a DOM row only
+  // for the same target AND source; unchanged SSE reads then preserve focus and
+  // table scroll, without transferring a checkbox to a different invoice.
+  for (const item of items) {
+    const identity = JSON.stringify([state.targetId, String(item.invoice_key ?? ""), item.source_path || item.file_path || ""]);
+    const html = rowHtml(item);
+    const signature = `${state.invoiceProvisional}:${html}`;
+    let entry = state.invoiceRows.get(identity);
+    if (!entry || entry.signature !== signature) {
+      const template = document.createElement("template");
+      template.innerHTML = html;
+      entry = { signature, node: template.content.firstElementChild };
+    }
+    next.set(identity, entry);
+  }
+  const wanted = new Set([...next.values()].map((entry) => entry.node));
+  for (const row of [...refs.invoiceBody.children]) if (!wanted.has(row)) row.remove();
+  let index = 0;
+  for (const { node } of next.values()) {
+    const anchor = refs.invoiceBody.children[index++] || null;
+    if (anchor !== node) refs.invoiceBody.insertBefore(node, anchor);
+  }
+  state.invoiceRows = next;
+}
+
 function renderInvoiceRows() {
   const items = sortedInvoiceItems(state.invoiceItems);
-  const pages = Math.max(1, Math.ceil(items.length / 100));
+  const pages = Math.max(1, Math.ceil(state.invoiceCount / 100));
   state.invoicePage = Math.min(state.invoicePage || 1, pages);
-  const pageItems = items.slice((state.invoicePage - 1) * 100, state.invoicePage * 100);
   const pager = document.getElementById("invoicePager");
   if (pager) {
-    pager.hidden = items.length <= 100;
-    document.getElementById("invoicePageStatus").textContent = `第 ${state.invoicePage} / ${pages} 页 · 共 ${items.length} 条`;
+    pager.hidden = state.invoiceCount <= 100;
+    document.getElementById("invoicePageStatus").textContent = `第 ${state.invoicePage} / ${pages} 页 · ${state.invoiceProvisional ? "已整理" : "共"} ${state.invoiceCount} 条`;
     document.getElementById("invoicePreviousPage").disabled = state.invoicePage === 1;
     document.getElementById("invoiceNextPage").disabled = state.invoicePage === pages;
   }
   updateDateSortControl();
-  refs.invoiceBody.innerHTML = items.length
-    ? pageItems.map(rowHtml).join("")
-    : `<tr><td colspan="10">${Object.entries(state.filters).some(([key, value]) => key !== "search_scope" && String(value || "").trim())
+  if (items.length) reconcileInvoiceRows(items);
+  else {
+    const html = `<tr><td colspan="11">${Object.entries(state.filters).some(([key, value]) => key !== "search_scope" && String(value || "").trim())
       ? "没有符合当前筛选条件的发票。"
       : "暂无发票。请选择目录后点击“重新汇总”。"}</td></tr>`;
-  updateSelectedInvoiceTotal();
+    if (refs.invoiceBody.innerHTML !== html) refs.invoiceBody.innerHTML = html;
+    state.invoiceRows.clear();
+  }
+  syncVisibleInvoiceSelection();
+  if (state.invoiceProvisional) refs.invoiceBody.querySelectorAll("input, a, button").forEach((element) => {
+    if (element.tagName === "A") element.removeAttribute("href");
+    else element.disabled = true;
+    element.title = "临时结果，完整核对后可操作";
+  });
 }
 
-function selectAllVisibleInvoices() {
-  for (const item of state.invoiceItems) {
+async function selectAllVisibleInvoices() {
+  if (state.invoiceProvisional) return;
+  const generation = state.refreshGeneration;
+  const query = new URLSearchParams(state.filters).toString();
+  app.setBusy(refs.selectAllInvoicesBtn, true, "选择中");
+  try {
+  const payload = await app.api(`/api/v1/invoices?${query}`);
+  if (!isCurrentRefresh(generation) || payload.snapshot?.revision !== state.invoiceRevision) return;
+  // All means the complete filtered result, including pages not mounted in the DOM.
+  for (const item of payload.items) {
     const key = String(item.invoice_key ?? "");
     const selected = invoiceSelectionRecord(item);
     if (!key || !selected.source_path) continue;
     state.selectedInvoices.set(key, selected);
   }
-  renderInvoiceRows();
+  syncVisibleInvoiceSelection();
+  } catch (error) {
+    app.setBanner(refs.banner, "warning", `选择失败：${error.message}`);
+  } finally {
+    app.setBusy(refs.selectAllInvoicesBtn, false);
+    updateSelectionControls();
+  }
 }
 
 function clearSelectedInvoices() {
   state.selectedInvoices.clear();
-  renderInvoiceRows();
+  syncVisibleInvoiceSelection();
 }
 
 function selectionDetailNumber(value, decimals = 2) {
@@ -1000,6 +1064,7 @@ function selectionProjectHtml(project) {
         <div class="selection-summary-project__title">
           <strong class="detail-cost-name" title="${app.escapeHtml(projectName)}">${app.escapeHtml(projectName)}</strong>
           <span class="selection-tax-rate-badge${taxRateTone}">${app.escapeHtml(taxRate)}</span>
+          ${selectionSourcesHtml(project.source_invoices || [])}
         </div>
         <span class="detail-cost-count">${specs.length} 个规格</span>
       </div>
@@ -1072,6 +1137,7 @@ function selectionSummaryWarnings(payload) {
 }
 
 function renderSelectionSummary(payload) {
+  state.selectionSummaryPayload = payload;
   const selection = payload.selection || {};
   const totals = payload.totals || {};
   const breakdown = payload.cost_breakdown || {};
@@ -1098,11 +1164,14 @@ function renderSelectionSummary(payload) {
   if (refs.selectionSummaryBreakdownMeta) {
     refs.selectionSummaryBreakdownMeta.textContent = `${Number(breakdown.matched_invoice_count || 0)} 张匹配 / ${Number(breakdown.unmatched_invoice_count || 0)} 张无明细 / ${Number(breakdown.detail_count || 0)} 条明细`;
   }
-  if (refs.selectionSummaryDetails) {
-    refs.selectionSummaryDetails.innerHTML = projects.length
-      ? projects.map(selectionProjectHtml).join("")
-      : '<div class="detail-cost-empty selection-summary-empty">本次勾选发票暂无可用成本明细</div>';
+  const taxSelect = document.getElementById("selectionTaxFilter");
+  if (taxSelect) {
+    const previous = taxSelect.value;
+    taxSelect.innerHTML = '<option value="all">全部税率</option>' + [...new Set(projects.map((p) => p.tax_rate || "missing"))].map((rate) =>
+      `<option value="${app.escapeHtml(rate)}">${app.escapeHtml(rate === "missing" ? "税率未识别" : rate)}</option>`).join("");
+    if ([...taxSelect.options].some((option) => option.value === previous)) taxSelect.value = previous;
   }
+  renderFilteredSelectionProjects();
   setSelectionSummaryState("success");
 }
 
@@ -1291,8 +1360,7 @@ function setFilePreviewNotice(message = "", tone = "info") {
 }
 
 function currentFilePreviewEntry() {
-  const files = Array.isArray(state.filePreviewJob?.files) ? state.filePreviewJob.files : [];
-  return files.find((item) => Number(item.file_number) === Number(state.filePreviewFileNumber)) || null;
+  return state.filePreviewJob?.files?.[0] || null;
 }
 
 function formatPreviewModified(value) {
@@ -1312,14 +1380,18 @@ function renderFilePreviewMetadata(file) {
 function populateFilePreviewFiles() {
   if (!refs.filePreviewFileSelect) return;
   refs.filePreviewFileSelect.replaceChildren();
-  const files = Array.isArray(state.filePreviewJob?.files) ? state.filePreviewJob.files : [];
-  files.forEach((file) => {
+  const items = state.filePreviewSelectionItems;
+  // Selection stays complete; mount only the current 100-name window.
+  const start = Math.floor((state.filePreviewFileNumber - 1) / 100) * 100;
+  items.slice(start, start + 100).forEach((item, offset) => {
     const option = document.createElement("option");
-    option.value = String(file.file_number);
-    option.textContent = `${file.file_number}. ${file.name || file.file_name || "未命名文件"}`;
+    option.value = String(start + offset + 1);
+    option.textContent = `${option.value}. ${item.source_file || item.source_path.split(/[\\/]/).pop()}`;
     refs.filePreviewFileSelect.append(option);
   });
   refs.filePreviewFileSelect.value = String(state.filePreviewFileNumber);
+  const position = document.getElementById("filePreviewPosition");
+  if (position) { position.max = String(items.length); position.value = String(state.filePreviewFileNumber); }
 }
 
 function populateFilePreviewPages(file) {
@@ -1349,14 +1421,14 @@ function applyFilePreviewZoom() {
 }
 
 function updateFilePreviewControls() {
-  const files = Array.isArray(state.filePreviewJob?.files) ? state.filePreviewJob.files : [];
+  const files = state.filePreviewSelectionItems;
   const file = currentFilePreviewEntry();
-  const fileIndex = files.findIndex((item) => Number(item.file_number) === Number(state.filePreviewFileNumber));
+  const fileIndex = state.filePreviewFileNumber - 1;
   const pageCount = file?.preview_type === "pages" ? Number(file.page_count || 0) : 0;
   const hasPages = pageCount > 0;
   if (refs.filePreviewFileSelect) {
     refs.filePreviewFileSelect.disabled = state.filePreviewJobLoading || !files.length;
-    if (file) refs.filePreviewFileSelect.value = String(file.file_number);
+    refs.filePreviewFileSelect.value = String(state.filePreviewFileNumber);
   }
   if (refs.filePreviewPreviousFileBtn) refs.filePreviewPreviousFileBtn.disabled = fileIndex <= 0;
   if (refs.filePreviewNextFileBtn) refs.filePreviewNextFileBtn.disabled = fileIndex < 0 || fileIndex >= files.length - 1;
@@ -1403,7 +1475,7 @@ async function loadFilePreviewContent(options = {}) {
   setFilePreviewState("loading");
   populateFilePreviewPages(file);
   updateFilePreviewControls();
-  if (refs.filePreviewSubtitle) refs.filePreviewSubtitle.textContent = file.name || file.file_name || "源文件";
+  if (refs.filePreviewSubtitle) refs.filePreviewSubtitle.textContent = `${state.filePreviewFileNumber} / ${state.filePreviewSelectionItems.length} · ${file.name || file.file_name || "源文件"} · 按需加载`;
   try {
     if (file.preview_type === "metadata") {
       renderFilePreviewMetadata(file);
@@ -1469,58 +1541,43 @@ async function loadFilePreviewContent(options = {}) {
 }
 
 async function loadFilePreviewJob(options = {}) {
-  const items = state.filePreviewSelectionItems.map((item) => ({ ...item }));
-  if (!items.length) {
-    closeFilePreview();
-    return false;
-  }
-  const previousFile = currentFilePreviewEntry();
-  const previousFileNumber = Number(state.filePreviewFileNumber || 1);
-  const previousPageNumber = Number(state.filePreviewPageNumber || 1);
-  const previousFileName = previousFile?.name || previousFile?.file_name || "";
+  if (!state.filePreviewSelectionItems.length) { closeFilePreview(); return false; }
+  if (!options.preservePosition) { state.filePreviewFileNumber = 1; state.filePreviewPageNumber = 1; }
+  const selected = state.filePreviewSelectionItems[state.filePreviewFileNumber - 1];
+  if (!selected) return false;
   const requestId = ++state.filePreviewRequestId;
+  state.filePreviewContentRequestId += 1;
   stopFilePreviewKeepAlive();
+  clearFilePreviewObjectUrl();
   state.filePreviewJobLoading = true;
+  state.filePreviewContentLoading = false;
   state.filePreviewJob = null;
-  if (!options.preservePosition) {
-    state.filePreviewFileNumber = 1;
-    state.filePreviewPageNumber = 1;
-  }
   setFilePreviewNotice();
   setFilePreviewState("loading");
-  if (refs.filePreviewSubtitle) {
-    refs.filePreviewSubtitle.textContent = options.automatic
-      ? "正在自动恢复预览连接"
-      : "正在核对勾选记录与当前发票列表";
-  }
+  populateFilePreviewFiles();
+  if (refs.filePreviewSubtitle) refs.filePreviewSubtitle.textContent = `正在加载第 ${state.filePreviewFileNumber} / ${state.filePreviewSelectionItems.length} 个文件`;
   updateSelectionControls();
   updateFilePreviewControls();
   try {
-    const payload = await app.api("/api/v1/invoices/preview-jobs", { method: "POST", body: { items } });
+    // Full selection is navigation data only. Server validates the captured target and
+    // current source, then prepares one file; no hundreds-of-files rendering barrier.
+    const payload = await app.api("/api/v1/invoices/preview-jobs", { method: "POST", body: {
+      target_id: state.filePreviewTargetId,
+      items: [{ invoice_key: selected.invoice_key, source_path: selected.source_path }],
+    } });
     if (requestId !== state.filePreviewRequestId || refs.filePreviewModal?.hidden) return false;
+    if (!payload.files?.length) throw new Error("服务器没有返回可预览文件。");
     state.filePreviewJob = payload;
-    const files = Array.isArray(payload.files) ? payload.files : [];
-    if (!files.length) throw new Error("服务器没有返回可预览文件。");
-    const preservedFile = options.preservePosition
-      ? files.find((file) => (file.name || file.file_name || "") === previousFileName)
-        || files.find((file) => Number(file.file_number) === previousFileNumber)
-      : null;
-    const activeFile = preservedFile || files[0];
-    state.filePreviewFileNumber = Number(activeFile.file_number || 1);
-    const activePageCount = activeFile.preview_type === "pages" ? Number(activeFile.page_count || 0) : 0;
-    state.filePreviewPageNumber = activePageCount
-      ? Math.min(activePageCount, Math.max(1, options.preservePosition ? previousPageNumber : 1))
-      : 1;
-    populateFilePreviewFiles();
-    if (refs.filePreviewSubtitle) refs.filePreviewSubtitle.textContent = `共 ${Number(payload.file_count || files.length)} 个源文件`;
-    const contentReady = await loadFilePreviewContent({ allowAutoRecovery: !options.automatic });
+    const file = currentFilePreviewEntry();
+    state.filePreviewPageNumber = Math.min(Math.max(1, Number(file.page_count || 1)), state.filePreviewPageNumber);
+    const ready = await loadFilePreviewContent({ allowAutoRecovery: !options.automatic });
     if (requestId !== state.filePreviewRequestId || refs.filePreviewModal?.hidden) return false;
-    if (options.automatic && contentReady) setFilePreviewNotice("预览连接已自动恢复。", "success");
+    if (options.automatic && ready) setFilePreviewNotice("预览连接已自动恢复。", "success");
     scheduleFilePreviewKeepAlive();
-    return contentReady;
+    return ready;
   } catch (error) {
     if (requestId !== state.filePreviewRequestId || refs.filePreviewModal?.hidden) return false;
-    showFilePreviewError(error, options.automatic ? "预览自动恢复失败" : "无法创建预览");
+    showFilePreviewError(error, "无法加载当前文件");
     return false;
   } finally {
     if (requestId === state.filePreviewRequestId) {
@@ -1534,7 +1591,8 @@ async function loadFilePreviewJob(options = {}) {
 function openFilePreview() {
   if (!refs.filePreviewModal || state.selectedInvoices.size === 0) return;
   setInvoiceActionMenuOpen(false);
-  state.filePreviewSelectionItems = selectedSummaryRequestItems();
+  state.filePreviewSelectionItems = [...state.selectedInvoices.values()].map((item) => ({ ...item }));
+  state.filePreviewTargetId = state.targetId;
   state.filePreviewReturnFocus = refs.invoiceSelectionMoreBtn;
   refs.filePreviewModal.hidden = false;
   syncInvoiceModalOpenState();
@@ -1566,7 +1624,7 @@ function closeFilePreview() {
 function dialogFocusableElements(dialog) {
   if (!dialog) return [];
   return [...dialog.querySelectorAll(
-    'button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+    'button:not([disabled]), summary, a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
   )].filter((element) => !element.hidden && element.getAttribute("aria-hidden") !== "true" && element.offsetParent !== null);
 }
 
@@ -1599,15 +1657,11 @@ function handleFilePreviewKeydown(event) {
 }
 
 function changeFilePreview(delta) {
-  const files = Array.isArray(state.filePreviewJob?.files) ? state.filePreviewJob.files : [];
-  const currentIndex = files.findIndex((item) => Number(item.file_number) === Number(state.filePreviewFileNumber));
-  const next = files[currentIndex + delta];
-  if (!next) return;
-  state.filePreviewFileNumber = Number(next.file_number);
+  const next = state.filePreviewFileNumber + delta;
+  if (next === state.filePreviewFileNumber || next < 1 || next > state.filePreviewSelectionItems.length) return;
+  state.filePreviewFileNumber = next;
   state.filePreviewPageNumber = 1;
-  populateFilePreviewPages(next);
-  updateFilePreviewControls();
-  loadFilePreviewContent();
+  loadFilePreviewJob({ preservePosition: true });
 }
 
 function changeFilePreviewPage(delta) {
@@ -1652,7 +1706,7 @@ async function loadSelectedInvoiceSummary() {
   try {
     const payload = await app.api("/api/v1/invoices/selection-summary", {
       method: "POST",
-      body: { items },
+      body: { items, target_id: state.targetId },
     });
     if (requestId !== state.selectionSummaryRequestId || refs.selectionSummaryModal?.hidden) return;
     renderSelectionSummary(payload);
@@ -1745,16 +1799,29 @@ async function loadSettings(generation) {
 }
 
 async function loadInvoices(generation) {
-  const query = new URLSearchParams(state.filters).toString();
+  const request = ++state.invoiceRequest;
+  const query = new URLSearchParams({ ...state.filters, page: state.invoicePage, page_size: 100, date_sort: state.dateSort }).toString();
   const payload = await app.api(query ? `/api/v1/invoices?${query}` : "/api/v1/invoices");
-  if (!isCurrentRefresh(generation)) return { status: "stale" };
+  if (!isCurrentRefresh(generation) || request !== state.invoiceRequest) return { status: "stale" };
+  if (state.invoiceRevision && state.invoiceRevision !== payload.snapshot?.revision && state.selectedInvoices.size) {
+    const all = await app.api(`/api/v1/invoices?${new URLSearchParams(state.filters)}`);
+    if (!isCurrentRefresh(generation) || request !== state.invoiceRequest) return { status: "stale" };
+    if (all.snapshot?.revision !== payload.snapshot?.revision) return loadInvoices(generation);
+    pruneSelectedInvoices(all.items || []);
+  }
   state.invoiceItems = payload.items || [];
   state.targetId = payload.target_id || "";
   state.hasInvoiceSnapshot = true;
-  pruneSelectedInvoices(state.invoiceItems);
+  state.invoiceCount = payload.count || 0;
+  state.invoicePage = payload.page || 1;
+  state.invoiceRevision = payload.snapshot?.revision || "";
+  state.invoiceProvisional = Boolean(payload.snapshot?.provisional);
+  if (state.invoiceProvisional) state.selectedInvoices.clear();
   renderStats(payload);
   refs.tableMeta.textContent = `${payload.count || 0} 条记录 / ${payload.snapshot?.source_label || "活动档案"} / 合法金额合计 ${app.formatMoney(payload.stats?.filtered?.total_amount || 0)}`;
+  if (state.invoiceProvisional) refs.tableMeta.textContent += " · 仅已整理部分，金额暂计，完整核对后可勾选";
   renderInvoiceRows();
+  if (state.invoiceProvisional && payload.snapshot?.progress?.state === "running" && !state.syncProgressPolling) startSyncProgressPolling();
   return { status: "ok" };
 }
 
@@ -1809,6 +1876,7 @@ async function refreshAll(reason = "") {
   }
   if (warnings.length) {
     const message = warnings.join(" ");
+    state.refreshWarning = true;
     app.setBanner(refs.banner, "warning", message);
     return { generation, stale: false, ok: false, partial: true, status: "primary_failure", message };
   }
@@ -1817,11 +1885,18 @@ async function refreshAll(reason = "") {
   if (!isCurrentRefresh(generation)) return staleRefreshResult(generation);
   if (dossierResult.status === "partial_failure") {
     const message = dossierResult.message || "业务资料夹刷新失败，发票列表仍可使用。";
+    state.refreshWarning = true;
     app.setBanner(refs.banner, "warning", message);
     return { generation, stale: false, ok: false, partial: true, status: "partial_failure", message };
   }
 
-  if (reason && !state.watchDirDirty) app.setBanner(refs.banner, "success", `已刷新：${reason}`);
+  // A directory draft suppresses routine success notices, but must not leave
+  // a failed-read warning visible after the same data has recovered.
+  if (state.refreshWarning) app.setBanner(refs.banner, "success", state.watchDirDirty
+    ? "当前目录已恢复读取，待保存目录尚未生效。"
+    : "当前目录已恢复读取。");
+  else if (reason && !state.watchDirDirty) app.setBanner(refs.banner, "success", `已刷新：${reason}`);
+  state.refreshWarning = false;
   return { generation, stale: false, ok: true, partial: false, status: "ok", message: "" };
 }
 
@@ -2017,14 +2092,14 @@ refs.filterResetBtn.addEventListener("click", async () => {
 refs.invoiceDateSortBtn?.addEventListener("click", () => {
   state.dateSort = state.dateSort === "asc" ? "desc" : "asc";
   state.invoicePage = 1;
-  renderInvoiceRows();
+  void refreshAll();
 });
 refs.selectAllInvoicesBtn?.addEventListener("click", selectAllVisibleInvoices);
 for (const [id, delta] of [["invoicePreviousPage", -1], ["invoiceNextPage", 1]]) {
   document.getElementById(id)?.addEventListener("click", () => {
     state.invoicePage += delta;
-    renderInvoiceRows();
-    refs.invoiceBody.closest(".table-wrap")?.scrollTo(0, 0);
+    void refreshAll();
+    refs.invoiceBody.closest(".table-shell")?.scrollTo(0, 0);
   });
 }
 refs.clearSelectedInvoicesBtn?.addEventListener("click", clearSelectedInvoices);
@@ -2034,11 +2109,11 @@ refs.previewSelectedInvoicesBtn?.addEventListener("click", openFilePreview);
 refs.printSelectedInvoicesBtn?.addEventListener("click", printSelectedInvoices);
 refs.batchInboundDocumentsBtn?.addEventListener("click", prepareBatchInboundDocuments);
 refs.filePreviewCloseBtn?.addEventListener("click", closeFilePreview);
-refs.filePreviewRetryBtn?.addEventListener("click", loadFilePreviewJob);
+refs.filePreviewRetryBtn?.addEventListener("click", () => loadFilePreviewJob({ preservePosition: true }));
 refs.filePreviewFileSelect?.addEventListener("change", () => {
   state.filePreviewFileNumber = Number(refs.filePreviewFileSelect.value || 1);
   state.filePreviewPageNumber = 1;
-  loadFilePreviewContent();
+  loadFilePreviewJob({ preservePosition: true });
 });
 refs.filePreviewPreviousFileBtn?.addEventListener("click", () => changeFilePreview(-1));
 refs.filePreviewNextFileBtn?.addEventListener("click", () => changeFilePreview(1));
@@ -2106,6 +2181,177 @@ refs.invoiceBody.addEventListener("change", (event) => {
   updateSelectedInvoiceTotal();
 });
 
+function selectionSourcesHtml(sources) {
+  if (!sources.length) return "";
+  return `<details class="selection-sources"><summary aria-label="展开汇总来源发票"><span class="selection-chevron" aria-hidden="true"></span><span>${sources.length} 个来源</span></summary>
+    <ul>${sources.map((source) => `<li><a href="/invoices/${encodeURIComponent(source.invoice_key)}" data-summary-source="${app.escapeHtml(JSON.stringify(source))}"><strong>${app.escapeHtml(source.invoice_number || "未识别发票号")}</strong><span>${app.escapeHtml(source.file_name || "源文件")}</span><span aria-hidden="true">›</span></a></li>`).join("")}</ul></details>`;
+}
+
+function renderFilteredSelectionProjects() {
+  const projects = state.selectionSummaryPayload?.cost_breakdown?.projects || [];
+  const query = (document.getElementById("selectionProjectSearch")?.value || "").trim().toLocaleLowerCase();
+  const rate = document.getElementById("selectionTaxFilter")?.value || "all";
+  const filtered = projects.filter((project) => {
+    const terms = [project.project_name, project.display_project_name,
+      ...(project.specs || []).flatMap((spec) => [spec.specification, spec.unit]),
+      ...(project.source_invoices || []).flatMap((source) => [source.invoice_number, source.file_name])];
+    return (rate === "all" || (project.tax_rate || "missing") === rate)
+      && (!query || terms.some((term) => String(term || "").toLocaleLowerCase().includes(query)));
+  });
+  if (refs.selectionSummaryDetails) refs.selectionSummaryDetails.innerHTML = filtered.length
+    ? filtered.map(selectionProjectHtml).join("")
+    : `<div class="detail-cost-empty selection-summary-empty">${projects.length ? '没有符合条件的明细，请调整搜索或税率。' : '本次勾选发票暂无可用成本明细'}</div>`;
+  const meta = document.getElementById("selectionFilterMeta");
+  if (meta) meta.textContent = `显示 ${filtered.length} / ${projects.length} 个项目税率分组 · 顶部合计为全部勾选发票`;
+}
+
+document.getElementById("selectionProjectSearch")?.addEventListener("input", renderFilteredSelectionProjects);
+document.getElementById("selectionTaxFilter")?.addEventListener("change", renderFilteredSelectionProjects);
+function jumpFilePreview() {
+  const input = document.getElementById("filePreviewPosition");
+  const position = Number(input.value);
+  if (Number.isInteger(position) && position >= 1 && position <= state.filePreviewSelectionItems.length) {
+    changeFilePreview(position - state.filePreviewFileNumber);
+  } else input.value = String(state.filePreviewFileNumber);
+}
+document.getElementById("filePreviewPosition")?.addEventListener("change", jumpFilePreview);
+document.getElementById("filePreviewJumpBtn")?.addEventListener("click", jumpFilePreview);
+document.getElementById("filePreviewPosition")?.addEventListener("keydown", (event) => { if (event.key === "Enter") jumpFilePreview(); });
+refs.selectionSummaryDetails?.addEventListener("click", (event) => {
+  const link = event.target.closest("[data-summary-source]");
+  if (!link) return;
+  try {
+    const source = JSON.parse(link.dataset.summarySource);
+    // Same-tab return state contains only selection metadata. Server revalidates key,
+    // source and target on detail entry and again when the summary is restored.
+    const token = crypto.randomUUID();
+    sessionStorage.setItem(`invoicehub.summary-return.${token}`, JSON.stringify({
+      created_at: Date.now(), target_id: state.targetId, items: [...state.selectedInvoices.values()],
+      filters: state.filters, page: state.invoicePage, dateSort: state.dateSort, source,
+      query: document.getElementById("selectionProjectSearch")?.value || "",
+      rate: document.getElementById("selectionTaxFilter")?.value || "all",
+    }));
+    history.replaceState({ ...history.state, selectionReturn: token }, "");
+    const query = new URLSearchParams({ selection_return: token });
+    if (new URLSearchParams(location.search).get("no_skin") === "1") query.set("no_skin", "1");
+    link.href = `/invoices/${encodeURIComponent(source.invoice_key)}?${query}`;
+  } catch (_error) {
+    event.preventDefault();
+    showOperationNotice("warning", "暂时无法打开来源", "浏览器无法保存返回位置，请允许本地会话存储后重试。");
+  }
+});
+
+async function initializeSelectionPage() {
+  let saved = null;
+  try {
+    const token = new URLSearchParams(location.search).get("selection_return") || history.state?.selectionReturn;
+    if (token) saved = JSON.parse(sessionStorage.getItem(`invoicehub.summary-return.${token}`) || "null");
+    if (!saved || Date.now() - saved.created_at > 30 * 60 * 1000 || !Array.isArray(saved.items)) saved = null;
+  } catch (_error) { saved = null; }
+  if (saved) {
+    state.filters = saved.filters || { search_scope: "invoice" };
+    state.invoicePage = saved.page || 1;
+    state.dateSort = saved.dateSort || "";
+    for (const [key, value] of Object.entries(state.filters)) {
+      const field = refs.filterForm?.elements.namedItem(key);
+      if (field) field.value = value;
+    }
+  }
+  await refreshAll();
+  if (!saved) return;
+  if (saved.target_id !== state.targetId || state.invoiceProvisional) {
+    showOperationNotice("warning", "未恢复原勾选", "目录已切换或正在同步，请重新勾选。");
+    return;
+  }
+  state.selectedInvoices = new Map(saved.items.map((item) => [String(item.invoice_key), item]));
+  renderInvoiceRows();
+  document.getElementById("selectionProjectSearch").value = saved.query || "";
+  refs.selectionSummaryModal.hidden = false;
+  syncInvoiceModalOpenState();
+  refs.selectionSummaryCloseBtn?.focus();
+  await loadSelectedInvoiceSummary();
+  document.getElementById("selectionTaxFilter").value = saved.rate || "all";
+  renderFilteredSelectionProjects();
+}
+
+const trashUi = {
+  dialog: document.getElementById("invoiceTrashDialog"),
+  confirm: document.getElementById("invoiceTrashConfirm"),
+  cancel: document.getElementById("invoiceTrashCancel"),
+  status: document.getElementById("invoiceTrashStatus"),
+  job: null, busy: false, request: 0, submitted: false, page: 0,
+};
+function renderTrashResult(job) {
+  trashUi.job = job;
+  const labels = { prepared: "待确认", running: "结果待核对", completed: "已完成", partial: "部分完成" };
+  const fileLabels = { pending: "未处理", moving: "结果待核对", trashed: "已移入废纸篓", failed: "未完成", unknown: "结果待核对" };
+  document.getElementById("invoiceTrashDescription").textContent = `共 ${job.files.length} 个源文件 · ${labels[job.state] || job.state}`;
+  document.getElementById("invoiceTrashFiles").innerHTML = job.files.slice(trashUi.page * 100, (trashUi.page + 1) * 100).map((file) => `<li><span>${app.escapeHtml(file.name)}</span><small>${app.escapeHtml(file.message || fileLabels[file.status] || "")}</small></li>`).join("");
+  document.getElementById("invoiceTrashPage").parentElement.hidden = job.files.length <= 100;
+  document.getElementById("invoiceTrashPage").textContent = `第 ${trashUi.page + 1} / ${Math.ceil(job.files.length / 100)} 组`;
+  document.getElementById("invoiceTrashPrevious").disabled = trashUi.page === 0;
+  document.getElementById("invoiceTrashNext").disabled = (trashUi.page + 1) * 100 >= job.files.length;
+  if (job.state !== "prepared") trashUi.status.textContent = `已确认移入废纸篓 ${job.trashed_count} 个。${job.state === "completed" ? "列表和汇总正在同步更新。" : "其余文件未确认完成，请核对源目录与废纸篓。不会自动重复删除。"}`;
+}
+async function openInvoiceTrash() {
+  if (!state.selectedInvoices.size || trashUi.busy) return;
+  setInvoiceActionMenuOpen(false);
+  const request = ++trashUi.request;
+  trashUi.job = null; trashUi.submitted = false; trashUi.page = 0;
+  trashUi.confirm.disabled = true; trashUi.confirm.textContent = "确认删除";
+  trashUi.cancel.textContent = "取消"; trashUi.status.textContent = "正在核对源文件…";
+  document.getElementById("invoiceTrashFiles").replaceChildren();
+  document.getElementById("invoiceTrashPage").parentElement.hidden = true;
+  document.getElementById("invoiceTrashDescription").textContent = "核对后将列出本次要删除的文件。";
+  trashUi.dialog.showModal(); trashUi.cancel.focus();
+  try {
+    const job = await app.api("/api/v1/invoices/trash-jobs", {method: "POST", body: {target_id: state.targetId, items: selectedSummaryRequestItems()}});
+    if (request !== trashUi.request || !trashUi.dialog.open) return;
+    renderTrashResult(job); trashUi.status.textContent = "请确认上方文件清单。"; trashUi.confirm.disabled = false;
+  } catch (error) {
+    if (request === trashUi.request) trashUi.status.textContent = error.message;
+  }
+}
+async function confirmInvoiceTrash() {
+  if (!trashUi.job || trashUi.busy) return;
+  trashUi.busy = true; trashUi.confirm.disabled = true; trashUi.cancel.disabled = true;
+  trashUi.status.textContent = trashUi.submitted ? "正在读取执行结果…" : "正在移入废纸篓，请稍候…";
+  try {
+    const url = `/api/v1/invoices/trash-jobs/${encodeURIComponent(trashUi.job.job_id)}`;
+    let job;
+    if (trashUi.submitted) job = await app.api(url);
+    else {
+      trashUi.submitted = true;
+      try { job = await app.api(`${url}/confirm`, {method: "POST", body: {confirmed: true}}); }
+      catch (error) {
+        // A lost response must not replay a filesystem mutation. Only query its journal.
+        job = await app.api(url);
+        if (job.state === "prepared") throw error;
+      }
+    }
+    renderTrashResult(job);
+    if (job.state !== "prepared") { clearSelectedInvoices(); await refreshAll(); }
+  } catch (error) { trashUi.status.textContent = `未能确认执行结果：${error.message}。请读取执行结果或核对源目录。`; }
+  finally {
+    trashUi.busy = false; trashUi.cancel.disabled = false; trashUi.cancel.textContent = "关闭";
+    trashUi.confirm.textContent = "读取执行结果"; trashUi.confirm.disabled = trashUi.job?.state === "completed";
+  }
+}
+document.getElementById("trashSelectedInvoicesBtn")?.addEventListener("click", openInvoiceTrash);
+trashUi.confirm?.addEventListener("click", confirmInvoiceTrash);
+trashUi.cancel?.addEventListener("click", () => { trashUi.request += 1; trashUi.dialog.close(); refs.invoiceSelectionMoreBtn?.focus(); });
+for (const [id, delta] of [["invoiceTrashPrevious", -1], ["invoiceTrashNext", 1]]) {
+  document.getElementById(id)?.addEventListener("click", () => {
+    if (!trashUi.job) return;
+    const page = trashUi.page + delta;
+    if (page < 0 || page * 100 >= trashUi.job.files.length) return;
+    trashUi.page = page; renderTrashResult(trashUi.job);
+    document.getElementById("invoiceTrashFiles").scrollTop = 0;
+  });
+}
+trashUi.dialog?.addEventListener("close", () => { trashUi.request += 1; refs.invoiceSelectionMoreBtn?.focus(); });
+trashUi.dialog?.addEventListener("cancel", (event) => { if (trashUi.busy) event.preventDefault(); else trashUi.request += 1; });
+
 function handleUnexpectedRefreshFailure(error) {
   console.error("InvoiceHub refresh failed unexpectedly", error);
   app.setBanner(refs.banner, "warning", `页面刷新遇到异常：${refreshErrorMessage(error)}。已保留当前发票列表，请稍后刷新。`);
@@ -2113,4 +2359,4 @@ function handleUnexpectedRefreshFailure(error) {
 
 app.connectEvents(refs.eventState, app.debounce(refreshAll, 300), { refreshOnFirstOpen: false });
 void refreshSyncProgress();
-void refreshAll().catch(handleUnexpectedRefreshFailure);
+void initializeSelectionPage().catch(handleUnexpectedRefreshFailure);

@@ -415,11 +415,11 @@ pub fn open_platform_marker_store(
 ) -> Result<Box<dyn RecoveryMarkerStore + Send>, MarkerStoreError> {
     #[cfg(unix)]
     {
-        return Ok(Box::new(UnixRecoveryMarkerStore::open(root)?));
+        Ok(Box::new(UnixRecoveryMarkerStore::open(root)?))
     }
     #[cfg(windows)]
     {
-        return Ok(Box::new(WindowsRecoveryMarkerStore::open(root)?));
+        Ok(Box::new(WindowsRecoveryMarkerStore::open(root)?))
     }
     #[cfg(not(any(unix, windows)))]
     {
@@ -733,9 +733,7 @@ impl RecoveryMarkerStore for UnixRecoveryMarkerStore {
             }
             return Err(marker_error_from_os_error(&error));
         }
-        if let Err(error) = self.remove_named(&temporary_name) {
-            return Err(error);
-        }
+        self.remove_named(&temporary_name)?;
         // Publish is not successful until both the final link and temporary
         // entry removal are durable in the pinned directory.
         self.sync_directory()?;

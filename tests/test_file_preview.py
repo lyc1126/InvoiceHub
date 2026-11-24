@@ -71,7 +71,7 @@ def _selection(item: dict) -> dict[str, str]:
 
 def _client_with_rows(tmp_path: Path, monkeypatch, rows: list[dict[str, str]]) -> tuple[TestClient, object]:
     monkeypatch.setattr(
-        "invoice_hub.services.app_state.AppState.run_background_diagnostics",
+        "invoice_hub.services.background_sync.BackgroundSyncService.run_background_diagnostics",
         lambda self, trigger="startup_sync": None,
     )
     app = create_app(tmp_path)
@@ -82,7 +82,7 @@ def _client_with_rows(tmp_path: Path, monkeypatch, rows: list[dict[str, str]]) -
 
 def test_preview_job_preserves_source_order_and_renders_pdf_ofd_xml(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(
-        "invoice_hub.services.app_state.AppState.run_background_diagnostics",
+        "invoice_hub.services.background_sync.BackgroundSyncService.run_background_diagnostics",
         lambda self, trigger="startup_sync": None,
     )
     app = create_app(tmp_path)
@@ -253,7 +253,7 @@ def test_preview_xml_encodings_replacements_and_truncation(tmp_path: Path) -> No
 
 def test_preview_api_rejects_stale_and_outside_watch_paths(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(
-        "invoice_hub.services.app_state.AppState.run_background_diagnostics",
+        "invoice_hub.services.background_sync.BackgroundSyncService.run_background_diagnostics",
         lambda self, trigger="startup_sync": None,
     )
     app = create_app(tmp_path)
@@ -290,7 +290,7 @@ def test_preview_api_rejects_stale_and_outside_watch_paths(tmp_path: Path, monke
 
 def test_preview_detects_source_changes_expiry_and_unknown_jobs(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(
-        "invoice_hub.services.app_state.AppState.run_background_diagnostics",
+        "invoice_hub.services.background_sync.BackgroundSyncService.run_background_diagnostics",
         lambda self, trigger="startup_sync": None,
     )
     app = create_app(tmp_path)
@@ -325,7 +325,7 @@ def test_preview_detects_source_changes_expiry_and_unknown_jobs(tmp_path: Path, 
 
 def test_preview_damaged_and_encrypted_files_are_isolated(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(
-        "invoice_hub.services.app_state.AppState.run_background_diagnostics",
+        "invoice_hub.services.background_sync.BackgroundSyncService.run_background_diagnostics",
         lambda self, trigger="startup_sync": None,
     )
     app = create_app(tmp_path)
@@ -362,7 +362,7 @@ def test_preview_damaged_and_encrypted_files_are_isolated(tmp_path: Path, monkey
 
 def test_preview_renderer_unavailable_maps_to_503(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(
-        "invoice_hub.services.app_state.AppState.run_background_diagnostics",
+        "invoice_hub.services.background_sync.BackgroundSyncService.run_background_diagnostics",
         lambda self, trigger="startup_sync": None,
     )
     app = create_app(tmp_path)
@@ -446,7 +446,7 @@ def test_preview_cache_limit_and_open_actions(tmp_path: Path, monkeypatch) -> No
     monkeypatch.setattr("invoice_hub.services.file_preview.MAX_PREVIEW_CACHE_BYTES", 256 * 1024 * 1024)
     monkeypatch.setattr("invoice_hub.services.file_preview.MAX_PREVIEW_JOB_BYTES", 128 * 1024 * 1024)
     monkeypatch.setattr(
-        "invoice_hub.services.app_state.AppState.run_background_diagnostics",
+        "invoice_hub.services.background_sync.BackgroundSyncService.run_background_diagnostics",
         lambda self, trigger="startup_sync": None,
     )
     app = create_app(tmp_path / "app")
@@ -461,7 +461,7 @@ def test_preview_cache_limit_and_open_actions(tmp_path: Path, monkeypatch) -> No
         [_summary_row(pdf, "10000000000000000010")],
     )
     opened: list[Path] = []
-    monkeypatch.setattr("invoice_hub.services.app_state.open_local_path", lambda path: opened.append(Path(path)))
+    monkeypatch.setattr("invoice_hub.services.preview_print.open_local_path", lambda path: opened.append(Path(path)))
     client = TestClient(app)
     item = client.get("/api/v1/invoices").json()["items"][0]
     payload = client.post("/api/v1/invoices/preview-jobs", json={"items": [_selection(item)]}).json()
@@ -474,3 +474,57 @@ def test_preview_cache_limit_and_open_actions(tmp_path: Path, monkeypatch) -> No
     assert open_file.headers["cache-control"] == "private, no-store"
     assert str(watch) not in json.dumps(open_file.json(), ensure_ascii=False)
     assert opened == [pdf.resolve(), pdf.parent.resolve()]
+
+
+def test_preview_print_service_follows_watch_dir_switch(tmp_path: Path, monkeypatch) -> None:
+    import pytest
+
+    from invoice_hub.services.file_preview import FilePreviewError
+
+    monkeypatch.setattr(
+        "invoice_hub.services.background_sync.BackgroundSyncService.run_background_diagnostics",
+        lambda self, trigger="startup_sync": None,
+    )
+    app = create_app(tmp_path / "app")
+    state = app.state.invoice_hub
+    old_watch = Path(state.active_profile.watch_dir)
+    old_watch.mkdir(parents=True, exist_ok=True)
+    pdf = old_watch / "old.pdf"
+    _write_pdf(pdf, [(595, 842)])
+    assert state.preview_print._invoice_preview_source({"source_path": str(pdf)}).path == pdf.resolve()
+
+    new_watch = tmp_path / "other"
+    new_watch.mkdir()
+    state.update_settings({"watch_dir": str(new_watch)})
+
+    assert state.preview_print.active_profile.id == state.active_profile.id
+    with pytest.raises(FilePreviewError) as raised:
+        state.preview_print._invoice_preview_source({"source_path": str(pdf)})
+    assert raised.value.code == "source_changed"
+    assert state.preview_print._print_pdf_path({"source_path": str(pdf)}) is None
+
+
+def test_preview_creation_waits_for_the_app_state_lock(tmp_path: Path, monkeypatch) -> None:
+    import threading
+
+    monkeypatch.setattr(
+        "invoice_hub.services.background_sync.BackgroundSyncService.run_background_diagnostics",
+        lambda self, trigger="startup_sync": None,
+    )
+    state = create_app(tmp_path / "app").state.invoice_hub
+    finished = threading.Event()
+
+    def prepare() -> None:
+        try:
+            state.preview_print.prepare_invoice_preview({"items": []})
+        except Exception:
+            pass
+        finished.set()
+
+    with state._lock:
+        worker = threading.Thread(target=prepare)
+        worker.start()
+        # The split service must reuse AppState's RLock, not a private one.
+        assert not finished.wait(0.3)
+    worker.join(timeout=10)
+    assert finished.is_set()

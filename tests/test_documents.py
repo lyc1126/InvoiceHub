@@ -9,8 +9,8 @@ from openpyxl import load_workbook
 from invoice_hub.api.app import create_app
 from invoice_hub.projections.cost_analysis import DETAIL_HEADERS
 from invoice_hub.projections.documents import build_inbound_preview, rmb_uppercase, write_inbound_workbook, write_outbound_workbook
-from invoice_hub.services.app_state import AppState
 from invoice_hub.services.document_index import DocumentIndex
+from invoice_hub.services.documents import DocumentService
 from invoice_hub.storage.files import read_json_object, write_csv_rows
 
 
@@ -81,7 +81,7 @@ def _detail_row(**overrides: object) -> dict:
 
 
 def _client(tmp_path: Path, monkeypatch) -> TestClient:
-    monkeypatch.setattr("invoice_hub.services.app_state.AppState.run_background_diagnostics", lambda self, trigger="startup_sync": None)
+    monkeypatch.setattr("invoice_hub.services.background_sync.BackgroundSyncService.run_background_diagnostics", lambda self, trigger="startup_sync": None)
     return TestClient(create_app(tmp_path))
 
 
@@ -375,7 +375,7 @@ def test_inbound_export_status_copy_location_deleted_and_occupied_messages(tmp_p
 
     recreated = client.post("/api/v1/documents/inbound/export", json={"invoice_number": "10000000000000000013"}).json()
     occupied_path = Path(recreated["path"])
-    monkeypatch.setattr(AppState, "_document_path_occupied", staticmethod(lambda path: path == occupied_path))
+    monkeypatch.setattr(DocumentService, "_document_path_occupied", staticmethod(lambda path: path == occupied_path))
     occupied_status = client.post("/api/v1/documents/inbound/export-status", json={"invoice_number": "10000000000000000013"}).json()
     occupied_export = client.post("/api/v1/documents/inbound/export", json={"invoice_number": "10000000000000000013"}).json()
     occupied_open = client.post("/api/v1/documents/inbound/open", json={"invoice_number": "10000000000000000013"}).json()
@@ -499,7 +499,7 @@ def _batch_selection_client(tmp_path: Path, monkeypatch):
     watch.mkdir(parents=True, exist_ok=True)
     for name, number in (("a.xml", "10000000000000000013"), ("a-copy.xml", "10000000000000000013"), ("b.xml", "10000000000000000014")):
         (watch / name).write_text(_cost_xml_text(number), encoding="utf-8")
-    state.bridge_rebuild()
+    state.monitor.bridge_rebuild()
     invoices = client.get("/api/v1/invoices").json()
     selection = {"target_id": invoices["target_id"], "items": [
         {"invoice_key": item["invoice_key"], "source_path": item["source_path"]} for item in invoices["items"]
@@ -510,6 +510,8 @@ def _batch_selection_client(tmp_path: Path, monkeypatch):
 def test_inbound_selection_deduplicates_families_and_reports_missing_details(tmp_path: Path, monkeypatch) -> None:
     client, state, watch, selection = _batch_selection_client(tmp_path, monkeypatch)
     write_csv_rows(watch / "成本发票明细.csv", DETAIL_HEADERS, [_detail_row()])
+    from invoice_hub.storage.generations import publish_exports
+    publish_exports(Path(state.active_profile.workspace_dir), watch)
     before = (watch / "成本发票明细.csv").read_bytes()
     response = client.post("/api/v1/documents/inbound/selection", json=selection)
     assert response.status_code == 200
@@ -524,9 +526,11 @@ def test_inbound_selection_deduplicates_families_and_reports_missing_details(tmp
 
 
 def test_inbound_duplicate_sources_preserve_real_lines_and_block_conflicts(tmp_path: Path, monkeypatch) -> None:
-    client, _state, watch, selection = _batch_selection_client(tmp_path, monkeypatch)
+    client, state, watch, selection = _batch_selection_client(tmp_path, monkeypatch)
     rows = [_detail_row(源文件=source) for source in ("a.xml", "a.xml", "a-copy.xml", "a-copy.xml")]
     write_csv_rows(watch / "成本发票明细.csv", DETAIL_HEADERS, rows)
+    from invoice_hub.storage.generations import publish_exports
+    publish_exports(Path(state.active_profile.workspace_dir), watch)
     result = client.post("/api/v1/documents/inbound/selection", json=selection).json()
     entry = next(item for item in result["items"] if item["ready"])
     assert entry["row_count"] == 2 and entry["total_with_tax"] == "452.00"
@@ -534,6 +538,7 @@ def test_inbound_duplicate_sources_preserve_real_lines_and_block_conflicts(tmp_p
     assert preview["row_count"] == 2
     rows[-1]["数量"] = "99"
     write_csv_rows(watch / "成本发票明细.csv", DETAIL_HEADERS, rows)
+    publish_exports(Path(state.active_profile.workspace_dir), watch)
     result = client.post("/api/v1/documents/inbound/selection", json=selection).json()
     assert not any(item["ready"] for item in result["items"])
     response = client.post("/api/v1/documents/inbound/export", json={"invoice_number": entry["invoice_number"], "selection": entry["selection"], "mode": "skip_existing"})
@@ -557,10 +562,10 @@ def test_inbound_selection_rejects_stale_or_invalid_identity(tmp_path: Path, mon
     elif change == "outside":
         outside = tmp_path / "outside.xml"
         outside.write_text(_cost_xml_text(), encoding="utf-8")
-        current = state.list_invoices()
+        current = state.invoices.list_invoices()
         current["items"][0]["source_path"] = str(outside)
         selection["items"][0]["source_path"] = str(outside)
-        monkeypatch.setattr(state, "list_invoices", lambda: current)
+        monkeypatch.setattr(state.invoices, "list_invoices", lambda: current)
     else:
         selection["items"] = []
         status = 400
@@ -627,3 +632,45 @@ def test_document_layout_retains_rows_totals_and_print_area(tmp_path: Path, kind
             assert preview["layout"]["column_widths"][3:5] == [10, 10]
     finally:
         wb.close()
+
+
+def test_document_service_follows_watch_dir_and_outbound_switch(tmp_path, monkeypatch):
+    with _client(tmp_path, monkeypatch) as client:
+        state = client.app.state.invoice_hub
+        before = client.get("/api/v1/documents/state?selection_only=true").json()
+        other_watch = tmp_path / "其它发票"
+        other_watch.mkdir()
+        outbound = tmp_path / "开具发票"
+        outbound.mkdir()
+
+        state.update_settings({"watch_dir": str(other_watch)})
+        state.settings.update_outbound_invoice_dir({"outbound_invoice_dir": str(outbound)})
+        after = client.get("/api/v1/documents/state?selection_only=true").json()
+
+        assert after["watch_dir"] == str(other_watch.resolve()) != before["watch_dir"]
+        assert after["target_id"] == state.active_profile.id != before["target_id"]
+        assert after["cost_detail_csv_path"] == str(other_watch.resolve() / "成本发票明细.csv")
+        assert after["outbound_invoice_dir"] == str(outbound.resolve())
+
+
+def test_document_export_waits_for_the_app_state_lock(tmp_path, monkeypatch):
+    import threading
+
+    with _client(tmp_path, monkeypatch) as client:
+        state = client.app.state.invoice_hub
+        finished = threading.Event()
+
+        def export() -> None:
+            try:
+                state.documents.export_inbound_document({"invoice_number": "10000000000000000013"})
+            except Exception:
+                pass
+            finished.set()
+
+        with state._lock:
+            worker = threading.Thread(target=export)
+            worker.start()
+            # The split service must reuse AppState's RLock, not a private one.
+            assert not finished.wait(0.3)
+        worker.join(timeout=10)
+        assert finished.is_set()

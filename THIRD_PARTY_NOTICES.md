@@ -30,6 +30,9 @@ the license text shipped by each upstream project remains authoritative.
 | typing-inspection | 0.4.2 | MIT | <https://github.com/pydantic/typing-inspection> |
 | Uvicorn | 0.52.1 | BSD-3-Clause | <https://github.com/encode/uvicorn> |
 | watchdog | 6.0.0 (Windows only) | Apache-2.0 | <https://github.com/gorakhargosh/watchdog> |
+| Vue (workspace preview bundle `web/static/app`) | 3.5.45 | MIT | <https://github.com/vuejs/core> |
+| Vue Router (workspace preview bundle) | 5.4.0 | MIT | <https://github.com/vuejs/router> |
+| Pinia (workspace preview bundle) | 4.1.0 | MIT | <https://github.com/vuejs/pinia> |
 | Sparkle | 2.9.2 (macOS only) | MIT | <https://github.com/sparkle-project/Sparkle> |
 | python-build-standalone | 20260623 artifacts (macOS runtime) | project and bundled component licenses | <https://github.com/astral-sh/python-build-standalone> |
 | Lucide (website, application power and appearance icons) | 1.8.0 selected nodes | ISC / MIT for Feather-derived icons | <https://github.com/lucide-icons/lucide> |

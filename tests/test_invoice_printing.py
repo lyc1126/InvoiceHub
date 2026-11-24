@@ -43,7 +43,7 @@ def _selection(item: dict) -> dict[str, str]:
 
 def test_invoice_print_job_keeps_all_pdf_pages_and_family_fallback(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(
-        "invoice_hub.services.app_state.AppState.run_background_diagnostics",
+        "invoice_hub.services.background_sync.BackgroundSyncService.run_background_diagnostics",
         lambda self, trigger="startup_sync": None,
     )
     app = create_app(tmp_path)
@@ -110,7 +110,7 @@ def test_invoice_print_job_keeps_all_pdf_pages_and_family_fallback(tmp_path: Pat
 
 def test_invoice_print_job_rejects_unprintable_and_stale_selection(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(
-        "invoice_hub.services.app_state.AppState.run_background_diagnostics",
+        "invoice_hub.services.background_sync.BackgroundSyncService.run_background_diagnostics",
         lambda self, trigger="startup_sync": None,
     )
     app = create_app(tmp_path)
@@ -151,7 +151,7 @@ def test_invoice_print_job_rejects_unprintable_and_stale_selection(tmp_path: Pat
 
 def test_invoice_print_page_rejects_unknown_job(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(
-        "invoice_hub.services.app_state.AppState.run_background_diagnostics",
+        "invoice_hub.services.background_sync.BackgroundSyncService.run_background_diagnostics",
         lambda self, trigger="startup_sync": None,
     )
     client = TestClient(create_app(tmp_path))

@@ -31,6 +31,7 @@ RENDER_TIMEOUT = 25
 # Binds the Java adapter/build locks to the Python core build identity. Refresh
 # only together with those inputs; the source contract checks the exact digest.
 COMPONENT_SOURCE_FINGERPRINT = "43438691e41bdbf7d613de2d0248bdefb9ce5ddb99c55113a4cab03955fe9993"
+DEV_OFD_COMPONENT_ENV = "INVOICE_HUB_DEV_OFD_COMPONENT"
 _RENDER_SLOT = threading.BoundedSemaphore(1)
 _DECLARATION = re.compile(r"<!\s*(?:DOCTYPE|ENTITY)\b", re.I)
 
@@ -137,15 +138,97 @@ def _component_signature(root: Path, names: tuple[str, ...]) -> tuple[tuple, ...
     return tuple(signatures)
 
 
+def verify_ofd_component(
+    component_dir: Path,
+    *,
+    expected_platform: str | None = None,
+    expected_fingerprint: str = COMPONENT_SOURCE_FINGERPRINT,
+) -> dict:
+    """Fail-closed integrity verification shared by runtime OFDRenderer and release verifiers."""
+    raw_root = Path(component_dir)
+    if raw_root.is_symlink() or not raw_root.is_dir():
+        raise ValueError(f"OFD preview component directory is missing or symlinked: {raw_root}")
+    root = raw_root.resolve()
+    manifest_path = root / "component.json"
+    if manifest_path.is_symlink() or not manifest_path.is_file():
+        raise ValueError(f"OFD preview component manifest is missing: {manifest_path}")
+    manifest_signature = _component_signature(root, ("component.json",))
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise ValueError(f"OFD preview component manifest is invalid JSON: {exc}") from exc
+    if not isinstance(manifest, dict):
+        raise ValueError("OFD preview component manifest must be a JSON object")
+    target_platform = expected_platform or _platform_id()
+    if (
+        manifest.get("schema_version") != 1
+        or manifest.get("engine") != "ofdrw-2.4.0"
+        or manifest.get("java_major") != 21
+        or manifest.get("platform") != target_platform
+        or manifest.get("source_fingerprint") != expected_fingerprint
+    ):
+        raise ValueError(
+            "OFD preview component identity or source_fingerprint does not match this build"
+        )
+    files = manifest.get("files")
+    if not isinstance(files, dict) or not files:
+        raise ValueError("OFD preview component manifest has no files")
+    validated_files: dict[str, str] = {}
+    for raw_name, digest in files.items():
+        if not isinstance(raw_name, str) or not isinstance(digest, str):
+            raise ValueError("OFD preview component file entry is invalid")
+        name = _member_name(raw_name)
+        validated_files[name] = digest
+    names = ("component.json", *sorted(validated_files))
+    signature = _component_signature(root, names)
+    if signature[0] != manifest_signature[0]:
+        raise ValueError("OFD preview component changed during verification")
+    for name, digest in validated_files.items():
+        item = root / name
+        if item.is_symlink() or not item.resolve().is_relative_to(root):
+            raise ValueError(f"OFD preview component member path is unsafe: {name}")
+        if hashlib.sha256(item.read_bytes()).hexdigest() != digest:
+            raise ValueError(f"OFD preview component SHA-256 mismatch: {name}")
+    java_name = "java/bin/java.exe" if target_platform == "windows-x64" else "java/bin/java"
+    jars = [root / name for name in sorted(validated_files) if name.startswith("lib/") and name.endswith(".jar")]
+    if java_name not in validated_files or "lib/ofd-preview.jar" not in validated_files or not jars:
+        raise ValueError("OFD preview component is missing required Java runtime or JAR members")
+    if _component_signature(root, names) != signature:
+        raise ValueError("OFD preview component changed during verification")
+    return {
+        "root": root,
+        "names": names,
+        "signature": signature,
+        "java": root / java_name,
+        "jars": tuple(jars),
+        "platform": target_platform,
+        "engine": manifest["engine"],
+        "source_fingerprint": manifest["source_fingerprint"],
+    }
+
+
 class OFDRenderer:
     def __init__(self, component_dir: Path | None = None):
         root = Path(__file__).resolve().parents[3]
         packaged = Path(sys.prefix) / "components" / "ofd-preview"
-        # Packaged applications never fall back to user executables or PATH Java.
-        self.component_dir = component_dir or (
-            packaged if (root / "invoice-hub-build.json").exists() or os.environ.get("INVOICE_HUB_RELEASE_MODE") == "1" or packaged.exists()
-            else root / "runtime" / "components" / "ofd-preview"
-        )
+        is_release = (root / "invoice-hub-package.json").exists() or os.environ.get("INVOICE_HUB_RELEASE_MODE") == "1"
+        is_built_core = (root / "invoice-hub-build.json").exists()
+        # Packaged release builds only trust sys.prefix/components/ofd-preview and
+        # ignore development environment overrides. Local Tauri development apps
+        # carry invoice-hub-build.json without invoice-hub-package.json and run from
+        # a checkout venv, so their launcher may point INVOICE_HUB_DEV_OFD_COMPONENT
+        # at the repo's runtime/components/ofd-preview (still hash-verified below).
+        dev_override = "" if is_release else os.environ.get(DEV_OFD_COMPONENT_ENV, "").strip()
+        if component_dir is not None:
+            self.component_dir = component_dir
+        elif is_release or packaged.exists():
+            self.component_dir = packaged
+        elif dev_override and Path(dev_override).is_absolute():
+            self.component_dir = Path(dev_override)
+        elif is_built_core:
+            self.component_dir = packaged
+        else:
+            self.component_dir = root / "runtime" / "components" / "ofd-preview"
         self._component_lock = threading.Lock()
         self._verified_component: tuple | None = None
 
@@ -165,34 +248,15 @@ class OFDRenderer:
                 if root == cached_root and _component_signature(root, names) == signature:
                     return java, list(jars)
             self._verified_component = None
-            manifest_signature = _component_signature(root, ("component.json",))
-            manifest = json.loads((root / "component.json").read_text(encoding="utf-8"))
-            if (manifest["schema_version"] != 1 or manifest["engine"] != "ofdrw-2.4.0"
-                    or manifest["java_major"] != 21 or manifest["platform"] != _platform_id()
-                    or manifest["source_fingerprint"] != COMPONENT_SOURCE_FINGERPRINT):
-                raise ValueError("component identity")
-            files = manifest["files"]
-            if not isinstance(files, dict) or not files:
-                raise ValueError("empty component")
-            names = ("component.json", *sorted(_member_name(name) for name in files))
-            signature = _component_signature(root, names)
-            if signature[0] != manifest_signature[0]:
-                raise ValueError("component changed")
-            for name, digest in files.items():
-                item = root / _member_name(name)
-                if item.is_symlink() or not item.resolve().is_relative_to(root):
-                    raise ValueError("component path")
-                if hashlib.sha256(item.read_bytes()).hexdigest() != digest:
-                    raise ValueError("component hash")
-            java_name = "java/bin/java.exe" if os.name == "nt" else "java/bin/java"
-            jars = [root / name for name in sorted(files) if name.startswith("lib/") and name.endswith(".jar")]
-            if java_name not in files or "lib/ofd-preview.jar" not in files or not jars:
-                raise ValueError("component missing")
-            if _component_signature(root, names) != signature:
-                raise ValueError("component changed")
-            java = root / java_name
-            self._verified_component = (root, names, signature, java, tuple(jars))
-            return java, jars
+            verified = verify_ofd_component(self.component_dir)
+            self._verified_component = (
+                verified["root"],
+                verified["names"],
+                verified["signature"],
+                verified["java"],
+                verified["jars"],
+            )
+            return verified["java"], list(verified["jars"])
         except (OSError, ValueError, KeyError, TypeError, OFDPreviewError) as exc:
             self._verified_component = None
             raise OFDPreviewError("ofd_renderer_unavailable") from exc

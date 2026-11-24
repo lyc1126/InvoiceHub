@@ -18,7 +18,29 @@ ARCHITECTURE_APPENDICES = (
     ROOT / "docs" / "architecture" / "AGENT_TASK_MAP.md",
     ROOT / "docs" / "architecture" / "COMMENT_RATIONALE_MAP.md",
 )
-ARCHITECTURE_DOCS = (ARCHITECTURE_ENTRY, *ARCHITECTURE_APPENDICES)
+ARCHITECTURE_RULES = tuple(
+    ROOT / "docs" / "architecture" / "rules" / f"{name}.md"
+    for name in (
+        "INVOICE_EXTRACTION",
+        "COST_ANALYSIS",
+        "MONITORING",
+        "WEB_UI",
+        "BOOKKEEPING",
+        "TAX_WORKBENCH",
+        "WINDOWS",
+        "MACOS",
+        "TAURI_HOST",
+        "RELEASE",
+    )
+)
+ARCHITECTURE_DOCS = (ARCHITECTURE_ENTRY, *ARCHITECTURE_APPENDICES, *ARCHITECTURE_RULES)
+HANDOFF_FILES = tuple(ROOT / path for path in (
+    "scripts/dev/agent_handoff.py",
+    "scripts/dev/build_agent_handoff.py",
+    "docs/AGENT_HANDOFF.md",
+    "tests/test_agent_handoff.py",
+    "tests/test_agent_handoff_packaging.py",
+))
 MACOS_ENGINEERING_FILES = tuple(
     ROOT / path
     for path in (
@@ -115,6 +137,7 @@ TAURI_FOUNDATION_FILES = tuple(
 )
 CURRENT_FACT_DOCS = (
     *ARCHITECTURE_DOCS,
+    ROOT / "docs/AGENT_HANDOFF.md",
     ROOT / "AGENTS.md",
     ROOT / "README.md",
     ROOT / "IMPLEMENTATION_STATUS.md",
@@ -139,6 +162,8 @@ PUBLIC_RELEASE_FILES = (
 HISTORY_SANITIZATION_EXECUTION = ROOT / "docs" / "release" / "HISTORY_SANITIZATION_EXECUTION.md"
 NEW_GOVERNED_FILES = {
     path.relative_to(ROOT).as_posix() for path in ARCHITECTURE_DOCS
+} | {
+    path.relative_to(ROOT).as_posix() for path in HANDOFF_FILES
 } | {
     path.relative_to(ROOT).as_posix()
     for path in (*MACOS_ENGINEERING_FILES, *LOCAL_EXTENSION_FILES)
@@ -328,6 +353,46 @@ def test_platform_architecture_covers_macos_and_shared_boundaries() -> None:
         assert f"`{relative}`" in file_map
 
 
+def test_agent_entries_and_scoped_rules_remain_navigable() -> None:
+    agents = ROOT / "AGENTS.md"
+    claude = ROOT / "CLAUDE.md"
+    task_map = ROOT / "docs" / "architecture" / "AGENT_TASK_MAP.md"
+    task_text = task_map.read_text(encoding="utf-8")
+    # Keep the mandatory entry bounded; feature rules must remain reachable even
+    # when an agent starts without the previous conversation or feature context.
+    assert agents.stat().st_size <= 16 * 1024
+    assert claude.stat().st_size <= 4 * 1024
+    for entry in (agents, claude):
+        assert "AGENT_TASK_MAP.md#quick-lookup" in entry.read_text(encoding="utf-8")
+    for rule in ARCHITECTURE_RULES:
+        assert rule.is_file()
+        assert f"(rules/{rule.name})" in task_text
+        text = rule.read_text(encoding="utf-8")
+        assert "(../../../AGENTS.md)" in text
+        assert "../AGENT_TASK_MAP.md#task-" in text
+        assert "完整读取" in text
+
+    # Explicit anchors make navigation independent of rendered Chinese heading
+    # slugs. Check both directions, including Git and directory-rule handoffs.
+    for source in (agents, claude, *ARCHITECTURE_DOCS):
+        text = source.read_text(encoding="utf-8")
+        for match in MARKDOWN_LINK_RE.finditer(text):
+            target = match.group("target").strip("<>")
+            if "://" in target or "#" not in target:
+                continue
+            path, fragment = target.split("#", 1)
+            if not (
+                fragment.startswith("task-")
+                or fragment in {"quick-lookup", "directory-rules", "git-rules"}
+            ):
+                continue
+            destination = source.parent / unquote(path) if path else source
+            anchors = re.findall(
+                r'<a id="([^"]+)"></a>', destination.read_text(encoding="utf-8")
+            )
+            assert anchors.count(fragment) == 1, f"{source.relative_to(ROOT)} -> {target}"
+
+
 def test_architecture_mermaid_and_markdown_fences_are_balanced() -> None:
     mermaid_blocks = sum(_assert_fences_are_balanced(path) for path in ARCHITECTURE_DOCS)
     assert mermaid_blocks >= 3
@@ -449,7 +514,7 @@ def test_host_rpc_docs_describe_the_direct_backend_token_handoff() -> None:
         text = path.read_text(encoding="utf-8")
         assert "直接启动的 Python backend" in text
         assert "descendant 环境清除" in text
-        assert "四种固定 picker enum" in text
+        assert "五种固定单路径 picker enum" in text
         assert "`update_check` / `update_install` 两个固定 enum" in text
 
 
@@ -522,7 +587,9 @@ def test_l10_e_docs_keep_the_recovery_smoke_non_installing_and_isolated() -> Non
 
 
 def test_current_tauri_docs_require_bounded_update_checks_and_confirmed_exit_cleanup() -> None:
-    agents = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
+    tauri_rules = (
+        ROOT / "docs" / "architecture" / "rules" / "TAURI_HOST.md"
+    ).read_text(encoding="utf-8")
     plan = (ROOT / "docs" / "release" / "TAURI2_EXECUTION_PLAN.md").read_text(
         encoding="utf-8"
     )
@@ -530,7 +597,7 @@ def test_current_tauri_docs_require_bounded_update_checks_and_confirmed_exit_cle
         encoding="utf-8"
     )
 
-    for text in (agents, plan, platform):
+    for text in (tauri_rules, plan, platform):
         assert "ExitRequested" in text
         assert "kill" in text
         assert "5 秒" in text
@@ -605,14 +672,16 @@ def test_current_architecture_docs_do_not_expose_absolute_machine_paths() -> Non
 
 
 def test_all_fastapi_routes_are_registered_in_flow_map() -> None:
-    api_source = (ROOT / "src" / "invoice_hub" / "api" / "app.py").read_text(
-        encoding="utf-8"
+    api_dir = ROOT / "src" / "invoice_hub" / "api"
+    api_source = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in [api_dir / "app.py", *sorted((api_dir / "routes").glob("*.py"))]
     )
     flow_map = (
         ROOT / "docs" / "architecture" / "INTERFACES_AND_FLOWS.md"
     ).read_text(encoding="utf-8")
     route_pattern = re.compile(
-        r'''@app\.(?:get|post|put|delete|patch|api_route)\(\s*["']([^"']+)["']'''
+        r'''@(?:app|routes)\.(?:get|post|put|delete|patch|api_route)\(\s*["']([^"']+)["']'''
     )
     routes = sorted(set(route_pattern.findall(api_source)))
     missing = [route for route in routes if route not in flow_map]

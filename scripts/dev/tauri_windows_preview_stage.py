@@ -15,6 +15,7 @@ from invoice_hub.release.build_manifest import build_manifest_payload
 from invoice_hub.release.package_manifest import build_package_manifest_payload
 from invoice_hub.release.runtime_manifest import validate_runtime_manifest
 from invoice_hub.release.sbom import build_sbom_payload
+from invoice_hub.services.ofd_rendering import verify_ofd_component
 from invoice_hub.version import PRODUCT_VERSION, RELEASE_PYTHON_VERSION, WINDOWS_NSIS_PREVIEW_PACKAGE_ID
 
 
@@ -93,6 +94,13 @@ def stage(root: Path, runtime_dir: Path, source_commit: str) -> dict[str, str]:
         expected_python_version=RELEASE_PYTHON_VERSION,
         execute_probe=True,
     )
+    try:
+        verify_ofd_component(
+            runtime_dir / "components" / "ofd-preview",
+            expected_platform="windows-x64",
+        )
+    except (OSError, ValueError) as exc:
+        raise WindowsPreviewStageError(f"Windows OFD preview component is invalid: {exc}") from exc
     staging = root / STAGING_RELATIVE_PATH
     if staging.is_symlink():
         raise WindowsPreviewStageError("refusing to replace a symlinked staging directory")
@@ -103,7 +111,7 @@ def stage(root: Path, runtime_dir: Path, source_commit: str) -> dict[str, str]:
     build = _write_source_core(root, core, commit=source_commit, runtime=runtime)
     shutil.copytree(runtime_dir, staging / "python", symlinks=False)
     launcher = staging / LAUNCHER_NAME
-    launcher_bytes = b"@echo off\r\nsetlocal\r\nset PYTHONPATH=%~dp0invoice-hub-core\\src\r\n\"%~dp0python\\python.exe\" -B -m invoice_hub.api.main %*\r\n"
+    launcher_bytes = b"@echo off\r\nsetlocal\r\nset INVOICE_HUB_DEV_OFD_COMPONENT=\r\nset PYTHONPATH=%~dp0invoice-hub-core\\src\r\n\"%~dp0python\\python.exe\" -B -m invoice_hub.api.main %*\r\n"
     launcher.write_bytes(launcher_bytes)
     host = {
         "schema_version": 3,

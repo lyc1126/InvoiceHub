@@ -61,7 +61,10 @@ class BuildManifestError(ValueError):
 
 def _is_build_cache(path: Path, root: Path) -> bool:
     relative = path.relative_to(root)
-    return path.name == ".DS_Store" or path.suffix == ".pyc" or "__pycache__" in relative.parts
+    # Editable-install metadata is outside the packaged core. It must not change
+    # its identity, while all actual source files remain fingerprint inputs.
+    return (path.name == ".DS_Store" or path.suffix == ".pyc" or "__pycache__" in relative.parts
+            or any(part.endswith(".egg-info") for part in relative.parts))
 
 
 def deterministic_build_id(root: Path) -> str:

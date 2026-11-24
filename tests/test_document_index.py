@@ -1,5 +1,3 @@
-import json
-from pathlib import Path
 import sqlite3
 import time
 
@@ -34,7 +32,7 @@ def _wait(index, predicate):
 
 def test_cancel_releases_worker_health_stays_responsive_and_resume_keeps_progress(tmp_path, monkeypatch):
     from invoice_hub.api.app import create_app
-    monkeypatch.setattr("invoice_hub.services.app_state.AppState.run_background_diagnostics", lambda *args, **kwargs: None)
+    monkeypatch.setattr("invoice_hub.services.background_sync.BackgroundSyncService.run_background_diagnostics", lambda *args, **kwargs: None)
     monkeypatch.setattr(module, "build_index", _slow_index)
     root = tmp_path / "outbound"
     root.mkdir()

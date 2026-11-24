@@ -80,6 +80,7 @@ def test_tauri_startup_surface_uses_the_pinned_host_only_opener_and_empty_webvie
     cargo = tomllib.loads((ROOT / "src-tauri" / "Cargo.toml").read_text(encoding="utf-8"))
     lock = tomllib.loads((ROOT / "src-tauri" / "Cargo.lock").read_text(encoding="utf-8"))
     main = (ROOT / "src-tauri" / "src" / "main.rs").read_text(encoding="utf-8")
+    lib = (ROOT / "src-tauri" / "src" / "lib.rs").read_text(encoding="utf-8")
     capability = json.loads(
         (ROOT / "src-tauri" / "capabilities" / "no-webview-ipc.json").read_text(encoding="utf-8")
     )
@@ -92,7 +93,9 @@ def test_tauri_startup_surface_uses_the_pinned_host_only_opener_and_empty_webvie
     assert ".open_js_links_on_click(false)" in main
     assert "tauri_plugin_opener::init()" not in main
     assert "app.opener()" in main
-    assert ".open_url(invoicehub_desktop::backend_origin(), None::<&str>)" in main
+    # Browser launch opens the Vue workspace entry while staying pinned to the fixed localhost origin.
+    assert ".open_url(invoicehub_desktop::backend_workspace_url(), None::<&str>)" in main
+    assert 'format!("{}/workspace/", backend_origin())' in lib
     assert capability["permissions"] == []
     assert "opener:" not in "\n".join(capability["permissions"])
 
@@ -158,7 +161,7 @@ def test_tauri_setup_cleans_up_an_owned_backend_before_returning_surface_failure
     assert "app_icon_id," in setup
     assert "backend.webview_data_directory()," in setup
     assert "backend.allow_print_popups()," in setup
-    assert "open_backend_in_browser(&app.handle())?" in setup
+    assert "open_backend_in_browser(app.handle())?" in setup
     assert "if let Err(error) = setup_result" in setup
     assert "complete_setup_failure_cleanup(&backend);" in setup
     assert "if let Err(cleanup_error)" not in setup
@@ -171,7 +174,7 @@ def test_tauri_setup_cleans_up_an_owned_backend_before_returning_surface_failure
     )
     assert setup.index("install_tray(app, app_icon_id)?;") < setup.index("app.manage(backend);")
     assert setup.index("create_desktop_window(") < setup.index("app.manage(backend);")
-    assert setup.index("open_backend_in_browser(&app.handle())?") < setup.index(
+    assert setup.index("open_backend_in_browser(app.handle())?") < setup.index(
         "app.manage(backend);"
     )
     assert setup.index("app.manage(backend);") < setup.index("app.manage(startup_surface);")
@@ -465,3 +468,19 @@ def test_tauri_print_popup_policy_only_allows_local_print_jobs() -> None:
     assert ".window_features(features)" in main
     assert ".on_navigation(|destination| is_print_popup_navigation_url(destination.as_str()))" in main
     assert "tauri::webview::NewWindowResponse::Deny" in main
+
+
+def test_tauri_fixed_port_conflict_recovery_requires_confirmation_and_revalidation() -> None:
+    main = (ROOT / "src-tauri" / "src" / "main.rs").read_text(encoding="utf-8")
+    backend = (ROOT / "src-tauri" / "src" / "backend.rs").read_text(encoding="utf-8")
+    diag = (ROOT / "src-tauri" / "src" / "startup_diagnostics.rs").read_text(encoding="utf-8")
+
+    setup = main[main.index(".setup(move |app|") : main.index(".build(context)")]
+    assert setup.index("resolve_fixed_port_conflict") < setup.index("BackendHost::launch")
+    assert "startup_diagnostics::offer_existing_invoicehub_shutdown(app.handle(), claim)" in setup
+    assert "pub fn resolve_port_conflict_with" in backend
+    assert "claim.same_instance(&rechecked)" in backend
+    assert "ExistingInstanceChanged" in backend
+    assert "ExistingInstanceShutdownTimedOut" in backend
+    assert "pub fn offer_existing_invoicehub_shutdown" in diag
+    assert "--no-startup-dialog" in diag[diag.index("pub fn offer_existing_invoicehub_shutdown") :]

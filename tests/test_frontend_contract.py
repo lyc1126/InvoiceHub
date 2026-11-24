@@ -5,6 +5,13 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def _api_source() -> str:
+    """app.py composes the route groups in api/routes/ and shares helpers from api/common.py."""
+    api = ROOT / "src" / "invoice_hub" / "api"
+    files = [api / "app.py", api / "common.py", *sorted((api / "routes").glob("*.py"))]
+    return "\n".join(path.read_text(encoding="utf-8") for path in files)
+
+
 def test_default_appearance_assets_and_reduced_motion_contract() -> None:
     css = (ROOT / "web/static/css/app.css").read_text(encoding="utf-8")
     dark = ROOT / "web/static/skins/website-dark"
@@ -72,13 +79,22 @@ def test_cost_page_keeps_required_controls() -> None:
     assert "开票参考" in html
     assert "复制当前表格" in html
     assert "保存状态" in html
-    assert "批量设为已开具" in html
-    assert "批量设为未开具" in html
+    # Selection actions live in the bottom action bar, grouped by task (已开数量 / 加价率 / 移除).
+    assert 'id="referenceActionBar"' in html and 'data-action-zone="selection"' in html and 'data-action-zone="save"' in html
+    assert ">设为全部已开<" in html and ">清零<" in html and ">按销项更新<" in html
+    assert 'id="excludeSelectedBtn"' in html and "从开票参考移除" in html
+    assert 'id="clearSelectionBtn"' in html and 'id="discardReferenceBtn"' in html
+    # One primary action in the command bar; secondary actions sit in the 更多 menu.
+    assert html.split("<dialog")[0].count('class="btn btn--primary"') == 2  # 重新汇总 + 保存状态 (only with drafts); dialogs excluded
+    assert 'id="costMoreMenu" class="cost-more__menu" role="menu"' in html
+    assert 'id="openSummaryBtn" class="cost-more__item"' in html and 'id="copyBtn" class="cost-more__item"' in html
+    assert 'id="referenceSourcesDialog"' in html and 'id="referenceExclusionsDialog"' in html
+    assert 'id="referenceExclusionsBtn"' in html
     assert "打开成本分析表" in html
     assert "系统服务连接状态" in html
     assert "service-status service-status--muted" in html
     assert "list-controls" in html
-    assert "cost-actions" in html
+    assert 'class="list-controls sticky-controls cost-command-bar"' in html
     assert "cost-tabs" in html
     assert "cost-view-switcher" in html
     assert "cost-formula-help-wrap" in html
@@ -91,7 +107,13 @@ def test_cost_page_keeps_required_controls() -> None:
     assert "库存平均单价(除税) = sum(金额(除税)) / sum(数量)" in html
     assert "库存平均单价(含税) = sum(金额(除税)+税金) / sum(数量)" in html
     assert "采购参考平均单价(含税) = avg(明细行含税原始单价)" in html
-    assert "平均单价(含税) = 平均单价(除税) × 1.13" in html
+    assert "平均单价(含税) = 平均单价(除税) × (1 + 本公司销项税率)" in html
+    assert "× 1.13" not in html
+    assert 'id="taxpayerTypeSelect"' in html
+    assert 'id="outputTaxRateSelect"' in html
+    assert 'id="saveTaxProfileBtn"' in html
+    for option in ('value="general"', 'value="small_scale"', 'value="13"', 'value="3"', 'value="1"'):
+        assert option in html
     assert "最近保存的文件夹" in js
     assert "入库总量合计" in html
     assert "已开库存合计金额" in html
@@ -101,8 +123,8 @@ def test_cost_page_keeps_required_controls() -> None:
     assert "data-markup-rate-input" not in html
     assert "开票加价率</span>" not in html
     assert "batchMarkupInput" in html
-    assert "批量锁定加价率" in html
-    assert "批量解锁加价率" in html
+    assert ">应用并锁定<" in html
+    assert ">解锁<" in html
     assert "平均单价(含税)" in js
     assert "renderProjectAverageWithTax" in js
     assert "renderProjectPurchaseReferenceWithTax" in js
@@ -123,11 +145,48 @@ def test_cost_page_keeps_required_controls() -> None:
     assert '"平均单价(含税)"' in reference_columns_body
     assert "row.reference_average_unit_price_with_tax" in js
     assert "numberValue(row.total_with_tax) / quantity" not in js
-    assert "const referenceAverageUnitPrice = numberValue(source.average_unit_price) * multiplier;" in js
+    assert "const referenceAverageUnitPrice = numberValue(source.reference_cost_unit_price ?? source.average_unit_price) * multiplier;" in js
+    assert "const outputTaxRate = referenceOutputTaxRate(source);" in js
+    assert "row?.reference_output_tax_rate" in js
+    # 品目表 dialog: rename-to-merge, type, per-item rate; blocked while reference drafts exist.
+    assert 'id="itemCatalogBtn"' in html and 'id="itemCatalogDialog"' in html and 'id="itemCatalogTable"' in html
+    assert 'list="itemCatalogNames"' in js
+    assert "item_catalog: { items }" in js
+    assert "开票参考还有未保存的草稿，请先保存或刷新后再修改品目表。" in js
+    assert '["goods", "货物"], ["service", "服务"], ["expense", "费用"], ["fixed_asset", "固定资产"]' in js
+    assert 'app.statusPill("已开数量待核对", "warning")' in js
+    assert ".item-catalog-dialog[open] { display: flex; }" in css
     assert "const referenceAmount = referenceAverageUnitPrice * max;" in js
-    assert "const referenceTax = referenceAmount * 0.13;" in js
+    assert "const referenceTax = referenceAmount * outputTaxRate;" in js
     assert "const referenceTotal = referenceAmount + referenceTax;" in js
-    assert "const referenceAverageWithTax = referenceAverageUnitPrice * 1.13;" in js
+    assert "const referenceAverageWithTax = referenceAverageUnitPrice * (1 + outputTaxRate);" in js
+    assert "referenceAmount * 0.13" not in js
+    assert "referenceAverageUnitPrice * 1.13" not in js
+    assert "state.payload?.reference_tax_profile?.output_tax_rate" in js
+    assert "tax_profile: taxProfileSelection()" in js
+    assert "请先保存开票参考草稿，再修改税务设置" in js
+    assert 'referenceText(row, "reference_cost_basis_text")' in reference_columns_body
+    # Quantity block first (库存数量与票面一致为原则): 数量 → 已开 → 销项 → 数量比对 → 未开 → 开票状态.
+    keys = re.findall(r'\{ key: "([^"]+)"', reference_columns_body)
+    assert keys[5:12] == ["quantity", "sources", "invoiced_quantity", "outbound_quantity", "outbound_compare_text", "uninvoiced_quantity", "invoice_status"]
+    assert keys.index("actual_markup_text") > keys.index("invoice_status")
+    assert keys[-1] == "reference_cost_basis_text" and len(keys) == 19
+    assert '{ key: "outbound_compare_text", label: "数量比对", render: renderOutboundCompare }' in reference_columns_body
+    # Live draft updates address cells by column key, so reordering columns cannot desync them.
+    assert "const referenceColumnIndex = Object.fromEntries(" in js
+    assert 'setCell("outbound_compare_text", renderOutboundCompare(source));' in js
+    assert "cells[17]" not in js and "cells[6]" not in js
+    assert 'class="cost-context-grid"' in html
+    assert 'id="costOutboundCounts"' in html
+    assert "数量一致 ${info.quantity_match_count || 0}" in js
+    assert "销项超过进项 ${info.oversold_count || 0}" in js
+    assert 'id="costOutboundPanel"' in html
+    assert 'id="costOutboundSummary"' in html
+    assert 'id="batchOutboundBtn"' in html
+    assert "data-outbound-apply" in js
+    assert "renderOutboundSummary(payload.outbound_summary);" in js
+    assert "比对只给建议，已开数量以保存的为准" in js
+    assert "setRowDraft(key, { invoiced_quantity: value });" in js
     assert "const referenceAmount = numberValue(source.amount) * multiplier;" not in js
     assert "referenceAverageWithTax = numberValue(source.average_unit_price) * 1.13 * multiplier" not in js
     assert "inventory_total_with_tax" in js
@@ -144,9 +203,9 @@ def test_cost_page_keeps_required_controls() -> None:
     assert "applySelectedMarkup" in js
     assert "锁定" in js
     assert "解锁" in js
-    assert "common.js?v=20260907-desktop-integrated-2" in html
-    assert "app.css?v=20260907-desktop-integrated-2" in html
-    assert "page-costs.js?v=20260907-desktop-integrated-2" in html
+    assert "common.js?v=20261114-workspace-skin-isolation-1" in html
+    assert "app.css?v=20261116-project-column" in html
+    assert "page-costs.js?v=20261121-service-item-types" in html
     for token in (
         "发票大类",
         "特定业务类型",
@@ -191,10 +250,10 @@ def test_cost_page_keeps_required_controls() -> None:
     assert "app.connectEvents(refs.eventState, loadCosts, { refreshOnFirstOpen: false });" in js
     assert '<section class="tabs" role="tablist" aria-label="成本分析视图">' not in html
     assert '<div class="tabs cost-tabs" role="tablist" aria-label="成本分析视图">' in html
-    assert '<div class="toolbar cost-actions">' in html
+    assert '<div class="cost-command-bar__actions">' in html
     assert "table-scroll-x" not in html
-    assert html.index('<section class="stats-grid">') < html.index('<section class="list-controls sticky-controls"') < html.index('<section class="panel cost-view" data-view="details">')
-    assert html.index('<div class="toolbar cost-actions">') < html.index('<div class="cost-view-switcher">') < html.index('<div class="tabs cost-tabs"') < html.index('<section class="panel cost-view" data-view="details">')
+    assert html.index('<section class="stats-grid">') < html.index('<section class="list-controls sticky-controls cost-command-bar"') < html.index('<section class="panel cost-view" data-view="details">')
+    assert html.index('<div class="cost-view-switcher">') < html.index('<div class="tabs cost-tabs"') < html.index('<div class="cost-command-bar__actions">') < html.index('<section class="panel cost-view" data-view="details">')
     assert 'href="/backend"' not in html
     common = (ROOT / "web" / "static" / "js" / "common.js").read_text(encoding="utf-8")
     assert "cost_analysis.reference_status_updated" in common
@@ -221,7 +280,21 @@ def test_cost_page_keeps_required_controls() -> None:
     assert "setSelectionRange" in js
     assert "isAutoRefreshReason" in js
     assert "正在编辑开票数量或加价率，已暂停自动刷新表格" in js
-    assert "保存状态（" in js
+    assert "行未保存" in js
+    assert 'document.body.classList.toggle("has-cost-action-bar"' in js
+    assert 'if (event.key !== "Escape" || document.querySelector("dialog[open]")) return;' in js
+    assert "reference_exclusions: next" in js
+    assert "data-reference-sources" in js and "data-source-pick" in js and "data-restore-kind" in js
+    assert "请先保存或放弃未保存的修改，再移除" in js
+    # Sheet / page switches render only the shown sheet and keep its height while loading (no jump).
+    assert 'const localViewChange = reason === "tab" || reason === "page";' in js
+    assert "const showLoadProgress = !isAutoRefreshReason(reason) && !localViewChange;" in js
+    assert "incoming.style.minHeight = `${keptHeight}px`;" in js
+    assert ".cost-view.is-entering { animation: cost-view-enter 140ms ease-out; }" in css
+    assert ".cost-view.is-entering { animation: none; }" in css
+    # 全选 spans every page of the same revision; 清空全选 is available in the panel and the bar.
+    assert 'id="selectAllReferenceBtn"' in html and 'id="clearAllReferenceBtn"' in html and ">清空全选<" in html
+    assert "async function selectAllReferenceRows()" in js and "数据已更新，请重新全选。" in js
     assert "updateReferenceControls" in js
     assert "app.setBusy" in js
     assert ".cost-view[hidden]" in css
@@ -239,7 +312,7 @@ def test_cost_page_keeps_required_controls() -> None:
     assert ".page-head__actions" in css
     assert "min-width: min(100%, 320px)" in css
     assert ".list-controls" in css
-    assert ".cost-actions" in css
+    assert ".cost-command-bar {" in css and ".cost-actions" not in css
     assert ".service-status--success" in css
     assert ".service-status--warning" in css
     assert ".status-pill--partial" in css
@@ -250,6 +323,25 @@ def test_cost_page_keeps_required_controls() -> None:
     assert ".cost-formula-help-wrap:hover .cost-formula-tooltip" in css
     assert ".cost-formula-help-wrap:focus-within .cost-formula-tooltip" in css
     assert "bottom: calc(100% + 10px)" in css
+    # The help button sits at the left of the switcher; the tooltip must be clamped to the
+    # viewport by measurement instead of a fixed right anchor that overflowed the left edge.
+    assert 'class="cost-formula-tooltip__body"' in html
+    assert '.cost-formula-tooltip[data-placement="bottom"]' in css
+    assert "var(--cost-tooltip-arrow-x, 15px)" in css
+    assert "var(--cost-tooltip-max-height, none)" in css
+    tooltip_rule = re.search(r"\n\.cost-formula-tooltip \{(?P<body>[^}]*)\}", css)
+    assert tooltip_rule is not None
+    assert "right: 0" not in tooltip_rule.group("body")
+    assert "function positionCostFormulaTooltip()" in js
+    assert "COST_FORMULA_TOOLTIP_EDGE_PX" in js
+    assert 'costFormulaHelpWrap?.addEventListener("mouseenter", positionCostFormulaTooltip)' in js
+    assert 'costFormulaHelpWrap?.addEventListener("focusin", positionCostFormulaTooltip)' in js
+    assert 'document.querySelector(".topbar")' in js
+    # Repositioning must ignore the panel's own scroll, bridge the hover gap, and respect clientWidth.
+    assert 'event?.type === "scroll" && costFormulaTooltip?.contains(event.target)' in js
+    assert "costFormulaTooltip.style.maxWidth" in js
+    assert ".cost-formula-tooltip::before" in css
+    assert '.cost-formula-tooltip[data-placement="bottom"]::before' in css
     assert ".cost-tabs" in css
     assert "justify-content: flex-end" in css
     assert ".batch-markup-control" in css
@@ -286,8 +378,15 @@ def test_cost_page_keeps_required_controls() -> None:
     assert "min-width: 1520px" in css
     assert "#projectTable" in css
     assert "min-width: 1420px" in css
-    assert "min-width: 1560px" in css
+    assert "min-width: 2228px" in css
+    assert "#referenceTable th:nth-child(19)" in css
+    assert "body.has-cost-action-bar .shell { padding-bottom: 120px; }" in css
+    assert ".cost-action-bar[hidden], .cost-action-bar__zone[hidden] { display: none; }" in css
+    assert ".cost-context-grid {" in css
     assert "#referenceTable th:nth-child(14)" in css
+    # 成本口径 and the three 销项 columns need explicit widths, or table-layout: fixed squeezes them.
+    for index in (15, 16, 17, 18):
+        assert f"#referenceTable th:nth-child({index})" in css
     assert ".reference-number" in css
     assert ".reference-text" in css
     assert ".reference-text__inner" in css
@@ -314,11 +413,17 @@ def test_cost_page_keeps_required_controls() -> None:
     assert 'await loadCosts("save");' in js
     assert "updateReferenceStatsFromDrafts();" in js
     assert "setMarkupControlState(input, markupButton, nextLocked);\n  updateReferenceRowByKey(key);" in js
-    assert 'cells[6].innerHTML = referenceNumber(formatUnitPrice(metrics.referenceAverageWithTax), "average-unit-price-with-tax");' in js
-    assert 'cells[8].innerHTML = referenceNumber(formatReferenceAmount(metrics.referenceTotal), "reference-total");' in js
-    assert 'cells[13].innerHTML = referenceNumber(formatReferenceAmount(metrics.uninvoicedReferenceAmount), "uninvoiced-reference-amount");' in js
-    assert "refs.invoicedReferenceTotal.textContent = app.formatMoney(invoicedTotal);" in js
-    assert "refs.uninvoicedReferenceTotal.textContent = app.formatMoney(uninvoicedTotal);" in js
+    assert 'setCell("reference_average_unit_price_with_tax", referenceNumber(formatUnitPrice(metrics.referenceAverageWithTax), "average-unit-price-with-tax"));' in js
+    assert 'setCell("reference_total_with_tax", referenceNumber(formatReferenceAmount(metrics.referenceTotal), "reference-total"));' in js
+    assert 'setCell("uninvoiced_reference_amount", referenceNumber(formatReferenceAmount(metrics.uninvoicedReferenceAmount), "uninvoiced-reference-amount"));' in js
+    assert "setText(refs.invoicedReferenceTotal, app.formatMoney(invoicedTotal));" in js
+    assert "setText(refs.uninvoicedReferenceTotal, app.formatMoney(uninvoicedTotal));" in js
+    # Unchanged background refreshes update only the chrome; full redraws keep height and scroll.
+    assert "isAutoRefreshReason(reason) && !revisionChanged && !targetChanged && state.renderedViews.has(view)" in js
+    assert "if (Math.abs(window.scrollY - scrollY) > 1) window.scrollTo(0, scrollY);" in js
+    # Sizing an empty sheet capped it at ~620px, collapsing the page for a frame and resetting the scroll.
+    assert "if (!panel.hidden) updateCostTableSizing(view);" in js
+    assert "if (state.renderedViews.has(state.activeView)) scheduleCostTableSizing(state.activeView);" in js
     assert "tabindex=\"0\"" in js
     assert "text-align: center" in css
     assert ".cost-view .data-table" in css
@@ -361,7 +466,7 @@ def test_home_sync_progress_and_cost_load_progress_are_separate() -> None:
     assert "refreshSyncProgress" not in costs_js
     assert "stopSyncProgressPolling" not in costs_js
     assert "const COST_LOAD_PROGRESS_SUCCESS_VISIBLE_MS = 900" in costs_js
-    assert 'app.api("/api/v1/cost-analysis")' in costs_js
+    assert '/api/v1/cost-analysis/view?' in costs_js
     assert 'await app.api("/api/v1/bridge/rebuild", { method: "POST", body: {} });' in costs_js
     assert "function beginCostLoadProgress()" in costs_js
     assert "function advanceCostLoadProgress(percent, detail)" in costs_js
@@ -415,10 +520,10 @@ def test_main_pages_keep_user_visible_controls() -> None:
     assert "过去保存" in index
     assert 'class="inline-panel path-inline" hidden' not in index
     assert 'id="watchDirDraft" class="watch-dir-draft" hidden' in index
-    assert "app.css?v=20260907-desktop-integrated-2" in index
+    assert "app.css?v=20261116-project-column" in index
     assert "settings-actions.css?v=20260907-desktop-integrated-2" in index
-    assert "common.js?v=20260907-desktop-integrated-2" in index
-    assert "page-index.js?v=20260907-large-list-1" in index
+    assert "common.js?v=20261114-workspace-skin-isolation-1" in index
+    assert "page-index.js?v=20261122-invoice-row-refresh-2" in index
     assert 'select name="search_scope"' in index
     assert '<option value="invoice" selected>销售方 / 发票号</option>' in index
     assert 'select name="invoice_type"' in index
@@ -535,7 +640,7 @@ def test_main_pages_keep_user_visible_controls() -> None:
     assert "data-invoice-select" in page_index
     assert "data-invoice-amount" in page_index
     assert "已勾选 ${invoiceCount} 张（${recordCount} 条记录）" in page_index
-    assert 'td colspan="10"' in page_index
+    assert 'td colspan="11"' in page_index
     assert 'refs.pickBtn.addEventListener("click", pickWatchDir)' in page_index
     assert 'refs.saveBtn.addEventListener("click", saveWatchDir)' in page_index
     assert "monitor.sync_completed" in common
@@ -596,7 +701,7 @@ def test_main_pages_keep_user_visible_controls() -> None:
     assert "选择文件" in ocr
     assert 'href="/backend"' not in ocr
     assert "复制结果" in ocr
-    assert "page-ocr.js?v=20260717-settings-macos-sync" in ocr
+    assert "page-ocr.js?v=20261124-ocr-paddle-1" in ocr
     assert "loadOcrPreferences" in page_ocr
     assert "saveOcrFolderPreference" in page_ocr
     assert "/api/v1/preferences" in page_ocr
@@ -619,13 +724,13 @@ def test_main_pages_keep_user_visible_controls() -> None:
     assert 'id="openSourceLocationBtn" class="btn btn--secondary" type="button">打开文件所在位置</button>' in detail
     assert detail.index("<h3>核心字段</h3>") < detail.index("openSourceBtn") < detail.index("openSourceLocationBtn") < detail.index('id="detailSummary"')
     assert detail.index("<h3>手工修订</h3>") < detail.index('<h3 id="detailCostTitle">本票成本明细</h3>')
-    assert "page-detail.js?v=20260726-invoice-taxonomy" in detail
+    assert "page-detail.js?v=20261009-selection-6" in detail
     assert "发票大类" in page_detail
     assert "特定业务类型" in page_detail
     assert "类型识别状态" in page_detail
     assert "类型识别说明" in page_detail
-    assert "common.js?v=20260907-desktop-integrated-2" in detail
-    assert "app.css?v=20260907-desktop-integrated-2" in detail
+    assert "common.js?v=20261114-workspace-skin-isolation-1" in detail
+    assert "app.css?v=20261116-project-column" in detail
     assert ".panel__head .detail-file-actions" in css
     assert ".detail-grid" in css
     assert ".detail-grid .stat-card strong { min-width: 0; overflow-wrap: anywhere; word-break: break-word; }" in css
@@ -842,8 +947,8 @@ def test_selected_invoice_summary_frontend_contract() -> None:
 
     for template_name in ("backend.html", "base_head.html", "consistency.html", "costs.html", "detail.html", "documents.html", "index.html", "ocr.html", "settings.html", "skins.html"):
         template = (ROOT / "web" / "templates" / template_name).read_text(encoding="utf-8")
-        assert "app.css?v=20260907-desktop-integrated-2" in template
-    assert "page-index.js?v=20260907-large-list-1" in index
+        assert "app.css?v=20261116-project-column" in template
+    assert "page-index.js?v=20261122-invoice-row-refresh-2" in index
 
 
 def test_consistency_page_is_user_facing_not_raw_json() -> None:
@@ -870,7 +975,7 @@ def test_documents_page_contract() -> None:
     js = (ROOT / "web" / "static" / "js" / "page-documents.js").read_text(encoding="utf-8")
     css = (ROOT / "web" / "static" / "css" / "app.css").read_text(encoding="utf-8")
     skin_css = (ROOT / "web" / "static" / "skins" / "animal-island" / "skin.css").read_text(encoding="utf-8")
-    api_app = (ROOT / "src" / "invoice_hub" / "api" / "app.py").read_text(encoding="utf-8")
+    api_app = _api_source()
 
     assert 'body data-page="documents"' in html
     assert 'aria-current="page" href="/documents"' in html
@@ -906,9 +1011,9 @@ def test_documents_page_contract() -> None:
     assert ">是</button>" in html
     assert ">否</button>" in html
     assert ">打开该文件</button>" in html
-    assert "app.css?v=20260907-desktop-integrated-2" in html
-    assert "common.js?v=20260907-desktop-integrated-2" in html
-    assert "page-documents.js?v=20260907-large-list-1" in html
+    assert "app.css?v=20261116-project-column" in html
+    assert "common.js?v=20261114-workspace-skin-isolation-1" in html
+    assert "page-documents.js?v=20261123-batch-preview-1" in html
     assert "large-lists.css?v=20260907-large-list-1" in html
     assert 'id="documentIndexStop"' in html
     assert 'id="documentIndexResume"' in html
@@ -1004,13 +1109,13 @@ def test_bookkeeping_page_static_contract() -> None:
     base_head = (ROOT / "web" / "templates" / "base_head.html").read_text(encoding="utf-8")
     js = (ROOT / "web" / "static" / "js" / "page-bookkeeping.js").read_text(encoding="utf-8")
     css = (ROOT / "web" / "static" / "css" / "app.css").read_text(encoding="utf-8")
-    api_app = (ROOT / "src" / "invoice_hub" / "api" / "app.py").read_text(encoding="utf-8")
+    api_app = _api_source()
     backend = (ROOT / "web" / "templates" / "backend.html").read_text(encoding="utf-8")
 
     assert 'body data-page="bookkeeping"' in html
     assert "{{BASE_HEAD}}" in html
     assert "{{BOOTSTRAP_JSON}}" in html
-    assert "app.css?v=20260907-desktop-integrated-2" in base_head
+    assert "app.css?v=20261116-project-column" in base_head
     assert "page-bookkeeping.js?v=20260711-w9-ledger-review-v3" in html
     assert 'id="voucherBlockers"' in html
     assert "item.can_approve === true" in js
@@ -1192,8 +1297,9 @@ def test_settings_page_contract() -> None:
     js += (ROOT / "web/static/js/system-controls.js").read_text(encoding="utf-8")
     css = (ROOT / "web" / "static" / "css" / "app.css").read_text(encoding="utf-8")
     settings_actions_css = (ROOT / "web" / "static" / "css" / "settings-actions.css").read_text(encoding="utf-8")
-    api_app = (ROOT / "src" / "invoice_hub" / "api" / "app.py").read_text(encoding="utf-8")
-    app_state = (ROOT / "src" / "invoice_hub" / "services" / "app_state.py").read_text(encoding="utf-8")
+    api_app = _api_source()
+    # AppState forwards to domain services split out of it (ENG-03); check the whole services layer.
+    app_state = "\n".join(path.read_text(encoding="utf-8") for path in sorted((ROOT / "src" / "invoice_hub" / "services").glob("*.py")))
     bridge = (ROOT / "src" / "invoice_hub" / "services" / "monitor_bridge.py").read_text(encoding="utf-8")
 
     assert 'body data-page="settings"' in html
@@ -1215,10 +1321,18 @@ def test_settings_page_contract() -> None:
     assert 'class="settings-edit-card settings-defaults-card"' in html
     assert 'href="/skins"' in html
     assert 'href="/backend"' in html
-    assert "app.css?v=20260907-desktop-integrated-2" in html
+    assert "app.css?v=20261116-project-column" in html
     assert "settings-actions.css?v=20260907-desktop-integrated-2" in html
-    assert "common.js?v=20260907-desktop-integrated-2" in html
-    assert "page-settings.js?v=20260907-desktop-integrated-2" in html
+    assert "common.js?v=20261114-workspace-skin-isolation-1" in html
+    assert "page-settings.js?v=20261124-ocr-settings-1" in html
+    assert 'id="settingsAboutFeedbackLink"' in html
+    assert '<details class="settings-edit-card" id="settingsAboutTechnicalDetails">' in html
+    assert 'id="settingsAboutTechnicalList"' in html
+    identity = js.split("renderRows(refs.identityList, [", 1)[1].split("]);", 1)[0]
+    technical = js.split("renderRows(refs.technicalList, [", 1)[1].split("]);", 1)[0]
+    assert "平台与架构" in identity
+    for label in ("包类型", "Package ID", "核心 Build ID", "API 契约"):
+        assert label in technical and label not in identity
     assert 'id="settingsAboutWebsiteLink" class="btn btn--ghost" href="/website/"' in html
     assert 'refs.website.href = safeWebsiteHref(payload?.links?.website)' in js
     assert "可选择桌面窗口或系统默认浏览器；下次启动生效。" in js
@@ -1478,7 +1592,7 @@ def test_settings_page_contract() -> None:
     assert "/api/v1/diagnostics/support-package" in api_app
     assert "/api/v1/server/shutdown" in api_app
     assert "shutdown_scheduler" in api_app
-    assert "if state.server_shutdown_requested:" in api_app
+    assert "if state.shutdown.server_shutdown_requested:" in api_app
 
 
 def test_skin_page_contract_and_common_skin_loader() -> None:
@@ -1486,7 +1600,7 @@ def test_skin_page_contract_and_common_skin_loader() -> None:
     js = (ROOT / "web" / "static" / "js" / "page-skins.js").read_text(encoding="utf-8")
     common = (ROOT / "web" / "static" / "js" / "common.js").read_text(encoding="utf-8")
     css = (ROOT / "web" / "static" / "css" / "app.css").read_text(encoding="utf-8")
-    api_app = (ROOT / "src" / "invoice_hub" / "api" / "app.py").read_text(encoding="utf-8")
+    api_app = _api_source()
 
     assert 'body data-page="skins"' in html
     assert 'href="/settings"' in html
@@ -1503,8 +1617,8 @@ def test_skin_page_contract_and_common_skin_loader() -> None:
     assert "disabled>替换" in html
     assert "skinList" in html
     assert 'role="radiogroup"' in html
-    assert "app.css?v=20260907-desktop-integrated-2" in html
-    assert "common.js?v=20260907-desktop-integrated-2" in html
+    assert "app.css?v=20261116-project-column" in html
+    assert "common.js?v=20261114-workspace-skin-isolation-1" in html
     assert "page-skins.js?v=20260907-desktop-integrated-2" in html
     assert '@app.get("/skins", response_class=HTMLResponse)' in api_app
     assert 'render_page(request, "skins.html"' in api_app
@@ -1732,11 +1846,11 @@ def test_home_invoice_list_centers_content_and_uses_one_status_badge() -> None:
         html = template_path.read_text(encoding="utf-8")
         if "app.css?v=" not in html:
             continue
-        assert "app.css?v=20260907-desktop-integrated-2" in html
+        assert "app.css?v=20261116-project-column" in html
         assert "app.css?v=20260727-invoice-list-status-layout" not in html
         assert "app.css?v=20260726-invoice-taxonomy" not in html
     index = (templates_dir / "index.html").read_text(encoding="utf-8")
-    assert "page-index.js?v=20260907-large-list-1" in index
+    assert "page-index.js?v=20261122-invoice-row-refresh-2" in index
 
 
 def test_ink_pulse_body_page_entry_never_creates_fixed_modal_containing_block() -> None:

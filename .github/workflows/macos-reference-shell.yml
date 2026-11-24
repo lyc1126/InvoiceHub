@@ -1,0 +1,43 @@
+name: macOS reference shell
+
+# The SwiftUI/WKWebView shell is a frozen development reference (Tauri is the
+# shipping desktop host), so its Swift tests run only when the shell or the
+# shared identity/handshake contract it consumes changes.
+on:
+  pull_request:
+    paths:
+      - "macos/**"
+      - "src/invoice_hub/version.py"
+      - "src/invoice_hub/release/build_manifest.py"
+      - ".github/workflows/macos-reference-shell.yml"
+  push:
+    branches:
+      - main
+      - "codex/**"
+    paths:
+      - "macos/**"
+      - "src/invoice_hub/version.py"
+      - "src/invoice_hub/release/build_manifest.py"
+      - ".github/workflows/macos-reference-shell.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-shell-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  swift:
+    name: Swift package tests from the resolved Sparkle pin
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Run Swift package tests
+        working-directory: macos/InvoiceHubMac
+        run: |
+          swift package resolve
+          swift test --disable-sandbox

@@ -156,6 +156,45 @@ pub fn offer_browser_fallback() -> bool {
     false
 }
 
+fn format_existing_invoicehub_prompt(claim: &crate::backend::ExistingInvoiceHubClaim) -> String {
+    format!(
+        "端口 {} 已被本机另一个 InvoiceHub 服务占用：\n\n版本：{}\n类型：{}\n进程 PID：{}\n运行目录：{}\n\n是否优雅关闭该旧 Web 服务并继续启动本次 InvoiceHub？\n\n说明：仅关闭旧版 localhost 服务，不会停止独立后台监控（monitor），也不会修改保存的关闭偏好。选择“取消/否”将保留旧服务并退出。",
+        crate::FIXED_BACKEND_PORT,
+        claim.product_version,
+        claim.package_type,
+        claim.pid,
+        claim.runtime_dir,
+    )
+}
+
+#[cfg_attr(windows, allow(unused_variables))]
+pub fn offer_existing_invoicehub_shutdown(
+    app: &tauri::AppHandle<tauri::Wry>,
+    claim: &crate::backend::ExistingInvoiceHubClaim,
+) -> bool {
+    if std::env::args().any(|argument| argument == "--no-startup-dialog") {
+        return false;
+    }
+    let prompt = format_existing_invoicehub_prompt(claim);
+    #[cfg(windows)]
+    {
+        windows::offer_existing_invoicehub_shutdown(&prompt)
+    }
+    #[cfg(not(windows))]
+    {
+        use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
+        app.dialog()
+            .message(prompt)
+            .title("InvoiceHub 端口冲突")
+            .kind(MessageDialogKind::Warning)
+            .buttons(MessageDialogButtons::OkCancelCustom(
+                "关闭旧服务并启动".to_owned(),
+                "取消".to_owned(),
+            ))
+            .blocking_show()
+    }
+}
+
 #[cfg(windows)]
 mod windows {
     use std::{collections::BTreeSet, mem::size_of};
@@ -335,6 +374,22 @@ mod windows {
         }
     }
 
+    pub fn offer_existing_invoicehub_shutdown(prompt: &str) -> bool {
+        let text: Vec<u16> = prompt.encode_utf16().chain(Some(0)).collect();
+        let title: Vec<u16> = "InvoiceHub 端口冲突"
+            .encode_utf16()
+            .chain(Some(0))
+            .collect();
+        unsafe {
+            MessageBoxW(
+                std::ptr::null_mut(),
+                text.as_ptr(),
+                title.as_ptr(),
+                MB_YESNO | MB_DEFBUTTON2 | MB_ICONINFORMATION | MB_SETFOREGROUND | MB_TOPMOST,
+            ) == IDYES
+        }
+    }
+
     #[test]
     fn real_listener_is_reported_by_pid() {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
@@ -404,5 +459,22 @@ mod tests {
             id,
             instance_identifier("com.invoicehub.desktop", exe, Path::new("C:/test/runtime"))
         );
+    }
+
+    #[test]
+    fn existing_invoicehub_prompt_shows_identity_and_keep_monitor_guarantee() {
+        let claim = crate::backend::ExistingInvoiceHubClaim {
+            pid: 7788,
+            product_version: "1.0.0-beta.1".to_owned(),
+            package_type: "dmg".to_owned(),
+            config_path: "/safe/config/app.local.json".to_owned(),
+            runtime_dir: "/safe/runtime".to_owned(),
+        };
+        let prompt = format_existing_invoicehub_prompt(&claim);
+        assert!(prompt.contains("8766"));
+        assert!(prompt.contains("1.0.0-beta.1"));
+        assert!(prompt.contains("7788"));
+        assert!(prompt.contains("/safe/runtime"));
+        assert!(prompt.contains("不会停止独立后台监控"));
     }
 }

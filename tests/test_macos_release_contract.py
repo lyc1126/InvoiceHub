@@ -9,6 +9,8 @@ from pathlib import Path
 
 import pytest
 
+from invoice_hub.services.ofd_rendering import COMPONENT_SOURCE_FINGERPRINT
+
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -35,7 +37,7 @@ def _public_preview_receipt(
     verifier,
     verification: dict[str, object],
 ) -> tuple[Path, Path, Path]:
-    app = tmp_path / "InvoiceHub-v0.3.0-alpha.2-macos-arm64-preview.app"
+    app = tmp_path / "InvoiceHub-v1.0.0-beta.1-macos-arm64-preview.app"
     resources = app / "Contents/Resources"
     resources.mkdir(parents=True)
     (resources / verifier.HOST_NAME).write_text(
@@ -51,7 +53,29 @@ def _public_preview_receipt(
         ),
         encoding="utf-8",
     )
-    dmg = tmp_path / "InvoiceHub-v0.3.0-alpha.2-macos-arm64-preview.dmg"
+    ofd_component = resources / "python/components/ofd-preview"
+    ofd_files = {
+        "java/bin/java": b"synthetic-macos-java",
+        "lib/ofd-preview.jar": b"synthetic-ofd-jar",
+    }
+    for rel, content in ofd_files.items():
+        target = ofd_component / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(content)
+    (ofd_component / "component.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "engine": "ofdrw-2.4.0",
+                "java_major": 21,
+                "platform": "macos-arm64",
+                "source_fingerprint": COMPONENT_SOURCE_FINGERPRINT,
+                "files": {rel: hashlib.sha256(content).hexdigest() for rel, content in ofd_files.items()},
+            }
+        ),
+        encoding="utf-8",
+    )
+    dmg = tmp_path / "InvoiceHub-v1.0.0-beta.1-macos-arm64-preview.dmg"
     dmg.write_bytes(b"synthetic-public-preview-dmg")
     receipt = tmp_path / "receipt.json"
     payload = {
@@ -212,6 +236,30 @@ def test_public_preview_host_manifest_requires_a_json_boolean_disabled_updater(
         verifier._verify_app_layout(app)
 
 
+def test_public_preview_verifier_rejects_missing_or_tampered_ofd_component(tmp_path: Path) -> None:
+    import shutil
+
+    verifier = _load_module(
+        "scripts/dev/verify_tauri_public_preview.py",
+        "public_preview_verifier_ofd_gate_test",
+    )
+    app, _, _ = _public_preview_receipt(
+        tmp_path,
+        verifier,
+        {"complete": False, "verifier": verifier.VERIFIER_ID},
+    )
+    verifier._verify_app_layout(app)
+
+    jar = app / "Contents/Resources/python/components/ofd-preview/lib/ofd-preview.jar"
+    jar.write_bytes(b"tampered")
+    with pytest.raises(verifier.PublicPreviewVerificationError, match="hash mismatch"):
+        verifier._verify_app_layout(app)
+
+    shutil.rmtree(app / "Contents/Resources/python/components/ofd-preview")
+    with pytest.raises(verifier.PublicPreviewVerificationError, match="components/ofd-preview"):
+        verifier._verify_app_layout(app)
+
+
 def test_public_preview_builder_reports_verifier_stdout_stderr_and_timeout(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -309,7 +357,7 @@ def test_macos_formal_build_has_release_identity_signing_notary_and_fixed_output
     verify = _text("macos/InvoiceHubMac/script/verify_macos_release.sh")
     sparkle_verifier = _text("macos/InvoiceHubMac/script/verify_sparkle_update.swift")
     for marker in (
-        'VERSION="0.3.0-alpha.2"',
+        'VERSION="1.0.0-beta.1"',
         'BUILD_NUMBER="1"',
         'PACKAGE_ID="com.invoicehub.macos.arm64.dmg"',
         "git -C \"$REPO_ROOT\" archive",

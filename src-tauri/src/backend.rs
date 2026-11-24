@@ -74,6 +74,13 @@ const REQUIRED_OPENAPI_OPERATIONS: &[(&str, &str)] = &[
     ("/api/v1/settings/pick-watch-dir", "post"),
     ("/api/v1/documents/pick-outbound-dir", "post"),
     ("/api/v1/ocr/pick-file", "post"),
+    ("/api/v1/temporary-recognition/pick", "post"),
+    ("/api/v1/temporary-recognition/drop", "post"),
+    ("/api/v1/temporary-recognition/sessions", "post"),
+    ("/api/v1/cost-analysis/view", "get"),
+    ("/api/v1/invoices/trash-jobs", "post"),
+    ("/api/v1/invoices/trash-jobs/{job_id}", "get"),
+    ("/api/v1/invoices/trash-jobs/{job_id}/confirm", "post"),
     ("/api/v1/ocr/pick-folder", "post"),
     ("/api/v1/update/check", "post"),
     ("/api/v1/update/install", "post"),
@@ -161,10 +168,38 @@ impl fmt::Display for HandshakeError {
 
 impl Error for HandshakeError {}
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExistingInvoiceHubClaim {
+    pub pid: u32,
+    pub product_version: String,
+    pub package_type: String,
+    pub config_path: String,
+    pub runtime_dir: String,
+}
+
+impl ExistingInvoiceHubClaim {
+    pub fn same_instance(&self, other: &Self) -> bool {
+        self.pid == other.pid
+            && self.product_version == other.product_version
+            && self.runtime_dir == other.runtime_dir
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PortConflictOutcome {
+    PortAvailable,
+    RecoveredByShutdown { pid: u32 },
+}
+
 #[derive(Debug)]
 pub enum BackendError {
     FixedPortRequiresLoopback,
     FixedPortUnavailable,
+    ExistingInstanceChanged,
+    ExistingInstanceShutdownFailed,
+    ExistingInstanceShutdownTimedOut {
+        pid: u32,
+    },
     DesktopStateUnavailable,
     BundleManifestMissing,
     BundleManifestInvalid,
@@ -199,6 +234,18 @@ impl fmt::Display for BackendError {
                 "InvoiceHub requires the fixed IPv4 loopback backend address"
             }
             Self::FixedPortUnavailable => "InvoiceHub backend port is already occupied",
+            Self::ExistingInstanceChanged => {
+                "端口 8766 上的旧 InvoiceHub 实例状态已变化，已中止自动关闭；请确认占用程序后重试"
+            }
+            Self::ExistingInstanceShutdownFailed => {
+                "旧 InvoiceHub 服务拒绝了优雅关闭请求，请从原窗口或托盘手动退出后重试"
+            }
+            Self::ExistingInstanceShutdownTimedOut { pid } => {
+                return write!(
+                    formatter,
+                    "旧 InvoiceHub 服务（PID {pid}）未在预期时间内释放 8766 端口，请从原窗口或托盘手动退出后重试"
+                )
+            }
             Self::DesktopStateUnavailable => "InvoiceHub user state directory is unavailable",
             Self::BundleManifestMissing => "InvoiceHub desktop bundle manifest is missing",
             Self::BundleManifestInvalid => "InvoiceHub desktop bundle manifest is invalid",
@@ -430,16 +477,16 @@ fn desktop_state_paths() -> Result<DesktopStatePaths, BackendError> {
     #[cfg(target_os = "windows")]
     {
         let local_app_data = env::var_os("LOCALAPPDATA").map(PathBuf::from);
-        return desktop_state_paths_for(
+        desktop_state_paths_for(
             DesktopStatePlatform::Windows,
             local_app_data.as_deref(),
             None,
-        );
+        )
     }
     #[cfg(target_os = "macos")]
     {
         let home = env::var_os("HOME").map(PathBuf::from);
-        return desktop_state_paths_for(DesktopStatePlatform::Macos, None, home.as_deref());
+        desktop_state_paths_for(DesktopStatePlatform::Macos, None, home.as_deref())
     }
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     {
@@ -456,12 +503,209 @@ pub fn assert_loopback_port_available(address: SocketAddr) -> Result<(), Backend
         return Err(BackendError::FixedPortRequiresLoopback);
     }
     TcpListener::bind(address)
-        .map(|listener| drop(listener))
+        .map(drop)
         .map_err(|_| BackendError::FixedPortUnavailable)
 }
 
 pub fn assert_fixed_backend_port_available() -> Result<(), BackendError> {
     assert_loopback_port_available(fixed_backend_socket_addr())
+}
+
+fn sanitize_claim_text(value: &str) -> String {
+    value
+        .chars()
+        .filter(|c| !c.is_control())
+        .take(600)
+        .collect::<String>()
+        .trim()
+        .to_owned()
+}
+
+/// Strictly classifies a loopback `/api/v1/health` JSON payload as an InvoiceHub backend.
+/// Requires InvoiceHub-specific contract fields so unrelated services on port 8766 are never
+/// misidentified or sent shutdown requests; display fields are stripped of control characters.
+pub fn parse_existing_invoicehub_claim(value: &Value) -> Option<ExistingInvoiceHubClaim> {
+    let fields = value.as_object()?;
+    if fields.get("ok").and_then(Value::as_bool) != Some(true) {
+        return None;
+    }
+    let pid = fields
+        .get("pid")
+        .and_then(Value::as_u64)
+        .and_then(|value| u32::try_from(value).ok())
+        .filter(|value| *value != 0)?;
+    let api_contract_version = fields
+        .get("api_contract_version")
+        .and_then(Value::as_str)
+        .map(sanitize_claim_text)
+        .filter(|value| !value.is_empty())?;
+    let _ = api_contract_version;
+    let product_version = fields
+        .get("product_version")
+        .and_then(Value::as_str)
+        .map(sanitize_claim_text)
+        .filter(|value| !value.is_empty())?;
+    let package_type = fields
+        .get("package_type")
+        .and_then(Value::as_str)
+        .map(sanitize_claim_text)
+        .filter(|value| !value.is_empty())?;
+    let config_path = fields
+        .get("config_path")
+        .and_then(Value::as_str)
+        .map(sanitize_claim_text)
+        .filter(|value| !value.is_empty())?;
+    let runtime_dir = fields
+        .get("runtime_dir")
+        .and_then(Value::as_str)
+        .map(sanitize_claim_text)
+        .filter(|value| !value.is_empty())?;
+    Some(ExistingInvoiceHubClaim {
+        pid,
+        product_version,
+        package_type,
+        config_path,
+        runtime_dir,
+    })
+}
+
+pub fn probe_existing_invoicehub_at(address: SocketAddr) -> Option<ExistingInvoiceHubClaim> {
+    if address.ip() != IpAddr::V4(Ipv4Addr::LOCALHOST) {
+        return None;
+    }
+    let deadline = Instant::now() + Duration::from_secs(1);
+    let request = format!(
+        "GET {HEALTH_PATH} HTTP/1.1\r\nHost: {}:{}\r\nConnection: close\r\n\r\n",
+        address.ip(),
+        address.port(),
+    );
+    let response =
+        local_request_at(address, HEALTH_PATH, request.as_bytes(), &[], deadline).ok()?;
+    if response.status != 200 {
+        return None;
+    }
+    let value: Value = serde_json::from_slice(&response.body).ok()?;
+    parse_existing_invoicehub_claim(&value)
+}
+
+fn request_existing_keep_monitor_shutdown_at(address: SocketAddr) -> Result<(), BackendError> {
+    if address.ip() != IpAddr::V4(Ipv4Addr::LOCALHOST) {
+        return Err(BackendError::FixedPortRequiresLoopback);
+    }
+    let body = br#"{"shutdown_behavior":"keep_monitor","remember":false}"#;
+    let deadline = Instant::now() + HTTP_TIMEOUT;
+    let request = format!(
+        "POST {SERVER_SHUTDOWN_PATH} HTTP/1.1\r\nHost: {}:{}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        address.ip(),
+        address.port(),
+        body.len(),
+    );
+    let response = local_request_at(
+        address,
+        SERVER_SHUTDOWN_PATH,
+        request.as_bytes(),
+        body,
+        deadline,
+    )
+    .map_err(|_| BackendError::ExistingInstanceShutdownFailed)?;
+    if response.status != 200 {
+        return Err(BackendError::ExistingInstanceShutdownFailed);
+    }
+    let value: Value = serde_json::from_slice(&response.body)
+        .map_err(|_| BackendError::ExistingInstanceShutdownFailed)?;
+    if !is_keep_monitor_shutdown_ack(&value) {
+        return Err(BackendError::ExistingInstanceShutdownFailed);
+    }
+    Ok(())
+}
+
+fn wait_for_loopback_port_release(address: SocketAddr, timeout: Duration) -> bool {
+    let deadline = Instant::now() + timeout;
+    loop {
+        if assert_loopback_port_available(address).is_ok() {
+            return true;
+        }
+        if Instant::now() >= deadline {
+            return false;
+        }
+        thread::sleep(BACKEND_RETRY_INTERVAL);
+    }
+}
+
+/// Resolves an occupied fixed backend port without ever switching ports or taking over
+/// unknown listeners. Only an explicitly confirmed InvoiceHub instance that still matches
+/// after the user dialog receives a standard `keep_monitor` shutdown request.
+pub fn resolve_port_conflict_with<FCheck, FProbe, FOffer, FShutdown, FWait>(
+    mut check_port: FCheck,
+    mut probe_existing: FProbe,
+    offer_shutdown: FOffer,
+    request_shutdown: FShutdown,
+    wait_for_release: FWait,
+) -> Result<PortConflictOutcome, BackendError>
+where
+    FCheck: FnMut() -> Result<(), BackendError>,
+    FProbe: FnMut() -> Option<ExistingInvoiceHubClaim>,
+    FOffer: FnOnce(&ExistingInvoiceHubClaim) -> bool,
+    FShutdown: FnOnce() -> Result<(), BackendError>,
+    FWait: FnOnce() -> bool,
+{
+    match check_port() {
+        Ok(()) => return Ok(PortConflictOutcome::PortAvailable),
+        Err(BackendError::FixedPortUnavailable) => {}
+        Err(other) => return Err(other),
+    }
+    let Some(claim) = probe_existing() else {
+        return Err(BackendError::FixedPortUnavailable);
+    };
+    if !offer_shutdown(&claim) {
+        return Err(BackendError::FixedPortUnavailable);
+    }
+    // Re-check after the potentially long user prompt so a different process that replaced
+    // the old InvoiceHub listener can never receive a shutdown request.
+    if check_port().is_ok() {
+        return Ok(PortConflictOutcome::PortAvailable);
+    }
+    let Some(rechecked) = probe_existing() else {
+        return Err(BackendError::ExistingInstanceChanged);
+    };
+    if !claim.same_instance(&rechecked) {
+        return Err(BackendError::ExistingInstanceChanged);
+    }
+    request_shutdown()?;
+    if !wait_for_release() {
+        return Err(BackendError::ExistingInstanceShutdownTimedOut { pid: claim.pid });
+    }
+    Ok(PortConflictOutcome::RecoveredByShutdown { pid: claim.pid })
+}
+
+pub fn resolve_port_conflict_at<FOffer>(
+    address: SocketAddr,
+    timeout: Duration,
+    offer_shutdown: FOffer,
+) -> Result<PortConflictOutcome, BackendError>
+where
+    FOffer: FnOnce(&ExistingInvoiceHubClaim) -> bool,
+{
+    resolve_port_conflict_with(
+        || assert_loopback_port_available(address),
+        || probe_existing_invoicehub_at(address),
+        offer_shutdown,
+        || request_existing_keep_monitor_shutdown_at(address),
+        || wait_for_loopback_port_release(address, timeout),
+    )
+}
+
+pub fn resolve_fixed_port_conflict<FOffer>(
+    offer_shutdown: FOffer,
+) -> Result<PortConflictOutcome, BackendError>
+where
+    FOffer: FnOnce(&ExistingInvoiceHubClaim) -> bool,
+{
+    resolve_port_conflict_at(
+        fixed_backend_socket_addr(),
+        BACKEND_SHUTDOWN_TIMEOUT,
+        offer_shutdown,
+    )
 }
 
 pub fn bundle_root_for_executable(executable: &Path) -> Result<PathBuf, BackendError> {
@@ -1739,6 +1983,19 @@ fn local_request(
     body: &[u8],
     deadline: Instant,
 ) -> Result<HttpResponse, BackendError> {
+    local_request_at(fixed_backend_socket_addr(), path, request, body, deadline)
+}
+
+fn local_request_at(
+    address: SocketAddr,
+    path: &'static str,
+    request: &[u8],
+    body: &[u8],
+    deadline: Instant,
+) -> Result<HttpResponse, BackendError> {
+    if address.ip() != IpAddr::V4(Ipv4Addr::LOCALHOST) {
+        return Err(BackendError::FixedPortRequiresLoopback);
+    }
     let remaining = || {
         deadline
             .checked_duration_since(Instant::now())
@@ -1752,9 +2009,9 @@ fn local_request(
         path,
         error: HttpError::io(stage, error),
     };
-    // Always connect directly to the fixed loopback address. Proxy settings cannot redirect
+    // Always connect directly to an IPv4 loopback address. Proxy settings cannot redirect
     // ownership challenges; the same total deadline covers connect, write and framed read.
-    let mut stream = TcpStream::connect_timeout(&fixed_backend_socket_addr(), remaining()?)
+    let mut stream = TcpStream::connect_timeout(&address, remaining()?)
         .map_err(|error| map_io("connect", error))?;
     for mut bytes in [request, body] {
         while !bytes.is_empty() {
@@ -2562,8 +2819,11 @@ mod tests {
         let manifest = br#"{\"schema_version\":3}"#;
         let digest = Sha256::digest(manifest)
             .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect::<String>();
+            .fold(String::new(), |mut hex, byte| {
+                use std::fmt::Write;
+                let _ = write!(hex, "{byte:02x}");
+                hex
+            });
 
         assert!(bundle_manifest_hash_matches(manifest, &digest));
         assert!(!bundle_manifest_hash_matches(

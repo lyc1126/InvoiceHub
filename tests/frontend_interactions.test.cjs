@@ -11,20 +11,23 @@ const appearanceSource = fs.readFileSync(path.join(root, "web/static/js/appearan
 const documentsSource = fs.readFileSync(path.join(root, "web/static/js/page-documents.js"), "utf8");
 const indexSource = fs.readFileSync(path.join(root, "web/static/js/page-index.js"), "utf8");
 
-test("seven thousand invoices mount at most one hundred rows and preserve full-list selection", () => {
+test("seven thousand invoices mount at most one hundred rows and preserve full-list selection", async () => {
   const items = Array.from({length: 7003}, (_, i) => ({invoice_key: String(i), source_path: `synthetic/${i}`}));
-  const state = {invoiceItems: items, invoicePage: 1, selectedInvoices: new Map()};
+  const state = {invoiceItems: items.slice(0, 100), invoiceCount: items.length, invoicePage: 1, invoiceRevision: "r1", filters: {}, selectedInvoices: new Map()};
   const refs = {invoiceBody: {innerHTML: ""}};
   const nodes = new Map();
-  const context = vm.createContext({state, refs, document: {getElementById(id) { if (!nodes.has(id)) nodes.set(id, {}); return nodes.get(id); }},
+  const context = vm.createContext({state, refs, URLSearchParams, isCurrentRefresh: () => true, updateSelectionControls() {}, app: { setBusy() {}, api: async () => ({ items, snapshot: { revision: "r1" } }) }, document: {getElementById(id) { if (!nodes.has(id)) nodes.set(id, {}); return nodes.get(id); }},
     sortedInvoiceItems: items => items, updateDateSortControl() {}, updateSelectedInvoiceTotal() {},
+    reconcileInvoiceRows(items) { refs.invoiceBody.innerHTML = items.map(context.rowHtml).join(""); },
+    syncVisibleInvoiceSelection() {},
     rowHtml: item => `<tr data-key="${item.invoice_key}"></tr>`, invoiceSelectionRecord: item => item});
   vm.runInContext(indexSource.slice(indexSource.indexOf("function renderInvoiceRows()"), indexSource.indexOf("function selectionDetailNumber(")), context);
   context.renderInvoiceRows();
   assert.equal((refs.invoiceBody.innerHTML.match(/<tr/g) || []).length, 100);
-  context.selectAllVisibleInvoices();
+  await context.selectAllVisibleInvoices();
   assert.equal(state.selectedInvoices.size, 7003);
   state.invoicePage = 71;
+  state.invoiceItems = items.slice(7000);
   context.renderInvoiceRows();
   assert.equal((refs.invoiceBody.innerHTML.match(/<tr/g) || []).length, 3);
   assert.match(refs.invoiceBody.innerHTML, /7002/);
@@ -32,7 +35,7 @@ test("seven thousand invoices mount at most one hundred rows and preserve full-l
 
 test("late broad-search response cannot replace the current invoice-only results", async () => {
   const pending = [];
-  const state = { filters: { keyword: "synthetic", search_scope: "all" }, refreshGeneration: 1 };
+  const state = { filters: { keyword: "synthetic", search_scope: "all" }, refreshGeneration: 1, invoiceRequest: 0, selectedInvoices: new Map() };
   const context = vm.createContext({
     state, URLSearchParams, refs: { tableMeta: {} },
     app: { api: (url) => new Promise(resolve => pending.push({ url, resolve })), formatMoney: String },
@@ -53,6 +56,31 @@ test("late broad-search response cannot replace the current invoice-only results
   assert.equal((await old).status, "stale");
   assert.equal(state.invoiceItems.length, 1);
   assert.equal(state.invoiceItems[0].seller, "synthetic");
+});
+
+test("a recovered refresh clears its failure notice without discarding an unsaved directory", async () => {
+  const state = { refreshGeneration: 0, watchDirDirty: true, pendingWatchDir: "synthetic draft" };
+  const banners = [];
+  let failed = true;
+  const context = vm.createContext({ state, refs: { banner: {} },
+    app: { setBanner: (_element, tone, message) => banners.push({ tone, message }) },
+    isCurrentRefresh: generation => generation === state.refreshGeneration,
+    loadSettings: async () => ({ status: "ok" }),
+    loadInvoices: async () => { if (failed) throw Error("synthetic unavailable"); return { status: "ok" }; },
+    renderInvoiceRefreshFailure: () => "读取失败，保留旧列表",
+    loadBusinessDossierSafely: async () => ({ status: "ok" }),
+  });
+  vm.runInContext(indexSource.slice(indexSource.indexOf("async function refreshAll("),
+    indexSource.indexOf("async function runAction(")), context);
+  assert.equal((await context.refreshAll("invoice.changed")).status, "primary_failure");
+  assert.equal(banners.at(-1).tone, "warning");
+  failed = false;
+  assert.equal((await context.refreshAll("invoice.changed")).status, "ok");
+  assert.match(banners.at(-1).message, /已恢复读取.*待保存目录尚未生效/);
+  assert.equal(state.pendingWatchDir, "synthetic draft");
+  assert.equal(state.watchDirDirty, true);
+  await context.refreshAll("invoice.changed");
+  assert.equal(banners.length, 2, "Routine refresh must still leave directory-draft notices alone");
 });
 
 function documentHarness(api) {
@@ -133,6 +161,30 @@ test("slow previous invoice preview cannot replace the newly selected invoice", 
   await first;
   assert.equal(h.state.inboundPreview.invoice_number, "new");
   assert.match(h.refs.inboundPreviewMeta.textContent, /^new/);
+});
+
+test("batch inbound selection populates choices in selection_only mode so preview and export work without manual refresh", async () => {
+  const preview = { invoice_number: "inv-batch-1", supplier: "供应商甲", invoice_date: "2026-09-01", total_with_tax: "113.00", rows: [], layout: { column_widths: Array(10).fill(10), minimum_rows: 11 } };
+  const h = documentHarness(async (url) => {
+    if (url.endsWith("/selection")) {
+      return {
+        record_count: 1,
+        invoice_count: 1,
+        items: [{ invoice_number: "inv-batch-1", seller: "供应商甲", row_count: 1, total_with_tax: "113.00", ready: true, selection: { target_id: "current" } }],
+      };
+    }
+    if (url.includes("/documents/inbound/preview")) return preview;
+    if (url.endsWith("/export-status")) return { exists: false };
+    return { ok: true };
+  });
+  h.state.payload = { target_id: "current", selection_only: true, inbound_invoices: [], outbound_invoices: [] };
+  h.state.batch.handoff = { target_id: "current", items: [{ invoice_key: "k1", source_path: "/watch/a.pdf" }] };
+  await h.checkBatchSelection();
+  assert.match(h.refs.inboundSelect.innerHTML, /inv-batch-1/);
+  h.refs.inboundSelect.value = "inv-batch-1";
+  await h.loadPreview("inbound");
+  assert.equal(h.state.inboundPreview.invoice_number, "inv-batch-1");
+  assert.equal(h.refs.exportInboundBtn.disabled, false);
 });
 
 function setup({ settings = false, ownership = null } = {}) {
@@ -293,6 +345,29 @@ test("recovery stays white without saving and skin reset synchronizes the moon",
   assert.equal(dark.button.getAttribute("aria-pressed"), "false");
 });
 
+test("embedded skin reads isolate decorative builtins while classic and default dark remain available", () => {
+  for (const id of ["ink-pulse", "animal-island"]) {
+    const h = appearanceHarness();
+    const draft = h.element("watchDirInput"); draft.value = "synthetic unsaved draft";
+    const skin = { id, stylesheet_url: `/api/v1/skins/${id}/files/skin.css` };
+    const payload = { active_skin: skin, enabled_skin_id: id, skins: [skin] };
+    h.html.dataset.workspaceIsolatedSkins = "animal-island ink-pulse";
+    assert.equal(h.app.applySkinPayload(payload), null);
+    assert.equal(h.html.dataset.activeSkin, undefined);
+    assert.equal(h.links.length, 0);
+    const dark = { id: "website-dark", stylesheet_url: "/api/v1/skins/website-dark/files/skin.css" };
+    h.app.applySkinPayload({ active_skin: dark, enabled_skin_id: dark.id, skins: [dark] });
+    assert.equal(h.html.dataset.activeSkin, dark.id);
+    h.app.applySkinPayload(payload);
+    assert.equal(h.html.dataset.activeSkin, undefined);
+    assert.equal(draft.value, "synthetic unsaved draft");
+    assert.deepEqual(h.calls, []);
+    delete h.html.dataset.workspaceIsolatedSkins;
+    h.app.applySkinPayload(payload);
+    assert.equal(h.html.dataset.activeSkin, id);
+  }
+});
+
 test("concurrent slow reads keep feedback through body parsing and clear it after failure", async () => {
   const h = setup();
   let resolveBody, rejectSecond, bodyStarted;
@@ -443,4 +518,14 @@ test("accepted shutdown closes SSE and suppresses false reconnect warnings", () 
   assert.equal(source.closed, true);
   source.onerror();
   assert.match(label.textContent, /关闭中/);
+});
+
+test("cost sync banner shows unknown counts as pending instead of undefined or a fake zero", () => {
+  const costsSource = fs.readFileSync(path.join(root, "web/static/js/page-costs.js"), "utf8");
+  const context = vm.createContext({});
+  vm.runInContext(costsSource.slice(costsSource.indexOf("function costSyncCount("), costsSource.indexOf("function renderCostChrome(")), context);
+  const provisional = context.costSyncText({source_invoice_count: 3, parsed_invoice_count: 1, pending_count: 2, review_count: null, not_parsed_count: null});
+  assert.equal(provisional, "发票池 3 张，成本已纳入 1 张，待同步 2 张，待核对 待统计，已校验但未解析明细 待统计");
+  assert.doesNotMatch(context.costSyncText({}), /undefined|null|NaN/);
+  assert.match(context.costSyncText({source_invoice_count: 0, parsed_invoice_count: 0, pending_count: 0, review_count: 0, not_parsed_count: 0}), /已校验但未解析明细 0 张$/);
 });

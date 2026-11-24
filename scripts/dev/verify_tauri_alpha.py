@@ -13,13 +13,12 @@ import argparse
 import hashlib
 import json
 import os
-import platform
 import re
 import shutil
 import subprocess
 import sys
 import tempfile
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 
@@ -30,11 +29,12 @@ LAUNCHER_NAME = "invoice-hub-alpha-launcher.sh"
 BUILD_MANIFEST_NAME = "invoice-hub-build.json"
 PACKAGE_MANIFEST_NAME = "invoice-hub-package.json"
 RUNTIME_MANIFEST_NAME = "invoice-hub-runtime.json"
-PRODUCT_VERSION = "0.3.0-alpha.2"
+PRODUCT_VERSION = "1.0.0-beta.1"
 PACKAGE_ID = "com.invoicehub.macos.arm64.dmg"
 WINDOWS_SUFFIXES = {".bat", ".cmd", ".ps1", ".psm1", ".exe", ".dll", ".pyd", ".msi", ".msix"}
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
 COMMIT = re.compile(r"^[0-9a-f]{40}$")
+_FINGERPRINT_PATTERN = re.compile(r'COMPONENT_SOURCE_FINGERPRINT\s*=\s*"([0-9a-f]{64})"')
 
 
 class AlphaVerificationError(RuntimeError):
@@ -272,6 +272,44 @@ def _verify_app_layout(app: Path, expected_core_build_id: str | None) -> dict[st
         raise AlphaVerificationError("runtime manifest Python version is invalid")
     if runtime_manifest.get("python_executable") != "bin/python3":
         raise AlphaVerificationError("runtime manifest executable is invalid")
+    component = runtime / "components" / "ofd-preview"
+    if component.is_symlink() or not component.is_dir():
+        raise AlphaVerificationError("App is missing embedded components/ofd-preview")
+    ofd_source = core / "src/invoice_hub/services/ofd_rendering.py"
+    if not ofd_source.is_file():
+        ofd_source = Path(__file__).resolve().parents[2] / "src/invoice_hub/services/ofd_rendering.py"
+    matched = _FINGERPRINT_PATTERN.search(ofd_source.read_text(encoding="utf-8"))
+    if matched is None:
+        raise AlphaVerificationError("OFD source fingerprint constant is missing")
+    ofd_manifest = _json(component / "component.json", "OFD component manifest")
+    if (
+        ofd_manifest.get("schema_version") != 1
+        or ofd_manifest.get("engine") != "ofdrw-2.4.0"
+        or ofd_manifest.get("java_major") != 21
+        or ofd_manifest.get("platform") != "macos-arm64"
+        or ofd_manifest.get("source_fingerprint") != matched.group(1)
+    ):
+        raise AlphaVerificationError("embedded OFD preview component identity or fingerprint is invalid")
+    ofd_files = ofd_manifest.get("files")
+    if not isinstance(ofd_files, dict) or not ofd_files:
+        raise AlphaVerificationError("embedded OFD preview component has no declared files")
+    resolved_component = component.resolve()
+    jars = []
+    for raw_name, expected_hash in ofd_files.items():
+        if not isinstance(raw_name, str) or not isinstance(expected_hash, str):
+            raise AlphaVerificationError("embedded OFD preview component file entry is invalid")
+        rel = PurePosixPath(raw_name)
+        if not raw_name or "\\" in raw_name or ":" in raw_name or "\x00" in raw_name or rel.is_absolute() or any(p in {"", ".", ".."} for p in raw_name.rstrip("/").split("/")):
+            raise AlphaVerificationError(f"embedded OFD preview component path is unsafe: {raw_name}")
+        target = component / rel.as_posix()
+        if target.is_symlink() or not target.is_file() or not target.resolve().is_relative_to(resolved_component):
+            raise AlphaVerificationError(f"embedded OFD preview component member is missing or unsafe: {raw_name}")
+        if _sha256(target) != expected_hash:
+            raise AlphaVerificationError(f"embedded OFD preview component hash mismatch: {raw_name}")
+        if rel.as_posix().startswith("lib/") and rel.as_posix().endswith(".jar"):
+            jars.append(rel.as_posix())
+    if "java/bin/java" not in ofd_files or "lib/ofd-preview.jar" not in ofd_files or not jars:
+        raise AlphaVerificationError("embedded OFD preview component is missing java/bin/java or lib/ofd-preview.jar")
     return {"build_id": build_id, "host_manifest_sha256": _sha256(host_path), "launcher_sha256": launcher_hash}
 
 

@@ -28,7 +28,10 @@ def render_master() -> Image.Image:
     # the website wordmark. The compact silhouette also survives tray sizes.
     draw.polygon(points([(748, 105), (920, 277), (787, 277), (748, 238)]), fill="#d9fb5c")
     draw.line(points([(748, 109), (748, 238), (787, 277)]), fill="#b9bfb1", width=round(3 * scale))
-    font = ImageFont.truetype(str(ROOT / "website/assets/display.woff"), round(510 * scale))
+    # This fixed Latin wordmark was authored with BASIC shaping. Pillow's
+    # optional Raqm changes glyph spacing between Mac/Windows wheels.
+    font = ImageFont.truetype(str(ROOT / "website/assets/display.woff"), round(510 * scale),
+                              layout_engine=ImageFont.Layout.BASIC)
     bounds = draw.textbbox((0, 0), "hi.", font=font)
     width = bounds[2] - bounds[0]
     left = (size - width) / 2 - bounds[0]

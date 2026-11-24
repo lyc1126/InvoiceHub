@@ -26,9 +26,12 @@
 html[data-active-skin="website-dark"] * { scrollbar-color: #626857 var(--surface); }
 html[data-active-skin="website-dark"] .topbar { background: var(--surface); }
 html[data-active-skin="website-dark"] .brand-mark { background: transparent; color: var(--brand-lime); }
-html[data-active-skin="website-dark"] :is(button, .btn, .input, .table-shell, .detail-cost-project, .cost-formula-tooltip, .cost-formula-tooltip::after, .skin-card__preview) { background: var(--surface); color: var(--text); border-color: var(--line); }
-html[data-active-skin="website-dark"] :is(button, .btn):hover:not(:disabled) { background: var(--surface-2); color: var(--text); border-color: var(--line-strong); }
-html[data-active-skin="website-dark"] :is(button:disabled, .btn:disabled, .input:disabled, .input[readonly], .reference-markup-input[readonly]) { background: #292b25; color: #929785; border-color: var(--line); }
+/* Classic pages only. The Vue workspace styles its transparent/selected controls from
+   the same tokens; a bare `button` rule here would paint boxes over them. :where keeps
+   classic specificity unchanged so later .btn--primary rules still win. */
+html[data-active-skin="website-dark"] :where(body:not([data-page="workspace"])) :is(button, .btn, .input, .table-shell, .detail-cost-project, .cost-formula-tooltip, .cost-formula-tooltip::after, .skin-card__preview) { background: var(--surface); color: var(--text); border-color: var(--line); }
+html[data-active-skin="website-dark"] :where(body:not([data-page="workspace"])) :is(button, .btn):hover:not(:disabled) { background: var(--surface-2); color: var(--text); border-color: var(--line-strong); }
+html[data-active-skin="website-dark"] :where(body:not([data-page="workspace"])) :is(button:disabled, .btn:disabled, .input:disabled, .input[readonly], .reference-markup-input[readonly]) { background: #292b25; color: #929785; border-color: var(--line); }
 html[data-active-skin="website-dark"] .input::placeholder { color: #969c8d; opacity: 1; }
 html[data-active-skin="website-dark"] .input:focus { border-color: var(--primary); box-shadow: 0 0 0 3px #d9fb5c24; }
 html[data-active-skin="website-dark"] input:is([type="checkbox"], [type="radio"]) { accent-color: var(--brand-lime); }

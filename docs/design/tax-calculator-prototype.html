@@ -1,0 +1,297 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>InvoiceHub · 税务计算器交互原型</title>
+<style>
+:root{color-scheme:light;--paper:#f8f9f5;--ink:#252820;--line:#dce0d5;--muted:#62675d;--lime:#d5ff5f;--body:#444740;--key:#70756b;--function:#969c91;--orange:#ff9d00;--text:#fff;--soft:#e1e5dc;--inside:#373a34;--edge:#696e64;--warning:#ffce88}
+*{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC",sans-serif;font-size:15px;line-height:1.5}button,input,select{font:inherit}button{cursor:pointer}button:disabled{cursor:default;opacity:.5}button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible{outline:3px solid var(--orange);outline-offset:3px}button{transition:background .15s,opacity .15s}svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;flex:none}[hidden]{display:none!important}a{color:inherit}.demo-bar{background:var(--ink);color:var(--paper);display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:10px 24px;font-size:13px}.demo-bar strong{font-weight:600;color:var(--lime)}.demo-bar a{margin-left:auto;text-underline-offset:4px}.app-header{display:flex;align-items:center;gap:38px;padding:22px 40px;border-bottom:1px solid var(--line)}.logo{font-weight:800;font-size:36px;line-height:1}.navigation{display:flex;gap:28px;font-weight:500}.navigation span:first-child{border-bottom:3px solid var(--ink)}.app-header .version{margin-left:auto;color:var(--muted);font-size:12px}.workspace{max-width:1250px;margin:auto;padding:48px 72px}.eyebrow{color:var(--muted);font-size:12px;letter-spacing:.12em}.workspace h1{font-size:31px;margin:6px 0 8px;letter-spacing:-.02em}.workspace p{color:var(--muted);margin:0 0 30px}.toolbar{padding:18px;border:1px solid var(--line);border-radius:12px;display:flex;gap:12px;align-items:center;background:#fff}.folder-field{padding:10px 14px;background:var(--paper);flex:1;border-radius:8px;color:var(--muted)}.subtle{border:1px solid var(--line);background:transparent;border-radius:8px;padding:10px 16px;color:inherit}.table-wrap{margin-top:30px;border-top:1px solid var(--line);overflow:auto}table{width:100%;border-collapse:collapse;white-space:nowrap}th,td{padding:18px 12px;border-bottom:1px solid var(--line);text-align:left}th{font-size:12px;color:var(--muted);font-weight:500}td{font-size:14px}.amount{text-align:right;font-variant-numeric:tabular-nums}.ghost{color:var(--muted)}.launcher-wrap{position:fixed;left:14px;top:46%;z-index:2;display:grid;gap:6px;justify-items:center}.launcher{width:48px;height:58px;color:white;background:var(--body);border:1px solid var(--edge);border-radius:14px;box-shadow:0 5px 15px #25282022}.launcher svg{height:28px;width:28px}.launcher-wrap small{font-size:11px}.entry-hint{margin:40px 0;padding:20px 24px;border-left:3px solid var(--orange);max-width:720px}.entry-hint b{font-weight:600}.entry-hint p{margin:8px 0 0;font-size:14px}.demo-settings{margin-left:auto}.dialog-shell{border:0;background:transparent;color:var(--text);padding:0;width:min(880px,calc(100vw - 32px));max-height:calc(100dvh - 32px);overflow:auto;margin:auto;border-radius:26px}.dialog-shell::backdrop{background:#1b211d77;backdrop-filter:blur(3px)}html.modal-open,body.modal-open{overflow:hidden!important}.assembly{display:grid;grid-template-columns:minmax(0,360px) minmax(0,1fr);background:var(--inside);border:1px solid var(--edge);border-radius:26px;overflow:hidden;min-width:0;box-shadow:0 24px 70px #0005}.calculator{padding:20px;background:var(--body);min-width:0}.card-head{display:flex;align-items:center;gap:6px;margin-bottom:16px}.card-head strong{font-weight:500;font-size:15px}.icon-button{border:0;color:var(--text);background:transparent;min-height:44px;min-width:44px;padding:9px;border-radius:10px;display:inline-flex;gap:7px;align-items:center;justify-content:center}.icon-button:hover{background:#ffffff18}.flip-button{margin-left:auto;font-size:12px;color:var(--soft)}.close-narrow{display:none}.mode-line{display:flex;align-items:center;gap:8px;margin-bottom:18px;color:var(--soft);font-size:12px}.dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--orange)}.stage{perspective:1300px}.flip-core{position:relative;transform-style:preserve-3d;transition:transform .32s ease-in-out;display:grid}.flip-core.flipped{transform:rotateY(180deg)}.face{grid-area:1/1;backface-visibility:hidden;-webkit-backface-visibility:hidden;min-width:0}.face.back{transform:rotateY(180deg);padding:0 2px;align-self:start}.back h2{font-size:23px;margin:9px 0 18px;font-weight:500}.back p{font-size:14px;color:var(--soft);line-height:1.75;margin:13px 0}.back .formula{padding:14px 16px;background:var(--inside);border-radius:13px;color:var(--text);font-size:16px;line-height:1.8;font-variant-numeric:tabular-nums;white-space:pre-line;overflow-wrap:anywhere}.back .source{font-size:11px;border-top:1px solid var(--edge);padding-top:14px}.back .back-return{border:1px solid var(--edge);padding:9px 16px;border-radius:10px;background:transparent;color:var(--text);margin-top:14px;min-height:44px}.field-label{display:flex;justify-content:space-between;color:var(--soft);font-size:12px;gap:8px}.display{background:transparent;border:0;color:var(--text);font-size:44px;font-weight:300;line-height:1.2;text-align:right;width:100%;min-width:0;letter-spacing:-.03em;padding:14px 0 4px;font-variant-numeric:tabular-nums;border-radius:5px}.display[readonly]{cursor:default}.secondary-result{display:flex;justify-content:space-between;gap:12px;align-items:baseline;padding:10px 0 14px;margin-bottom:12px;min-height:42px;border-bottom:1px solid var(--edge);font-size:13px;color:var(--soft)}.secondary-result strong{color:var(--text);font-weight:500}.rate-row{display:flex;align-items:center;gap:7px;margin-bottom:16px}.rate-row span{font-size:12px;color:var(--soft);margin-right:auto}.rate{padding:6px 11px;border:1px solid var(--edge);border-radius:20px;background:transparent;color:var(--soft);font-size:12px;min-height:35px}.rate[aria-pressed=true]{color:var(--ink);background:var(--orange);border-color:var(--orange)}.keypad{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;position:relative}.key{border:0;border-radius:50%;aspect-ratio:1;background:var(--key);color:var(--text);font-size:30px;display:flex;align-items:center;justify-content:center;min-width:0;min-height:44px;font-weight:400}.key:hover{filter:brightness(1.16)}.key:active{transform:scale(.96)}.key.function{background:var(--function);color:#182015;font-size:24px}.key.operator{background:var(--orange);color:#251b0e;font-size:34px}.key.menu-toggle svg{width:28px;height:28px}.tax-menu{position:absolute;bottom:76px;left:0;z-index:3;width:min(300px,100%);background:#55594f;border:1px solid #777e6f;box-shadow:0 15px 30px #0005;border-radius:15px;padding:9px}.menu-caption{font-size:11px;color:var(--soft);padding:6px 9px 10px}.menu-row{display:grid;grid-template-columns:32px 1fr;align-items:center;min-height:46px;gap:5px;border-radius:8px}.menu-row.active{background:#ffffff13}.menu-row label{display:grid;place-items:center;min-height:44px}.menu-row input{appearance:auto;width:18px;height:18px;accent-color:var(--orange)}.menu-row button{border:0;background:none;text-align:left;color:var(--text);padding:8px 5px;font-size:14px;min-height:44px}.menu-row small{display:block;color:var(--soft);font-size:10px}.main-note{font-size:11px;color:var(--soft);margin:15px 1px 0;min-height:34px}.main-note.warn{color:var(--warning)}.details{padding:22px 24px;min-width:0}.details-head{display:flex;justify-content:space-between;gap:10px;align-items:center}.details-head h2{font-size:19px;font-weight:500;margin:0}.scenario-control{margin:14px 0 18px}.scenario-control label{font-size:12px;color:var(--soft);display:block;margin-bottom:5px}.scenario-control select{width:100%;min-height:40px;background:var(--body);color:var(--text);border:1px solid var(--edge);border-radius:8px;padding:8px 10px}.scope{display:flex;align-items:center;gap:8px;font-size:12px;margin-bottom:18px;color:var(--soft)}.scope svg{width:16px;height:16px}.selection-results{display:flex;flex-direction:column;gap:0}.result-row{display:grid;grid-template-columns:1fr auto;column-gap:12px;align-items:center;padding:14px 0;border-bottom:1px solid var(--edge)}.result-row button{background:transparent;border:0;color:var(--text);font-size:14px;padding:0;text-align:left;min-height:30px}.result-row .result-value{font-variant-numeric:tabular-nums;color:var(--text);font-size:18px}.result-row small{font-size:11px;color:var(--soft);grid-column:1/-1;margin-top:3px}.result-row .pending{color:var(--warning);font-size:13px}.total-box{padding:18px 0 12px}.total-box small{font-size:12px;color:var(--soft)}.total-value{font-size:28px;font-weight:400;margin:6px 0;font-variant-numeric:tabular-nums}.total-box p{color:var(--soft);font-size:11px;margin:5px 0}.source-box{margin-top:14px;padding:16px;background:#464b403f;border:1px solid var(--edge);border-radius:14px}.source-box h3{font-size:13px;font-weight:500;margin:0 0 8px}.source-box p{font-size:12px;color:var(--soft);margin:4px 0}.reset-case{background:transparent;color:var(--text);border:1px solid var(--edge);border-radius:10px;padding:9px 15px;font-size:12px;min-height:40px;margin-top:18px}.settings-view{background:var(--paper);color:var(--ink);border-radius:20px;padding:28px;max-width:680px;margin:auto}.settings-view h2{font-size:24px;margin:0 0 6px}.settings-view p{color:var(--muted);font-size:14px}.settings-head{display:flex;align-items:flex-start;gap:20px}.settings-head button{margin-left:auto;color:var(--ink)}.settings-view label{font-size:13px;display:block;margin:24px 0 7px}.path-field{border:1px solid var(--line);background:white;border-radius:8px;padding:12px;width:100%;color:var(--muted)}.settings-actions{display:flex;gap:10px;margin:12px 0}.settings-status{font-size:13px;padding:14px 0;border-bottom:1px solid var(--line)}.roles{margin:14px 0}.role-status{display:flex;justify-content:space-between;gap:15px;font-size:13px;padding:10px 0;border-bottom:1px solid var(--line)}.role-status span:last-child{color:var(--muted)}.primary{background:var(--lime);color:var(--ink);border:1px solid var(--ink);padding:10px 18px;border-radius:9px}.settings-note{font-size:12px!important;margin-bottom:0}.prototype-controls{display:flex;gap:8px}.compact-preview .dialog-shell{width:375px;max-width:calc(100vw - 20px)}.compact-preview .assembly{grid-template-columns:minmax(0,1fr)}.compact-preview .details{border-top:1px solid var(--edge)}.compact-preview .close-narrow{display:inline-flex}.compact-preview .details-head .close-wide{display:none}.light-calculator{--body:#e8eae3;--key:#d0d5c9;--function:#b4bdaa;--text:#252820;--soft:#525b49;--inside:#f1f3ec;--edge:#b9c1b0;--warning:#80521e}.light-calculator .key.function{color:var(--ink)}.light-calculator .tax-menu{background:#e1e6d7;border-color:#a5af98}.light-calculator .result-row .result-value{color:var(--ink)}.light-calculator .source-box{background:#e5eadb}.light-calculator .icon-button:hover{background:#0000000d}
+
+/* The 20px glyph stays compact while its transparent hit area remains 44px. */
+.launcher-wrap{width:44px;height:44px;gap:0;touch-action:none}
+.launcher{width:32px;height:32px;border-radius:9px;padding:0;display:grid;place-items:center}
+.launcher::before{content:"";position:absolute;inset:0}
+.launcher svg{width:20px;height:20px}
+.launcher-wrap small{display:none}
+.launcher-wrap.in-header{position:relative;left:auto;top:auto;touch-action:auto;z-index:auto}
+.launcher-wrap.dragging{cursor:grabbing}.launcher-wrap.dragging .launcher{cursor:grabbing}
+.header-navigation{display:flex;align-items:center;gap:8px;min-width:0}
+#header-calculator-slot{display:flex;align-items:center;justify-content:center;flex:none}#header-calculator-slot:empty{display:none}
+.navigation{align-items:center}.app-header{position:sticky;top:0;z-index:4;background:var(--paper)}.settings-actions{flex-wrap:wrap}
+.entry-preference,.picker-preview{border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin:20px 0}
+.entry-preference legend,.picker-preview legend{font-size:14px;font-weight:500;padding:0 5px}
+.entry-options{display:flex;gap:8px 18px;flex-wrap:wrap}
+.entry-options label{display:flex;align-items:center;gap:8px;margin:0;min-height:44px;cursor:pointer}
+.entry-options input{width:18px;height:18px;accent-color:var(--ink)}
+.entry-preference p,.picker-preview p{font-size:12px;margin:8px 0}
+.settings-actions button{min-height:44px}.entry-reset{font-size:12px}
+
+@media(max-width:720px){.assembly{grid-template-columns:minmax(0,1fr)}.dialog-shell{width:min(390px,calc(100vw - 20px));max-height:calc(100dvh - 20px)}.details{border-top:1px solid var(--edge)}.close-narrow{display:inline-flex}.details-head .close-wide{display:none}.app-header{padding:22px;gap:25px}.navigation{gap:15px}.app-header .version{display:none}.workspace{padding:30px 24px 30px 74px}.workspace h1{font-size:25px}.toolbar{display:block}.toolbar button{margin-top:12px}.demo-bar{padding:10px 16px}.demo-bar a{margin-left:0}.demo-bar .prototype-controls{width:100%}.launcher-wrap{left:12px;top:44%}.entry-hint{padding:14px 12px}.table-wrap th,.table-wrap td{padding:14px 8px}.settings-view{padding:20px}}
+@media(prefers-reduced-motion:reduce){*,*::before,*::after{transition:none!important;animation:none!important;scroll-behavior:auto!important}.flip-core{transform:none!important}.flip-core .face[aria-hidden=true]{visibility:hidden}.flip-core .back{transform:none}}
+
+/* Reserve the front keyboard independently of the scrollable explanation/results. */
+#calculator-dialog{--calc-height:clamp(516px,calc(100dvh - 24px),560px);--key-size:clamp(44px,calc((var(--calc-height) - 296px)/5),54px);width:min(660px,calc(100vw - 24px));max-height:calc(100dvh - 20px);border-radius:20px}
+#calculator-dialog .assembly{grid-template-columns:minmax(0,292px) minmax(0,1fr);height:calc(var(--calc-height) + 2px);border-radius:20px}
+#calculator-dialog .calculator{height:var(--calc-height);padding:12px;display:grid;grid-template-rows:44px 16px minmax(0,1fr);gap:4px}
+#calculator-dialog .card-head,#calculator-dialog .mode-line{margin:0}
+#calculator-dialog .stage,#calculator-dialog .flip-core{height:100%;min-height:0}
+#calculator-dialog .front{display:grid;height:100%;min-height:0;grid-template-rows:16px 42px 30px 40px minmax(0,1fr) 32px;gap:4px}
+#calculator-dialog .field-label{grid-row:1;font-size:11px}
+#calculator-dialog .display{grid-row:2;font-size:32px;padding:0;line-height:1.2}
+#calculator-dialog .secondary-result{grid-row:3;margin:0;padding:3px 0;min-height:0;font-size:11px}
+#calculator-dialog .rate-control{grid-row:4;min-width:0}
+#calculator-dialog .rate-row{height:40px;margin:0;gap:5px}
+#calculator-dialog .rate{padding:5px 8px;min-height:34px;font-size:12px}
+#calculator-dialog .keypad{grid-row:5;grid-template-columns:repeat(4,var(--key-size));grid-template-rows:repeat(5,var(--key-size));gap:6px;justify-content:space-between;align-content:start}
+#calculator-dialog .key{width:var(--key-size);height:var(--key-size);aspect-ratio:auto;font-size:25px}
+#calculator-dialog .key.function{font-size:20px}#calculator-dialog .key.operator{font-size:28px}
+#calculator-dialog .key.menu-toggle svg{width:23px;height:23px}
+#calculator-dialog .main-note{grid-row:6;margin:0;min-height:0;line-height:14px;overflow:auto}
+#calculator-dialog .face.back{position:absolute;inset:0;height:100%;overflow:auto;padding:0 4px}
+#calculator-dialog .back h2{font-size:20px;margin:5px 0 12px}
+#calculator-dialog .back p{font-size:13px;margin:10px 0}
+#calculator-dialog .back .formula{padding:10px 12px;font-size:14px}
+#calculator-dialog .details{padding:16px 18px;min-height:0;max-height:var(--calc-height);overflow:auto}
+#calculator-dialog .details-head h2{font-size:17px}
+#calculator-dialog .scenario-control{margin:8px 0 12px}
+#calculator-dialog .scope{margin-bottom:8px}
+#calculator-dialog .result-row{padding:10px 0}
+#calculator-dialog .total-box{padding:12px 0 8px}
+#calculator-dialog .total-value{font-size:25px}
+#calculator-dialog .source-box{margin-top:8px;padding:12px}
+#calculator-dialog .reset-case{margin-top:12px}
+#calculator-dialog .tax-menu{bottom:0;max-height:100%;overflow:auto}
+.custom-rate-editor{display:flex;align-items:center;gap:7px;height:40px;font-size:12px;min-width:0}
+.custom-rate-editor label{color:var(--soft);white-space:nowrap}
+.custom-rate-editor input{width:90px;min-width:0;height:36px;padding:5px 7px;border:1px solid var(--edge);border-radius:8px;background:var(--inside);color:var(--text);font-size:16px;font-variant-numeric:tabular-nums}
+.custom-rate-editor input[aria-invalid=true]{border-color:var(--warning)}
+.custom-rate-editor button{margin-left:auto}
+.compact-preview #calculator-dialog{width:min(320px,calc(100vw - 20px))}
+.compact-preview #calculator-dialog .assembly{grid-template-columns:minmax(0,1fr);height:auto}
+@media(max-width:720px){
+ #calculator-dialog{width:min(320px,calc(100vw - 20px))}
+ #calculator-dialog .assembly{grid-template-columns:minmax(0,1fr);height:auto}
+}
+@media(max-height:539px) and (min-width:620px){
+ #calculator-dialog{--calc-height:max(336px,calc(100dvh - 24px));--key-size:clamp(44px,calc((var(--calc-height) - 116px)/5),52px);width:min(560px,calc(100vw - 24px))}
+ #calculator-dialog .assembly{grid-template-columns:minmax(0,1fr);height:auto}
+ #calculator-dialog .front{grid-template-columns:minmax(0,1fr) 226px;grid-template-rows:16px 42px 30px 40px minmax(32px,1fr);column-gap:14px}
+ #calculator-dialog .front>.field-label,#calculator-dialog .display,#calculator-dialog .secondary-result,#calculator-dialog .rate-control,#calculator-dialog .main-note{grid-column:1}
+ #calculator-dialog .keypad{grid-column:2;grid-row:1/6}
+ #calculator-dialog .main-note{grid-row:5}
+ #calculator-dialog .close-narrow{display:inline-flex}#calculator-dialog .close-wide{display:none}
+}
+
+</style>
+</head>
+<body>
+<svg aria-hidden="true" style="position:absolute;width:0;height:0;overflow:hidden"><defs>
+<!-- Calculator glyph follows the repository's Lucide ISC asset.
+ISC License — Copyright (c) 2026 Lucide Icons and Contributors
+Permission to use, copy, modify, and/or distribute this software for any
+purpose with or without fee is hereby granted, provided that the above
+copyright notice and this permission notice appear in all copies.
+THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+The flip, folder and close glyphs are simple original paths in this prototype.
+-->
+<symbol id="calc-icon" viewBox="0 0 24 24"><rect x="4" y="2" width="16" height="20" rx="2"/><path d="M8 6h8M16 14v4M16 10h.01M12 10h.01M8 10h.01M12 14h.01M8 14h.01M12 18h.01M8 18h.01"/></symbol>
+<symbol id="flip-icon" viewBox="0 0 24 24"><path d="M4 8h11a5 5 0 0 1 0 10H9M7 4 3 8l4 4M9 14l-4 4 4 4"/></symbol>
+<symbol id="close-icon" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol>
+<symbol id="folder-icon" viewBox="0 0 24 24"><path d="M3 5h6l2 3h10v12H3z"/></symbol>
+</defs></svg>
+<div class="demo-bar"><strong>交互设计原型</strong><span>合成案例 · 不读取公司资料 · 不连接计算服务</span><a href="../TAX_WORKBENCH_DESIGN.md">设计说明</a><div class="prototype-controls"><button class="subtle" id="size-toggle">窄屏预览</button><button class="subtle" id="theme-toggle">浅色恢复样式</button></div></div>
+<header class="app-header"><span class="logo">hi.</span><!-- 计算器独立放在整组模块导航之前，保持首页、成本、单据的连续顺序。 --><div class="header-navigation"><span id="header-calculator-slot"></span><nav class="navigation" aria-label="界面示意导航"><span>首页</span><span>成本</span><span>单据</span></nav></div><span class="version">基于 alpha.2 优化版 1</span><button class="subtle demo-settings" id="open-settings">设置</button></header>
+<main class="workspace"><div class="eyebrow">INVOICE WORKSPACE</div><h1>发票工作台</h1><p>整理手边的票据，也把每一个税额算明白。</p><div class="toolbar"><div class="folder-field">示例发票目录</div><span class="ghost">仅界面示意</span></div><div class="table-wrap"><table><thead><tr><th>来源</th><th>销售方</th><th>开票日期</th><th class="amount">价税合计</th></tr></thead><tbody><tr><td>合成样例 A.pdf</td><td>示例材料供应商</td><td>2026-05-08</td><td class="amount">113,000.00</td></tr><tr><td>合成样例 B.xml</td><td>示例服务供应商</td><td>2026-05-16</td><td class="amount">10,600.00</td></tr></tbody></table></div><div class="entry-hint"><b>从左侧的小计算器开始。</b><p>点击展开；用左下角菜单切换税种、勾选并列结果，再点击“为什么”把卡片翻到背面。设置中可以预览资料夹为空和资料缺项的状态。</p></div></main>
+<div class="launcher-wrap" id="launcher-wrap"><button id="launcher" class="launcher" aria-label="打开税务计算器" aria-haspopup="dialog"><svg><use href="#calc-icon"/></svg></button><small>计算器</small></div>
+<dialog id="calculator-dialog" class="dialog-shell" aria-label="税务计算器交互原型"><div class="assembly" id="assembly"><section class="calculator"><div class="card-head"><strong id="tax-title">价税换算</strong><button id="flip" class="icon-button flip-button" aria-label="翻转卡片：为什么这样算"><svg><use href="#flip-icon"/></svg><span>为什么</span></button><button class="icon-button close-narrow" data-close aria-label="关闭计算器"><svg><use href="#close-icon"/></svg></button></div><div class="mode-line"><span class="dot"></span><span id="mode-label">手工测算 · 2026-05</span></div><div class="stage"><div class="flip-core" id="flip-core"><div class="face front" id="front-face" aria-hidden="false"><div class="field-label"><label id="display-label" for="display">价税合计 / 元</label><span id="result-state">示例已计算</span></div><input id="display" class="display" inputmode="decimal" autocomplete="off" value="113000.00" aria-label="价税合计，人民币元"><div class="secondary-result"><span id="secondary-label">其中增值税额</span><strong id="secondary-value">13,000.00</strong></div><div class="rate-control" id="rate-control"><div id="rate-row" class="rate-row"><span>税率</span><button class="rate" data-rate="6" aria-pressed="false">6%</button><button class="rate" data-rate="9" aria-pressed="false">9%</button><button class="rate" data-rate="13" aria-pressed="true">13%</button><button class="rate" id="custom-rate-toggle" aria-controls="custom-rate-editor" aria-expanded="false">自定义</button></div><div class="custom-rate-editor" id="custom-rate-editor" hidden><label for="custom-rate-input">自定义</label><input id="custom-rate-input" type="text" inputmode="decimal" maxlength="8" autocomplete="off" placeholder="例如 1.5" aria-describedby="main-note" aria-invalid="false"><span>%</span><button class="rate" id="preset-rates">预设</button></div></div><div class="keypad" id="keypad"><button class="key function" data-key="clear" aria-label="清空输入">AC</button><button class="key function" data-key="sign" aria-label="切换正负号">±</button><button class="key function" data-key="%" aria-label="百分号">%</button><button class="key operator" data-key="÷" aria-label="除">÷</button><button class="key" data-key="7">7</button><button class="key" data-key="8">8</button><button class="key" data-key="9">9</button><button class="key operator" data-key="×" aria-label="乘">×</button><button class="key" data-key="4">4</button><button class="key" data-key="5">5</button><button class="key" data-key="6">6</button><button class="key operator" data-key="−" aria-label="减">−</button><button class="key" data-key="1">1</button><button class="key" data-key="2">2</button><button class="key" data-key="3">3</button><button class="key operator" data-key="+" aria-label="加">+</button><button class="key menu-toggle" id="menu-toggle" aria-label="选择税种和并列展示" aria-expanded="false" aria-controls="tax-menu"><svg><use href="#calc-icon"/></svg></button><button class="key" data-key="0">0</button><button class="key" data-key=".">.</button><button class="key operator" id="equals" aria-label="计算当前输入">=</button><div class="tax-menu" id="tax-menu" hidden><div class="menu-caption">点击名称切页 · 勾选并列展示</div><div id="menu-rows"></div></div></div><p class="main-note" id="main-note" aria-live="polite">示例为单一 13% 税率；票面税额不等于本期应缴税额。</p></div><div class="face back" id="back-face" aria-hidden="true" inert><div class="eyebrow" style="color:var(--soft)">把这笔税算明白</div><h2 id="why-title">为什么要除以 1.13？</h2><p id="why-intro"></p><div class="formula" id="why-formula"></div><p id="why-detail"></p><p class="source" id="why-source"></p><button class="back-return" id="back-return">返回计算</button></div></div></div></section><aside class="details"><div class="details-head"><h2>所选结果</h2><button class="icon-button close-wide" data-close aria-label="关闭计算器"><svg><use href="#close-icon"/></svg></button></div><div class="scenario-control"><label for="scenario">体验合成案例</label><select id="scenario"><option value="manual">纯计算 · 未绑定公司</option><option value="month">月账 · 增值税与附加</option><option value="quarter">季账 · 所得税累计预缴</option><option value="missing">资料不足 · 缺上期留抵</option></select></div><div class="scope"><svg><use href="#folder-icon"/></svg><span id="scope-label">未绑定公司资料文件夹</span></div><div id="selection-results" class="selection-results" aria-live="polite"></div><div class="total-box"><small>所选应纳测算小计</small><div class="total-value" id="total-value">—</div><p id="total-note">价税换算展示票面税额，不计入应纳小计。</p></div><div class="source-box"><h3 id="source-heading">计算能力随时可用</h3><p id="source-description">公司文件夹默认为空。仅使用手工填写的金额与条件。</p><p>数据与公式详见配套设计；当前为预设案例。</p></div><button class="reset-case" id="reset-case">恢复当前示例</button></aside></div></dialog>
+<dialog id="settings-dialog" class="dialog-shell" aria-label="计算器资料设置原型">
+<div class="settings-view">
+  <div class="settings-head"><div><h2>计算器设置</h2><p>小小的入口，放在顺手的位置。</p></div><button class="icon-button" id="close-settings" aria-label="关闭资料设置"><svg><use href="#close-icon"/></svg></button></div>
+  <fieldset class="entry-preference"><legend>计算器入口位置</legend>
+    <div class="entry-options"><label><input type="radio" name="entry-placement" value="floating" checked>界面内悬浮</label><label><input type="radio" name="entry-placement" value="header">首页置顶栏</label></div>
+    <p id="placement-note">20px 小图标。可拖动到界面内顺手的位置；点击打开计算器。</p>
+    <button class="subtle entry-reset" id="reset-position">重置悬浮位置</button>
+  </fieldset>
+  <label for="company-path">公司业务资料文件夹</label><input id="company-path" class="path-field" readonly placeholder="未设置，保留手工计算能力">
+  <div class="settings-actions"><button class="subtle" id="pick-company-dir">选择本地文件夹</button><button class="subtle" id="detect-demo" disabled>检测资料</button><button class="subtle" id="clear-demo">清空示例绑定</button></div>
+  <fieldset class="picker-preview" id="native-picker-preview" hidden><legend>原生文件夹选择流程（模拟）</legend><p>正式版将打开系统文件夹窗口。本原型只演示选择器的返回结果。</p><div class="settings-actions"><button class="subtle" id="picker-select-demo">选择示例目录</button><button class="subtle" id="picker-cancel-demo">取消</button><button class="subtle" id="picker-fail-demo">模拟不可用</button></div></fieldset>
+  <div class="settings-status" id="settings-status" aria-live="polite">未绑定 · 基础计算和手工税额测算可用</div><div class="roles" id="roles"></div><button class="primary" id="save-demo" disabled>保存示例绑定</button>
+  <p class="settings-note">原型中的位置偏好仅在本次打开期间保留。资料选择为模拟流程，不会读取或保存本机路径。</p>
+</div></dialog>
+
+<script>
+'use strict';
+// This design artifact only plays fixed, synthetic, independently documented cases.
+// It deliberately contains no tax arithmetic, source IO, production API calls or persistence.
+const $ = id => document.getElementById(id);
+const types = [
+  ['basic','基础计算'],['split','价税换算'],['vat','增值税应纳'],['surcharge','附加税费'],['stamp','印花税'],['eit','企业所得税预缴']
+];
+const explanations = {
+ basic:{title:'每一步，都看得见',intro:'基础计算将显示完整表达式；百分号表示当前数值除以 100。',formula:'输入 → 后端运算 → 返回结果',detail:'这是交互原型，数字键演示输入状态。任意表达式的运算在正式版本由后端完成。',source:'当前未连接计算服务。'},
+ split:{title:'为什么要除以 1.13？',intro:'这笔价税合计 113,000 元，包含价款本身和按价款计算的 13% 增值税。',formula:'113,000 ÷ 1.13 = 100,000\n113,000 − 100,000 = 13,000',detail:'13% 针对的是不含税价。不能把含税价再乘 13%，那样连已经包含的税也一起乘进去了。这是票面价税换算。',source:'依据：增值税法第七、十、十六、十七条。单一税率、无差额等特殊情形；日期 2026-05。'},
+ vat:{title:'销项税，为什么还要减？',intro:'本例是普通一般计税月账：销项 26,000，当期确认可抵扣进项 13,000，上期留抵 10,000；没有进项转出和特殊调整。',formula:'26,000 − 13,000 − 10,000\n= 3,000 元',detail:'上期没抵完的 10,000 元，在本期继续使用。只有已经确认用途、抵扣期间的进项才能进入这里；采购票税额不能直接全部抵扣。',source:'依据：增值税法第十四、十六、二十一、二十二条。当前为合成应纳测算，不是已申报或已缴。'},
+ surcharge:{title:'三项附加，分别计算',intro:'本例确认计税依据 3,000 元，城建 7%、教育 3%、地方教育 2%。符合六税两费减半条件，不满足教育费完全免征条件。',formula:'城建：3,000 × 7% × 50% = 105\n教育：3,000 × 3% × 50% = 45\n地方教育：3,000 × 2% × 50% = 30',detail:'三项合计 180 元。不是用销售额直接乘这些比例，也不是所有企业都自动减半；资格和各税费计税依据都要分别确认。',source:'依据：城建税法、财政部 税务总局公告2023年第12号及配套算法文档。3%/2% 为本例已填条件。'},
+ stamp:{title:'这里看资本增加了多少',intro:'本例是营业账簿：实收资本与资本公积合计 120 万，已经计税的资本金额是 100 万。',formula:'应税增加额：120万 − 100万 = 20万\n200,000 × 0.00025 = 50\n符合减半条件：50 × 50% = 25',detail:'不是一本账簿收 5 元，也不是把注册资本直接拿来算。已经缴过税的资本部分不重复计税。',source:'依据：印花税法第五、十一条及税率表；财政部 税务总局公告2023年第12号。'},
+ eit:{title:'季度交的是累计税款的差额',intro:'本例第二季度年累计预缴基数 16 万，满足当期小型微利条件，年内此前已预缴 5,000 元。',formula:'累计税额：160,000 × 25% × 20%\n= 8,000 元\n本期应补：8,000 − 5,000 = 3,000 元',detail:'第一季度 5,000 与第二季度累计 8,000 不能再相加。预缴基数需要账簿、已销成本和适用调整，不能只用销项票减采购票。',source:'依据：企业所得税法第五十三、五十四条、实施条例第一百二十七条、财政部 税务总局公告2023年第12号。'}
+};
+const fixtures = {
+ basic:{input:'0',label:'当前输入',value:'—',kind:'待输入',note:'数字键演示编辑；原型不执行任意表达式。'},
+ split:{input:'113000.00',label:'价税合计 / 元',value:'13,000.00',kind:'其中增值税额',note:'单一 13% 税率；票面税额不等于本期应缴税额。'},
+ vat:{input:'3000.00',label:'本月应纳测算 / 元',value:'0.00',kind:'期末留抵',note:'普通一般计税月账，输入与来源见背面。'},
+ surcharge:{input:'180.00',label:'附加税费合计 / 元',value:'105 / 45 / 30',kind:'城建 / 教育 / 地方教育',note:'本例已填写资格与计税依据；不能默认套用。'},
+ stamp:{input:'25.00',label:'营业账簿印花税 / 元',value:'200,000.00',kind:'本次资本计税增量',note:'本例适用万分之二点五，且符合减半条件。'},
+ eit:{input:'3000.00',label:'本季应补预缴测算 / 元',value:'8,000.00',kind:'本年累计应纳预缴',note:'累计税额不再次计入本季应补小计。'}
+};
+let current='split', scenario='manual', selected=new Set(['split']), dirty=new Set(), restoreFocus=null, motion=null;
+const drafts = new Map();
+const rateDraft = {mode:'preset',preset:'13',custom:''};
+const reduced = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
+function syncScroll(){const any=$('calculator-dialog').open||$('settings-dialog').open;document.documentElement.classList.toggle('modal-open',any);document.body.classList.toggle('modal-open',any)}
+function reveal(dialog){restoreFocus=document.activeElement;dialog.showModal();syncScroll()}
+function hide(dialog){if(motion){motion.cancel();motion=null}dialog.close();syncScroll();if(restoreFocus?.isConnected)restoreFocus.focus()}
+function openCalculator(){reveal($('calculator-dialog'));$('tax-menu').hidden=true;$('menu-toggle').setAttribute('aria-expanded','false');render();if(!reduced()){const from=$('launcher').getBoundingClientRect(),to=$('assembly').getBoundingClientRect();motion=$('assembly').animate([{transform:`translate(${from.left-to.left}px,${from.top-to.top}px) scale(${from.width/to.width},${from.height/to.height})`,opacity:.15,borderRadius:'16px'},{transform:'translate(0,0) scale(1,1)',opacity:1,borderRadius:'26px'}],{duration:260,easing:'cubic-bezier(.18,.8,.2,1)',fill:'none'});$('assembly').style.transformOrigin='top left'}$('flip').focus()}
+function closeCalculator(){if(motion)motion.cancel();if(reduced()){hide($('calculator-dialog'));return}const from=$('assembly').getBoundingClientRect(),to=$('launcher').getBoundingClientRect();motion=$('assembly').animate([{transform:'translate(0,0) scale(1,1)',opacity:1},{transform:`translate(${to.left-from.left}px,${to.top-from.top}px) scale(${to.width/from.width},${to.height/from.height})`,opacity:0}],{duration:180,easing:'ease-in',fill:'none'});motion.onfinish=()=>hide($('calculator-dialog'))}
+function flip(toBack){$('flip-core').classList.toggle('flipped',toBack);$('front-face').inert=toBack;$('back-face').inert=!toBack;$('front-face').setAttribute('aria-hidden',String(toBack));$('back-face').setAttribute('aria-hidden',String(!toBack));$('flip').setAttribute('aria-label',toBack?'翻转卡片：返回计算':'翻转卡片：为什么这样算');if(toBack)$('back-return').focus();else $('flip').focus()}
+function availability(type){if(dirty.has(type))return 'stale';if(type==='basic')return 'empty';if(type==='split')return 'ready';if(scenario==='manual')return 'missing';if(scenario==='missing'&&(type==='vat'||type==='surcharge'))return 'missing';if(scenario==='month'&&type==='eit')return 'missing';if(scenario==='quarter'&&(type==='vat'||type==='surcharge'))return 'missing';return 'ready'}
+function renderMenu(){const root=$('menu-rows');root.replaceChildren();for(const [key,label] of types){const row=document.createElement('div');row.className='menu-row'+(key===current?' active':'');const choice=document.createElement('label');const box=document.createElement('input');box.type='checkbox';box.checked=selected.has(key);box.setAttribute('aria-label','并列显示'+label);box.addEventListener('change',()=>{if(box.checked)selected.add(key);else selected.delete(key);renderResults()});choice.append(box);const button=document.createElement('button');button.type='button';button.textContent=label;button.addEventListener('click',()=>{current=key;selected.add(key);$('tax-menu').hidden=true;$('menu-toggle').setAttribute('aria-expanded','false');flip(false);render()});row.append(choice,button);root.append(row)}}
+function renderResults(){const root=$('selection-results');root.replaceChildren();for(const [key,label] of types){if(!selected.has(key))continue;const row=document.createElement('div');row.className='result-row';const title=document.createElement('button');title.type='button';title.textContent=label;title.addEventListener('click',()=>{current=key;flip(false);render()});const val=document.createElement('span');val.className='result-value';const status=availability(key);val.textContent=status==='ready'?(key==='split'?'13,000.00':fixtures[key].input):status==='stale'?'待重算':status==='empty'?'—':'缺资料';if(status!=='ready')val.classList.add('pending');const detail=document.createElement('small');detail.textContent=status==='stale'?'输入已修改，旧结果不参与小计':status==='missing'?missingReason(key):key==='split'?'票面税额 · 单笔换算，不计入应纳小计':key==='eit'?'2026 年第二季度 · 本期应补预缴':'2026-05 · 合成应纳测算';row.append(title,val,detail);root.append(row)}
+// Totals are preset outcomes for these exact scenes, never client-side tax sums.
+const included=[...selected].filter(k=>k!=='basic'&&k!=='split');const allReady=included.every(k=>availability(k)==='ready');const setKey=included.sort().join(',');const known={month:{'':'—','vat':'3,000.00','surcharge':'180.00','stamp':'25.00','surcharge,vat':'3,180.00','stamp,vat':'3,025.00','stamp,surcharge':'205.00','stamp,surcharge,vat':'3,205.00'},quarter:{'':'—','eit':'3,000.00','stamp':'25.00','eit,stamp':'3,025.00'},missing:{'':'—','stamp':'25.00'}};const exact=known[scenario]?.[setKey];$('total-value').textContent=!included.length?'—':!allReady?'未完整':exact??'口径待核对';$('total-note').textContent=!included.length?'票面价税换算不计入应纳小计。':!allReady?'所选含缺资料或待重算项，暂不显示完整合计。':'仅含同一合成场景的应纳/应补项目，不包含票面税额或累计中间额。'}
+function missingReason(key){if(scenario==='missing'&&key==='vat')return '缺上期留抵，不能把未知当零';if(scenario==='missing'&&key==='surcharge')return '缺可确认的附加计税依据';if(key==='eit')return '需累计利润、资格与此前已预缴证据';if(key==='stamp')return '需合同税目或资本计税增量';return '需本期税务资料或手工填写完整条件'}
+function render(){const f=fixtures[current],s=availability(current);$('tax-title').textContent=types.find(x=>x[0]===current)[1];$('mode-label').textContent=scenario==='manual'?'手工测算 · 2026-05':scenario==='quarter'?'示例公司 · 2026 年第二季度':'示例公司 · 2026-05';$('display-label').textContent=f.label;$('display').setAttribute('aria-label',f.label);$('display').value=s==='missing'?'—':dirty.has(current)?(drafts.get(current)||'0'):f.input;$('display').readOnly=!['basic','split'].includes(current);$('secondary-label').textContent=f.kind;$('secondary-value').textContent=s==='ready'||s==='empty'?f.value:'—';$('result-state').textContent=s==='ready'?'示例已计算':s==='stale'?'待重算':s==='empty'?'交互示意':'需补资料';$('rate-control').hidden=current!=='split';$('main-note').textContent=s==='missing'?missingReason(current):s==='stale'?'输入已变化。原型仅展示待重算；可恢复示例查看计算结果。':f.note;$('main-note').classList.toggle('warn',s==='missing'||s==='stale');for(const b of document.querySelectorAll('[data-key],#equals'))b.disabled=!['basic','split'].includes(current);const why=explanations[current];$('why-title').textContent=s==='missing'?'为什么还算不出来？':s==='stale'?'输入变了，结果也要重算':why.title;$('why-intro').textContent=s==='missing'?missingReason(current):s==='stale'?'当前输入与上一次结果不再属于同一次计算。':why.intro;$('why-formula').textContent=s==='missing'?'缺失资料 ≠ 金额为 0':s==='stale'?'新输入 → 后端重新计算 → 新解释':why.formula;$('why-detail').textContent=s==='missing'?'先补齐并确认对应资料。其他条件完整的税种可以单独查看。':s==='stale'?'正式版本将返回一份新的计算记录，正面结果与背面解释同步更新。':why.detail;$('why-source').textContent=s==='missing'||s==='stale'?'当前不输出完整确定税额。':why.source;$('scope-label').textContent=scenario==='manual'?'未绑定公司资料文件夹':'示例公司资料 · 合成数据';$('source-heading').textContent=scenario==='manual'?'计算能力随时可用':scenario==='missing'?'还有资料需要补齐':'每个数值都有来源';$('source-description').textContent=scenario==='manual'?'公司文件夹默认为空。仅使用手工填写的金额与条件。':scenario==='missing'?'进销项资料已识别；上期留抵没有可靠记录。':scenario==='quarter'?'累计预缴基数与此前已预缴为本例明确条件。':'销项 26,000；本期可抵扣 13,000；上期留抵 10,000。';renderMenu();renderResults();syncRateControls()}
+function markDirty(){dirty.add(current);drafts.set(current,$('display').value);render()}
+$('launcher').addEventListener('click',()=>{if(suppressLauncherClick){suppressLauncherClick=false;return}openCalculator()});document.querySelectorAll('[data-close]').forEach(b=>b.addEventListener('click',closeCalculator));$('calculator-dialog').addEventListener('cancel',e=>{e.preventDefault();if(!$('tax-menu').hidden){$('tax-menu').hidden=true;$('menu-toggle').setAttribute('aria-expanded','false');$('menu-toggle').focus()}else closeCalculator()});$('calculator-dialog').addEventListener('click',e=>{if(e.target===$('calculator-dialog')){const r=$('calculator-dialog').getBoundingClientRect();if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)closeCalculator()}});$('calculator-dialog').addEventListener('close',syncScroll);$('flip').addEventListener('click',()=>flip(!$('flip-core').classList.contains('flipped')));$('back-return').addEventListener('click',()=>flip(false));$('menu-toggle').addEventListener('click',()=>{const show=$('tax-menu').hidden;$('tax-menu').hidden=!show;$('menu-toggle').setAttribute('aria-expanded',String(show));renderMenu()});$('display').addEventListener('input',markDirty);
+document.querySelectorAll('[data-key]').forEach(b=>b.addEventListener('click',()=>{const k=b.dataset.key;let value=$('display').value;if(k==='clear')value='0';else if(k==='sign')value=value.startsWith('-')?value.slice(1):'-'+value;else value=(value==='0'&&/^[0-9]$/.test(k)?'':value)+k;$('display').value=value.slice(0,28);markDirty()}));document.querySelectorAll('[data-rate]').forEach(b=>b.addEventListener('click',()=>{rateDraft.mode='preset';rateDraft.preset=b.dataset.rate;markDirty()}));$('equals').addEventListener('click',()=>{$('main-note').textContent='原型只播放预设案例。自定义数值待接入后端计算；点击“恢复当前示例”继续体验。';$('main-note').classList.add('warn')});
+$('scenario').addEventListener('change',()=>{scenario=$('scenario').value;resetRateDraft();dirty.clear();current=scenario==='manual'?'split':scenario==='quarter'?'eit':'vat';selected=new Set(scenario==='manual'?['split']:scenario==='quarter'?['eit']:['vat','surcharge']);flip(false);render()});$('reset-case').addEventListener('click',()=>{dirty.clear();drafts.clear();resetRateDraft();render()});
+$('size-toggle').addEventListener('click',()=>{document.body.classList.toggle('compact-preview');$('size-toggle').textContent=document.body.classList.contains('compact-preview')?'恢复宽屏':'窄屏预览';openCalculator()});$('theme-toggle').addEventListener('click',()=>{document.body.classList.toggle('light-calculator');$('theme-toggle').textContent=document.body.classList.contains('light-calculator')?'深灰计算器样式':'浅色恢复样式';openCalculator()});
+// A custom percent is only an input assumption; tax arithmetic remains backend-owned.
+function validCustomPercent(text){
+  if(!/^(?:0|[1-9]\d{0,2})(?:\.\d{1,4})?$/.test(text))return false;
+  const [whole,fraction='']=text.split('.');
+  return BigInt(whole)*10000n+BigInt(fraction.padEnd(4,'0'))<=1000000n;
+}
+function resetRateDraft(){rateDraft.mode='preset';rateDraft.preset='13';rateDraft.custom=''}
+function syncRateControls(){
+  const custom=rateDraft.mode==='custom';
+  $('rate-row').hidden=custom;$('custom-rate-editor').hidden=!custom;
+  $('custom-rate-toggle').setAttribute('aria-expanded',String(custom));
+  $('custom-rate-input').value=rateDraft.custom;
+  document.querySelectorAll('[data-rate]').forEach(b=>b.setAttribute('aria-pressed',String(!custom&&b.dataset.rate===rateDraft.preset)));
+  if(current!=='split')return;
+  if(custom){
+    const valid=validCustomPercent(rateDraft.custom);
+    $('custom-rate-input').setAttribute('aria-invalid',String(!valid));$('equals').disabled=!valid;
+    $('result-state').textContent='自定义 · 待重算';
+    $('main-note').textContent=valid?`自定义 ${rateDraft.custom}% · 用户测算假设，结果待后端重算。`:'请输入 0–100 的税率（%），最多 4 位小数。';
+    $('main-note').classList.add('warn');
+    $('why-source').textContent='用户自定义税率仅为测算假设，不代表官方适用税率。原型尚未连接计算服务。';
+  }
+}
+$('custom-rate-toggle').addEventListener('click',()=>{rateDraft.mode='custom';markDirty();$('custom-rate-input').focus()});
+$('custom-rate-input').addEventListener('input',()=>{rateDraft.custom=$('custom-rate-input').value;markDirty()});
+$('preset-rates').addEventListener('click',()=>{rateDraft.mode='preset';markDirty();document.querySelector(`[data-rate="${rateDraft.preset}"]`).focus()});
+
+// Placement is a display preference, independent of company selection and calculation drafts.
+let entryPlacement='floating', floatingAnchor=null, dragState=null, suppressLauncherClick=false;
+const launcherWrap=$('launcher-wrap');
+function clampFloatingPosition(x,y){
+  const rect=launcherWrap.getBoundingClientRect();
+  const maxX=Math.max(8,innerWidth-rect.width-8),maxY=Math.max(8,innerHeight-rect.height-8);
+  const minY=Math.min(maxY,document.querySelector('.app-header').getBoundingClientRect().bottom+8);
+  return {x:Math.min(maxX,Math.max(8,x)),y:Math.min(maxY,Math.max(minY,y))};
+}
+function layoutFloating(){
+  if(entryPlacement!=='floating')return;
+  const rect=launcherWrap.getBoundingClientRect();
+  const point=clampFloatingPosition(floatingAnchor?floatingAnchor.x*Math.max(1,innerWidth-rect.width):14,floatingAnchor?floatingAnchor.y*Math.max(1,innerHeight-rect.height):innerHeight*.46);
+  launcherWrap.style.left=point.x+'px';launcherWrap.style.top=point.y+'px';
+}
+function placeLauncher(value){
+  if(!['floating','header'].includes(value))return;
+  entryPlacement=value;
+  launcherWrap.classList.toggle('in-header',value==='header');
+  (value==='header'?$('header-calculator-slot'):document.body).append(launcherWrap);
+  launcherWrap.style.left='';launcherWrap.style.top='';
+  $('reset-position').disabled=value==='header';
+  $('placement-note').textContent=value==='header'?'入口位于置顶栏“首页”左侧，与导航按钮纵向居中对齐。':'20px 小图标。可拖动到界面内顺手的位置；点击打开计算器。';
+  layoutFloating();
+}
+launcherWrap.addEventListener('pointerdown',event=>{
+  if(entryPlacement!=='floating'||event.button!==0)return;
+  const rect=launcherWrap.getBoundingClientRect();
+  dragState={id:event.pointerId,x:event.clientX,y:event.clientY,left:rect.left,top:rect.top,moved:false};
+});
+launcherWrap.addEventListener('pointermove',event=>{
+  if(!dragState||event.pointerId!==dragState.id)return;
+  const dx=event.clientX-dragState.x,dy=event.clientY-dragState.y;
+  if(!dragState.moved&&Math.hypot(dx,dy)<6)return;
+  if(!dragState.moved){dragState.moved=true;launcherWrap.setPointerCapture(event.pointerId);launcherWrap.classList.add('dragging')}
+  const point=clampFloatingPosition(dragState.left+dx,dragState.top+dy);
+  launcherWrap.style.left=point.x+'px';launcherWrap.style.top=point.y+'px';
+  const rect=launcherWrap.getBoundingClientRect();
+  floatingAnchor={x:point.x/Math.max(1,innerWidth-rect.width),y:point.y/Math.max(1,innerHeight-rect.height)};
+});
+function endLauncherDrag(event){
+  if(!dragState||event.pointerId!==dragState.id)return;
+  // A completed drag must not also dispatch the calculator-opening click.
+  if(dragState.moved){suppressLauncherClick=true;setTimeout(()=>{suppressLauncherClick=false},0)}
+  if(launcherWrap.hasPointerCapture(event.pointerId))launcherWrap.releasePointerCapture(event.pointerId);
+  dragState=null;launcherWrap.classList.remove('dragging');
+}
+launcherWrap.addEventListener('pointerleave',()=>{if(dragState&&!dragState.moved)dragState=null});
+launcherWrap.addEventListener('lostpointercapture',()=>{dragState=null;launcherWrap.classList.remove('dragging')});
+launcherWrap.addEventListener('pointerup',endLauncherDrag);
+launcherWrap.addEventListener('pointercancel',endLauncherDrag);
+addEventListener('resize',layoutFloating);
+document.querySelectorAll('[name="entry-placement"]').forEach(input=>input.addEventListener('change',()=>placeLauncher(input.value)));
+$('reset-position').addEventListener('click',()=>{floatingAnchor=null;layoutFloating()});
+$('open-settings').addEventListener('click',()=>reveal($('settings-dialog')));
+function dismissPickerDemo(){
+  $('native-picker-preview').hidden=true;$('pick-company-dir').disabled=false;
+  $('pick-company-dir').textContent='选择本地文件夹';
+}
+function closeSettings(){dismissPickerDemo();hide($('settings-dialog'))}
+$('close-settings').addEventListener('click',closeSettings);
+$('settings-dialog').addEventListener('cancel',event=>{event.preventDefault();if(!$('native-picker-preview').hidden){dismissPickerDemo();$('pick-company-dir').focus()}else closeSettings()});
+$('settings-dialog').addEventListener('close',syncScroll);
+$('pick-company-dir').addEventListener('click',()=>{
+  $('native-picker-preview').hidden=false;$('pick-company-dir').disabled=true;
+  $('pick-company-dir').textContent='正在选择（模拟）…';$('picker-select-demo').focus();
+});
+$('picker-cancel-demo').addEventListener('click',()=>{dismissPickerDemo();$('pick-company-dir').focus()});
+$('picker-fail-demo').addEventListener('click',()=>{dismissPickerDemo();$('settings-status').textContent='模拟：原生选择器不可用，可重试；原目录与草稿已保留。';$('pick-company-dir').focus()});
+$('picker-select-demo').addEventListener('click',()=>{
+  // Picking supplies only a draft; its old detection must not authorize a save.
+  dismissPickerDemo();$('company-path').value='示例公司资料（演示路径）';
+  $('settings-status').textContent='待保存目录 · 请先检测资料';$('roles').replaceChildren();
+  $('detect-demo').disabled=false;$('save-demo').disabled=true;$('detect-demo').focus();
+});
+$('detect-demo').addEventListener('click',()=>{
+  $('settings-status').textContent='待保存目录 · 已找到进销项资料，上期留抵缺失';$('roles').replaceChildren();
+  for(const [label,value] of [['进项发票','已识别'],['销项发票','已识别'],['进项用途确认','已识别'],['上期申报 / 留抵','缺少'],['利润表 / 累计预缴','尚未映射'],['合同 / 已税资本','尚未映射']]){
+    const row=document.createElement('div');row.className='role-status';
+    const a=document.createElement('span'),b=document.createElement('span');a.textContent=label;b.textContent=value;row.append(a,b);$('roles').append(row);
+  }
+  $('save-demo').disabled=false;
+});
+$('save-demo').addEventListener('click',()=>{
+  $('settings-status').textContent='示例绑定已保存 · 增值税完整测算仍缺上期留抵';$('save-demo').disabled=true;
+  scenario='missing';current='vat';selected=new Set(['vat','surcharge']);$('scenario').value=scenario;resetRateDraft();dirty.clear();render();
+});
+$('clear-demo').addEventListener('click',()=>{
+  dismissPickerDemo();$('company-path').value='';$('roles').replaceChildren();
+  $('settings-status').textContent='未绑定 · 基础计算和手工税额测算可用';$('save-demo').disabled=true;$('detect-demo').disabled=true;
+  scenario='manual';current='split';selected=new Set(['split']);$('scenario').value=scenario;resetRateDraft();dirty.clear();render();
+});
+render();layoutFloating();
+</script>
+</body>
+</html>

@@ -18,9 +18,10 @@ from openpyxl import load_workbook
 
 from invoice_hub.domain import TargetProfile
 from invoice_hub.domain.models import utc_now_text
-from invoice_hub.extraction.parsers import SUPPORTED_EXTS, supported_invoice_files
+from invoice_hub.extraction.parsers import SUPPORTED_EXTS
 from invoice_hub.projections.summary import SUMMARY_HEADERS, write_summary_xlsx
 from invoice_hub.storage.files import atomic_write_json, read_csv_rows, read_json_object, write_csv_rows
+from invoice_hub.storage.parse_cache import scan_files
 
 STOP_FLAG_NAME = ".invoice_stop"
 LOCK_FILE_NAME = ".invoice_monitor.lock"
@@ -52,7 +53,7 @@ def _is_windows_lock_contention(exc: OSError) -> bool:
     )
 
 
-def _acquire_sync_os_lock(handle) -> None:
+def _acquire_sync_os_lock(handle, *, blocking=True) -> None:
     if os.name == "nt":
         import msvcrt
 
@@ -75,11 +76,13 @@ def _acquire_sync_os_lock(handle) -> None:
             except OSError as exc:
                 if not _is_windows_lock_contention(exc):
                     raise
+                if not blocking:
+                    raise BlockingIOError() from exc
                 time.sleep(SYNC_WRITE_LOCK_POLL_SECONDS)
         return
     import fcntl
 
-    fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+    fcntl.flock(handle.fileno(), fcntl.LOCK_EX | (0 if blocking else fcntl.LOCK_NB))
 
 
 def _release_sync_os_lock(handle) -> None:
@@ -322,6 +325,36 @@ class MonitorState:
             yield
 
     @contextmanager
+    def try_sync_write_lock(self):
+        """Read-view requests fall back to committed cache instead of waiting for parsing."""
+        key = canonical_path(self.sync_write_lock_file)
+        lock = _sync_thread_lock(key)
+        if not lock.acquire(blocking=False):
+            yield False
+            return
+        try:
+            held = getattr(_SYNC_HELD_LOCKS, "counts", {})
+            if held.get(key):
+                yield True
+                return
+            self.state_dir.mkdir(parents=True, exist_ok=True)
+            with self.sync_write_lock_file.open("a+b") as handle:
+                try:
+                    _acquire_sync_os_lock(handle, blocking=False)
+                except BlockingIOError:
+                    yield False
+                    return
+                held[key] = 1
+                _SYNC_HELD_LOCKS.counts = held
+                try:
+                    yield True
+                finally:
+                    held.pop(key, None)
+                    _release_sync_os_lock(handle)
+        finally:
+            lock.release()
+
+    @contextmanager
     def _file_lock(self, path: Path) -> Iterator[None]:
         key = canonical_path(path)
         thread_lock = _sync_thread_lock(key)
@@ -503,7 +536,7 @@ class MonitorState:
 
     def source_snapshot(self, progress: Callable[[int, int], None] | None = None) -> dict[str, dict]:
         result: dict[str, dict] = {}
-        files = supported_invoice_files(self.watch_dir)
+        files = scan_files(self.watch_dir)
         total = len(files)
         if progress:
             progress(0, total)

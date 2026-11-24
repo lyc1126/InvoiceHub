@@ -20,7 +20,8 @@ use tauri_plugin_opener::OpenerExt;
 
 use invoicehub_desktop::app_icon::{self, AppIconId};
 use invoicehub_desktop::backend::{
-    default_bundle_root, load_bundle_manifest, BackendHost, BackendShutdownOutcome, StartupSurface,
+    default_bundle_root, load_bundle_manifest, resolve_fixed_port_conflict, BackendHost,
+    BackendShutdownOutcome, PortConflictOutcome, StartupSurface,
 };
 use invoicehub_desktop::startup_diagnostics;
 
@@ -40,7 +41,7 @@ fn open_backend_in_browser(
     app: &tauri::AppHandle<tauri::Wry>,
 ) -> Result<(), tauri_plugin_opener::Error> {
     app.opener()
-        .open_url(invoicehub_desktop::backend_origin(), None::<&str>)
+        .open_url(invoicehub_desktop::backend_workspace_url(), None::<&str>)
 }
 
 fn reveal_desktop_window(app: &tauri::AppHandle<tauri::Wry>) {
@@ -245,6 +246,18 @@ fn main() -> ExitCode {
             // Tauri executes setup during run(), where returning Err panics instead of
             // reaching Builder::build's error arm. Present and request an orderly exit here.
             let outcome = (|| -> Result<(), Box<dyn Error>> {
+            // If another local InvoiceHub owns fixed port 8766, let the user explicitly
+            // confirm a standard keep_monitor shutdown before launching our own backend.
+            // Unknown occupants fail closed immediately; never switch ports or auto-kill.
+            if let PortConflictOutcome::RecoveredByShutdown { pid } =
+                resolve_fixed_port_conflict(|claim| {
+                    startup_diagnostics::offer_existing_invoicehub_shutdown(app.handle(), claim)
+                })?
+            {
+                eprintln!(
+                    "InvoiceHub gracefully shut down previous backend PID {pid} (keep_monitor) before launch"
+                );
+            }
             let backend = BackendHost::launch(manifest, app.handle().clone())?;
             let mut startup_surface = surface_override.unwrap_or(backend.startup_surface());
             let app_icon_id = app_icon::load_selected(backend.runtime_dir());
@@ -264,7 +277,7 @@ fn main() -> ExitCode {
                         startup_diagnostics::offer_browser_fallback()
                     },
                     || backend.verify_surface_ownership().map_err(Into::into),
-                    || { open_backend_in_browser(&app.handle())?; Ok(()) },
+                    || { open_backend_in_browser(app.handle())?; Ok(()) },
                 )?;
                 Ok(())
             })();
@@ -374,9 +387,9 @@ fn create_desktop_window(
     webview_data_directory: &Path,
     allow_print_popups: bool,
 ) -> Result<(), Box<dyn Error>> {
-    let backend_url = invoicehub_desktop::backend_origin().parse()?;
+    let backend_url = invoicehub_desktop::backend_workspace_url().parse()?;
     let app_handle = app.handle().clone();
-    tauri::WebviewWindowBuilder::new(
+    let window = tauri::WebviewWindowBuilder::new(
         app,
         MAIN_WINDOW_LABEL,
         tauri::WebviewUrl::External(backend_url),
@@ -411,6 +424,19 @@ fn create_desktop_window(
         }
     })
     .build()?;
+    let drop_window = window.clone();
+    window.on_webview_event(move |event| {
+        // Forward only to the fixed homepage/temporary workspace; no Host RPC credentials enter Web content.
+        if drop_window.url().ok().is_none_or(|url| !invoicehub_desktop::accepts_temporary_file_drop(&url)) {
+            return;
+        }
+        if let tauri::WebviewEvent::DragDrop(tauri::DragDropEvent::Drop { paths, .. }) = event {
+            let paths: Vec<String> = paths.iter().map(|path| path.to_string_lossy().into_owned()).collect();
+            if let Ok(payload) = serde_json::to_string(&paths) {
+                let _ = drop_window.eval(format!("window.dispatchEvent(new CustomEvent('invoicehub:temporary-drop', {{detail:{payload}}}));"));
+            }
+        }
+    });
     Ok(())
 }
 

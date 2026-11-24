@@ -27,10 +27,15 @@ PDF_AMOUNT_WINDOW_CHARS = 2000
 PDF_AMOUNT_WINDOW_LINES = 48
 PDF_AMOUNT_MAX_CANDIDATES = 24
 PDF_AMOUNT_TOLERANCE = Decimal("0.02")
+# The bare 合计 row label (its own line, or split one character per line) is also an anchor:
+# fuel and utility e-invoices print "合计 ¥除税 ¥税额" before 价税合计, so a window starting at
+# 价税合计 alone only sees the total. Embedded words (金额合计, 合计电费：…) never match.
 PDF_TOTAL_ANCHOR_PATTERN = re.compile(
-    r"价\s{0,3}税\s{0,3}合\s{0,3}计|[（(]\s*小\s*写\s*[）)]",
-    re.I,
+    r"价\s{0,3}税\s{0,3}合\s{0,3}计|[（(]\s*小\s*写\s*[）)]|^[ \t]*合\s{0,12}计[ \t]*$",
+    re.I | re.M,
 )
+PDF_TOTAL_ROW_PATTERN = re.compile(r"^[ \t]*合\s{0,12}计[ \t]*$", re.M)
+PDF_GRAND_TOTAL_PATTERN = re.compile(r"价\s{0,3}税\s{0,3}合\s{0,3}计|[（(]\s*小\s*写\s*[）)]", re.I)
 CURRENCY_MONEY_PATTERN = re.compile(
     rf"(?<![\d,])(?P<prefix_sign>[-+]?)\s*[¥￥]\s*(?P<suffix_sign>[-+]?)\s*"
     rf"(?P<number>{MONEY_NUMBER_PATTERN})(?![\d,])"
@@ -306,6 +311,32 @@ def _extract_pdf_amount_triple(text: str) -> dict[str, str]:
     }
 
 
+def _extract_pdf_untaxed_pair(text: str) -> dict[str, str]:
+    """Read a page whose lines are all 不征税/免税: one 合计 amount, then an equal 小写 total.
+
+    Such invoices leave the tax column blank, so no ¥ triple exists. Zero tax is accepted only
+    when the page shows no percentage rate at all and exactly one amount sits on each side of
+    价税合计; any remark amount, rate or second page with a different pair gives up.
+    """
+    found: set[str] = set()
+    for page in str(text or "").split(PDF_PAGE_SEPARATOR):
+        if re.search(r"\d\s*%", page) or not re.search(r"不征税|免税", page):
+            continue
+        for anchor in PDF_TOTAL_ROW_PATTERN.finditer(page):
+            _start, window = _bounded_pdf_amount_window(page, anchor.end())
+            grand = PDF_GRAND_TOTAL_PATTERN.search(window)
+            if not grand:
+                continue
+            row = _currency_money_candidates(window[: grand.start()])
+            total = _currency_money_candidates(window[grand.end() :])
+            if len(row) == 1 and len(total) == 1 and row[0][1] == total[0][1]:
+                found.add(total[0][2])
+    if len(found) != 1:
+        return {}
+    value = found.pop()
+    return {"pretax_amount": value, "tax_amount": "0.00", "amount": value}
+
+
 def _extract_tax_rate(text: str) -> str:
     value = _regex_first(text, [r"税率[:：\s]*([0-9]{1,2}(?:\.\d+)?%)", r"([0-9]{1,2}(?:\.\d+)?%)"])
     return value if value and len(value) <= 8 else ""
@@ -525,6 +556,22 @@ def _extract_vertical_party(text: str, label: str) -> str:
     return ""
 
 
+def _extract_split_label_parties(text: str) -> tuple[str, str]:
+    """Read "购/买/方/信/息 名称:X" blocks whose label is printed one character per line.
+
+    Returns (buyer, seller) only when each label is followed directly by its own 名称 line and
+    the two names differ. If both labels precede the values, the buyer label is not followed by
+    名称, so neither side is taken: the seller label would otherwise grab the buyer's name.
+    """
+    names = []
+    for label in ("购买方", "销售方"):
+        pattern = r"\s*".join(label) + r"\s*(?:信\s*息)?\s*名\s*称[:：][ \t]*([^\n\r]+)"
+        match = re.search(pattern, str(text or ""))
+        names.append(_clean_company_candidate(match.group(1)) if match else "")
+    buyer, seller = names
+    return (buyer, seller) if buyer and seller and buyer != seller else ("", "")
+
+
 def _ofd_text_objects(archive: zipfile.ZipFile) -> dict[str, str]:
     result: dict[str, str] = {}
     content_names = [
@@ -550,17 +597,28 @@ def _ofd_text_objects(archive: zipfile.ZipFile) -> dict[str, str]:
     return result
 
 
-def _ofd_positioned_text_objects(archive: zipfile.ZipFile) -> list[dict[str, float | str]]:
+def _ofd_positioned_text_objects(
+    archive: zipfile.ZipFile, *, single_layout: bool = False,
+) -> list[dict[str, float | str]]:
     result: list[dict[str, float | str]] = []
     content_names = [
         name
         for name in archive.namelist()
         if name.lower().endswith("content.xml") and ("/pages/" in name.lower() or "/tpls/" in name.lower())
     ]
+    if single_layout:
+        # Classification can scan all objects, but amount/party coordinates are page-local.
+        # Without resolving template IDs, only one page and at most one same-document template are safe to combine.
+        page_roots = [name.lower().split("/pages/", 1)[0] for name in content_names if "/pages/" in name.lower()]
+        template_roots = [name.lower().split("/tpls/", 1)[0] for name in content_names if "/tpls/" in name.lower()]
+        if len(page_roots) != 1 or (template_roots and template_roots != page_roots):
+            return []
     for name in sorted(content_names):
         try:
             root = ET.fromstring(archive.read(name))
         except Exception:
+            if single_layout:
+                return []
             continue
         for element in root.iter():
             if _local_name(element.tag) != "textobject":
@@ -607,6 +665,96 @@ def _ofd_custom_tag_refs(archive: zipfile.ZipFile) -> dict[str, list[str]]:
 
         walk(root, [])
     return refs
+
+
+def _ofd_layout_parties(objects: list[dict[str, float | str]]) -> tuple[str, str]:
+    """Pair each template "名称：" label with the page value printed right after it on the same top line.
+
+    The side comes from the nearest 购/销 block character to the label's left, not from page halves,
+    so top/bottom and left/right layouts both work. Both sides must resolve to different names.
+    """
+    sides: dict[str, list[str]] = {"购": [], "销": []}
+    markers = [item for item in objects if item["text"] in sides]
+    for label in objects:
+        text = str(label["text"]).strip()
+        inline = re.fullmatch(r"名\s*称[:：](.+)", text)
+        if not inline and not re.fullmatch(r"名\s*称[:：]?", text):
+            continue
+        lx, ly = float(label["x"]), float(label["y"])
+        if inline:
+            value = inline.group(1)
+        else:
+            # Label boxes are padded, so the value may start inside the label's width.
+            right = [item for item in objects if item is not label and abs(float(item["y"]) - ly) <= 1.5
+                     and 0 < float(item["x"]) - lx <= 30]
+            value = str(min(right, key=lambda item: float(item["x"]))["text"]) if right else ""
+        near = [item for item in markers if float(item["x"]) <= lx]
+        if not near:
+            continue
+        side = str(min(near, key=lambda item: (float(item["x"]) - lx) ** 2 + (float(item["y"]) - ly) ** 2)["text"])
+        name = _clean_company_candidate(value)
+        if name:
+            sides[side].append(name)
+    buyers, sellers = set(sides["购"]), set(sides["销"])
+    if len(buyers) != 1 or len(sellers) != 1 or buyers == sellers:
+        return "", ""
+    return buyers.pop(), sellers.pop()
+
+
+def _ofd_layout_amounts(objects: list[dict[str, float | str]]) -> dict[str, str]:
+    """Read the 合计 row and the （小写） total from OFD coordinates, with the PDF safety rules.
+
+    Values belong to a row only when their boxes overlap the label's vertical band. Two row values
+    must add up to the single total; one row value equal to the total is zero tax only when the page
+    has no percentage rate and states 不征税/免税. Anything else returns no evidence.
+    """
+    def band_text(label: dict[str, float | str], *, right_of_label: bool) -> str:
+        top, bottom = float(label["y"]), float(label["y"]) + float(label["height"])
+        # Padded label boxes can overlap the value, so "right of" starts at the label's own x.
+        start = float(label["x"]) if right_of_label else float("-inf")
+        hits = [item for item in objects
+                if float(item["y"]) < bottom and float(item["y"]) + float(item["height"]) > top
+                and float(item["x"]) >= start and item is not label]
+        # A currency sign and its number can share one x; keep the sign first.
+        ordered = sorted(hits, key=lambda item: (float(item["x"]), str(item["text"]) not in ("¥", "￥")))
+        return " ".join(str(item["text"]) for item in ordered)
+
+    row_labels = [item for item in objects if re.fullmatch(r"合\s*计", str(item["text"]).strip()) or item["text"] == "合"]
+    total_labels = [item for item in objects if re.fullmatch(r"[（(]\s*小\s*写\s*[）)]", str(item["text"]).strip())]
+    if len(row_labels) != 1 or len(total_labels) != 1:
+        return {}
+    row = _currency_money_candidates(band_text(row_labels[0], right_of_label=False))
+    total = _currency_money_candidates(band_text(total_labels[0], right_of_label=True))
+    if len(total) != 1:
+        return {}
+    if len(row) == 2 and abs(row[0][1] + row[1][1] - total[0][1]) <= PDF_AMOUNT_TOLERANCE:
+        return {"pretax_amount": row[0][2], "tax_amount": row[1][2], "amount": total[0][2]}
+    page_text = "\n".join(str(item["text"]) for item in objects)
+    if (len(row) == 1 and row[0][1] == total[0][1]
+            and not re.search(r"\d\s*%", page_text) and re.search(r"不征税|免税", page_text)):
+        return {"pretax_amount": total[0][2], "tax_amount": "0.00", "amount": total[0][2]}
+    return {}
+
+
+def _fill_from_ofd_layout(record: InvoiceRecord, objects: list[dict[str, float | str]]) -> InvoiceRecord:
+    """Fill only empty party/amount fields from the OFD layout; structured CustomTag values always win.
+
+    Amounts are taken as a set and only when any amount already present agrees with the layout,
+    so a partial structured record is never mixed with an unrelated triple.
+    """
+    updates: dict[str, str] = {}
+    if not record.buyer or not record.seller:
+        buyer, seller = _ofd_layout_parties(objects)
+        if not record.buyer and buyer:
+            updates["buyer"] = buyer
+        if not record.seller and seller:
+            updates["seller"] = seller
+    if not (record.amount and record.pretax_amount and record.tax_amount):
+        layout = _ofd_layout_amounts(objects)
+        present = {key: getattr(record, key) for key in ("amount", "pretax_amount", "tax_amount") if getattr(record, key)}
+        if layout and all(_normalize_money(value) == layout[key] for key, value in present.items()):
+            updates.update({key: value for key, value in layout.items() if key not in present})
+    return record.model_copy(update=updates) if updates else record
 
 
 def _ofd_classification(
@@ -767,7 +915,9 @@ def _is_synthetic_release_fixture(text: str) -> bool:
 
 def _record_from_text(path: Path, text: str, classification: ClassificationResult | None = None) -> InvoiceRecord:
     sequence = _extract_einvoice_value_sequence(text)
-    amount_triple = _extract_pdf_amount_triple(text) if path.suffix.lower() == ".pdf" else {}
+    amount_triple = (
+        (_extract_pdf_amount_triple(text) or _extract_pdf_untaxed_pair(text)) if path.suffix.lower() == ".pdf" else {}
+    )
     synthetic_fixture = _is_synthetic_release_fixture(text)
     chinese_invoice_evidence = "发票" in text
     invoice_number_patterns = [r"发票号码[:：\s]*([0-9]{8,20})"]
@@ -809,6 +959,9 @@ def _record_from_text(path: Path, text: str, classification: ClassificationResul
     invoice_date = sequence.get("invoice_date") or _normalize_date(invoice_date) or invoice_date
     seller = sequence.get("seller") or seller
     buyer = sequence.get("buyer") or buyer
+    if not buyer or not seller:
+        split_buyer, split_seller = _extract_split_label_parties(text)
+        buyer, seller = buyer or split_buyer, seller or split_seller
     if not buyer:
         buyer = _extract_vertical_party(text, "购买方信息")
     if not seller:
@@ -929,9 +1082,18 @@ def _record_from_xml(path: Path) -> InvoiceRecord:
 
 
 def _record_from_ofd(path: Path) -> InvoiceRecord:
-    structured = _record_from_ofd_structured(path)
-    if structured:
-        return structured
+    record = _record_from_ofd_structured(path) or _record_from_ofd_text(path)
+    if all((record.buyer, record.seller, record.amount, record.pretax_amount, record.tax_amount)):
+        return record
+    try:
+        with zipfile.ZipFile(path) as archive:
+            layout_objects = _ofd_positioned_text_objects(archive, single_layout=True)
+    except Exception:
+        return record
+    return _fill_from_ofd_layout(record, layout_objects)
+
+
+def _record_from_ofd_text(path: Path) -> InvoiceRecord:
     text = _text_from_ofd(path)
     try:
         with zipfile.ZipFile(path) as archive:

@@ -57,11 +57,11 @@ def _package(platform: str = "windows", package_type: str = "portable") -> dict:
     }
 
 
-def _feed(version: str = "0.3.0-alpha.3") -> dict:
-    release_root = f"https://github.com/lyc1126/InvoiceHub/releases"
+def _feed(version: str = "1.0.0-beta.2") -> dict:
+    release_root = "https://github.com/lyc1126/InvoiceHub/releases"
     return {
         "schema_version": 1,
-        "channel": "alpha",
+        "channel": "beta",
         "latest_version": version,
         "published_at": "2026-08-02T00:00:00Z",
         "minimum_api_contract": "2026-08-02-release-update-v1",
@@ -122,7 +122,7 @@ def test_update_check_reports_available_and_reuses_etag_cache(tmp_path: Path) ->
     second = service.check(force=True)
 
     assert first["status"] == "available"
-    assert first["latest_version"] == "0.3.0-alpha.3"
+    assert first["latest_version"] == "1.0.0-beta.2"
     assert first["artifact"]["size_bytes"] == 123
     assert calls[1]["If-None-Match"] == '"feed-v1"'
     assert "Cache-Control" not in calls[0]
@@ -138,7 +138,7 @@ def test_required_fresh_body_rejects_cached_etag_and_304_metadata(tmp_path: Path
             UpdateFetchResult(304, b"", '"cached"', UPDATE_FEED_URL),
             UpdateFetchResult(
                 200,
-                json.dumps(_feed("0.3.0-alpha.3")).encode(),
+                json.dumps(_feed("1.0.0-beta.2")).encode(),
                 '"fresh"',
                 UPDATE_FEED_URL,
             ),
@@ -167,7 +167,7 @@ def test_required_fresh_body_rejects_cached_etag_and_304_metadata(tmp_path: Path
     assert blocked["status"] == "invalid"
     assert blocked["error_code"] == "UPDATE_FEED_INVALID"
     assert fresh["status"] == "available"
-    assert fresh["latest_version"] == "0.3.0-alpha.3"
+    assert fresh["latest_version"] == "1.0.0-beta.2"
     assert "If-None-Match" not in calls[0]
     assert "If-None-Match" not in calls[1]
     assert "If-None-Match" not in calls[2]
@@ -177,7 +177,7 @@ def test_required_fresh_body_rejects_cached_etag_and_304_metadata(tmp_path: Path
 
 
 def test_update_check_handles_prerelease_order_and_invalid_version(tmp_path: Path) -> None:
-    feed = _feed("0.3.0-alpha.1")
+    feed = _feed("1.0.0-beta.0")
 
     def transport(url, _headers, *_args):
         return UpdateFetchResult(200, json.dumps(feed).encode(), "", url)
@@ -538,7 +538,7 @@ def test_failed_check_preserves_last_good_etag_and_feed_for_recovery(tmp_path: P
     assert service.check(force=True)["status"] == "offline"
     cache = json.loads(cache_path.read_text(encoding="utf-8"))
     assert cache["etag"] == '"stable"'
-    assert cache["feed"]["latest_version"] == "0.3.0-alpha.3"
+    assert cache["feed"]["latest_version"] == "1.0.0-beta.2"
     assert cache["last_success_result"]["status"] == "available"
     assert service.check(force=True)["status"] == "available"
 

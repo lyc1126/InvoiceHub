@@ -1,8 +1,493 @@
 # InvoiceHub 注释与设计原因地图
 
+## 2026-11-24 OFD 开发包定位、发布验包门禁与多页预览防并发冲突
+
+| 文件与符号 | 原因与不变量 | 守护 |
+|---|---|---|
+| `services/ofd_rendering.py::OFDRenderer.__init__` / `verify_ofd_component`、`scripts/dev/tauri_dev_app.py` | 本地 macOS 开发包携带 `invoice-hub-build.json`（无 `invoice-hub-package.json`）并运行在仓库 `.venv` 下，无法在 `.venv/components/ofd-preview` 找到组件；由开发启动器导出绝对路径 `INVOICE_HUB_DEV_OFD_COMPONENT` 指向 `runtime/components/ofd-preview` 并继续走完整清单/指纹/SHA-256 校验，而正式发布模式（含 `invoice-hub-package.json` 或 `INVOICE_HUB_RELEASE_MODE=1`）始终忽略该变量并由双平台验包器强制检查内嵌 `components/ofd-preview`。 | `test_ofd_rendering.py`（dev/release 分支与平台/哈希校验）、`test_tauri_dev_app.py`、`test_tauri_windows_portable.py`、`test_macos_release_contract.py` |
+| `services/file_preview.py::create_job(allow_system_open=False)`、`services/sources.py::preview` | 服务器只读预览不暴露本机缓存路径与“系统打开”入口，传 `allow_system_open=False` 去除无效的系统打开提示，同时保持本地监控目录与经典页原提示不变。 | `test_ofd_rendering.py`、`test_server_sources.py` |
+| `ServerPreviewDrawer.vue`、`SourcePreview.vue`、`ServerSourcesPanel.vue` 的多页 OFD 跳转与 `onImageError` | `OFDRenderer` 进程全局只允许单 worker（`_RENDER_SLOT`），多页 OFD 并发渲染缩略图 `<img>` 会立即撞上 `422 ofd_renderer_busy`；改用页码按钮按需单页请求，并在图片加载失败时探测后端 JSON `detail`（仅 `404/410` 触发单次会话重建）。 | `frontend/tests/server-sources.spec.ts`、`frontend/tests/directory-preview.spec.ts` |
+| `storage/source_adapters/sftp.py::_ssh_agent_auth_message`、`services/sources.py::add`、`ServerConnectModal.vue::submitAdd` | 桌面 `.app` 进程默认 `SSH_AUTH_SOCK` 常未加载用户私钥，笼统报错难以排查；通过非交互 `ssh-add -l` 区分无 Agent / 空 Agent / 公钥被拒，并在添加 SFTP 后自动触发主机指纹 `probe` 且规范化非根尾斜杠（仍拒绝 `..`、`//` 和相对路径）。 | `test_sftp_source.py`、`test_server_sources.py`、`frontend/tests/server-sources.spec.ts` |
+
+## 2026-11-23 解析器版本重算、成品油归类与工作区重算
+
+| 文件与符号 | 原因与不变量 | 守护 |
+|---|---|---|
+| `storage/generations.py::parser_versions_stale`、`monitoring/sync.py`、`company_views.py::directory_freshness` | 程序升级改进提取/分类/成本规则不会改变源发票 `mtime_ns/size`，旧目录（如升级前无 manifest 或旧 `parser_versions`）会一直展示过时空白结果；检测版本变化触发一次增量重建并由 `ParseCache` 复用未变种类，稳态周期不重解析，手改覆盖仍保留。 | `test_monitor_sync_auto_rebuilds_when_parser_version_changes_or_manifest_missing`、`test_parser_version_change_marks_non_monitored_directory_stale_and_refresh_rebuilds` |
+| `services/document_index.py::CACHE_VERSION = 3`、`extraction/classification.py::BUSINESS_TYPE_REFINED_OIL` | 登记「成品油」特定业务类型后，原有成品油票的 `business_type` 从“标准电子发票”变为“成品油”；必须递增单据缓存版本使旧记录重新提取，且仅按坐标/显式结构化字段归类，拒绝公司名或商品名误触发。 | `test_refined_oil_business_type_uses_context_not_company_or_item_names` |
+| `DirectoryPanel.vue` / `CompanyDirectories.vue` 的 `rebuildActive` | 活动监控目录共用 `POST /api/v1/bridge/rebuild`（与经典页及 monitor 写锁一致），成功后派发 `workspace:company-refreshed` 通知同页列表与摘要；切换公司/目录或卸载时按 `rebuildGeneration` 丢弃迟到响应。 | `selection-summary-and-refresh.spec.ts` |
+
+## 2026-11-23 服务类型先于库存分组
+
+| 文件与符号 | 原因与不变量 | 守护 |
+|---|---|---|
+| `vouchers.build_drafts` 的品目分组、销售和历史数量 | 原票服务名可能包含“盘螺”；必须先按公司标准名链定类型，再调用库存品类匹配，避免金额、单位和服务数量进入购入/出库/期初更正与销售成本。服务名称只在原票依据披露。 | `test_voucher_item_types` 的混合票、别名、历史和混合销项 |
+| `voucher_items.non_stock_account` 与空编码行 | 旧库存映射/钢材品类习惯不证明服务应入库；只接受精确已确认可用非库存科目，缺失或冲突保留原票金额与借贷平衡，让共享 validator 阻断审核导出。 | 两入口对照、库存/不可用/矛盾映射、审核及整月导出 |
+| `company_views._voucher_invoice_inputs`、`prepare` 前后读取 | 完整代际 CSV 与人工状态位于不同目录；必须成对携带并在本次生成复核状态原字节和目录身份，避免选错公司、用错代际父目录或覆盖已变化来源下的原审核表。 | API 来源切换/改记入期、坏/未来状态、生成期间目录替换 |
+| `vouchers` 的零税额分支与库存编码复用 | 零金额税额行会被正金额 validator 拦截；隐式库存解析可能已返回完整科目名，再拼名称路径会丢编码。分别省略零税额行、复用已解析编码，保持校验和确认优先级。 | 零税额 200+30、纯货物和服务库存对照冲突 |
+
+## 2026-11-22 局部 DOM 与浏览器夹具清理
+
+- `page-index.reconcileInvoiceRows`：位置键来自投影下标，不能单独代表一张票；节点必须绑定目标与源路径，内容不变时才复用，避免 SSE 读回使焦点/内部滚动丢失或将旧复选框移交给其它文件。批量勾选只改属性，节点缓存限当前页；失效节点先移除，避免替换相邻行时搬动未变化的焦点行。
+- `page-index.refreshAll`：未保存目录会抑制例行成功横幅，不能因此一直保留旧读取失败提示；只有曾失败且完整读取恢复时显示恢复与待保存说明，普通草稿提示不被重复覆盖。守护为 Node 恢复回归与真实浏览器一次 503 后恢复。
+- `browser_e2e_support`：真实 context 的 SSE 必须先关闭，夹具才能正常退出。父进程持有临时根并在子进程收束后清理，强制终止不遗留投影；环境剥离宿主配置/令牌覆盖，CDP 只关闭本次 context。日志/trace 限合成资料。
+- `browser_e2e`/`classic_home_fixture`：重复是独立运行而非失败重试；故障只注入开发夹具的 JS，且必须失败于指定 DOM 身份断言，不能把依赖缺失、启动失败或其它错误当作守护有效。守护为 `test_browser_e2e.py`、三组浏览器及 `--verify-refresh-guard`。
+
+## 2026-11-21 服务毛利与价格证据
+
+- `cost_item_types._preview/save`：类型沿别名最终标准名保存，让货物/服务消费者一致；保存走原品目表迁移/工作簿链并取 monitor 的捕获 profile 同步锁，防并发汇总盖掉人工类型。坏状态/未知结果不当空重写，守护归类HTTP、旧快照与别名组回归。
+- `cost_reports._service_margin`：仅明确 service、同月非空项目与人工成本匹配，缺成本不可当零；避免把费用/资产或未归属收入拼成利润。守护同月双项目、跨月、明确零/缺失、来源过期、来源追溯与货物成本不变。
+- `cost_reports._uniform_markup`：必须使用原月实际成本，未知/排除样本阻止对全期间的一致判断；只展示样本证据，不推断税务违法或自动改价。`_alias_candidates` 保留规格E与单位边界、限制比较次数，不把名称相似当作已确认同物。守护期间、未知成本与规格差异测试。
+- `CostAnalysis.load`：新查询先移除旧结果，失败不把上一期间利润留在新日期下；映射/卸载作废迟到响应。`CostItemTypes` 保留过期草稿但撤销预览，未知写入仅成功读回解锁；守护Vue与故障注入浏览器回归。
+- `CostServiceCosts/CostInventorySetup`：共享归类保存会更新来源版本，旧预览必须作废、已编辑草稿保留并显式重新读取；预览/写入响应同时绑定公司代际，卸载/映射切换后不回填。守护迟到预览、共享保存作废与未知结果只查询的Vue用例。
+
+## 2026-11-21 旧加价率迁移与前端确认链
+
+- `CostQuote.openArchive/confirmArchive/checkArchive`：未知 PUT 可能已经落盘，必须锁定新预览/新 ID；查询提示独立渲染，防后续试算清错时丢掉恢复入口。`CostRules/CostItems` 监听成功 GET 替换的快照对象，而非只看 revision：未落盘失败也可能读回原版本，不能永久锁死；缺失快照不解锁，所有旧预览失效并按 generation 丢弃迟到结果。守护 `cost-v2.spec.ts` 的未知归档重试/查询失败、同版本恢复、公司切换与迟到预览回归。
+- `company_costs._preview/_quote` 的 `legacy_migrated`：上游为用户在迁移页确认的列表，下游报价/试算/归档不再读时套用这些 v1 人工加价率。省略字段沿用已保存列表，防普通规则编辑意外复活或丢弃旧加价率；列表进入 preview_hash 防确认后被替换。守护转换/不沿用/后续编辑保留/显式清空复活回归。
+- `CostItems.previewMigration`：保存列表取已迁移与本批的并集，防分批迁移时前一批回退到 v1；已有不限期单行规则的品目只记迁移不再新增规则，避免同层生效期重叠被拒。`issued()` 有销项实际时不加手填快照，防重复计数。
+- V2 写入组件统一：409 先重读再显示原因（否则成功读回会清掉冲突说明），网络/5xx 标未知并锁定写入，直到一次成功读回；`CompanyCostsV2` 换公司时丢弃迟到响应，防别家公司价格残留。`costV2.unitCost` 只缩短 50 位结存单价的显示（字符串四舍五入），精确值留在 title 且从不回传。
+
+## 2026-11-21 显式库存、固定归档与毛利守恒
+
+- `stock_mapping.resolve_stock/journal_stock`：上游为已确认对照/期初和账套读回，下游 V2/比较/草稿必须同科目同口径；没有期初不能假定账面为零，重叠导出无来源行ID不能猜去重，单位/数量方向不明不能建立余额。守护显式差额、缺月、重叠、共享草稿及单位冲突回归。
+- `CostInventoryService._preview/save` 与 `company_inventory`：品目别名在预览中展开，保证 CSV/CLI 原名与 V2 标准名同源；确认基线固定发票滚动起点，防查询起月变化掩盖旧差额。配置按成本锁→草稿锁保存、来源指纹复核/目录身份替换和读回；`vouchers.build_drafts` 拒绝与旧人工习惯冲突，且禁用确认期初的自动数量纠正。守护重绑、比较/草稿一致与无调整回归。
+- `CostRecordService.save/_state`：上游是一次确认的报价/试算，下游历史查询与导出要保留原价，源变化后同ID原请求只返回旧回执；独立根目录历史读取不依赖发票目录还在。内容 hash 与结构校验共同防损坏记录导致错误导出，hash 不等于签名。守护原请求重放、源移走、异内容拒绝/并发CAS、重算校验后坏结构回归。
+- `cost_reports.build_margin_report/read`：上游为原品类月销售成本，下游四维分析只分摊同一总额；累计数量到分再作差防逐行舍入丢分，不生成规格库存。当前月截今天并标暂计，服务人工成本单列，非货物收入排除，防未来销项/未知成本被当已实现利润。守护多客户/项目/规格分位守恒及当前日期回归。
+- `cost_export.quote_workbook`：只消费已确认归档，不读取当前规则重报价；所有金额/用户文字写文本，防Excel精度损失或公式前缀执行。守护试算前后、原市场来源、字面公式及导出无写盘回归。人工服务成本预览保存守护源说明/有界金额/修订失效，不读取工资推算成本。
+
+## 2026-11-20 阶梯阈值与市场底线
+
+- `cost_pricing.calculate_price`：金额阶梯由请求显式提供基准金额，不能从报价结果反推，否则折扣与档位自指，preview/save 可能不一致；从零有序半开区间确定唯一整行档位。守护数量边界、显式金额、未知成本固定档与坏档位回归。
+- 同函数市场分支：用户输入的市场价有明确来源及有效期，缺失/过期不回退猜价；最低加价是硬底线、minimum_margin 是建议提示，取整后必须再守底线，必要时优先于尾数。守护市场上下限、有效期边界、含税总额守恒、零/未知成本与取整分差回归。
+- `CompanyCostService._quote/_preview`：基准金额与市场证据通过完整 lines 进入原 preview_hash；修改证据来源即使不改变报价金额也要重新确认。证据不写入规则文件。守护 HTTP 422、证据/金额变更 409、只读和旧三件套不变测试。
+
+## 2026-11-19 成本 V2 的只读与保存保护
+
+- `CostProjectionService.read_pricing_inputs`：从完整代际读取旧行快照，不走旧页面的 schema 修复路径；日期坏行保留给库存排除，不能静默丢掉后声称完整。守护成本 V2 无写入/坏代际及库存排除回归。
+- `CompanyCostService._context/_snapshot`：活动 monitored 徽标不等于来源已同步；结存取品类月末加权，任何历史卖超/排除/过期都不可回退成历史均价冒充结存。生成的 v1 默认率不迁移成手工规则，否则客户层永远被遮蔽。守护 active/inactive 来源失效、低高价滚动、规格共享、历史身份与旧行迁移测试。
+- `CompanyCostService.save`：规则独立文件避免 monitor/v1 重建冲掉人工设置；确认后重新试算并复核目录与来源，替换时用原目录身份，读回确认结果。实际销项和手填快照不得双计，规则不得改写已开金额。守护无写入、旧快照、同进程双提交、目录晚替换/链接及旧确认重放测试；外部 CLI/编辑器不属于该锁的事务范围。
+- `cost_pricing.calculate_price/select_rule`：含税价为权威时从含税总额反算税额，避免已舍入除税单价往返多一分；旧行只读迁移优先于客户默认，显式 V2 line 可覆盖它。守护 100×3 含税合同价、分数数量、层级/生效期与特殊计税未知测试。
+
+## 2026-11-19 反馈隐私与外部写入保护
+
+- `FeedbackService.configuration/submit`：About 只取四项环境字段，默认不发送；意图先持久化，重放/重启只读回执，避免中转或 GitHub 已创建后因断线重复创建。receipt 绑定原中转，防止配置变化把旧查询秘密发给新服务。守护 `tests/test_feedback.py` 的隐私、断线/重启、重复/并发用例。
+- `integrations/feedback-relay/relay.py::Relay.submit/finish`：固定 API 接收服务端令牌，不能交给客户端；预留与限流同一 SQLite 写事务，原 HTTP 超时后的晚到成功仍可查询，重启留下的 sending 不能当未发送。匿名内容打断 @ 提及，防止反馈入口直接通知任意 GitHub 用户。守护反馈协议、限流与未知不重放测试。
+- `FeedbackDialog.submit/lookup`：未知响应锁写、只 GET 原编号；正文文本渲染，草稿只在内存，缺中转时不伪装在线成功。App `navigate` 只把受校验的设置导航变成外壳对话框，避免替换缓存 iframe 丢设置草稿。守护 `feedback.spec.ts` 与原桥接回归，真实浏览器另验。
+
+## 2026-11-19 候选与工资确认保护
+
+- `company_detection._inspect/register`：同类多候选只让用户选择；plan_hash 绑定全部候选身份及最终映射，未选不登记，同名替换不沿用旧确认。`CompanyCreateForm` 只发送非空选择，根路径改变/迟到响应不能借用旧计划。守护 `test_api_companies.py` 多候选/标准目录/同名替换与 `company-setup.spec.ts`。
+- `bank.salary` / `company_salary.save`：工资表是证据，前端脱敏行不是计提输入；保存时重解析并检查明确年月、逐行金额与合计，确认只补明确费用科目。工资/社保共用原税文件 SHA 与写锁，坏工资不能被社保保存覆盖。守护 `test_company_salary.py` 伪造行、损坏、并发/原表/目录替换与超限测试。
+- `bank.vouchers.prepare/build_drafts`：原表改变则停止生成；应发计提只借费用/成本、贷工资，不依据实发/扣款再生成付款或社保代扣，避免和已有社保个人部分分录重复。已入账月跳过，缺科目沿用审核阻断。守护工资页面/CLI一致性、入账月/社保并列与缺科目测试。
+- `CompanySalary`：未知保存只能读取结果；公司/来源切换丢弃旧响应，关闭完整显示时立即隐藏原值，即使后续请求失败也不遗留。社保/工资保存互相刷新共享 revision，409 不重放。守护 `company-salary.spec.ts`。
+
+## 2026-11-19 WS-06—09 衔接与失败保护
+
+- `parse_cache` / `summary` / `cost_analysis`：缓存的是原始解析，不是同票纠偏或手改后的最终值；在副本上纠偏，元数据、hash 和解析器版本失效后重取。守护 `test_incremental_projections.py` 的万文件差分、等长替换、坏缓存及全量一致性。
+- `incremental.rebuild_generation` / `generations`：先完整枚举，再生成普通与成本候选，复核源/人工版本后仅切 manifest，避免页面混读半份新结果。系统路径别名先规范化，兼容旧清单中的别名拼写而拒绝不同根；公司登记与 monitor 配置不能因等价路径混用产生 500。固定导出用回执恢复，未知 Excel 手改不能按旧导出覆盖。守护候选失败、迟到发布、内容损坏和导出恢复测试；读取消费者含工作区草稿，显式旧 CLI CSV 契约保留。
+- `company_opening` / `company_settlement`：往来户名必须来自显式辅助期初，不能从无辅助核算的摘要猜测；快照前来源退出余额，未知/覆盖不足不冒零。预付款仍进往来余额，但不能关联付款之后的发票。守护 `test_company_opening.py`、`test_workspace_prototype_ledger.py`。
+- `purchase_taxpayer_type` / `CostProjectionService` / `company_inventory`：购入成本取开票月身份，销项率仍取当前保存设置；历史未知不能套当前身份。完整时间线作为依赖，无新票也可刷新到期工作簿。守护历史身份与参考/库存同口径用例。
+- `source_worker` / `SourceService._run/_commit`：网络 I/O 放可终止子进程，锁只管状态；取消以 epoch 拒绝迟到结果，磁盘发布先于内存指针，失败保留完整快照。守护取消/重启、发布失败和根替换测试；标准 SFTP v3 只能标弱版本，二次枚举不能冒充服务器事务。
+- `SourceService.preview_content/release_preview` / `file_preview.release_job` / `ServerSourcesPanel`：离线需用户明确同意，租约绑定来源/revision/条目版本；关闭与切换只释放对应来源作业，不放宽本地活动目录权限。无号票使用不透明 entry_id 作为来源家族。守护 server_sources、sftp_source、server-sources.spec.ts 与原 file_preview/API 相邻回归。
+
+- `SourceService.entries` / `ServerSourcesPanel.load`：子树可读计数独立于筛选/分页，只有元信息的文件不能暗示有可读票面；收藏重开先恢复绑定/预算，避免默认值被再次保存覆盖。离线文件及标签入口明确提示副本。守护完整子树计数与 `server-sources.spec.ts` 的元信息、恢复及离线测试。
+- `source_worker.summarize` / `SourceService.summary` / `ServerDirectoryPanel`（2026-11-24）：真实 SMB 共享常为多项目混合盘，因此支持按 `parent_id` 仅拉取/解析所选子目录、跳过 macOS `._*` 伴随文件，并在单个非发票 PDF 成本明细失败时保留票头汇总并显式返回 `cost_error`（二次一致性校验亦限定在当前子树，避免无关项目变动打断当前目录）；`selection_summary` 与批量 `previews` 继续严格绑定不透明 `entry_id`、代际与来源租约，不放宽本地 `watch_dir` 权限。守护 `test_server_sources.py` 与 `frontend/tests/server-sources.spec.ts`。
+
+- `DirectoryInvoices.focusTagMenu` / `.tag-menu`：批量选择条位于层级 20，菜单须在其上且在异步标记加载后再次约束窗口边界，否则真实指针会被选择条截获或菜单逃出窄屏；单元测试覆盖边界坐标，浏览器实际点击验证保存。
+- `DirectoryInvoices` 的 `.invoice-party__text` 与 `workspace.hiddenInvoiceColumns`：`table-layout: auto` 下直接给 `<td>` 设 `max-width` 易被 `white-space: nowrap` 的固有宽度忽略，单条超长单位名会撑宽整列导致销售方与购买方间出现大段空白，故用 `inline-block` 子元素限宽省略并保留完整文本与 `title`；隐藏列按 `dirKey` 存 `localStorage` 使成本发票隐藏购买方不误影响开具发票，且始终保留至少 1 列防止空表。守护 `frontend/tests/directory-preview.spec.ts`。
+
+## 2026-11-19 WS 后端完整性收尾
+
+- `company_files.DRAFT_WRITE_LOCK` → `company_vouchers` / `company_payroll.save_confirmed`：草稿生成读取同一个申报文件，社保确认的读取 / SHA 核对 / 替换必须共用本进程写入顺序，否则两个请求可用同一 revision 互相覆盖。守护 `test_payroll_confirmation_waits_for_draft_generation_lock`、`test_concurrent_confirmations_cannot_both_replace_one_revision`；不承诺外部编辑器跨进程事务。
+- `company_payroll._tax_state/_confirmed_details/_rows_from_body`：JSON 可解析不代表社保月份结构有效；损坏状态不能退为空，脏金额不能变为零计提。`read_relative` / `write_state` 约束目录身份和链接，替换前再看 SHA，保留观察到的外部改动。守护嵌套损坏、非法金额、链接 / 目录替换、混合批次和外部改动测试；Windows 原生竞态另验。
+- `company_tax.get`：前期无法产出 closing_credit 时，后续连续假设不能重新成为可计算月份；未解状态与查询范围无关，断档只结束该段、不推定缺月数值。守护 `test_tax_unresolved_carry_blocks_later_months_until_prior_assumptions_are_corrected` 与缺输入 / 断档测试。
+
+## 2026-11-17 P3 保护与原因
+
+- `company_tax`：手工输入是税额，不能推导销售额计税依据；basis.amount 保持 null，税额净额只进入测算和解释。守护 `test_unsigned_taxes_never_present_vat_as_all_tax_total`。
+
+- `company_bank_recognition.recognize_batch`：PDF解析可停留在库内，线程超时不能回收；spawn子进程超时 terminate/join/kill，pending不缓存，刷新续读。守护超时回收、33文件分批、档案/源变化测试。
+- `company_bank_layouts.index/save`：先后核对档案与来源身份；保存根身份留在计划上，不能在验证后再依赖可能被并发淘汰的 refs。固定账号与预览哈希绑定，未映射账号列也检查冲突。守护 CAS、缓存失效与 refs 淘汰用例。
+- `bank.vouchers.prepare`：有公司版式时拒绝公司根外的银行输入，避免把固定账号带到另一公司；无档案的旧显式输入保持兼容。守护 `test_draft_generation_cannot_apply_company_account_to_external_folder`。
+- `workpaper.discover` / `vouchers.prepare` / `company_views._voucher_bank_dir`：三入口共用适配与无链接字节快照，显式公司/目录不靠父目录猜；先全部对账单再回单保证方向；列不全拒绝。守护 CLI、页面、生成与自定义银行目录结果一致。
+- `company_voucher_rows.write_rows`：删除首行不能丢业务来源；新增分录不能继承旧数量/槽位/来源链接。含公式/合并表时不猜引用平移。守护证据、其它表保留、错误整批原子拒绝与真实浏览器结构保存。
+- `CompanyVouchers.vue`：保存未知不能重发；成功重读才放开，查询失败与迟到响应保持锁定。`WorkspaceModule.vue` 的经典frame只在首次实际访问挂载，避免公司凭证/税费页读取无关活动监控资料；浏览器断言零错误及 frame 数。
+- `company_tax.py/company_tax_rules.py`：候选算术不等于已签署适用规则，实时服务只消费候选说明；不把已知VAT小计显示为全部税费。守护独立样例与完整合计始终 needs_review。
+
+## 2026-11-17 P2 保护与原因
+
+- `company_settlement.flow_state`：银行解析错误/缺少完整月份不能证明未匹配；红冲抵销不产生银行匹配。守护 `test_workspace_p2.py` 与 `test_company_settlement.py`。
+- `bank/layouts.evaluate`：方向靠每笔余额验证，不靠借贷列名；脏行和多解必须阻断。`statement` 要求显式唯一账号，避免不同账户混入账簿。首行倒推不冒充独立期初校验。守护三种金额/顺逆序、错误余额与 XLSX 零值用例。
+- `company_bank_layouts`：计划绑定源字节、映射和 revision，保存时重读；新文件再验证，不能用已确认表头跳过自检。`company_bank` 缓存加档案 SHA 并在读取后重验，避免显示旧方向结果。守护源替换/冲突/复用/破坏用例。
+- `company_files`：读取拒绝链接并校验目录句柄身份，原子替换绑定读时根身份；坏状态不覆盖。Windows fallback 只有前后检查，原生 reparse/race 仍需平台验收。守护 parent/leaf/root swap 测试。
+- `company_tax`：未签署政策包时只接受显式手工假设，申报/缴纳独立，零需来源。月度正额不跨月冲销，留抵核对不能因查询范围缩短而绕过。守护独立手算、query-independent carry、脏值与状态保护。
+- `CompanyTax.vue`：编辑切换税种/月份先读该月及 revision；未知响应查询须比较完整 assumption，不能把另一笔同额记录误认为本次写入。`BankLayouts.vue` 修改映射后禁存直到重校验；`company_bank_layouts.preview` 先跑保存时的 `statement()` 账号检查并返回 `save_blockers`，否则余额链成立却缺账号列的文件会显示可保存、提交后 422。守护 `workspace-p2.spec.ts`、`test_bank_preview_reports_save_blocker_without_account_column`。`WsModal` 传送到 `<body>`，`#app` 前缀的按钮规则不生效，弹窗内主按钮/危险按钮由 `.ws-modal button.*` 同步覆盖。
+
+## 2026-11-17 P1 衔接原因与保护
+
+- `invoice_list._invoice_stats` / `company_views.directory_invoices`：同票家族 Decimal 金额在全部筛选后、分页前计算，避免多格式重复计入及标签合计失真；守护 `test_invoice_tags.py`、`test_company_views.py`、Vue companies 标签测试。
+- `company_detection.py`：计划绑定目录身份，创建前校验所有登记输入，持久意图优先于 mkdir 后变化的检测哈希；失败保留已创建目录，登记阶段失败可能已写清单，必须 unknown。守护 `test_api_companies.py`、`workspace-p1.spec.ts`。
+- `jierui.export` / `company_export_jobs.py`：预览在任何文件/导出日志/习惯写入前退出；正式执行意图先落盘，未知响应不能重放，防止部分月份已经写出却重复导入。守护 `test_company_vouchers.py`、原导出格式 golden 与 `workspace-p1.spec.ts`。
+- `CostProjectionService._outbound_summary`：缓存来源须与公司映射一致，否则目录改映射后会沿用旧全局/旧公司销项；所有入口传递同一来源，当前月有效身份不写回状态。守护 `test_summary_and_costs.py`、`test_company_views.py` 的全部构造点检查和 `workspace-p1.spec.ts` 的只读/回退显示。
+
+
+## 2026-11-16 工作区明暗协调
+
+| 位置 | 原因 / 不变量 | 守护验证 |
+|---|---|---|
+| `web/static/skins/website-dark/skin.css` 裸按钮规则 | 外壳的透明 / 选中按钮由变量表达，皮肤裸 `button` 规则会盖出方框并抹掉选中态；`:where` 保持经典页面特异度，后续 `.btn--primary` 仍生效 | 浏览器明暗核对、`test_workspace_frontend.py` |
+| `frontend/src/prototype.css` 深色变量 | 浅色原型的墨色填充在深色下会变成近白块；遮罩色须与经典 `.modal-backdrop` 一致，否则外壳与 iframe 出现色差 | 浏览器明暗核对 |
+| `workspace-embed.js::reportModal`、`ClassicModuleView.vue::dimmed` | 经典对话框只遮住 iframe；外壳遮罩仅表现层，文档替换 / 隐藏 / 卸载必须清除，避免卡住外壳 | `workspace_embed.test.cjs`、`modules.spec.ts` |
+| `OverviewDocuments.vue` 可见后加载 | 每次读取会两次执行银行流水比较；总览打开不应因此变慢，勾稽标签的懒加载保持不变 | `companies.spec.ts` |
+
+## 2026-11-16 项目列与回单保护
+
+| 位置 | 原因 / 不变量 | 守护验证 |
+|---|---|---|
+| `company_views.py::active_project_fields`、`company_projects.py::project_fields/load` | 分页后附加项目使人工保存立即可见且不改变勾选身份 / 金额；冲突不猜、嵌套损坏拒写 | `test_company_projects.py` |
+| `company_receipts.py::_read/create/_validate/page` | 回单独立公司能力，唯一 manifest 源 + HMAC + 文件身份；目录重映射、链接或渲染中变化都不能返回旧票面 | `test_company_receipts.py`、`test_company_settlement.py` |
+| `company_bank.py::CachedFolderReader.read/list_files` | 等大小恢复 mtime 的替换及解析中变化不能复用旧字段 | `test_company_receipts.py` 与银行 / 抵扣回归 |
+| `CompareGallery.vue`、`CompareThumbnail.vue` | 六项分页限制活跃作业；隐藏停止、迟到响应丢弃，非监控发票不发预览请求 | `compare-gallery.spec.ts`、`companies.spec.ts` |
+
+## 2026-11-14 WS-02 目录身份与 WS-01 隔离策略
+
+- `company_directory_guard.py`：路径名相同不证明目录相同；补建 hash 必须绑定根与现有前缀的设备 / inode，每次 mkdir 之前重验，不使用会穿透被替换父路径的 `parents=True`。缺失子目录的祖先若为文件 / 链接必须阻断。守护：`test_company_directory_guards.py` 的同名替换、根内链接、junction、共享父路径与执行中替换。
+- `company_registry.py::_load` 与 `company_setup.py::_load`：JSON 能解析不等于结构有效；目录计划和后续写入会使用嵌套字段，不能把错误映射退回默认值。写前先验证清单，新建登记前重新核对先前目录，避免后续读者得到已经被替换的来源。守护：嵌套清单 / 任务损坏保留与登记前替换测试。
+- `api/workspace.py`、`appearance.ts`、`common.js`：用户仅暂停工作区两款皮肤；首次 HTML 和之后的 Vue / 经典缓存读回须遵循同一注入名单，否则刷新会重新加载。隔离只改呈现，不清除偏好 / 资产，独立经典页面继续使用原设置。守护：HTTP、Vue 与 Node 隔离回归；真实默认 / 双平台外观另验。
+
+## 2026-11-14 模块缓存与临时识别（WS-01 第五阶段）
+
+- `App.vue` / `ClassicModuleView.vue`：iframe 脱离 DOM 会丢失浏览上下文，常规切换用附着的 `v-show`；当前刷新才更换 frame key / token，拒绝旧 window / token 返回。隐藏视图不得导航外壳。守护：`modules.spec.ts`、App 缓存 / 批量入库交接与合成浏览器。
+- `workspace-embed.js`：六个常驻 SSE 会占满 HTTP/1 连接并阻塞 API；只暂停隐藏 transport，保留原消费者，恢复 onopen 复核。皮肤同步使用代次，旧 GET 不得覆盖较新的恢复入口。守护：`workspace_embed.test.cjs` 的 SSE、来源拒绝、迟到与失败恢复。
+- `api/workspace.py`：只对固定页面显式请求加展示适配，原业务控制器与确认 / CAS 保持单一实现；做账使用专用模板也必须包装。守护：`test_workspace_frontend.py` 的七模块嵌入与无关路由拒绝。
+- `temporary.ts`：后台运行任务不能挤掉当前历史的来源复核；两者按独立 id 轮询，失效只清空受影响展示。复制也是缓存字段输出，必须在剪贴板写入前再次复核；创建未知不重放。守护：`temporary.spec.ts`，服务端源变更 / 原文件保护相邻回归。
+- `TemporaryPreview.vue`：旧页超时只取消它自身的 controller，隐藏 / 切换使旧代次失效并释放 blob；XML 不进入 DOM。守护：临时预览组件用例与实际 PNG 翻页 / XML 验收。
+
+## 2026-11-14 Vue 工作区外观（WS-01 第四阶段）
+
+- `api/app.py::workspace_shell` 共用 `active_skin_link`：只在 Vue 挂载后读取皮肤会令暗色首屏先出现浅色面板；在 head 注入同一份已校验身份与 CSS，并共用恢复判断。守护：`test_workspace_frontend.py` 的三款首屏 / 深链接和恢复不重置保存状态用例。
+- `appearance.ts::prepareSkinStylesheet` 与 `AppearanceToggle.vue::toggle`：CSS 预加载时不生效，加载完成才发送保存请求，响应身份一致后替换当前样式；否则资源失败会持久化不可用外观。保存响应丢失只提示核对，不能自动重放；卸载取消待处理样式与请求，迟到结果不能改变页面。守护：`appearance.spec.ts` 的加载 / 超时 / 断线 / 身份不符 / 重复 / 迟到用例。
+- `styles.css` 将 Vue 面板和状态色映射到经典皮肤变量；源票面图片保留原色，不用页面整体反色。皮肤的 `overflow-x:hidden` 会形成额外纵向滚动容器，导致长列表时 sticky 模块列 / 侧栏滚出视口；工作区在 html/body 用更高优先级的 `clip` 保留装饰裁剪而不建立滚动容器。切换只换 link 与皮肤身份，不重新挂载业务树。守护：App 未保存公司表单保留测试；1280 / 390 合成浏览器覆盖两款皮肤、勾选与原票面，桌面长列表另核对模块列和侧栏的视口位置。
+- `router.ts`、模块列与侧栏返回链接保留 `no_skin`：修复入口若在重定向或导航中丢参数，下一页又会加载损坏皮肤。守护：App 的旧 / 未知路径恢复导航测试；恢复模式组件零请求与 HTTP 保存状态不变契约。
+
+## 2026-11-13 公司选择、新建向导与映射（WS-02）
+
+- 公司 picker 是独立固定用途，返回只填草稿；复用监控用途会混淆“登记公司”与“切换业务来源”。host 拒绝路径等额外元数据，UI 不接收覆盖手工草稿的迟到结果。守护：`test_company_picker_is_a_draft_fixed_capability_with_origin_and_body_guards`、前端 picker 取消 / 重复 / 迟到用例与 Rust payload / ownership 契约。
+- 新建先持久化排他执行标记再 mkdir，每步记录意图与观察：断线或重启后“不知道成功”不能变成再次创建 / 登记。部分空目录保留，不做删除回滚；登记原子写成功而事件写失败时必须是 unknown。守护：`test_interrupted_claim_is_query_only_and_corrupt_job_is_preserved`、部分失败与登记事件失败用例。
+- setup 共用注册服务的 RLock 与 CAS；规划阶段拒绝与 watch_dir 重叠，因此持锁登记不会触发获取成本投影写锁的纳税人回调，保持原有锁顺序。
+- 映射改变会改变公司账簿的事实来源，缓存键不能只有公司 id；但普通对象刷新也不能反复加载。来源变化丢弃旧读请求、选择和未确认目录操作，未保存人工项目归属 / 工资手工值保留。守护：`company-setup.spec.ts` 的映射、选择失效与草稿用例，既有局部更新 / 页面缓存回归。
+
+## 2026-11-13 目录列表与共用原票预览（WS-01 第三阶段）
+
+- 目录预览传完整选择、保留同票各格式，金额家族去重不能复用为预览去重；100 个文件名 / 12 页缩略图是渲染窗口，不是队列上限。守护：`directory-preview.spec.ts` 的多格式与 101 文件用例。
+- XML `response.text()` 后再检查读取代际：响应头先到而正文很慢时，光在 fetch 后检查仍会让旧文件正文覆盖新文件。关闭取消读取；持续失效只立即重建一次，避免请求循环。守护：迟到 XML 与持续 410 两项用例。
+- 最后一页按钮禁用可能让焦点回到 body；窗口 Esc 监听只处理具有可见布局的面板，关闭时移除监听，避免缓存的隐藏标签响应。浏览器实测发现，组件用例与 PDF 翻页后的浏览器复验守护。
+- 日期排序复用后端且在分页前执行；列表与全选只接受当前代际。监控身份变化会使可操作的旧首页身份失效，须重读并清除选择；普通公司对象刷新仍不重载。守护：排序竞态 / 监控切换用例，以及既有只局部更新标签和双击刷新测试。
+
+## 2026-11-11 发票标签（WS-06）
+
+- `company_views.py::directory_invoices` 先复制首页服务返回的 payload 与每一行再附加公司字段和 `tags`：活动目录的行来自首页服务，原地修改会让首页响应带上不属于它的字段。守护：`test_active_directory_hands_over_to_the_live_invoice_list`（断言首页响应没有 `tags`/`tags_error`）。
+- 标签定义放本机、标记放公司资料夹：标签的含义是使用者的习惯，标记是对某家公司发票的判断，后者要随资料走。删除定义时逐个公司清除；资料夹离线时读侧忽略未知 id，避免删掉的标签又冒出来。守护：`test_deleting_a_tag_removes_its_marks_everywhere`。
+- `CompanyDirectories.vue::toggleTag` 只局部更新该行：重新加载列表会重置页码与滚动，用户对“点一下就抖”敏感。守护：前端用例断言打标签后没有再请求列表。
+
+## 2026-11-11 公司项目汇总（WS-03）
+
+- `company_projects.py::ProjectAssignmentStore`：人工项目归属存在公司资料夹根目录而不是 `runtime/`，资料夹换机器或换人接手时人工判断随资料走；它和 `成本开票状态.json` 一样只在用户保存时写，重新汇总不读写。守护：`test_manual_assignment_is_saved_in_the_company_folder_and_survives`。
+- 损坏的 `项目归属.json` 拒绝读写而不是当作空文件：当空文件覆盖会一次丢掉全部人工归属。守护：`test_bad_requests_and_a_damaged_file_are_refused`。
+- 一张票备注出现两个项目名称时不择一：选哪个都是猜，列入未归属等人工指定。守护：`test_projects_come_from_remarks_and_manual_values_win`。
+- 项目重命名 `aliases` 保持单跳无环（`keys ∩ values == ∅`），并在 `PRICING_LOCK -> _projects._lock` 固定锁序下同步 `服务成本归集.json`：既避免改写源发票或出现多次改名后的循环转发，也防止项目改名后服务收入与人工服务成本脱节或跨锁死锁。守护：`test_project_rename_preview_confirm_alias_collapse_and_service_cost_sync`、`test_damaged_aliases_in_projects_file_are_refused`。
+- `build_project_summary` 与 `build_invoice_ledger` 交叉校验：项目页和账簿页对同一批票必须给出同一个合计，否则用户无法判断哪个对。
+
+## 2026-11-11 往来核对（WS-07 第 4 步）
+
+- `company_settlement.py::_party_index`：对账单“备注”列会截断长户名，只认唯一命中的 ≥4 字前缀；命中多家时不归属，因为把付款记到错误的单位比留着待查更难发现。守护：`test_a_name_that_fits_two_parties_is_not_assigned`。
+- 组合匹配只接受唯一一组：两组以上发票都能凑成同一金额时任选一组就是猜。守护：`test_more_than_one_set_of_invoices_is_left_unmatched`。
+- 红冲抵销先于收付款匹配：否则余额已经为 0，被冲的蓝字票仍显示“未付”，页面自相矛盾。守护：`test_red_letter_invoices_reduce_the_balance_and_unreadable_ones_are_listed`。
+- `party_balance` 与 `flow_accounting` 从原始发票、流水清单复算，而不是用往来单位行自己的数：同义反复的校验永远成立，发现不了漏算。守护：上述各用例的 `_ok`。
+
+## 2026-11-13 通用凭证导出配置（BK-01）
+
+- 只替换写文件一步，业务判断仍只在 `jierui.export`：整月拦截、重编号、重复跳过若在每个格式里各写一份，会出现某个格式漏拦的情况。已导出签名不分格式：同一凭证换格式再导一次会被跳过，避免同一凭证进两个账套。守护：`test_an_exported_voucher_is_skipped_in_any_other_format`。
+- 捷锐黄金测试对比引入导出配置之前的导出代码的输出（冻结为 `tests/fixtures/jierui_export_golden.json`）：唯一实测过能导入的格式不能因重构改变任何一个单元格。守护：`test_jierui_output_is_unchanged_from_before_the_profiles`。
+- 其他软件只标“实验”：各家导入模板是私有格式，只有用友 T3/U8 有公开字段规范，柠檬云表头来自第三方仓库；未实际导入前不能当作可用。按编码引入的格式没有编码时留空，不用名称顶替（会被当作错误编码导入）。
+- 校验提示改为“请确认账套里已建档”：同一提醒现在服务所有格式。
+
+## 2026-11-13 工资社保页面（WS-05 第三阶段）
+
+- 只在用户确认后写 `申报数据.json`，且写入的单位 / 个人部分由后端从所确认的险种行求和：草稿计提只读这两个数，页面传来的合计不被信任。守护：`test_confirming_writes_the_month_into_the_tax_file_and_keeps_its_other_keys`、`test_a_confirmed_month_is_accrued_by_the_generated_draft`。
+- 整文件按 SHA-256 revision 重写并保留其他键：`申报数据.json` 同时存月度增值税、季度税费、已抵扣进项发票，由人工维护，社保确认不能冲掉它们；文件损坏时拒绝而不是当作空文件。守护：`test_confirming_needs_a_readable_tax_file`。
+- PDF 按 token 流识别、每行恰好 11 个数值：文字层可能整行一行或一格一行，按行切会漏读；数值个数不对就跳过，不猜列。守护：`test_reads_the_same_table_from_a_text_pdf` 两种排版。
+- 图片不识别：发布包没有 OCR（AGENTS.md 不做本地 OCR 打包版），用户 2026-11-13 决定本轮不支持图片。
+- 姓名、证件号默认脱敏返回：页面、截图和诊断默认不出现完整个人信息，只有显式请求时返回原值。
+
+## 2026-11-13 属期文件夹核对与移动文件（WS-05 第二阶段）
+
+- 文件夹名只作提示：期间仍只按内容判定（“5月”文件夹里的空导出不按文件夹名推断所属期的规则不变），否则改名或放错一个文件夹就会改变抵扣与对账结果。守护：`test_check_compares_the_content_period_with_the_folder`（空导出为 unknown）。
+- 移动照删除流程：先计划、确认时复核签名，逐文件 fsync 意图后再改名，响应丢失只读日志；移动不能像删除一样从回收站撤回，同名不覆盖、新文件夹只能是 `YYYY-MM`。守护：`test_a_confirmed_move_creates_the_period_folder_and_never_overwrites`、`test_a_file_changed_after_the_plan_is_not_moved`。
+- 对账单逐个文件解析：对账单只记录文件名，两个属期文件夹里可能有同名文件，按名字找回会移错文件。
+- 与监控目录重叠时拒绝：监控目录内的文件移动会被看作删除 + 新增，手改字段按路径保存，需要走监控自己的流程。
+
+## 2026-11-13 改记入期（WS-05 第二阶段）
+
+- 调整只存在公司资料夹的 `记入期调整.json` 并由 `build_drafts` 应用，而不是改审核表单元格：增值税、库存加权、待认证转出与月度核对都按 `book_month` 计算，只改单元格会让这些结果与凭证不一致；命令行读同一份文件，两边结果相同。守护：`test_rebooking_an_invoice_moves_its_voucher_and_the_cli_follows`。
+- 抵扣月份不随记入期改变：能否抵扣是税务事实（开票月、勾选与申报），记入期是账务选择；记入早于可抵扣月份时挂待认证，到可抵扣月转出。
+- 范围前开票、记入本草稿的票全部按“已在当月购销中计算”扣出首月期初应有数量（原来只扣补记到首月的进项）：否则调整进来的票数量重复计算。
+- 调整文件损坏时生成失败而不是忽略：静默丢掉人工调整会让凭证回到错误的期间。
+
+## 2026-11-13 页面生成草稿与沿用审核（WS-05 第二阶段）
+
+- 页面生成直接走 `prepare` + `write_review_xlsx` + 命令行说明页：两套入口只要有一处不同，页面审核过的表就不是命令行会导出的表。守护：`test_the_page_writes_the_same_workbook_as_the_cli`。
+- 沿用审核按来源配对、按导出签名判定：凭证号会因前面增删凭证而变，按号配对会把审核挂到别的凭证上；签名与重复导出判定同一口径，签名不变才说明导出内容没变。银行流水的 row_id 是对账单序号，必须带借方合计复核。守护：`test_regenerating_backs_up_and_carries_unchanged_reviews`。
+- 覆盖前先完整备份、现有表读不了就不覆盖：审核表是用户人工审核的成果，重新生成不能静默丢掉。
+
+## 2026-11-13 凭证草稿页面导出（WS-05 第二阶段）
+
+- 页面导出直接调用 `jierui.export`，不另写：整月拦截、按月重新编号、已导出跳过与科目习惯学习都在那里，复制一份就会与命令行漂移。守护：`test_export_writes_the_approved_vouchers_like_the_cli_and_skips_a_repeat`（用导出写出的文件核对凭证号与制单人、第二次跳过、通过但不合格时整月不写）。
+- revision 在导出锁内复核：导出写的是用户审核过的那一版，另一处保存或重新生成后必须先刷新。不开放“允许再次导出”：响应丢失后再点只会跳过已导出的，不会重复导入。
+- 导出按钮在有未保存改动时禁用：导出读文件，页面上未保存的修改不会进入导入文件。
+- 账套“已用到的号”输入框 `v-model` 在 number 输入上给出数字，不能当字符串 `trim()`（前端测试发现）。
+
+## 2026-11-13 凭证草稿的所属期与记账日期（WS-05 第二阶段）
+
+- 移到另一个月的凭证必须重新编号：`read_review_xlsx` 与导出都按“月份 + 凭证号”分组，沿用原号会和目标月的同号凭证合成一张、借贷与审核都会错。号码取目标月已占用号（不含本次移出的）与本次已分配号的最大值 + 1。守护：`test_moving_a_voucher_to_another_month_renumbers_it_and_dates_outside_block_approval`。
+- 记账日期不在所属期内仍可保存、但不能审核通过：用户可能分两步改（先改日期再改月份），只在审核时由 `validate` 拦截，与导出口径一致。守护：同上。
+
+## 2026-11-13 比较记录的原票（WS-04）
+
+- `preview` 只附给监控目录、非临时列表的记录，且身份取自该目录当前的首页列表：`preview-jobs` 按当前 watch_dir 重新校验 `invoice_key + source_path`，其它目录的身份是另一份投影的位置，接上去要么被拒、要么指错文件。守护：`test_only_the_monitored_folders_records_open_the_original_invoice`（用附带的身份真实创建预览作业）。
+- 图片出错只重建一次：页面渲染失败（不是过期）时无限重建会反复占用渲染与内存上限。守护：`companies.spec.ts` 的 “opens a monitored record's original invoice…”（410 后重建并保留第 2 页、关闭后不再续租）。
+- 窄屏 `.grid` 设 `position: relative`：表头里绝对定位的 `.sr-only` 以初始包含块定位，会逃出表格的横向滚动把整页撑宽 60px（浏览器验收发现，勾稽与同号检查标签都受影响）。
+
+## 2026-11-13 同号检查（WS-04）
+
+- 同号不一律判为重复：两家公司一方开具、一方取得的是同一笔交易的两端，标为“双方同一张票”；其余同号才是“疑似重复”，且只给人工核对，不下结论。守护：`test_issued_on_one_side_and_received_on_the_other_is_one_transaction_across_companies`。
+- 有勾稽关系的同一公司组合拒绝做同号检查：否则一组本应做进销存 / 往来核对的目录会被降格为号码比对，掩盖勾稽差异。守护：`test_same_number_api_across_folders_and_companies_without_writing`。
+- 每边按 `selection_family_key` 合并：与发票账簿、首页勾选同一口径，同一张票的 PDF / OFD / XML 不会自己和自己“同号”。守护：`test_formats_of_one_invoice_count_once_and_shared_numbers_are_listed`。
+- `tabId` 只在有第二个对象时追加字段：已有标签 id 保持不变。
+
+## 2026-11-13 多行批量打标签（WS-06）
+
+- 批量菜单打开时从 `GET .../invoice-tags` 读当前标记，而不是用列表行的 `tags`：勾选可能跨页（全选筛选结果），未加载页的标记页面不知道；保存仍是“整张号码的完整标签列表 + revision”，冲突时重新读取，让用户按现状再点一次。守护：`companies.spec.ts` 的 “tags every selected invoice…”。
+- 勾选里额外保存发票号码只供批量打标签，传给选择条前剥掉：`selection-summary`、`print-jobs`、`trash-jobs` 的请求体保持 `invoice_key + source_path`。守护：同上（断言合计请求体）。
+
+## 2026-11-13 凭证草稿审核（WS-05 第一阶段）
+
+- 页面直接改命令行生成的审核表，而不是另存一份：`voucher_cli export` 只读这份工作簿，另存会出现两份草稿、导出拿不到页面的修改。守护：`test_edits_write_back_into_the_same_cells_and_unbalanced_vouchers_cannot_be_approved`（用导出自己的 `read_review_xlsx` 读回，并断言其他工作表仍在）。
+- 审核通过只在后端用导出的 `jierui.validate` 判定，任一不过整批不写：页面的实时借贷合计只是显示，另写一份校验会与导出口径漂移；部分保存会让页面与文件不一致。守护：同上与 `test_voucher_draft_api_lists_reads_and_reports_blockers`（`error.details` 逐张原因）。
+- 改过的已通过凭证清空审核：否则改了分录仍带旧“通过”被导出。保存带文件 SHA-256：命令行重新生成或别处改过后，旧页面不能覆盖。守护：`test_editing_an_approved_voucher_needs_a_new_review_and_stale_saves_are_refused`。
+- 改科目编码时同步或清空表内科目名称：打开工作簿的人看到的名称不能与编码不符。金额以 Decimal 写回，与生成命令一致。守护：`test_an_edited_code_refreshes_the_sheet_name_and_malformed_saves_are_refused`。
+
+## 2026-11-13 目录标签的勾选操作条（WS-01 第二阶段）
+
+- 勾选合计不在 Vue 里算：同票家族去重与三项金额的冲突 / 缺失规则只在后端 `selection-summary`，前端再写一份就是两套口径。守护：`companies.spec.ts` 的 “selects invoices on the monitored folder…”（断言请求体只含 `invoice_key + source_path`）。
+- 删除确认的响应丢失时只读执行日志：重新确认可能重复移动文件。删除结果放在列表而不是操作条里：完成后清空勾选会卸载操作条，部分完成的逐文件结果不能随之消失。守护：同上（确认只发一次、随后 GET 日志、结果面板仍在）。
+- `DirectorySelectionBar` 的删除计划 `trash` 必须在立即执行的 `watch` 之前声明：否则组件一挂载就抛错。
+
+## 2026-11-11 比较明细与并排原始记录（WS-04）
+
+- 计算过程 `steps` 在后端用 `cost_of_sales` 实际用到的数值生成（销售成本写成“金额 × 数量 ÷ 可售数量”而不是“数量 × 舍入单价”）：前端拼式子会因舍入与真实结果差几分，等于另写一份算法。守护：`test_categories_point_at_their_invoices_and_explain_the_month`。
+- 类目与并排记录共用后端 id，前端只过滤：类目归属（品类、往来单位、所属期）是后端判断，页面按名称或金额去猜会与核对结果不一致。守护：`test_parties_and_matches_point_at_their_rows_side_by_side`、抵扣用例的 `record_ids` 断言、`companies.spec.ts` 的 “opens a category's calculation…”。
+
+## 2026-11-11 工作区外框（WS-01）
+
+- 首页标签用 `v-show` 常驻、以 `id#refresh` 为 key：关闭才丢缓存，双击 `hi.` 只让当前标签的 `refresh` 加一而重建，其他标签不受影响。守护：`app.spec.ts` 的 “opens sidebar nodes as tabs once…” 与 “refreshes only the active tab…”。
+- `DirectoryPanel` / `DirectoryInvoices` 的 `watch` 用 `公司 id/目录键` 字符串：公司清单刷新会换成新的 company 对象，返回数组的 getter 每次都“变化”，会让列表无故重载。守护：“refreshes only the active tab…”（隐藏的公司标签不重读）。
+- 首次进入只自动打开一次监控中的公司（`seeded`）：用户全部关闭后停在起始页，刷新公司清单不得把标签重新打开。守护：同上第一条。
+- 侧栏的比较组合只来自 `relations.ts`（与后端 `COMPARE_RELATIONS` 相同的四组），前端不计算任何结果；不同公司或无勾稽关系时禁用并说明，后端仍会拒绝。守护：“compares two folders of one company…”。
+
+## 2026-11-11 进销存（WS-07 第 4 步）
+
+- `company_inventory.py` 调用 `bank.vouchers.cost_of_sales`，不另写加权平均：页面上的销售成本必须与做账草稿的结转同一算法，两处结果才能互相核对。守护：`test_month_end_weighted_average_rolls_stock_forward_and_merges_names`。
+- 逐月从最早月份滚到最晚月份（包括没有发票的月份），`start/end` 只筛选显示：从范围首月重新按 0 起算会丢掉之前的结存。守护：`test_range_starts_from_the_rolled_forward_stock`。
+- 库存按品类（`goods_family` + 单位）而不是规格计算：账套库存商品按品类设明细，只有同一粒度，账套读回的期初才能落到对应的行；规格行只细分购销，不分摊期初与成本，否则规格成本之和会因舍入与品类不符。守护：`test_specs_are_a_breakdown_of_the_category_row`、`test_opening_comes_from_the_book_readback_per_category`。
+- 账套期初只在读回包含期初月份之前的月份时采用，并把这些月份的发票移出滚动：账套余额已经包含它们，再计一次就重复；读回不足时按 0 起算并写明原因，不拿半截读回当期初。没有单位的分录不猜单位。守护：`test_book_readback_without_earlier_months_keeps_the_zero_opening`、`test_unit_less_book_line_is_not_guessed_onto_one_of_several_units`、`test_broken_or_incomplete_books_never_stop_the_check`。
+- `projections/costs.py::read_only_inputs`：比较的两个目录多半不是监控目录，`snapshot` 会刷新 schema、重写工作簿，读取就会改动用户目录。守护：`test_compare_api_reads_both_projections_without_writing`（前后文件 mtime 不变）。
+- `_qty`：`cost_of_sales` 的零值带两位小数，数量直接 `str` 会变成“5.00 吨”；数量要保留自己的精度（2.345 吨），不能按金额格式化。
+- `CompanyInventoryResult.vue` 的逐月明细放在品目下方整行展开：嵌在“说明”格里的子表在窄屏会被截断。
+- 2026-11-17 `bank.vouchers.purchase_family_treatment`：进销存与做账草稿共用同一判断，燃油、无库存明细的电梯不进库存品类而列入 excluded；只靠提示会让期末库存虚增（BUG-05）。销项同一品类也排除，否则会变成“进项中找不到”的假卖超。守护：`test_goods_booked_outside_stock_are_listed_not_counted`。
+- 2026-11-17 `read_book_inputs` 取最新 `科目表_*.json` 快照：账套建账后新增的库存科目只在读回快照里，读 `凭证/科目表.json` 会让 `account_code` 为空、电梯被误判为固定资产。没有序时账也读科目表。守护：`test_newest_books_snapshot_names_the_accounts_and_keeps_project_elevators_in_stock`。
+- 2026-11-17 `company_vouchers._books(root, name)` 用该草稿生成时的科目表（`草稿生成参数.json` 的 `ledger`，命令行生成的表按最新快照）：审核、保存、导出与生成必须是同一份科目，否则新科目在页面上不可用、旧科目在导出时才报错；记录的快照不在时拒绝审核，不换用别的科目表。守护：`test_review_checks_codes_against_the_chart_the_draft_was_generated_with`。
+
+## 2026-11-11 抵扣核对（WS-07 第 4 步）
+
+- `company_deduction.py::parse_deduction_workbook`：当期没有勾选时，电子税务局只导出一格“发票清单”，文件里没有所属期。按文件夹名（“5月”）推断会把用户随手起的名字当成事实，所以只报告为“空清单、所属期未知”。守护：`test_empty_and_unrecognised_files_are_reported_not_guessed`。
+- `_amount`：清单金额是 Excel 浮点数，必须经 `str()` 的最短表示再到 Decimal，直接 `Decimal(float)` 会带出二进制尾数，合计行核对会差几厘。守护：`test_parser_reads_period_rows_and_total`。
+- `read_deduction_lists` 按相对路径命名：每月导出都叫 `用途确认信息.xlsx`，只给文件名时用户分不清是哪个月。守护：同上空清单用例断言 `5月/用途确认信息.xlsx`。
+- `build_deduction_check` 的“目录有、清单无”只列专票，并给出所属期不早于开票月的已有清单：有这样的清单说明“该勾未勾”，没有则只是“还没有清单”，两者不能混为一谈；普票不能抵扣，只计数。守护：`test_lists_and_invoices_are_matched_by_number_and_period`。
+- `company_views.py::COMPARE_RELATIONS`：算法由两类资料的关系决定，不由请求决定；没有勾稽关系的组合直接拒绝，避免页面给出拼凑的关联。守护：`test_compare_api_refuses_unrelated_pairs_and_bad_months`。
+
+## 2026-11-11 公司账簿的银行流水（WS-07 第 3 步银行部分）
+
+- `company_bank.py::BankFlowReader.read`：目录列不全（超过 2,000 个 PDF 或 2 秒）时整体拒绝汇总。只汇总列出来的那部分，会让缺掉的月份看起来像“没有收支”。守护：`list_bank_pdfs` 的完整性返回与 `test_receipts_are_recognised_but_not_parsed`。
+- `_bucket`：没有对账单的月份不给余额（`null`），任一缺月让该期校验不成立。用 0 或上月期末补齐会让缺月与“当月无交易”无法区分，守恒校验也会被凑平。守护：`test_a_month_without_a_statement_is_missing_not_zero`、`test_a_quarter_with_a_missing_month_fails_even_when_the_ends_exist`。
+- `company_views.py::_bank_ledger` 与发票账簿并列返回、`checks_ok` 分开：银行口径（收付款）和票面口径不能互相抵消；银行目录读不了也不能挡住发票汇总。守护：`test_ledger_api_adds_bank_flows_beside_the_invoice_ledger`。
+- `bank/workpaper.py::discover(parse_receipts=False)`：账簿只需要余额链，回单逐页按坐标解析很慢；版式改为只看首页识别，对账单才读全部页面。CLI 默认仍解析回单。守护：`test_reader_reuses_the_parse_until_a_file_changes`（断言调用参数）与 `tests/test_bank_workpaper.py`。
+
+## 2026-11-10 工作区“公司”模块（WS-02 / WS-07 界面）
+
+- `frontend/src/api/client.ts::acceptPartial`：子目录补建部分失败时后端返回 `ok:false` 但带逐项 `created/skipped/failed`；默认把 `ok:false` 当错误会丢掉这些结果，用户就不知道哪些文件夹已经建好。守护：`companies.spec.ts` 补建用例。
+- `stores/companies.ts::write`：版本冲突时先重新读取清单再抛出提示，不自动重放写入，避免覆盖另一个页面刚做的修改。守护：`reloads the list after a revision conflict instead of overwriting`。
+- `CompanySettings.vue` 只在 `company.id` 变化时重置：切换监控目录、补建子目录都会刷新清单，若按对象变化重置，会冲掉用户正在编辑的纳税人身份。
+- `CompanyLedger.vue` 的 `<details :open="!checks_ok">`：校验全部成立时收起以免占屏，任一不成立必须展开标红，不能让失败藏在折叠里。守护：`shows failing conservation checks in red`。
+
+## 2026-11-10 公司发票账簿（WS-07 第 3 步发票部分）
+
+- `company_ledger.py::_family_amounts`：三项金额必须同时识别并守恒才计入，否则整张列入 `excluded`。按字段分别累计（首页勾选合计的做法）会让三列合计来自不同的票集合，账簿里“不含税 + 税额 = 价税合计”就不再成立。守护：`test_formats_of_one_invoice_count_once_and_broken_ones_are_listed_not_counted`。
+- `_ZERO_TAX_RATE`：免税判断只认整串为 0 或 0%，不能用子串，否则“10%”会被当成零税率，把缺失的税额补成 0。守护：同上用例中的 10% 行。
+- `build_invoice_ledger` 先判期间范围再判金额：范围外的票不应出现在“不计入”清单里；日期未识别的票在有范围时不进合计，因为无法证明它属于该期间。守护：`test_periods_ranges_and_undated_invoices`。
+- 不按公司名称剔除发票：登记名称与票面全称常不一致，自动剔除会静默丢票；改为提示购买方/销售方不一致。守护：`test_party_and_cross_listing_warnings`。
+
+## 2026-11-10 按公司只读目录与纳税人类型（WS-07 第 2 步）
+
+- `targets/companies.py`：查找放在 `targets/` 而不是 `services/`，因为 monitor daemon 与 spawn 子进程不经过 AppState，`monitoring/` 也不能依赖 `services/`；坏清单读作“无公司”，成本页与同步照常工作，损坏由清单 API 报告。守护：`test_company_taxpayer_lookup_follows_folder_and_month`。
+- `background_sync.py::_run_background_sync_process(company_taxpayer=…)`：子进程没有 AppConfig，由父进程查好后传入；daemon 是长驻进程，按每次同步现查以跟随清单修改与跨月。守护：`test_every_cost_projection_and_synchronizer_receives_the_registry_lookup`。
+- `cost_analysis.py::build_cost_analysis_outputs` 在解析后、写工作簿前才调用 `company_taxpayer()`：长时间同步期间改了清单，不会被同步开始时读到的旧值覆盖；`services/costs.py::refresh_workbook_tax_profile` 因此在写锁被占用时可以直接返回 `sync_running`。
+- `CostProjectionService.read_fingerprint` 含有效类型：类型变化不改任何投影文件，不纳入就会让分页读缓存继续返回旧价格。守护：`test_registry_taxpayer_type_prices_the_reference_and_keeps_the_saved_rate`。
+- `effective_tax_profile` 只换类型、不换税率：清单不替用户在 3% 与 1% 之间选择，小规模配非常用税率时由既有 `warning` 提示。`save_reference_status` 拒绝与清单不同的类型，避免页面保存后又被清单覆盖、看起来“保存无效”。
+- `company_registry.py::_after_write` 在释放 AppState 锁后才回调成本刷新，并且只比较纳税人类型（改名不重写工作簿）：刷新要取投影写锁，持有 AppState 锁去等它会阻塞其它请求。守护：`test_registry_edit_reprices_the_active_company_and_rewrites_the_workbook`。
+- `company_views.py::_read_processed/_scan_signatures` 不用 `MonitorState`：它的构造函数会建目录，`load_processed` 遇坏文件会备份并重写；非活动目录必须完全只读。扫描有 20,000 项 / 2 秒上限，未扫完时删除数不计、无差异只能判 `unknown`。守护：`test_directory_views_report_projection_and_freshness_without_writing`、`test_missing_processed_record_reads_as_unknown`。
+
+## 2026-11-17 工作区 P1 对接修正
+
+- `company_export_jobs.py::_REJECTED_BEFORE_WRITE`：只有 `export_draft` 在调用 `export()` 前自查抛出的错误码记 `rejected`，页面据此放开按钮；`VOUCHER_DRAFT_UNREADABLE` 包住 `export()` 本身，可能已写一半，必须保持 `unknown` 只查询。两种状态下同 token 都不重放。守护：`test_export_pre_write_refusal_records_rejected_receipt`、`test_export_mid_write_error_stays_unknown`。
+- `company_detection.py::register` 的 `failed` 分支：`failed` 只在写公司清单之前记录，同一计划可再执行；旧记录改名保留，不覆盖。守护：`test_failed_registration_before_registry_write_can_run_again`。
+- `services/costs.py::cost_view` 临时快照与 `page-costs.js::costSyncCount`：首次构建 / 空快照没有完整投影，待核对与未解析明细数未知，后端发 null，页面显示“待统计”；只有非负整数才显示为张数，避免把未知写成 0 或 undefined（BUG-03）。守护：`test_failed_cost_build_never_promotes_partial_rows_to_editable` 与 Node 用例 “cost sync banner shows unknown counts…”。
+- `scripts/dev/workspace_p3_e2e.mjs` 的就绪探测走浏览器：本机 Agent 沙箱拦截 Node 进程连接回环端口（CDP 端口除外），而浏览器能访问夹具；CDP 模式只关闭自建 context，不关外部浏览器。
+- `page-costs.js::renderTaxProfile`：工作区内只锁纳税人身份（以公司清单为准），销项税率保持可改，依据用户 2026-11-10 的决定；后端 `save_reference_status` 拒绝与公司身份不一致的类型。守护：`workspace-p1.spec.ts` 的 B6 用例。
+
+## 2026-11-10 公司清单（WS-07 第 1 步）
+
+- `company_registry.py::CompanyRegistryService._load/_corrupt`：损坏、未来版本或缺字段的清单不回退为空，否则下一次保存会抹掉全部公司；保留原文件并拒写。守护：`test_corrupt_registry_is_kept_and_blocks_writes`。
+- `_clean_root`：根目录按解析后、大小写折叠的路径比较，禁止重复与嵌套，后续公司聚合才不会把同一文件计入两家公司；`_clean_subdirs` 同理禁止六类子目录相同或嵌套。守护：`test_names_are_unique_and_roots_cannot_repeat_or_nest`、`test_subdir_mapping_must_stay_inside_the_root_and_be_distinct`。
+- `detect_subdirs`：同一文件夹命中多类提示词时不归入任何一类，改为提示创建标准目录，避免把抵扣清单当成开具发票读。守护：`test_create_detects_existing_folders_and_never_guesses_ambiguous_ones`。
+- `_subdir_status`：`resolve()` 也会跟随已存在前缀里的链接，因此“父目录是指向外部的链接”的缺失子目录在创建前就被拒绝。守护：`test_linked_parent_that_leaves_the_root_is_blocked`。
+- `_plan/create_subdirs`：`plan_hash` 绑定清单 revision 与每项路径/动作，确认时在锁内重算；`mkdir(exist_ok=False)` 在预览后出现同名项时不覆盖。守护：`test_subdir_creation_is_preview_then_confirm_and_only_makes_empty_folders`。
+- `clean_taxpayer_periods/taxpayer_type_for`：空即未设置，不默认一般纳税人（税务规则“未知不为零”）。守护：`test_taxpayer_type_follows_effective_month`。
+
+## 2026-11-09 工程门禁、路由拆分与 Vue 前端
+
+- `api/app.py::create_app` 的 `include_router` 顺序：每个路由组放在其路由原来注册的位置，FastAPI 0.141 以 `_IncludedRouter` 按序惰性匹配，故重叠路径（发票详情与 trash-jobs、皮肤 `{skin_id}` 与固定动作）的命中顺序不变。守护：拆分时 OpenAPI 逐字节一致、792 个方法×路径样本命中同一端点，以及 `test_api_contract.py`。
+- `frontend/vite.config.ts::versionQuery`：构建产物提交在 `web/` 内，固定文件名让发布白名单、Core Build ID 文件集合与 FILE_MAP 不随每次构建漂移；缓存刷新改由 `?v=` 内容哈希承担，与旧页面同一缓存规则。守护：`test_workspace_frontend.py` 与 CI 的构建可复现检查。
+- `requirements/lint-tools-py314.lock` 独立于 `test-tools-py314.lock`：后者由 Windows 重打包配置引用，改动会牵动发布核对；lint 工具不进入任何成品。
+- `.github/workflows/ci.yml` 的 Windows clippy 已在 2026-11-24（ENG-01）对 `host_rpc.rs` 仅 macOS 重启路径符号加 `#[cfg(target_os = "macos")]` 后切换为 `-D warnings` 阻断；Windows updater 2.10.1 经 `on_before_exit` 直接退出并拉起安装器，不走 `request_relaunch`。
+- `projections/costs.py::save_reference_status` 已在 2026-11-24（ENG-02）改为合并工作簿独有的非默认已开/加价率状态与既有行空白字段并移除 `noqa`，避免保存一行时重写工作簿而抹掉仅存于工作簿的其他行状态。守护：`test_save_reference_status_preserves_workbook_only_status_for_untouched_rows`。
+- `src-tauri/src/backend.rs::resolve_port_conflict_with`（ENG-10）：用户确认关闭旧 InvoiceHub 对话框耗时不可控，确认后必须先重检端口并再次比对 `pid/product_version/runtime_dir`，防止旧进程中途退出后被非 InvoiceHub 服务接替端口而误发 shutdown；`--no-startup-dialog` 始终拒绝自动关闭。守护：`port_conflict_state_machine_guards_unknown_decline_and_toctou_changes`、`loopback_port_conflict_recovery_shuts_down_confirmed_invoicehub_and_rejects_unknown`、`test_tauri_fixed_port_conflict_recovery_requires_confirmation_and_revalidation`。
+- `storage/generations.py::prune_generations` / `storage/source_cache.py::evict_objects`（ENG-09）：回收代际/汇总前先改名为 `.pruning-*` 墓碑再递归删除以保证崩溃可续接，且严格保护当前 manifest、回执引用代际、进程内 `pin_generation` 读者与活动预览租约对象，损坏 manifest 直接跳过不删任何代际。守护：`tests/test_cache_governance.py`。
+- `extraction/ocr_client.py::extract_validated_invoice_fields` & `services/ocr.py`（OCR-01）：对图像 OCR 文本以虚拟 `.pdf` 后缀调用 `_record_from_text` 复用完整三元组/锚点校验并二次核验号码位数/税率/算术守恒；Access Token 仅落 `runtime/.ocr-secrets.json`（`0o600`），不进 `app.local.json` 或 API 返回。守护：`tests/test_ocr_paddle.py`。
+- `bank/export_profiles.py` & `services/company_vouchers.py::_export_profile`（BK-01）：工作区 API 与 Vue 页面默认切换为软件无关的 `generic`（通用凭证表，支持 `read_generic_entries` 无损读回），显式选择 `jierui` 或旧 CLI 不传 `--profile` 仍保持既有黄金模板逐单元格一致。守护：`tests/test_export_profiles.py`。
+- `api/main.py` 在设置 `INVOICE_HUB_ROOT/CONFIG` 后才调用 `create_app()`，`api/app.py` 不再有模块级实例：旧实例让任何导入都按仓库默认配置做启动同步，测试会改写 checkout 的 `runtime/` 与 `发票文件/`（ENG-07）。守护：`test_importing_the_api_module_builds_no_app_state`、`test_cli_creates_exactly_one_app_state` 与 `tests/conftest.py` 的仓库状态快照。
+- `host_rpc.rs` 测试的 `accept_within`：阻塞 `accept()` 在发送线程无法连接时会让整个测试二进制挂起，改为有时限失败。
+
+## 2026-10-09 双平台构建保护
+
+- `trash.py::post_delete`：Microsoft明确规定PostDeleteItem的psiNewlyCreated表示回收站中目标，NULL不能证实可恢复；在前置veto后仍验证结果。守护：COM成功/失败/取消/缺少目标测试。依据：[Microsoft PostDeleteItem](https://learn.microsoft.com/en-us/windows/win32/api/shobjidl_core/nf-shobjidl_core-ifileoperationprogresssink-postdeleteitem)。
+- `lib.rs::accepts_temporary_file_drop`：详情返回token只影响首页状态；按固定origin与路径而非整个URL字符串判断，避免返回后拖入失效，保持其它页面和远端拒绝。Rust正反例守护。
+- `generate_desktop_icon.py`：固定hi.拉丁字标原稿采用BASIC布局，可选Raqm不能使跨平台重生成像素漂移；原master逐像素回归保持。
+- `build_manifest.py::_is_build_cache`：editable安装元数据不进入任何core包，不参与core身份；真实源码仍逐文件纳入。身份测试覆盖元数据无影响与源码变化会改变指纹。
+
+Windows验包测试中的假凭据在运行时拼接：保持生成文件的扫描正反例，同时源码归档不携带凭据形状字面量；不降低 `content_scan` 的识别规则。守护为 `test_tauri_windows_portable_verifier_uses_dependency_scope_for_locked_cpython_lib` 与整份源码归档扫描。
+
+## 2026-10-09 勾选工作流保护
+
+| 判断位置 | 原因与不变量 | 守护测试 |
+|---|---|---|
+| `platform/trash.py::recycle_guard` / `_windows_trash` | 请求回收仍可能遇到磁盘不支持；PreDeleteItem必须阻止永久删除，COM对象及回调活到释放完毕 | `test_windows_guard_vetoes_permanent_delete`、`test_windows_com_contract_fails_closed` |
+| `invoice_trash.py::commit/_record_file` | 原生操作前持久化意图，结果不明只能查询，不能删除同名替换文件；逐项追加避免平方级写入 | `test_trash_confirmation_exact_selection_and_idempotence`、`test_interrupted_journal_is_observed_without_retry` |
+| `AppState.commit_invoice_trash` | 活动目录、monitor写入与确认来源串行；忙锁不等待解析，变动只经既有同步更新投影和保留手改 | `test_confirmation_revalidates_all_before_any_move`、`test_stale_cross_origin_symlink_and_busy_rejected` |
+| `selection_cost_breakdown` | 金额行去重与来源集合分开，确保来源只归属于该项目/税率 | `test_provenance_tracks_project_tax_and_keeps_money_deduplication` |
+| `page-index.js::loadFilePreviewJob/confirmInvoiceTrash` | 全量选择只作导航，当前项按需准备；删除响应丢失只能GET日志，不重发POST | `tests/selection_workflow.test.cjs` |
+
+平台接口依据：[Apple FileManager Trash](https://developer.apple.com/documentation/foundation/filemanager/trashitem(at:resultingitemurl:))、[Microsoft PreDeleteItem](https://learn.microsoft.com/en-us/windows/win32/api/shobjidl_core/nf-shobjidl_core-ifileoperationprogresssink-predeleteitem)。
+
+
+## 2026-10-09 临时识别的来源与异步边界
+
+- `TemporaryRecognitionService.preview/_preview_source`：仅选择授权或历史 item 可访问 watch_dir 外文件；返回缓存前后核验整线程，防止预览绕过源失效限制。守护：历史重启、跨线程 id、同元数据改内容、渲染中删除、缓存回收回归。
+- `temporary-recognition.js` 的预览代际/序号：切换文件、页码或离开后，迟到内容及校验失败不得清除新视图；XML 仅 textContent，blob URL 在离开时释放。守护：Node 迟到响应、源失效清空、纯文本与返回测试。
+
+- `TemporaryRecognitionService._public/get`：历史不是源文件备份，任一来源失效必须省略全部 items；守护：删除、移动、替换和相同元数据下内容变化测试。
+- `recognize_job`：只处理显式选中的来源，进度写 runtime 缓存，禁止扫描所在文件夹或进入正式投影；守护：排序、逐份发布和原文件不变测试。
+- `temporary-recognition.js`：generation 拒绝迟到 picker/历史结果；网络失败先隐藏旧表格，复制前再次核验来源；守护：Node 异步竞态回归。
+- `main.rs`：只有固定 origin 首页消费原生拖入路径，私有 RPC token 不进入事件；多选复用固定枚举、原生线程调度和120秒预算。
+
+
+## 2026-10-09 渐进读取保护
+
+| 位置 | 原因与不变量 | 守护验证 |
+|---|---|---|
+| `ReadViews.read/save_cost` | 同一次读事务绑定页数据与代际；成本四表同事务发布，防止复制跨代际混合 | progressive loading 的分页/过期 revision 回归 |
+| `CostService.cost_view`/ `MonitorState.try_sync_write_lock` | 非阻塞读缓存不能取消原投影互斥；锁释放不代表生成成功，失败临时明细永远只读 | 写锁占用时可读、失败后不可编辑 |
+| `InvoiceListService.list_invoices`（`services/invoice_list.py`）/ summary 解析循环 | 临时列表在家族校正前可见但不能用于选择、详情、打印和导出；完整结果仍用原位置身份校验 | 暂停第二张解析、分页全量统计及既有选择身份回归 |
+| `DocumentIndex.build_index` / `document_state` | 入库准备与出库解析分阶段；首页勾选已给出票的身份，无需触发无关出库扫描 | selection_only 无扫描、进程停止/恢复与候选预览回归 |
+| `document_outbound_preview` | 元数据复用仅节省紧随预览的文件状态读取；源文件变化或导出仍需验证 | 状态不重复解析、源文件中途变化拒绝、临时预览导出拒绝 |
+
+## 通用检查点的恢复与私有边界
+
+`agent_handoff.py::Store.save` 先提交 journal 再更新投影，避免多文件中断导致已确认进度丢失；expected revision 与 私有根目录锁防旧执行者覆盖新记录。`build_agent_handoff.py::package` 仅复制公开白名单及固定 runtime，不能递归复制工作目录。对应工具/打包回归覆盖中断、并发、未知结果和私有成员拒绝；actor 是协作标签，不是系统安全边界。跨 project 可用性扫描与写入必须共用私有根目录锁；仅共享扫描而各自加 project 锁仍会发生双认领。Git 采集清除调用环境中的工作区/索引覆盖变量，避免把另一任务的 Git 身份当成本目录真值。
+
+1.1 的 `brief` 明确省略字段与行动前展开标记，防止为了省 token 隐去约束或未知结果；默认 resume 不调用 snapshot，claim 只复核一次。`Store.save` 先比较去除时间/revision 的内容，无变化零提交；增量事件可重建全文，更新一个任务不能改写其它 CURRENT。`resolve_reference` 只查本地明确绑定，多个匹配直接拒绝，不读取聊天或按时间选任务。守护测试覆盖摘要预算/全文保留、无变化无写入、只读不哈希、引用歧义、v1→v2追加和坏delta恢复拒绝。
+
+功能约束按需读取：规则正文维护在 `rules/`，本页维护原因、不变量与守护测试的对应关系。先按 [任务快速索引](AGENT_TASK_MAP.md#quick-lookup) 定位全部命中项，再读取规则全文及对应实现章节；AGENTS.md 保留全局必读规则。
+
+## Agent 入口与功能规则分层
+
+| 维护位置 | 原因与不变量 | 守护 |
+|---|---|---|
+| AGENTS.md / CLAUDE.md → 任务快速索引 → rules 专题 → 原有任务行 | 新任务没有前一段聊天上下文；全局规则必须完整可读，功能规则必须能从问题定位且不因迁移降级为可选。正文只在所属专题维护，避免两个 Agent 入口各自复制失效细则 | `test_agent_entries_and_scoped_rules_remain_navigable` 锁定入口 16 KiB / 4 KiB 预算、双向规则链接和唯一锚点；原有文档契约继续覆盖文件地图、正文约束、无本机路径、链接与围栏 |
+
+## 税务工作台拟议不变量（2026-09-11）
+
+这里登记[设计](../TAX_WORKBENCH_DESIGN.md)与[政策来源治理](../TAX_POLICY_SOURCES_AND_REVIEW.md)的后续注释位置，不宣称对应生产源码或守护测试已经存在。
+
+| 拟议交接点 | 为什么必须说明 | 未来守护 |
+|---|---|---|
+| 公司绑定 → 只读归集 | `watch_dir` 导航不是独立税务公司授权，默认空不得偷读父目录 | 空绑定零 IO、跨公司/越界拒绝、旧任务迟到 |
+| 原生选择器 → 设置草稿 → 检测/保存 | 复用原生面板但使用独立公司用途，选择不能隐式保存/切换监控目录；取消和迟到返回不得覆盖新草稿 | 双平台原生选择、取消/失败/超时/重复拉起、设置关闭后返回与保存前隔离 |
+| 入口偏好 → 单一图标 / 弹窗 | 缩小可见图标仍保留点击范围；置顶入口在首页左侧独立工具槽居中，不打断模块顺序；移动入口不应重建计算器状态；拖动与打开必须区分 | 位置切换保留草稿、入口唯一、拖动后不误开、视口变化与重置、保存失败恢复 |
+| 卡片布局 / 自定义税率 → 正面按键 / 待重算 | 长解释和新增输入行不能挤走按键；自定义是输入假设，不能沿用旧官方结果 | 短窗口 20 键、长背面/结果滚动、税率编辑不增高、范围/精度与旧结果失效 |
+| 事实快照 → 税务引擎 | 发票、抵扣、义务、记账和缴款期间不同，未知不是零 | 跨月抵扣、红字、多格式、缺期初与单月/季度反例 |
+| 引擎 → 正面/翻面 | 用户数字与解释必须属于相同 run、规则和快照，前端不重复计算 | trace 数值与模板同源、结果 stale 时解释失效 |
+| 规则选择 → 优惠 | 小规模、微利资格、六税两费和教育免征不是同一开关；2026 临界比较符不同 | 起征点前/等于/后、身份负向、舍入节点复核 |
+| 并列选择 → 小计 | 票面额/累计额/已缴额和附加父子项目不能重复求和 | 叶子 ID、量纲/期间、缺资料/旧结果排除 |
+| 政策来源 → 规则包 | 视频号与自媒体没有文号、条款定位和有效期，无法在解释中引用也无法判定失效；解释性材料一旦被当成法条，错误会随规则包扩散 | A/B/C/D 分级、线索回溯到官方原文、规则包只含 A 级来源与签署记录 |
+| 规则包 → 申报表映射 | 表式随政策版本调整，过期映射比没有映射更危险：用户会照着旧行次填报 | 表式版本变化后映射 stale、缺表式样例时不输出行次 |
+| 规则包 → 征期与期限提醒 | 期限只作提醒，不构成已申报证据；推断出的日期会被当成事实 | 记录来源与核对日期、未核验显示“未核验”、税费种认定优先于通用日历 |
+| 结论 → 留存备查清单 | 多数优惠是自行判别、申报享受、资料留存备查，算得对但拿不出资料仍是风险 | 清单来自本次实际引用的规则与证据、资格类型可指认证据文件 |
+| 资格与认定 → 历史属期 | 纳税人身份、资格和税费种认定会变；用今天的身份算以前的属期是最隐蔽的错算 | 带生效期间的状态回放、跨期递推例、政策变更例 |
+
+合成原型的入口注释与固定小计注释明确其无税务算法/业务 IO 边界；源码语法和交互核对只能验证设计表现，不能冒充生产算法与成品验收。
+
 2026-09-09 `tauri_windows_portable.py::_replace_staging` 对 Windows 5/32/33 最多重试 20 次、累计 1.9 秒，处理新复制 EXE/DLL 后目录发布的短暂占用；持续拒绝与无关错误仍停止，不复制半成品或放宽清单。`test_stage_publish_retries_only_bounded_windows_sharing_errors` 守护成功、次数上限和错误范围。
 
 2026-09-09 `BackendHost::launch` 清除 PYTHONHOME，避免用户 Python/Conda 的标准库路径使随包解释器在 encodings 初始化时退出；spawn 前重置诊断、只输出 OS 错误码，避免旧握手记录和敏感环境值进入新诊断。Windows 随包 Python 污染/清理实验及新包启动验收守护；`windows_abortive_close_preserves_framing_and_reports_truncation` 使用真实 Winsock SO_LINGER 验证完整 200/204 与截断 10054 的区别。
+
+## 参考凭证草稿（2026-10-10）
+
+| 文件与符号 | 设计原因与不变量 | 守护测试 |
+|---|---|---|
+| `bank/ledger.py::Ledger.find` | 不同账套编码不同，按名称路径定位；不唯一或不存在时留空，避免把分录记到相近但错误的科目 | 科目路径定位用例 |
+| `bank/vouchers.py::_input_policy` | 已申报且有抵扣的月份推定已抵扣，防止重复抵扣；已申报且未抵扣的进项记待认证，在未申报月份转入 | 进项抵扣与增值税测算用例 |
+| `bank/workpaper.py::analyze` 角色优先级 | 自动写入的“未知”不能压过后来补充的发票证据，只有人工条目优先 | 人工角色保留用例 |
+| `bank/jierui.py::export` | 任一凭证不合格则整月不写出，防止只导入半个月；签名去重防止同一凭证重复导入；编号从该月草稿最小号起，补记凭证不与账套已有凭证撞号 | 导出校验、重复导出、已入账月份补记用例 |
+| `bank/vouchers.py::_input_policy` 勾选清单 | 清单已登记的月份里没出现的发票就是未勾选，挂待认证；推定已抵扣会虚增进项、与申报表对不上 | 勾选清单与跨月补记用例 |
+| `bank/vouchers.py::build_drafts` 发票读回匹配 | 按税额消耗匹配读回分录，避免已入账发票重复入账；已结账月份的漏记发票补记到首月，不改已结账期间 | 勾选清单与跨月补记、已入账月份补记用例 |
+| `bank/vouchers.py::match_booked` | 账套曾把同一人多笔来款合成一张凭证，只在摘要点名的对方流水里找合计组合；对不上就补记或列“账有银无”，不按相近金额硬配 | 合并来款匹配、已入账月份补记用例 |
+| `bank/vouchers.py::build_drafts` 已入账月份 | 有账套读回的月份发票与月末计提已入账，再生成会重复入账；只补记银行漏记 | 已入账月份补记用例 |
+| `bank/workpaper.py::_assign_statement_id` | 中国银行每页序号重排，行号按整份对账单位置编号，否则第 2 页行与第 1 页撞号并覆盖分类 | 分页序号用例 |
+| `bank/vouchers.py::merge_lines` 数量 | 合并同科目分录时数量随金额相加，单位不一致则清空交人工，避免库存数量与金额脱节 | 合并分录用例 |
+
+## 银行流水底稿（2026-10-02）
+
+| 文件与符号 | 设计原因与不变量 | 守护测试 |
+|---|---|---|
+| `bank/boc.py::_finish_row` | 银行对账单“借方发生额”是账户流出，企业账上记贷方；方向写错会让整套建议分录借贷颠倒 | 解析方向用例 |
+| `bank/boc.py::parse_statement_pages` 续行拼接 | 定宽列把中文和长编号折行，插空格会破坏流水号与户名，必须无空格拼接 | 摘要/备注续行用例 |
+| `bank/boc.py::_pair_fields` | 回单文本层中标签与值顺序不稳定，只能按同行坐标与下一标签边界配对；折行值与首行左对齐 | 合成回单坐标解析 |
+| `bank/matching.py::match_receipts` | 同一流水号可同时对应转账与手续费，必须带金额；多候选不猜 | 流水号匹配用例 |
+| `bank/classify.py::suggest` | 依据文本不含户名，户名只在 `aux`，脱敏才能统一替换；建议分录不是凭证 | 端到端私有/脱敏对照 |
+| `bank/redaction.py::free_text/scan` | 摘要夹带人名和项目名，只能白名单保留用途词；数字按词边界匹配避免哈希串误报，命中即 fail closed | 白名单、词边界、fail-closed 用例 |
+| `bank/workpaper.py::run` | 先构建并扫描脱敏表再写私有表，防止半套产物；`往来单位.json` 只补不改 | fail-closed 不写出、人工角色保留用例 |
 
 ## OFD 原票预览（2026-09-08）
 
@@ -78,26 +563,28 @@
 
 | 文件与符号 | 应说明的原因 | 不能破坏的不变量 | 守护测试 |
 |---|---|---|---|
-| `services/app_state.py::_run_background_sync_process` 与 `AppState.run_background_diagnostics` | PyMuPDF 等原生解析可能长时间占用 GIL；首轮同步必须在 `spawn` 子进程，而不是把重解析留在 API 进程线程中。retire 和 worker 清理可以并发，`Process.close()` 后读取 `pid/exitcode` 会抛错 | `/` 和 health 不被重解析阻塞；子进程以 `emit_events=false/notify=false` 返回结果，父进程只有在 generation 与完整 TargetProfile 身份仍匹配时才清缓存、更新状态并补发普通同步事件；过期结果只能记 `server.background_stale`；超时事件使用关闭前安全捕获的进程诊断值 | startup child、慢 worker、过期 TargetProfile、关闭后 PID 快照与失败路径 API 测试 |
-| `api/app.py::invoice_selection_summary` 与 `AppState.invoice_selection_summary` | `invoice_key` 是行位置，会在重建后复用，所以请求必须带并复核 `source_path`；业务方法还会做同步文件 I/O 和聚合，必须由异步路由卸载到线程池 | 旧选择不能落到新文件；过期返回 409；selection-summary 进行中 health 仍可调度 | selection-summary 过期/非法/并发 health 测试 |
-| `api/app.py::manual_fields/cost_analysis/reference_status` 与 `AppState.update_manual_fields/cost_snapshot/save_cost_reference_status` | 手改、schema 自愈和状态/工作簿写入都会等待文件锁；留在事件循环会让 health 与其他轻请求饥饿，脱离 profile 锁又会与 monitor 竞争 | JSON 解析后在线程池运行；所有会写投影的路径使用捕获 profile 的写锁；profile 已切换时旧目录可完成自身真值，但不得清当前缓存或发出当前目录事件 | manual fields、cost snapshot、reference status 的 lock/health/stale-profile API 测试 |
-| `_selection_family_key/_selection_metric_total` | 票头号码和文件名号码必须进入同一命名空间；每个金额字段独立判断冲突 | 同票多格式只计一次；同字段多值整票不计 | selection-summary 去重/冲突/回退测试 |
-| `AppState.rename_invoice_files` 第一阶段 | 临时名先释放所有源名称，避免 A/B 目标互占和顺序覆盖 | 任何 staging 失败都逆序回滚；不覆盖已有非计划文件 | 重命名保持手改与重复目标测试 |
+| `services/background_sync.py::_run_background_sync_process` 与 `BackgroundSyncService.run_background_diagnostics` | PyMuPDF 等原生解析可能长时间占用 GIL；首轮同步必须在 `spawn` 子进程，而不是把重解析留在 API 进程线程中。retire 和 worker 清理可以并发，`Process.close()` 后读取 `pid/exitcode` 会抛错 | `/` 和 health 不被重解析阻塞；子进程以 `emit_events=false/notify=false` 返回结果，父进程只有在 generation 与完整 TargetProfile 身份仍匹配时才清缓存、更新状态并补发普通同步事件；过期结果只能记 `server.background_stale`；超时事件使用关闭前安全捕获的进程诊断值 | startup child、慢 worker、过期 TargetProfile、关闭后 PID 快照与失败路径 API 测试 |
+| `api/app.py::invoice_selection_summary` 与 `InvoiceSelectionService.invoice_selection_summary` | `invoice_key` 是行位置，会在重建后复用，所以请求必须带并复核 `source_path`；业务方法还会做同步文件 I/O 和聚合，必须由异步路由卸载到线程池 | 旧选择不能落到新文件；过期返回 409；selection-summary 进行中 health 仍可调度 | selection-summary 过期/非法/并发 health 测试 |
+| `api/app.py::manual_fields/cost_analysis/reference_status` 与 `InvoiceListService.update_manual_fields`、`CostService.cost_snapshot/save_cost_reference_status` | 手改、schema 自愈和状态/工作簿写入都会等待文件锁；留在事件循环会让 health 与其他轻请求饥饿，脱离 profile 锁又会与 monitor 竞争 | JSON 解析后在线程池运行；所有会写投影的路径使用捕获 profile 的写锁；profile 已切换时旧目录可完成自身真值，但不得清当前缓存或发出当前目录事件 | manual fields、cost snapshot、reference status 的 lock/health/stale-profile API 测试 |
+| `invoice_selection.py::selection_family_key` / `InvoiceSelectionService._selection_metric_total` | 票头号码和文件名号码必须进入同一命名空间；每个金额字段独立判断冲突 | 同票多格式只计一次；同字段多值整票不计 | selection-summary 去重/冲突/回退测试 |
+| `InvoiceRenameService.rename_invoice_files`（`services/invoice_rename.py`）第一阶段 | 临时名先释放所有源名称，避免 A/B 目标互占和顺序覆盖 | 任何 staging 失败都逆序回滚；不覆盖已有非计划文件 | 重命名保持手改与重复目标测试 |
 | `rename_invoice_files` 第二阶段 | 全部临时名再提交为最终名，失败时需要同时回滚已提交与未提交项 | 结果必须区分文件已改名但投影重建失败 | 同上；真实目录验收另行执行 |
 | `_migrate_renamed_manual_overrides` | 手改状态用源路径作身份，文件改名必须迁移 key | 不丢三项手改，不把旧 invoice_key 当长期身份 | 手改迁移/重建测试 |
 | `request_server_shutdown` | stop-monitor 模式必须先停止并复核，失败时保留 WebUI | 响应前不终止服务；monitor 仍 running 时不调度退出 | shutdown API 两种行为测试 |
-| `AppState.server_shutdown_requested` 与 `api/app.py::event_stream` | WKWebView 的 EventSource 可在 shutdown 响应写回后继续持有 SSE；若 generator 不主动结束，Uvicorn graceful shutdown 会一直等待浏览器连接 | 仅在结构化 shutdown 已被成功接受后关闭 SSE；失败会重置 shutdown 标记，普通 EventSource、事件游标与 heartbeat 语义不变 | shutdown 后 SSE EOF API contract、public-preview smoke contract |
+| `ServerShutdownService.server_shutdown_requested`与 `api/app.py::event_stream` | WKWebView 的 EventSource 可在 shutdown 响应写回后继续持有 SSE；若 generator 不主动结束，Uvicorn graceful shutdown 会一直等待浏览器连接 | 仅在结构化 shutdown 已被成功接受后关闭 SSE；失败会重置 shutdown 标记，普通 EventSource、事件游标与 heartbeat 语义不变 | shutdown 后 SSE EOF API contract、public-preview smoke contract |
 | `tauri_public_preview.py::build` 与 `verify_tauri_public_preview.py::_verify_receipt_verification` | 首次验包需要读取尚未写入 verifier 输出的 receipt；若把这一中间态当作公开验收成功，损坏或未完成的 receipt 可被误作发布证据 | pending record 仅可由组包器首轮显式接受；随后写入 exact verifier JSON 并绑定实际 DMG SHA-256，默认 verifier 必须再次通过，字段扩展、篡改或不完整一律拒绝 | macOS public-preview receipt finalizer、builder stdout/stderr/timeout contracts |
 | `finalize_server_shutdown` | 正式启动器 PID 可能不是 Uvicorn `os.getpid()`，且关闭期间可能启动新实例 | 仅当 PID 文件内容仍等于请求快照时删除 | shutdown finalize 测试 |
-| `AppState._scan_business_dossier/business_dossier/open_business_dossier` | 公司资料夹是导航边界，不是新的扫描根；完整递归和每链接重复扫描会拖住页面，即使前端超时服务端仍会继续工作 | 单次 `os.scandir` 有目录项/时间上限、跳过符号链接；迭代途中 `OSError` 保留已累计项并以 `unreadable_entries` 标为下界；只打开业务资料夹或当前 watch_dir 内路径，open 同步路径经线程池 | business dossier API/有界扫描/iterator-OSError/线程池与首页刷新容错测试 |
-| `AppState.bookkeeping_*` 与 bookkeeping repository | 做账状态写入跨进程且必须绑定当前资源 revision | 只经严格仓储/写锁/CAS；坏 schema 保留原文件并 fail closed | 全部 bookkeeping 状态/API 测试 |
+| `BusinessDossierService._scan_business_dossier/business_dossier/open_business_dossier`（`services/dossier.py`） | 公司资料夹是导航边界，不是新的扫描根；完整递归和每链接重复扫描会拖住页面，即使前端超时服务端仍会继续工作 | 单次 `os.scandir` 有目录项/时间上限、跳过符号链接；迭代途中 `OSError` 保留已累计项并以 `unreadable_entries` 标为下界；只打开业务资料夹或当前 watch_dir 内路径，open 同步路径经线程池 | business dossier API/有界扫描/iterator-OSError/线程池与首页刷新容错测试 |
+| `BookkeepingService.bookkeeping_*`与 bookkeeping repository | 做账状态写入跨进程且必须绑定当前资源 revision | 只经严格仓储/写锁/CAS；坏 schema 保留原文件并 fail closed | 全部 bookkeeping 状态/API 测试 |
+| `AppState.__init__` 构造全部领域服务（`services/*.py`）的 provider 与回调参数 | 切换 watch_dir 会替换 AppState 的 TargetProfile 与 config；服务若在构造时捕获对象，后续做账会落到旧公司资料夹。服务若自建锁，做账写入就不再与目录切换和其它 AppState 写入串行 | 活动目标、config、公司资料夹与成本明细路径一律经回调实时读取；传入的是 AppState 同一把 RLock；单据另经回调读取出库目录与首页勾选校验，切换出库目录后预览/导出不得落到旧目录 | `test_bookkeeping_service_follows_watch_dir_switch`、`test_bookkeeping_writes_wait_for_the_app_state_lock`、`test_document_service_follows_watch_dir_and_outbound_switch`、`test_document_export_waits_for_the_app_state_lock`、`test_cost_service_follows_watch_dir_switch`、`test_cost_view_waits_for_the_app_state_lock`、`test_business_dossier_follows_watch_dir_switch`（资料夹不取锁，只守护目录跟随；做账经它取公司目录，做账那条测试同时覆盖）、`test_preview_print_service_follows_watch_dir_switch`、`test_preview_creation_waits_for_the_app_state_lock`、`test_selection_service_follows_watch_dir_switch_and_live_invoice_list`（另守护发票列表回调每次现取）、`test_selection_summary_waits_for_the_app_state_lock`；所有服务另由 `tests/test_appstate_service_wiring.py` 按服务参数化守护（锁、活动目标、config 为 AppState 同一对象），并检查 AppState 不再长出转发方法。跨服务回调必须是每次现查的 lambda：构造后在服务实例上打桩（如 `state.settings.outbound_invoice_dir_text`）才能传到其它服务，变异核对时提前绑定方法对象会使 `test_outbound_partial_preview_and_status_reuse` 失败 |
 
 ## 5. P0：票头、金额与同票纠偏
 
 | 文件与符号 | 应说明的原因 | 不能破坏的不变量 | 守护测试 |
 |---|---|---|---|
 | `extraction/parsers.py::_normalize_money` | 8-20 位纯数字高度可能是发票号/对象号；上限用于阻止编号污染 | 不把号码片段当金额；合法小数/货币格式仍可用 | 三个金额防污染/合法金额测试 |
-| `_extract_pdf_amount_triple/_text_from_pdf` | 票面汇总金额可能早于身份值，购销方后又有重复明细金额；拼接页文本会制造跨页伪证据 | 保留 `\f` 页边界；只收锚点有限窗口内带货币符号的有序候选；唯一且差额不超过 `0.02`；总额来自票面 | 三元组安全边界与真实 48 票影子对照 |
+| `_extract_pdf_amount_triple/_text_from_pdf` | 票面汇总金额可能早于身份值，购销方后又有重复明细金额；拼接页文本会制造跨页伪证据 | 保留 `\f` 页边界；只收锚点有限窗口内带货币符号的有序候选；唯一且差额不超过 `0.02`；总额来自票面 | 三元组安全边界与真实 48 票影子对照；2026-11-17 增合计行锚点、不征税对与逐字分行购销方，真实 53 票影子对照只有 3 张空值补齐 |
+| `_ofd_positioned_text_objects/_fill_from_ofd_layout` | OFD 标签框与值可能重叠；不同页面的坐标重用，拼接会误把不同页的购销方或金额视为同一组 | 单页且同一文档最多一个模板才补空；一购一销且不同名；合计行与小写各唯一、算术成立；结构化金额与坐标不一致时整组不补 | `test_ofd_layout_fills_only_missing_parties_and_amounts`、`test_ofd_layout_never_overrides_or_mixes_with_structured_values`、`test_ofd_layout_does_not_mix_values_from_different_pages`、`test_ofd_layout_amounts_reject_incomplete_or_rated_rows`、`test_ofd_layout_parties_need_both_sides` |
 | `_first_money_near` | 160 字符窗口会跨票头、汇总和明细区域，把首个无关金额当标签值 | 只读标签同行或下一非空行的独立货币值；不恢复全文最大数 | 同行/紧邻/跨逻辑区域金额测试 |
 | `_extract_einvoice_value_sequence` | 某些电子票按“所有标签后集中输出值”，但主体后的数值也可能只是单价和明细金额 | 必须先锁定 20 位号和日期，只接受两个主体；金额交给独立证据链 | digital invoice value sequence 与两个明细小数拒绝测试 |
 | `_clean_company_candidate/_party_value_is_suspicious` | 大写金额、数字对象、地址/项目/标签常被误当主体 | 宁空勿脏；短个人主体仍允许 | 个人销售方与可疑主体纠偏测试 |
@@ -117,7 +604,14 @@
 | `stock_average_unit_price*` | 库存成本按数量加权；不能替换成行单价算术平均 | 缺少任一必需值时返回空，不把坏行作零 | 均价双口径/缺失行测试 |
 | `purchase_reference_average_unit_price_with_tax` | 采购参考刻画每次采购单价，行权重相同 | 不参与库存金额和开票参考基数 | 双口径测试 |
 | `_reference_key` 与 `costs.py::_reference_aliases` | SHA1 分隔键兼容旧系统，旧明文/规范化键仍需读取 | 新保存归一到 SHA1；四字段不能加入销售方/票号 | 旧 SHA1/兼容状态测试 |
-| `_invoice_reference_summary/_build_reference_rows` | 开票参考按库存除税均价、行级加价和 13% 销项税计算 | 8% 仅 fallback；每行独立；公式两文件一致 | 行级加价与统计测试 |
+| `_invoice_reference_summary/_build_reference_rows` | 开票参考按成本单价（不含税 + 不可抵扣税金）、行级加价和本公司销项税率计算 | 8% 仅 fallback；每行独立；公式在工作簿、API、保存与 page-costs 四处一致；无 `tax_profile` 时等同旧的一般纳税人 13% | 行级加价与统计测试、税务设置测试 |
+| `input_tax_deductibility/reference_cost_basis` | 一般纳税人只有专票与旅客运输普票可抵扣，其他普票税金计入成本；小规模全部计入 | 类型未确认时按不含税并标注，避免识别缺口抬高参考价；通行费普票未单独识别，会按不可抵扣计 | `test_cost_reference_general_taxpayer_adds_ordinary_invoice_tax_to_cost`、`..._unconfirmed_invoice_type_...` |
+| `_write_reference_status`（两处） | 改写状态 JSON 时保留顶层 `tax_profile` | 重新汇总合并工作簿状态、只保存行状态都不能清掉公司税务设置 | `test_rebuild_status_writer_preserves_tax_profile`、`test_cost_tax_profile_change_keeps_locked_snapshot_and_survives_row_saves` |
+| `read_outbound_summary/outbound_reference_fields` | 销项只在手动重新汇总时读取并缓存到工作区；只采用销售方为本目录进项购买方的票；比对不改保存的已开数量 | 开具目录是全局设置，切换公司后可能指向别家；手填可能早于销项归档，自动覆盖会改动已开快照 | `test_outbound_summary_dedupes_formats_and_ignores_other_companies`、`test_outbound_compare_states_follow_hand_entered_quantity`、`test_bridge_rebuild_reads_outbound_invoices_into_cost_reference` |
+| `canonical_reference_rows/merged_status_item/_migrate_statuses_to_catalog` | 品目表改名即合并；已开状态在保存品目表时一次性迁移（合并相加、拆分按数量分摊）；规格不改大小写、不去 E 后缀 | 合并 / 拆分不能丢已开快照；18E 与 18 是不同牌号；无品目表时分组键不变，旧状态无需迁移 | `test_item_catalog_merges_names_and_keeps_saved_invoiced_snapshots`、`test_item_catalog_split_shares_merged_status_by_quantity`、`test_item_catalog_spec_normalisation_finds_status_saved_under_old_key` |
+| `reference_invoice_id/reference_exclusions` | 开票参考“移除”只是排除，不删文件、不改明细与已开状态；来源发票整张移除 | 用户要求可恢复且不动发票目录；按发票号整张排除，避免同票在不同品目里一半计入一半不计 | `test_reference_exclusions_remove_and_restore_rows_without_losing_status`、`test_reference_exclusions_remove_source_invoice_from_row` |
+| `referenceColumnIndex` / 底部操作条 | 草稿联动按列 key 定位；批量操作只在勾选 / 有草稿时出现 | 新增列（来源）与重排不会让联动写错格；减少常驻按钮 | 前端契约测试 `test_cost_page_keeps_required_controls` |
+| `finishCostViewSwap` / `renderCostChrome` / `setText` | 切换 sheet 只渲染目标表；空表先保高度、渲染后先测量再释放；未变数据的自动刷新只更新状态文字 | 空表测得约 620px 的高度上限会让页面瞬间变短、滚动被拉回顶部；整页重绘与重复写 DOM 是“突兀”的来源 | 前端契约测试 `test_cost_page_keeps_required_controls` 与浏览器 A/B 验收 |
 | `CostProjectionService.save_reference_status::locked_part` | 已开金额代表保存当时的业务快照，新增明细只能增加未开 | 数量变化才按比例重锁；只改加价不重价已开部分 | 快照锁定/新增汇总/改加价测试 |
 | `_read_reference_status_from_workbook` | 旧目录可能只有工作簿状态，没有完整 JSON | 只作兼容兜底，恢复后写结构化 JSON | 工作簿恢复测试 |
 
@@ -130,8 +624,8 @@
 | `file_signature/detect_source_changes` | 周期扫描要轻量，事件只是提示，最终以路径+mtime_ns+size 确认 | 无变化不重解析；增删改集合明确 | monitor rebuild/periodic 测试 |
 | `sync_excel_manual_edits` | Excel 可能被占用，且只允许三字段成为覆盖 | 不可读时 GUARD_BLOCK；不接受其它列手改 | schema/手改同步测试 |
 | `MonitorSynchronizer.run_sync` 决策矩阵 | 缺产物、schema 旧、源变化、手改和 force 的处理不同 | schema-only 可只刷新；无变化只 heartbeat；全重建后保存 processed | monitoring 同步与 schema 测试 |
-| `MonitorState.sync_write_lock`、`MonitorSynchronizer.run_sync` 与 `AppState.bridge_rebuild` | daemon、startup child 与手动重建可同时命中同一 TargetProfile，单进程 `AppState._lock` 不能保护跨进程投影写入且会阻塞 API | 以 TargetProfile `state_dir` 为键取得可重入线程锁和 OS 文件锁，覆盖整段读取、决策、投影与 monitor 状态写入；不同 profile 不互相串行 | monitor overlap 与手动重建相邻测试 |
-| `AppState._retire_background_process_async/_wait_for_background_sync_result` | 切换目录或新的 startup sync 不能让旧子进程无限扫描/写入；等待它退出也不能卡住请求入口 | superseded worker 独立有界 terminate/join；等待结果有总 deadline；仍未退出只记录 `server.background_worker_retire_timeout` 诊断，不覆盖活动 TargetProfile 真值 | startup child EOF、超时、retire 测试 |
+| `MonitorState.sync_write_lock`、`MonitorSynchronizer.run_sync` 与 `MonitorControlService.bridge_rebuild` | daemon、startup child 与手动重建可同时命中同一 TargetProfile，单进程 `AppState._lock` 不能保护跨进程投影写入且会阻塞 API | 以 TargetProfile `state_dir` 为键取得可重入线程锁和 OS 文件锁，覆盖整段读取、决策、投影与 monitor 状态写入；不同 profile 不互相串行 | monitor overlap 与手动重建相邻测试 |
+| `BackgroundSyncService._retire_background_process_async/_wait_for_background_sync_result` | 切换目录或新的 startup sync 不能让旧子进程无限扫描/写入；等待它退出也不能卡住请求入口 | superseded worker 独立有界 terminate/join；等待结果有总 deadline；仍未退出只记录 `server.background_worker_retire_timeout` 诊断，不覆盖活动 TargetProfile 真值 | startup child EOF、超时、retire 测试 |
 | `daemon.run_monitor` 两次 startup_sync | 第一轮扫描与 Watchdog ready 之间存在漏事件窗口 | observer/兜底初始化后必须再补漏，再写 ready=true | bridge ready 和新文件事件测试 |
 | daemon 的 `queue.Queue` 合并 | Watchdog 会产生连续 create/modify/move 事件 | 取得首事件后 1 秒归并，最终仍走签名判断 | daemon event 测试 |
 | `MonitorBridge.status/_wait_for_ready/start` | 仅见 PID/lock 不能向用户报告启动成功 | lock PID、status PID、running、ready 必须一致 | bridge start/stop 测试 |
@@ -148,11 +642,11 @@
 | `ink-pulse/skin.css::ink-pulse-page-in` | Chromium 可在 transform 动画终止帧为 `none` 时仍保留 identity matrix，让 `body` 成为 fixed containing block | `body` 入场 keyframes 只允许 opacity，不得使用 transform/filter/perspective/will-change 等可建立 containing block 的属性 | Ink Pulse CSS 完整 keyframes 属性契约；滚动后真实浏览器验收 |
 | `documents.py::_ensure_detail_rows/_finish_document_layout/document_layout` | 插行不会自动移动行高和打印范围；合并单元格不能按 nth-child 分配列宽 | 移动合并与行高、复制行样式、扩展打印范围；预览消费模板真实列宽 | 5/15 行双单据布局测试 |
 | `documents.py::_inbound_detail_rows` | 同票副本不能重复增加入库数量；相同来源内重复行仍是真实明细 | 仅折叠完整明细一致的不同来源，冲突阻断且不重写 CSV | 重复来源与冲突导出测试 |
-| `AppState.document_inbound_selection/export_inbound_document` | 页面草稿可能跨目录或列表身份已变化 | 同一锁内验证 target、key/path、真实源文件到逐票写出；已有文件跳过/副本 | 批量身份、缺明细、已有文件保护测试 |
+| `DocumentService.document_inbound_selection/export_inbound_document`（勾选身份由 `DocumentService._validated_inbound_selection` 经 `InvoiceSelectionService` 校验） | 页面草稿可能跨目录或列表身份已变化 | 同一锁内验证 target、key/path、真实源文件到逐票写出；已有文件跳过/副本 | 批量身份、缺明细、已有文件保护测试 |
 | `page-documents.js::exportBatchInbound/loadPreview` | 写请求结果不确定时重试可能重复生成；旧预览可能迟到 | 不确定结果停止剩余且保留；请求序号拒绝迟到预览 | Node 停止、断网与预览竞态检查 |
 | `documents.py::rmb_uppercase` | “零”的跨四位组规则非直觉，普通数字格式化不能替代 | HALF_UP 到分；万/亿跨组零正确 | RMB 零位测试 |
 | `documents.py::_save_workbook` | 直接保存目标可能留下半写工作簿 | 同目录临时文件后 replace；占用错误上抛给用例层 | 单据导出/占用测试 |
-| `AppState._path_is_under_root` 与 open/export 方法 | 客户端不能提交任意本机路径让服务打开/覆盖 | 路径由服务端计算且必须位于入/出库受控根 | 任意路径拒绝、出库范围测试 |
+| `targets.paths.path_is_under_root`（预览/打印服务与 DocumentService open/export 共用）| 客户端不能提交任意本机路径让服务打开/覆盖 | 路径由服务端计算且必须位于入/出库受控根 | 任意路径拒绝、出库范围测试 |
 | `storage/files.py::atomic_write_json/write_csv_rows` | 状态和投影被并发读取，半写正文会造成错误恢复 | 同目录临时文件 + `os.replace`；保持 CSV BOM | monitoring/cost/API 相邻测试 |
 
 ## 9. P0：Windows 启停和发布
@@ -235,6 +729,7 @@
 | `appearance.js::prepareStylesheet` 与切换处理 | CSS 必须先成功加载才写入 skin 状态，失败不能持久化坏外观；切换已加载 link 保留业务 DOM 与未保存草稿；保存响应未确认不自动重试 | frontend_interactions 的加载顺序、双击、失败恢复和草稿测试；真实默认/深色/恢复入口 |
 | `generate_desktop_icon.py` | 本地 OFL 字体和固定坐标避免主机字体造成图标漂移；纸白母版、Windows 多尺寸和 macOS 容器必须来自同一设计，tray 保持 8-bit RGBA | test_desktop_icon 的生成一致性、容器、透明度和小尺寸对比；Tauri IHDR 契约 |
 | `web/static/css/app.css` 的设置移动端规则、做账和勾选合计基础规则 | 缺失媒体查询结束大括号不会删除选择器，却会让桌面端完全丢失基础布局并被皮肤通用规则覆盖 | 共享基础规则必须位于顶层；透明金额卡点击层、三列金额卡和弹窗网格不能只在窄屏生效 | 前端 CSS 大括号层级契约；Ink Pulse、无皮肤和真实桌面浏览器验收 |
+| `page-costs.js::positionCostFormulaTooltip` 与 `app.css::.cost-formula-tooltip` | 按钮移到切换栏左侧后，固定 `right:0` 的 460px 浮层越过视口左缘；皮肤 `:is()` 无法匹配 `::after`，深色下箭头保持白色 | 每次 hover/focus 实测并夹在视口 12px 内、避开 `.topbar`，上方不足翻到下方，仍不足则限高由 `__body` 滚动（不裁箭头、不用 `overscroll-behavior: contain`）；浮层内部滚动不触发重算以免 `scrollTop` 归零，`::before` 悬停桥覆盖按钮间隙，`max-width` 按 `clientWidth` 写入；箭头 `background: inherit` | 前端静态契约；无头 Chrome 多宽度/翻转/矮视口与默认、no_skin、Animal Island、website-dark 实测 |
 | `web/static/css/app.css::.detail-cost-body` | 有界 Grid 会把多个隐式 `auto` 行压到容器高度内；项目卡又用 `overflow:hidden` 收圆角，结果是汇总卡占满项目、规格表被静默裁掉且外层没有可滚动溢出 | 隐式项目行使用 `max-content` 并从顶部排布；单项目表格保留自身有界滚动，多项目高度交给外层 `overflow-y:auto`，纵向滚动链仍为 `auto` | 前端静态契约；Ink Pulse、Animal Island、`?no_skin=1` 多项目真实浏览器尺寸与滚动验收 |
 | `invoice_print.html::waitForImage/waitForPrintableFrame/requestBrowserPrint` | `load` 早于图片解码/首次绘制时会让首次打印预览抓到空票面；固定 A4 会覆盖 A5，打印态 `100vw/100vh` 又会随预览页框重算形成反馈，表现为持续加载/跳动或额外空白页；浏览器仍只暴露打印对话框近似生命周期 | 首印等待 `decode()` 与两次渲染帧；命名页只声明方向；票面使用页框百分比且只在后续票面前分页；文案不得把对话框打开写成打印成功 | 打印前端契约 + Chrome/Edge A4/A5 真实验收 |
 | `targets/paths.py::target_id_for` | casefold 的目录身份是 Windows 语义，16 位只作档案目录 | paths 测试 |
@@ -242,7 +737,7 @@
 | `summary.py::summary_schema_needs_refresh` | CSV 与 XLSX 必须一起检查，旧表头会触发后台自愈 | summary schema 测试 |
 | `CostProjectionService.needs_schema_refresh/refresh_schema_from_current_detail` | 仅表头升级时不应重解析全部源票，且必须保留状态 | cost schema refresh 测试 |
 | `_sync_status` | 成本同步按同票来源组而非文件数统计 | same-invoice format count 测试 |
-| `AppState._summary_rows` | `mtime_ns+size` 只做进程内 CSV 读取缓存，不是源发票变化真值 | API 列表/后台同步测试 |
+| `InvoiceListService._summary_rows` | `mtime_ns+size` 只做进程内 CSV 读取缓存，不是源发票变化真值 | API 列表/后台同步测试 |
 | `platform/windows.py::run_native_dialog` | 子进程 cwd 必须是项目根，避免 config 目录破坏模块导入 | picker mock + Windows 真机 |
 | `release/build_manifest.py::deterministic_build_id/load_build_manifest` | 构建身份必须覆盖实际共享输入，字段缺失不能伪装成兼容包 | 排除本机缓存；无效清单返回 manifest_present=false；capabilities 不丢失 | build manifest 测试 |
 | `release/package_manifest.py` 与 `runtime_manifest.py` | 仅 core build 相同不能证明平台包、Python 或依赖相同 | package ID/平台/架构/类型/source/lock/core 闭环；runtime tree SHA 与 import probe 对应 | identity/dependency/release/Mac/Windows contract |
@@ -266,8 +761,8 @@
 | `backend.rs::updater_from_json`、`tauri.dev.conf.json`、`tauri_dev_app.py` recovery 变体与 `tauri_recovery_smoke.py` | 为验证 startup restore 而打开通用 development updater 会把任意 Feed/key 误带进脏工作树，也可能让 runner 自己触发 check/install 后把恢复样本误写成更新证据；插件配置缺省为 `null` 又会在 runtime manifest 覆盖前退出 | ordinary development/internal-alpha 始终 disabled；development enabled 只接受固定不可达 HTTPS loopback endpoint、无验签能力 sentinel 和精确三字段对象。overlay 空 `pubkey` 只提供可反序列化对象，不含 endpoint/权限；hash-bound manifest 和 Rust parser 再提供精确 sentinel。runner 预写 `auto_check_updates=false`，只允许 health/status/stop，按 plist/manifest/health/path 身份确认后才 stop，并仅清理自己创建的进程组 | Rust exact-tuple/extra-field test、development staging/plugin-placeholder tests、recovery runner plist/allowlist/path/identity contracts，以及 L10-E macOS arm64 startup-recovery 样本；真实 Feed/download/install/restart 不在样本内 |
 | `platform/host_rpc.py::_send` | 默认 `urllib` opener 会读取 `HTTP_PROXY/http_proxy`；即便 Host RPC URL 已被校验为 loopback，bearer token 仍可能被交给环境代理 | 为每个 private Host RPC 请求创建 `ProxyHandler({})` 的 opener，强制直连已验证的 private loopback listener；保留固定 enum、origin、超时与脱敏错误，不把 token 带入任何代理或日志 | `test_tauri_host_rpc.py` direct no-proxy transport contract |
 | `src-tauri/icons/icon.png` | Tauri 的编译期 context 可以接受 PNG，但 macOS tray 在实际初始化时要求可用的 8-bit RGBA 数据；16-bit RGBA 只在首个真实 app launch 暴露问题 | 图标保持 8-bit RGBA，并用 IHDR 回归锁定位深/颜色类型，避免把 tray 初始化异常误归因为生命周期或端口错误 | Tauri icon IHDR contract 与 L9 development app smoke |
-| `host_rpc.rs::HostUpdater` 与 `AppState.check_for_updates/install_update` | 普通 cache 检查不能授权安装；无时限网络、caller metadata、响应前副作用、并发 commit 或平台退出差异都会造成越权、悬挂或半更新 | Hosted API 保持 strict fresh-200/version approval 和非阻塞锁；HTTP install 只接 `{}`/脱敏 503。Host metadata/download 5 秒，完整 `Update` 和域分隔 artifact ID 不公开。Enabled runtime 只在 gate release/manage 后 startup restore；install 原子 consume/reserve，spawn latch worker，flush exact success 后 execute。writer/spawn/latch loss `CommitLost` 无副作用；coordinator 执行 verified download -> pause -> install -> relaunch，Windows callback 与 macOS prepared restart 分开；active commit 拒绝并发与普通 Quit | Host RPC deferred commit/disabled/concurrency/artifact tests、lifecycle/static/API contracts；真实 Feed/update 仍待平台验证 |
-| `AppState.check_for_updates` 的 hosted lock-contended 分支 | 只读 busy 结果若仍穿过统一的 `append_event`，会等待 SQLite 写入，破坏“立即/非持久化”并使锁竞争成为可被存储压力放大的路径 | 竞争分支在 `busy_result()` 后直接返回，不调用 metadata/candidate、不清 approval、也不写 `updates.checked`；成功与非竞争检查保持既有事件语义 | Host RPC Python blocked-append-event 并发样本 |
+| `host_rpc.rs::HostUpdater` 与 `AboutService.check_for_updates/install_update`（`services/about.py`） | 普通 cache 检查不能授权安装；无时限网络、caller metadata、响应前副作用、并发 commit 或平台退出差异都会造成越权、悬挂或半更新 | Hosted API 保持 strict fresh-200/version approval 和非阻塞锁；HTTP install 只接 `{}`/脱敏 503。Host metadata/download 5 秒，完整 `Update` 和域分隔 artifact ID 不公开。Enabled runtime 只在 gate release/manage 后 startup restore；install 原子 consume/reserve，spawn latch worker，flush exact success 后 execute。writer/spawn/latch loss `CommitLost` 无副作用；coordinator 执行 verified download -> pause -> install -> relaunch，Windows callback 与 macOS prepared restart 分开；active commit 拒绝并发与普通 Quit | Host RPC deferred commit/disabled/concurrency/artifact tests、lifecycle/static/API contracts；真实 Feed/update 仍待平台验证 |
+| `AboutService.check_for_updates` 的 hosted lock-contended 分支 | 只读 busy 结果若仍穿过统一的 `append_event`，会等待 SQLite 写入，破坏“立即/非持久化”并使锁竞争成为可被存储压力放大的路径 | 竞争分支在 `busy_result()` 后直接返回，不调用 metadata/candidate、不清 approval、也不写 `updates.checked`；成功与非竞争检查保持既有事件语义 | Host RPC Python blocked-append-event 并发样本 |
 | `platform/host_rpc.py` 的 picker 预算与 `api/app.py` 的四条 picker route | Rust dialog 可以合法等待 120 秒，较短 Python timeout 会在原生面板仍有效时伪造失败；未经映射的 private channel 错误会使外部响应语义漂移或泄露连接细节 | Python 等待 125 秒，保留 5 秒响应余量且不无限等待；四条 route 只将 `HostRpcError` 固定映射为脱敏 503，未配置 Tauri 时仍走既有 Tk | `test_tauri_host_rpc.py` timeout/route 静态契约与 FastAPI picker runtime contract |
 | `release/provenance.py::_verify_macos_distribution_artifacts` / `verify_macos_release.sh` / `verify_sparkle_update.swift` | macOS 收据可记录构建期结果，却无法证明发布时的 DMG、ZIP 或 Ed25519 sidecar 尚未被替换；checkout 工作树脚本也不是 Tag 版本发行物的信任根 | finalizer 只接受 schema 4、`developer-id-notarized`、`com.invoicehub.release` 与 v4 verifier，从已解析固定 Tag 取验证器并用 `--artifact-only --expect-notarized` 验证实际 DMG/ZIP；已签名 App 的 `SUPublicEDKey` 必须匹配后才验 ZIP 原始字节，内部收据与布尔值仅审计 | release provenance、metadata CLI、macOS release contract；真实 Developer ID/公证/DMG/Sparkle 成品验收 |
 | `bookkeeping.status/mapping_migration` preview/apply | 预览与执行之间资源可能变化，迁移又不可静默丢历史状态 | 同锁重验所有 SHA/revision/binding/backup；启动时不自动迁移 | bookkeeping migration 测试 |
@@ -277,7 +772,7 @@
 
 这些注释适合在未来拆分模块时增加短区块标题，不应单独制造批量 diff：
 
-- `services/app_state.py`：配置与诊断、单据、普通汇总/重命名、列表/一致性/选择合计、monitor/关闭、成本/皮肤、OCR/平台七个用例区。
+- `services/app_state.py`：组装根；只保留锁/活动目标/config、health，以及切换 watch_dir 与删除所选两条跨域编排，领域服务以公开属性暴露、路由直接调用（ENG-08）。各用例区见 `services/` 下的领域服务（文件地图逐一列出）。
 - `projections/cost_analysis.py`：格式清洗、均价/详情拆分、加价/快照、PDF 坐标、XML/OFD 明细、状态兼容、分组/工作簿七个算法区。
 - `web/static/js/page-settings.js`：只在真实拆分模块时为目录、运行、皮肤、偏好、关闭、诊断区保留导航标题。
 - Windows 启动器：预检、判重、进程启动、就绪探测、状态写入、浏览器派发的阶段标题。
@@ -349,3 +844,7 @@
 - [接口与运行流程](INTERFACES_AND_FLOWS.md)
 - [数据结构与算法](DATA_AND_ALGORITHMS.md)
 - [Agent 任务导航](AGENT_TASK_MAP.md)
+
+## 2026-11-16 设计提案与原型（非生产能力）
+
+服务器原型 `docs/design/server-connection-prototype.js` 以 Shadow DOM/独立状态保护原有模块；最新修订移除独立服务器工作区及模块捕获拦截，只打开右侧文件面板。当前目录标签/下拉选择只改变根内缓存视图，不修改连接根或 monitor；目录边界匹配防相邻目录串统计，空目录与无缓存/错误区分。updatePanelBoundary 测量原主内容区左缘，窗口 resize 与 ResizeObserver 跟随公司栏宽度，普通和放大面板都不覆盖左栏；网页全屏已移除。epoch 拒绝迟到任务，完整任务后才发布代际；缓存按协议/服务器/账号/根隔离，同来源重连复用，严格合成样本可持久化，自填配置只留内存。离线 DOM 检查覆盖目录、边界、来源、缓存与异常；真实浏览器视觉仍待验。生产 cursor 与代际同提交的原因及故障矩阵见[设计 §11—12](../SERVER_CONNECTION_AND_CACHE_DESIGN.md)。

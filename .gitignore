@@ -1,11 +1,13 @@
 /.venv/
 /node_modules/
+/frontend/node_modules/
 /.pnpm-store/
 /config/app.local.json
 /runtime/
 /dist/
 /wheelhouse/
 /release-staging/
+/output/playwright/
 /发票文件/*
 !/发票文件/.gitkeep
 /运行状态/

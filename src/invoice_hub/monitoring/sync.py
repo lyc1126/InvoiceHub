@@ -1,21 +1,33 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from invoice_hub.domain.models import utc_now_text
 from invoice_hub.projections.costs import CostProjectionService
 from invoice_hub.projections.summary import build_summary, summary_schema_needs_refresh
-from invoice_hub.storage import SQLiteRepository
+from invoice_hub.projections.incremental import current_parser_versions, rebuild_generation
+from invoice_hub.storage import SQLiteRepository, generations
 
 from .state import MonitorState, SyncProgress
 
 
 class MonitorSynchronizer:
-    def __init__(self, state: MonitorState, repo: SQLiteRepository | None = None, reference_markup_rate: str = "0.08"):
+    def __init__(
+        self,
+        state: MonitorState,
+        repo: SQLiteRepository | None = None,
+        reference_markup_rate: str = "0.08",
+        *,
+        company_taxpayer: Callable[[], dict | None] | None = None,
+        company_outbound: Callable[[], str | None] | None = None,
+    ):
         self.state = state
         self.repo = repo
         self.reference_markup_rate = reference_markup_rate
+        # Registry taxpayer lookup for the cost reference (see CostProjectionService).
+        self.company_taxpayer = company_taxpayer
+        self.company_outbound = company_outbound
         if self.repo:
             self.repo.init_db()
 
@@ -29,6 +41,8 @@ class MonitorSynchronizer:
             Path(self.state.profile.workspace_dir),
             self.state.profile.id,
             reference_markup_rate=self.reference_markup_rate,
+            company_taxpayer=self.company_taxpayer,
+            company_outbound=self.company_outbound,
         )
 
     def run_sync(
@@ -75,6 +89,8 @@ class MonitorSynchronizer:
 
         self.state.update_status(status="syncing", last_trigger=trigger, last_event_paths=event_paths or [])
         progress.report("preparing", "正在检查已保存的手工修订", percent=0)
+        from invoice_hub.storage.generations import recover_exports
+        recover_exports(self.state.workspace_dir, self.state.watch_dir)
         manual_changed = self.state.sync_excel_manual_edits()
         progress.report("scanning", "正在扫描发票文件", percent=0)
         changes = self.state.detect_source_changes(
@@ -95,6 +111,15 @@ class MonitorSynchronizer:
         cost = self._cost_service()
         cost_missing = not cost.detail_csv.exists() or not cost.summary_xlsx.exists()
         cost_schema_stale = (not cost_missing) and cost.needs_schema_refresh()
+        tax_stale = (not cost_missing) and cost.needs_tax_profile_refresh()
+        # Catch upgrades to extraction/classification/cost parsers (and pre-manifest workspaces)
+        # even when source PDFs/OFDs/XMLs have unchanged mtime/size; ParseCache still reuses
+        # entries whose per-kind version did not change.
+        parser_stale = (not summary_missing and not cost_missing) and generations.parser_versions_stale(
+            self.state.workspace_dir,
+            self.state.watch_dir,
+            current_parser_versions(),
+        )
         should_rebuild = bool(
             force
             or changes.changed
@@ -102,10 +127,16 @@ class MonitorSynchronizer:
             or summary_schema_stale
             or cost_missing
             or cost_schema_stale
+            or parser_stale
             or manual_changed
         )
         counts = changes.as_counts()
         if not should_rebuild:
+            # A month boundary changes the company's effective identity without a file event.
+            # Refresh derived prices only; raw invoices do not need to be parsed again.
+            if tax_stale:
+                cost.refresh_workbook_tax_profile()
+                emit("cost_analysis.updated", {"target_id": self.state.profile.id, "tax_profile_refreshed": True})
             payload = {"trigger": trigger, **counts, "manual_changed": manual_changed, "rebuilt": False}
             self.state.update_status(status="idle", last_checked_at=utc_now_text(), last_trigger=trigger)
             progress.complete("当前发票目录已是最新")
@@ -120,6 +151,7 @@ class MonitorSynchronizer:
                 or summary_missing
                 or summary_schema_stale
                 or cost_missing
+                or parser_stale
                 or manual_changed
             )
         )
@@ -161,43 +193,10 @@ class MonitorSynchronizer:
         self.state.log_event(action, f"added={counts['added']} updated={counts['updated']} deleted={counts['deleted']} force={force}")
         try:
             progress.report("summary", "正在生成普通汇总", percent=8)
-            summary = build_summary(
-                self.state.watch_dir,
-                self.state.workspace_dir,
-                progress=lambda completed, total: progress.report_fraction(
-                    "summary",
-                    "正在生成普通汇总",
-                    completed,
-                    total,
-                    8,
-                    52,
-                ),
+            summary, cost_result, applied, published = rebuild_generation(
+                self.state, cost, build_summary, progress,
+                full=trigger == "FULL_REBUILD", verify=trigger == "VERIFY_CONTENT",
             )
-            progress.report("summary", "正在应用已保存的手工修订", percent=52)
-            applied = self.state.apply_manual_overrides_to_summary()
-            progress.report("cost", "正在生成成本分析", percent=52)
-            cost_result = cost.rebuild(
-                progress=lambda completed, total: progress.report_fraction(
-                    "cost",
-                    "正在解析成本发票",
-                    completed,
-                    total,
-                    52,
-                    92,
-                ),
-            )
-            progress.report("finalizing", "正在确认已处理文件", percent=92)
-            processed = self.state.rebuild_processed_from_summary(
-                progress=lambda completed, total: progress.report_fraction(
-                    "finalizing",
-                    "正在确认已处理文件",
-                    completed,
-                    total,
-                    92,
-                    99,
-                ),
-            )
-            self.state.save_processed(processed)
             payload = {
                 "trigger": trigger,
                 **counts,
@@ -205,10 +204,14 @@ class MonitorSynchronizer:
                 "manual_applied": applied,
                 "summary_schema_refreshed": summary_schema_stale,
                 "cost_schema_refreshed": cost_schema_stale,
+                "parser_refreshed": parser_stale,
                 "summary_count": summary.get("count", 0),
                 "cost_detail_count": cost_result.get("detail_count", 0),
                 "rebuilt": True,
                 "target_id": self.state.profile.id,
+                "generation": published["generation"],
+                "cache": published["coverage"],
+                "export_warnings": published["export_warnings"],
             }
             self.state.update_status(status="idle", last_sync_at=utc_now_text(), last_trigger=trigger, last_error="")
             progress.complete(f"汇总已完成，共 {summary.get('count', 0)} 条发票")

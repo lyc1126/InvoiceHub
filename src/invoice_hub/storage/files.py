@@ -20,7 +20,12 @@ def read_json_object(path: Path, default: dict | None = None) -> dict:
 def atomic_write_json(path: Path, payload: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    # Flush and fsync the writable temporary file before os.replace so durability
+    # does not rely on fsyncing a read-only handle (which fails with EBADF on Windows).
+    with tmp.open("w", encoding="utf-8") as handle:
+        json.dump(payload, handle, ensure_ascii=False, indent=2)
+        handle.flush()
+        os.fsync(handle.fileno())
     os.replace(tmp, path)
 
 

@@ -1,0 +1,68 @@
+/* The embedded classic controller keeps its business DOM and only adopts the
+   approved workspace's typography, spacing and surfaces. Standalone pages are unchanged. */
+html[data-workspace-embedded="true"]:not([data-active-skin="website-dark"]) { --bg:#f8f9f5; --surface:#fff; --surface-2:#f3f5ef; --line:#dfe2d7; --text:#242520; --muted:#686b60; --primary:#d9fb5c; --ws-border:#b9bfb1; }
+html[data-workspace-embedded="true"][data-active-skin="website-dark"] { --ws-border:var(--line); --ws-inverse-bg:#30352a; --ws-inverse-ink:var(--text); }
+html[data-workspace-embedded="true"],
+html[data-workspace-embedded="true"] body { overflow-x:clip; }
+html[data-workspace-embedded="true"] body { font-family:"Segoe UI","PingFang SC","Microsoft YaHei",Arial,sans-serif; font-size:14px; line-height:1.5; }
+html[data-workspace-embedded="true"] .topbar { display:none; }
+html[data-workspace-embedded="true"] .shell { width:100%; max-width:none; margin:0; padding:20px 24px 48px; }
+html[data-workspace-embedded="true"] .panel { border:0; border-top:1px solid var(--line); border-radius:0; padding:16px 0; box-shadow:none; background:transparent; }
+html[data-workspace-embedded="true"] h1 { font-size:24px; letter-spacing:0; }
+html[data-workspace-embedded="true"] h2 { font-size:16px; letter-spacing:0; }
+html[data-workspace-embedded="true"] :is(button,.btn,input,select,textarea) { border-radius:4px; }
+html[data-workspace-embedded="true"] .btn { min-height:36px; box-shadow:none; font-weight:400; }
+/* Ink-on-lime is the light prototype; dark keeps the skin's lime-on-ink primary instead of a near-white slab. */
+html[data-workspace-embedded="true"]:not([data-active-skin="website-dark"]) .btn--primary { background:var(--text); color:var(--primary); border-color:var(--text); }
+html[data-workspace-embedded="true"] :is(.table-wrap,.table-container,.card) { border-radius:4px; box-shadow:none; }
+html[data-workspace-embedded="true"] :is(th,td) { padding:9px 11px; font-size:13px; }
+html[data-workspace-embedded="true"] th { font-size:12px; background:var(--surface-2); }
+html[data-workspace-embedded="true"] :is(.banner,.notice) { border-radius:4px; font-size:12.5px; }
+html[data-workspace-embedded="true"] .system-power { display:none; }
+@media (max-width:640px) { html[data-workspace-embedded="true"] .shell { padding:16px; } }
+/* Prototype tabs (costs/documents share the classic .tab): underline + muted label, never a filled slab. */
+html[data-workspace-embedded="true"] .tabs { gap:4px; }
+html[data-workspace-embedded="true"] .tabs .tab { min-height:0; padding:8px 14px; border:0; border-bottom:2px solid transparent; border-radius:0; background:transparent; color:var(--muted); box-shadow:none; font-weight:400; }
+html[data-workspace-embedded="true"] .tabs .tab:hover { background:transparent; color:var(--text); border-bottom-color:var(--ws-border); }
+html[data-workspace-embedded="true"] .tabs .tab:is([aria-selected="true"],.is-active) { background:transparent; color:var(--text); border-color:transparent; border-bottom-color:var(--text); font-weight:700; }
+html[data-workspace-embedded="true"] :is(.table-shell,.table-wrap) { border-radius:4px; background:var(--surface); }
+html[data-workspace-embedded="true"] .panel__head h3 { font-size:16px; }
+html[data-workspace-embedded="true"] .panel__head :is(p,.panel__meta) { font-size:13px; }
+html[data-workspace-embedded="true"] .inline-panel { border:1px solid var(--line); border-radius:4px; }
+/* Costs (prototype costsView): the shell header already names company/module/path, so the
+   classic title row, saved-folder list and headline cards give way to the settings | sales
+   pair, underline tabs with the actions on the right, and the sheet. Load progress and the
+   sync banner stay: they are the page's diagnosable state. */
+html[data-workspace-embedded="true"] body[data-page="costs"] .page-head { margin:0; }
+html[data-workspace-embedded="true"] body[data-page="costs"] :is(.page-head h2,#costPath,#eventState,#recentWatchDirs,.stats-grid) { display:none!important; }
+html[data-workspace-embedded="true"] body[data-page="costs"] .shell { padding-top:0; }
+html[data-workspace-embedded="true"] body[data-page="costs"] #syncPanel { margin:0 0 12px; padding:9px 12px; border:0; border-left:3px solid var(--ws-border); border-radius:0; background:var(--surface-2); color:var(--muted); font-size:12.5px; }
+html[data-workspace-embedded="true"] body[data-page="costs"] .cost-context-grid > .inline-panel { gap:8px; padding:12px 14px; background:var(--surface-2); color:var(--muted); }
+html[data-workspace-embedded="true"] body[data-page="costs"] .cost-panel-title { font-size:14px; font-weight:700; }
+html[data-workspace-embedded="true"] body[data-page="costs"] .cost-command-bar { align-items:flex-end; margin:0 0 4px; padding:0; border:0; border-bottom:1px solid var(--line); border-radius:0; background:transparent; box-shadow:none; }
+html[data-workspace-embedded="true"] body[data-page="costs"] .cost-command-bar__actions { padding-bottom:8px; }
+html[data-workspace-embedded="true"] body[data-page="costs"] .cost-view-switcher { justify-content:flex-start; align-items:flex-end; }
+html[data-workspace-embedded="true"] body[data-page="costs"] .cost-tabs { order:1; margin-bottom:-1px; }
+html[data-workspace-embedded="true"] body[data-page="costs"] .cost-formula-help-wrap { order:2; align-self:center; }
+html[data-workspace-embedded="true"] body[data-page="costs"] .cost-formula-help { width:17px; height:17px; font-size:11px; background:var(--surface); color:var(--muted); box-shadow:none; }
+html[data-workspace-embedded="true"] body[data-page="costs"] .cost-view { border-top:0; padding-top:12px; }
+html[data-workspace-embedded="true"] body[data-page="costs"] .cost-view .panel__head h3 { display:none; }
+html[data-workspace-embedded="true"] body[data-page="costs"] .cost-view .panel__head { margin-bottom:12px; align-items:center; }
+html[data-workspace-embedded="true"] body[data-page="costs"] .table-shell :is(th,td) { padding:7px 10px; }
+/* Prototype bottom bar: an ink strip with lime counts (dark keeps a raised surface). */
+html[data-workspace-embedded="true"] body[data-page="costs"] .cost-action-bar { width:min(100% - 48px, 1560px); padding:8px 10px 8px 16px; border:0; border-radius:8px; background:var(--ws-inverse-bg,#242520); color:var(--ws-inverse-ink,#eef1e6); box-shadow:0 14px 34px rgba(17,24,39,.28); }
+html[data-workspace-embedded="true"] body[data-page="costs"] .cost-action-bar :is(.btn,.btn--ghost) { min-height:32px; border-color:transparent; background:transparent; color:inherit; }
+html[data-workspace-embedded="true"] body[data-page="costs"] .cost-action-bar .btn:hover:not(:disabled) { background:color-mix(in srgb,currentColor 12%,transparent); }
+html[data-workspace-embedded="true"] body[data-page="costs"] .cost-action-bar .btn--primary { background:var(--primary); color:#242520; border-color:var(--primary); }
+html[data-workspace-embedded="true"] body[data-page="costs"] .cost-action-bar__count { color:var(--primary); font-weight:700; }
+html[data-workspace-embedded="true"] body[data-page="costs"] .cost-action-bar :is(.cost-action-bar__label,.muted) { color:#aab09f; }
+html[data-workspace-embedded="true"] body[data-page="costs"] .cost-action-bar__group { border-left-color:#45493e; }
+html[data-workspace-embedded="true"] body[data-page="costs"] .cost-action-bar input { border-color:#45493e; background:#2f322a; color:#eef1e6; }
+html[data-workspace-embedded="true"] body[data-page="costs"] .cost-action-bar__remove { color:#ffb4a8; }
+/* The frame is narrower than the window; keep the prototype's side-by-side pair until the frame itself is narrow. */
+@media (min-width:760px) { html[data-workspace-embedded="true"] body[data-page="costs"] .cost-context-grid { grid-template-columns:minmax(0,5fr) minmax(0,7fr); } }
+html[data-workspace-embedded="true"] body[data-page="costs"] .cost-formula-help { min-height:0; padding:0; }
+html[data-workspace-embedded="true"] body[data-page="costs"] .cost-view .panel__meta { display:flex; flex:1; align-items:center; flex-wrap:wrap; gap:8px; color:var(--muted); }
+html[data-workspace-embedded="true"] body[data-page="costs"] .reference-select-tools { margin:0 0 0 auto; gap:8px; }
+html[data-workspace-embedded="true"] body[data-page="costs"] .reference-select-tools .btn { background:var(--surface); color:var(--text); }
+html[data-workspace-embedded="true"] body[data-page="costs"] .cost-tax-profile__field .input { min-width:0; }

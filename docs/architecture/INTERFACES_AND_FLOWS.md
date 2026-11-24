@@ -1,5 +1,276 @@
 # InvoiceHub 接口与运行流程
 
+## 2026-11-23 解析器版本感知自动重算、成品油业务样式与工作区活动目录重算
+
+- `storage/generations.py::publish` 在 `projection-manifest.json` 记录 `parser_versions`（`summary` / `cost`）；`MonitorSynchronizer._run_sync_locked` 在源文件未变化时额外检查 `parser_versions_stale`，缺失清单的旧工作区或识别规则升级后自动触发一次增量重建并回报 `parser_refreshed: true`（保留手改字段；重建后周期检查恢复零重解析）。
+- `GET /api/v1/companies/{company_id}/directories` 的 `freshness` 在源文件未变化但 `parser_versions_stale` 为真时返回 `state: "stale"`、`parser_stale: true` 与“识别规则已更新”提示；`CompanyDataRefreshService` 非强制刷新亦会触发重建。
+- Vue 工作区 `DirectoryPanel.vue` 与 `CompanyDirectories.vue` 为当前活动监控发票目录提供「重新汇总」按钮，调用现有 `POST /api/v1/bridge/rebuild`，完成后提示 toast、派发 `workspace:company-refreshed` 并刷新目录列表；切换目录或卸载时丢弃迟到响应。
+- `extraction/classification.py` 登记 `BUSINESS_TYPE_REFINED_OIL = "成品油"`（PDF 左上角业务标签坐标、OFD 坐标/CustomTag 与 XML 显式业务字段触发；公司名/品名不触发），经典首页筛选新增「成品油」选项，单据索引 `CACHE_VERSION` 升至 3。
+
+## 2026-11-23 草稿生成的品目与来源交接
+
+外部 HTTP body 与 XLSX 列不变。工作区生成/改记入期通过 `_voucher_invoice_inputs` 成对捕获完整代际 `invoice_csv` 与其映射来源 `reference_status`，再经 `company_vouchers → CompanyPaths → prepare`；状态不从代际父目录、另一公司或活动 monitor 推断。无已建投影的旧根 CSV 公司继续读取根 CSV 旁的状态，CLI 也是同一入口；每次请求重新捕获来源，改记入期不能丢失状态路径。
+
+`prepare` 在生成前严格读取品目表，生成后重读目录身份与原字节；损坏/未来版本拒绝生成，生成期间变化拒绝覆盖原审核表。服务等非货物先分离，只接受当前账套可用的已确认非库存科目；冲突或缺确认时保留金额及原票依据、空编码并列待补。现有 `jierui.validate` 同时阻止页面审核通过与 CLI/页面整月导出。人工表随后显式修正科目的既有流程保留，不触碰源票、投影或真实账套。该复核不承诺外部编辑器跨进程事务。
+
+## 2026-11-22 首页局部刷新与合成浏览器门禁
+
+经典首页继续经 `GET /api/v1/invoices` 按完整结果筛选/排序后分页，selection-summary 仍由后端按家族核对金额。读取成功后按 `target_id + invoice_key + source_path` 复用未变化行；全选/清空只同步当前页复选框，SSE 的相同内容不替换 DOM。临时→完整转换重新建立可操作行，位置键被其它源文件占用不得复用旧节点；失败保留上次列表，旧代次响应仍丢弃。失败后完整读取恢复时替换旧失败提示，并明确待保存目录尚未生效，不以保留草稿为由留下过期告警。翻页仅重置实际 `.table-shell` 内部滚动，普通后台刷新保留焦点/滚动/目录草稿。
+
+开发入口 `browser_e2e.mjs` → 共享浏览器/夹具生命周期 → 真 FastAPI/Chrome 或配套 Chromium。三组各自新建临时资料，先关 context 释放 SSE，再有界停止夹具、清理父进程持有的根；失败保留合成诊断。首页故障控制与 JS 重绘注入只在开发 app 注册，不进入正常 API/OpenAPI，Linux CI 工作流不引入产品运行入口。执行与远端待验边界见[浏览器回归说明](../BROWSER_E2E.md)。
+
+## 2026-11-21 成本 V2 服务与价格提示
+
+公司成本 V2 新增下列接口，仍由成本路由在线程池执行；写入/预览沿用同源与 2 MiB JSON 限制：
+
+| 方法与路径 | 契约 |
+|---|---|
+| GET `/api/v1/companies/{company_id}/cost-analysis/v2/item-types` | 返回来源 revision 与进销双方品名的标准名称、类型、来源侧；只读，不建 profile 或写文件。 |
+| POST `/api/v1/companies/{company_id}/cost-analysis/v2/item-types/preview` | `{revision,types:{原品名:goods|service|expense|fixed_asset}}`，未列名称保持，别名按最终标准名联动，同组矛盾类型拒绝；返回 changes/preview_hash。 |
+| PUT `/api/v1/companies/{company_id}/cost-analysis/v2/item-types` | 原预览体加 `{confirm:true,preview_hash}`。成本锁→捕获 profile 的 monitor 同步锁→重新核对→既有品目表保存/兼容工作簿刷新→读回；无变化不写，来源/确认过期409、非法/坏文件422。明确归类会改品目表与兼容工作簿，普通 quote/analysis 不写。 |
+
+GET `…/analysis` 增加 `service_margin={rows,unplaced,complete,basis_label}`；rows 为月份/项目、除税收入/人工成本/毛利/毛利率、state/reasons、收入 sources 与人工 cost_sources。只匹配明确 service 类型与同月非空项目，缺失不补零、未归属不猜配；保留单列 `service_costs` 和原货物 dimensions。`actual_sales` 提供价格监控使用的同源原月收入/成本/数量及来源。默认起月同时考虑购销和人工成本，纯服务公司不会漏掉更早期间。
+
+GET `…/price-monitor` 增加 `uniform_markup`（state/sample_count/unknown_count/markup_percent/samples/依据）与 `alias_candidates={items,truncated}`。至少三个完整样本的实际加价率到 0.01 个百分点一致才增加 `uniform_actual_markup` 提示；候选同规格同单位、最多50组，来源可追溯，不自动合并或改价。原采购波动与最近票面税率仍取截至截止日的最近证据，不因起始月改变既有口径。Vue 查询失败清掉上一期间结果，公司映射变化与卸载丢弃迟到响应。
+
+可重复浏览器入口：`PLAYWRIGHT_MODULE=<已安装模块> node scripts/dev/cost_v2_e2e.mjs`；可设 `COST_V2_E2E_CDP` 连接外部 Chrome、`COST_V2_E2E_OUTPUT` 指定截图/下载目录（默认 output/playwright/cost-v2，收尾清理）。临时独立配置与合成源、服务端单次已落盘响应503，核对原记录仅查询与 XLSX冻结金额；不替代正式入口、真实业务和平台验收。
+
+## 2026-11-21 成本 V2 迁移对照与前端消费
+
+| 方法与路径 | 契约 |
+|---|---|
+| GET `/api/v1/companies/{company_id}/cost-analysis/v2/migration` | 可选 `pricing_date`；只读返回 revision、rules_revision、legacy_migrated、complete、summary（same/different/needs_review/legacy_active/legacy_migrated/legacy_none）与 rows（v1 历史均价口径价、V2 无客户数量 1 的当前规则价、差额、旧加价率状态、“不沿用”时的 V2 价）。不写盘。 |
+| POST `/api/v1/companies/{company_id}/cost-analysis/v2/migration/export` | 严格 `{revision,pricing_date}`；revision 与当前对照不符 409 `COST_V2_CONFLICT`，缺字段 422。返回内存 XLSX（V2开票参考/新旧对照/版本与口径，文本单元格、no-store），不改 v1 工作簿。 |
+
+GET V2 增加 `legacy_migrated`、`customers` 与每品目 `legacy_state`、`v1_reference`。rules/preview 与 PUT rules 接受可选 `legacy_migrated`（品目 key 列表，完整替换）；省略时沿用已保存列表，非法 key 422；列表进入 preview_hash 与“无变化”判断。
+
+前端：工作区“成本分析”模块选中公司默认显示 `CompanyCostsV2`，经典 `/costs` 在“经典成本表（v1）”标签且仍要求活动监控目录。页面 → `costV2.ts` → 上述接口；所有写入先 preview 再以 preview_hash+confirm 提交，409 重读不重放，网络/5xx 标未知并锁定直到成功读回。导出走 POST 附件 → blob 下载；Tauri 宿主的附件下载未验。
+
+接手复核：归档未知时只查询原记录 ID，禁止生成新预览/ID，重新试算仍保留查询入口；查询失败保持锁定。规则/迁移的读回以父组件成功 GET 后替换的快照为准，相同 revision 也能解锁，缺失快照不放行；解锁只允许重新预览，不重发旧 PUT。快照刷新使规则/迁移旧预览失效，迟到预览/保存响应不得恢复旧确认；归档预览的两次读取之间亦核对当前公司和报价。
+
+## 2026-11-21 成本核对、归档与分析接口
+
+全部由 `api/routes/costs.py` 在线程池调用独立服务；JSON 写入/预览/导出沿用 2 MiB、重复键拒绝与同源保护。GET/报价/预览不写盘；只有明确确认保存的独立人工状态文件写盘，不触发 monitor/汇总或改旧工作簿。
+
+| 方法与路径 | 契约 |
+|---|---|
+| GET `/api/v1/companies/{company_id}/cost-analysis/v2/inventory-setup` | revision 为来源指纹，返回 config_revision、ledger_hash、binding_state、setup、可用库存科目与 book_error；旧绑定变化仍可查看并重新确认。 |
+| POST `/api/v1/companies/{company_id}/cost-analysis/v2/inventory-setup/preview` | `{revision,setup}`，规范化并展开品目别名，返回 before/after/preview_hash。 |
+| PUT `/api/v1/companies/{company_id}/cost-analysis/v2/inventory-setup` | 原预览请求加 `{preview_hash,confirm:true}`；成本锁后取草稿锁、重核来源、原子替换与读回。旧确认/来源变化 409，非法科目等 422。 |
+| GET `/api/v1/companies/{company_id}/cost-analysis/v2/records` | page≥1、page_size=1…100，返回记录库 revision、count 和元数据；历史读取不依赖发票目录仍在。 |
+| POST `/api/v1/companies/{company_id}/cost-analysis/v2/records/preview` | `{kind:quote|simulation,records_revision:int,request:{既有 quote 或 rules/preview 请求}}`；冻结输入、成本行、来源、规则版本和结果，返回 content/preview_hash，不归档。 |
+| GET `/api/v1/companies/{company_id}/cost-analysis/v2/records/{record_id}` | 返回原归档内容/校验与记录库 revision；不存在 404，坏结构/校验或跨公司文件 422，保留原文件。 |
+| PUT `/api/v1/companies/{company_id}/cost-analysis/v2/records/{record_id}` | 原预览体加 `{preview_hash,confirm:true}`；同 ID 同原请求返回原回执 changed=false，即使来源变化；同 ID 异内容、旧记录库版本或来源指纹变化 409，不覆盖记录。 |
+| POST `/api/v1/companies/{company_id}/cost-analysis/v2/records/{record_id}/export` | 必须 `{confirm:true,content_hash}` 对应归档版本；返回内存 XLSX/no-store 附件，不写磁盘。未确认/版本不符 422；报价、成本规则、市场依据、版本与口径、试算前后对照。 |
+| GET `/api/v1/companies/{company_id}/cost-analysis/v2/service-costs` | 返回 revision、source_revision、costs 与人工口径说明。 |
+| POST `/api/v1/companies/{company_id}/cost-analysis/v2/service-costs/preview` | `{revision,source_revision,costs:{id:{month,project,amount,source}}}`；明确月份/非负金额/来源、项目可空，返回 before/after/preview_hash。 |
+| PUT `/api/v1/companies/{company_id}/cost-analysis/v2/service-costs` | 原体加 `{preview_hash,confirm:true}`，重核修订/来源、原子替换并读回，无变化不写；旧确认 409。 |
+| GET `/api/v1/companies/{company_id}/cost-analysis/v2/analysis` | 可选 start/end=YYYY-MM，缺 end 用本月，缺 start 用库存首月；拒未来月份/超过 100 年。返回 dimensions（month/item/customer/project）、收入/成本/毛利/来源、excluded、单列 service_costs、complete、as_of/period_state；当前月只到今天且 provisional，未知成本/毛利 null。item 是品类+单位，不是规格库存。 |
+| GET `/api/v1/companies/{company_id}/cost-analysis/v2/price-monitor` | 同期间参数与非负十进制 price_change_percent（默认30）、minimum_margin_percent（默认0且<100）；返回成本异常、最近采购波动、实际低毛利、票面税率设置差异和 tax_suggestions，仅供核对。 |
+
+原 GET V2 增加 `book_reconciliation`：state=matched/different/needs_review，差额=账面期末−发票滚动期末，未知保留 null；需明确期初、对照、逐月完整声明及实际读回，非月末/缺月/单位冲突/重叠分录不冒零。查询早于确认期初拒绝。公司进销存/草稿共用映射，比较遇坏/过期绑定返回 `COMPANY_STOCK_INVALID` 409；无配置保留原品类算法与提示。
+
+来源/目录/账套/品目/人工成本与项目归属的变化使确认失效；归档文件独立修订，不改变报价成本版本。进程内锁不承诺外部编辑器/CLI 跨进程事务。旧 v1、已开快照及工作簿不切换；下方日期为当时状态，普通 quote 不自动归档。
+
+## 2026-11-20 成本 V2 阶梯与市场参照
+
+沿用下方四个 V2 接口；quote、rules/preview 与 PUT rules 的 `lines[]` 新增可选 `tier_amount` 和 `market_reference`。前者为用户明确输入的单行本次除税基准金额（不等于结果金额），后者为 `{unit_price,price_basis:net|gross,observed_on,valid_to,source}`；数值均须十进制字符串，缺省省略字段，显式 null/坏结构为 422。市场依据只用于当前请求，服务不会联网或持久化它。
+
+规则新增 tiered/market，结构见[数据地图](DATA_AND_ALGORITHMS.md)。阶梯响应增加 `tier={basis,metric,from,to,kind,value,price_basis}`，to=null 表示末档；市场响应增加 `market_reference` 与已出价时的 `minimum_net_unit_price`。缺少金额档位依据、市场缺失/过期/尚未生效或依赖成本的规则遇到未知成本时保留 needs_review/null，不自动改用低优先级规则；固定价档位仍可给价但毛利未知。取整触及底线在 steps 中解释，最低毛利仍仅警告。
+
+用户更改数量、tier_amount 或任一市场依据字段后必须重新试算；这些输入均已包含在 preview_hash，PUT 同内容核对失败 409、原文件不变。保存仅写规则；GET/quote/preview 不写投影、v1 状态或工作簿。现有前端尚未消费 V2，当前契约由纯引擎/公司 HTTP 回归锁定。
+
+## 2026-11-19 公司成本 V2 首批后端
+
+前缀 `/api/v1/companies/{company_id}/cost-analysis/v2`，由 `api/routes/costs.py → CompanyCostService` 在线程池执行；不新增 AppState 存储，不切活动目录或触发监控。旧成本四接口保留。
+
+| 方法 / 后缀 | 请求与返回 |
+|---|---|
+| GET 空后缀 | 可选 `pricing_date=YYYY-MM-DD`，默认本机今天；返回 schema_version=2、company_id、pricing_date、revision、rules_revision、rules、items、inventory、sources、complete、warnings。数量/金额/价格为十进制字符串，未知为 null。items 保留 v1 SHA1 key，含品类结存成本、历史均价、最近价、税率与分开的 actual_issued/manual_issued_snapshot。 |
+| POST `/api/v1/companies/{company_id}/cost-analysis/v2/quote` | `{revision, pricing_date?, customer?, lines:[{key,quantity,rule?,output_tax_rate_percent?}]}`；1—500 行不重复 key，数量须正数字符串。返回命中 rule、overridden_rules、解释 steps、价税金额、毛利/加价率与 warnings；特殊计税和未知成本返回 needs_review。 |
+| POST `/api/v1/companies/{company_id}/cost-analysis/v2/rules/preview` | quote 公共字段 + `{rules_revision,rules}`，lines 可省略时默认全部品目数量 1；超过 500 个品目须显式选择。返回规范 rules、before/after 与 preview_hash；无品目时两组为空。 |
+| PUT `/api/v1/companies/{company_id}/cost-analysis/v2/rules` | 同一 preview 请求 + `{preview_hash,confirm:true}`；重新试算和核对，保存后读回 rules_revision/rules。规范内容未变返回 changed=false，不写盘/增加版本。 |
+
+示例流程：GET 获取 revision/rules_revision 与品目 key → quote 按客户/日期/数量查看当前规则 → preview 提交完整候选规则集 → 用户明确确认后 PUT 相同请求并附 preview_hash/confirm。`rules` 以规则 ID 为键；字段、算法与文件结构见[数据地图](DATA_AND_ALGORITHMS.md)。PUT 是完整替换规则集，不是局部 patch。
+
+POST/PUT 同源、流式请求最多 2 MiB，顶层对象和字段严格校验、重复 JSON 键拒绝；不存在公司 404、非法日期/结构/规则/坏投影 422、内容超限 413、跨源 403。revision、试算内容、目录或来源冲突为 409 `COST_V2_CONFLICT`；文件 I/O 失败 409 `COST_V2_INVALID`，未知保存结果重新 GET，不自动重放。GET/quote/preview 不写成本文件或目标缓存；只读上次完整代际，不保证源票实时重新提取。
+
+规则保存只改本公司成本目录中的独立规则文件；不修改旧状态/工作簿或执行真实记账。预览与保存由进程锁串行，前后校验公司/目录身份、完整代际、来源新鲜度、账套读回和规则指纹；无跨进程事务承诺。V2 前端/工作簿、后续规则与完整分析仍见 [COST-06](../PRODUCT_BACKLOG.md#cost-06)。
+
+## 2026-11-19 应用内反馈（未部署）
+
+`GET /api/v1/feedback` 只读本地配置、`issue_tracker_url`、环境白名单与未确认任务；`POST /api/v1/feedback` 接收 UUID、类型、标题、描述、环境选择与公开确认，同源与 32 KiB 限制后交独立 FeedbackService；`GET /api/v1/feedback/{request_id}` 只查询原中转回执，不重发。服务在 app 工厂独立接线，不新增 AppState 编排方法。GET About/打开表单不联网；未配置中转时由前端提供复制白名单脱敏信息并打开硬编码公开 GitHub Issue 页面的降级路径。
+
+设置关于新增“建议与反馈” → 已校验 frame/token 的 navigate → App/WsModal，设置草稿保留；独立经典页进入 Vue 深链接，no_skin 保留。蓝框四项身份收进默认关闭的技术详情；平台架构不隐藏，更新流程/API 不变。
+
+提交先写私有意图 → 单次 HTTPS 中转 → 中转先写回执 → 固定仓库 GitHub Issue；submitted 必须有 Issue 编号，未知只 GET 查询，网络/坏响应不冒充未发送。中转源码独立、不随产品启动，本轮无公网部署或真实 Issue。字段、secret、限流与恢复见[反馈设计](../FEEDBACK_DESIGN.md)。
+
+## 2026-11-19 WS-02 候选目录与 WS-05 工资确认
+
+- `POST /api/v1/companies/detect` 可带部分 `subdirs` 选择，返回各类 `candidates[] / selection_required`。同类多个非标准候选时必须明确选择，不能按首项猜；可显式选择标准名并另行勾选补建。仅接受本次候选/标准建议，plan_hash 同时绑定所选映射、选中目录及全部候选的身份。登记重检，未选 422，旧计划/同名替换 409；检测不写源目录。
+- `GET /api/v1/companies/{company_id}/salary?reveal=true` 请求时读取登记工资目录内 `.xlsx/.xlsm`，返回 `files / candidates / confirmed / source_revision / tax_revision / current_month`。候选有不透明 `candidate_id`、明确月份、人员行、后端合计与费用科目分组；默认姓名/证件号脱敏，reveal 才返回原值。目录上限 100 文件/30 MiB、单文件 5 MiB，文件错误脱敏披露；同月多文件不合并择一。
+- `PUT /api/v1/companies/{company_id}/salary` 同源写，携带 `{revision, month, source_revision, candidate_id, expense_path}`；服务端重新解析原表，忽略 UI rows。只补未指定行的明确费用科目路径；写入 `做账草稿/申报数据.json` 的工资明细，保留其他键。`{revision, month, remove:true}` 取消该月确认。无税文件/坏文件 409，来源或 revision 冲突 409 `SALARY_CONFLICT`，非法月份/金额/科目 422，未来月拒绝。未知写结果只重新 GET，不自动重发。
+- 工资/社保与草稿生成共用 `DRAFT_WRITE_LOCK`；写前核对公司/映射、目录身份、文件 SHA 和税文件 revision。`prepare` 对未入账月份复核已确认原表；变更/缺失拒绝生成并保留旧审核表。页面与 CLI 共用应发工资计提：借明确费用/成本科目，贷应付职工工资；不生成发薪/扣税、不再次扣记社保个人部分。重生成沿用原有备份/审核保护。
+
+## 2026-11-19 WS-06—09 接口与完整投影
+
+公司目录列表的跨页勾选与批量标签允许非监控目录，标签仍携带标记文件 revision；预览、打印、改名和删除继续只接受活动监控目录。`GET /api/v1/companies/{id}/ledger` 增 `accounts`，只读显式期初与已提供序时账；往来核对消费同一份期初，未知与零分开，付款不得匹配未来开具的发票。
+
+手动 `POST /api/v1/bridge/rebuild` 支持查询参数 `mode=incremental|full|verify`；daemon 与它共用候选生成及 manifest 发布。普通列表、成本、公司视图、单据与工作区草稿读取完整代际，固定 CSV/XLSX 仅作兼容导出。候选失败、来源/人工版本变化或迟到结果不推进 manifest；导出失败保留已发布结果，后续按导出回执恢复，不能覆盖未知手改。
+
+`/api/v1/sources` 是独立只读来源域，不把服务器 URI 传入 watch_dir，不切换 TargetProfile 或 monitor。以下相对路由均以该前缀组合；写请求走现有同源门禁，picker 另走原生选择门禁。
+
+| 方法与路由 | 请求 / 返回与边界 |
+| --- | --- |
+| `GET /api/v1/sources` | 收藏、连接/同步/快照状态、已汇总范围 `summarized_scopes` 和协议能力；password、remote_write、change_cursor 均为 false |
+| `GET /api/v1/sources/mounted-shares` | 只读枚举系统当前已挂载网络共享卷（macOS `/sbin/mount`、Windows 远程映射盘、Linux `/proc/mounts`），不主动发起网络挂载 |
+| `POST /api/v1/sources` | 名称、mounted 或 sftp 配置；只登记，不连接、不建立公司统计归属 |
+| `POST /api/v1/sources/pick` | 原生选择已挂载共享目录，只返回路径草稿；不可用返回脱敏 503 |
+| `GET /api/v1/sources/{sid}` | 查询状态、任务阶段/真实计数、代际、时效、覆盖能力与未接入模块 |
+| `PATCH /api/v1/sources/{sid}` | 带 revision 保存预算及显式公司/进销项角色上下文；运行中或版本变化拒绝 |
+| `DELETE /api/v1/sources/{sid}` | 带 revision 忘记来源；运行中或活动预览租约阻断，仅清本机来源缓存 |
+| `POST /api/v1/sources/{sid}/fingerprint` | 带 revision 显式确认已读取的主机指纹；候选变化拒绝 |
+| `POST /api/v1/sources/{sid}/tasks` | probe/scan/download/summary；download 支持单 `entry_id` 或批量 `entry_ids`（上限 100）；summary 支持可选 `parent_id` 按子目录增量汇总，full/verify 控制解析/内容核验 |
+| `POST /api/v1/sources/{sid}/cancel` | 请求取消独立 worker，保留完整快照和已完成副本 |
+| `POST /api/v1/sources/{sid}/disconnect` | 取消并切离线，epoch 拒绝迟到提交，不删除完整结果 |
+| `GET /api/v1/sources/{sid}/entries` | parent_id、keyword、page；200 项分页，返回面包屑、条目缓存态 `cached` 及当前目录含子目录的 `scope.files/bytes/readable_files`；可读数含受支持预览格式、与筛选和分页无关，不支持文件仍列元信息 |
+| `GET /api/v1/sources/{sid}/summary` | 按 `parent_id` 匹配本目录或最近祖先完整汇总，支持服务端全量 `keyword`/`file_ext`/`status`/`invoice_type`/`date_sort` 筛选排序与 `page`/`page_size` 分页，返回原生四项统计 `invoice_stats`、账簿、`cost_error` 与 `stale`，不冒充已接入公司模块 |
+| `POST /api/v1/sources/{sid}/selection-summary` | 按勾选 `entry_ids`（上限 1000）与 `generation` 核对同票去重除税/税额/价税合计及 `selection_cost_breakdown` 成本拆组；代际不符返回 409 |
+| `DELETE /api/v1/sources/{sid}/cache` | 显式清本机原始副本；任务和活动预览租约存在时拒绝，不改源文件或人工状态 |
+| `POST /api/v1/sources/{sid}/previews` | 支持单 `entry_id` 或批量 `entry_ids`（上限 100）与 `allow_stale`；只接受完整校验副本，离线须明确同意，返回来源绑定租约、多文件清单与 `keep_alive_url` |
+| `POST /api/v1/sources/{sid}/previews/{job_id}/keep-alive` | 复核来源租约/revision/条目版本后刷新闲置 TTL |
+| `GET /api/v1/sources/{sid}/previews/{job_id}/text` | 单文件 XML 安全纯文本，拒绝来源/revision/条目版本失效及其它来源作业 |
+| `GET /api/v1/sources/{sid}/previews/{job_id}/files/{file_number}/text` | 多文件预览指定序号 XML 安全纯文本（`text/plain`，`private, no-store`），校验来源租约与条目版本 |
+| `GET /api/v1/sources/{sid}/previews/{job_id}/pages/{page}` | 单文件受限 PNG renderer，`private, no-store`，不开放本机路径 |
+| `GET /api/v1/sources/{sid}/previews/{job_id}/files/{file_number}/pages/{page}` | 多文件预览指定序号受限 PNG renderer，`private, no-store`，校验来源租约与条目版本 |
+| `DELETE /api/v1/sources/{sid}/previews/{job_id}` | 关闭/切换释放对应租约，不能释放本地或其它来源作业 |
+
+每来源一个任务、全局最多两个，网络 I/O 在可终止 spawn worker；30 秒无进展超时，health/cancel 不等待网络。完整枚举失败不是空目录或删除，来源发布先落盘再提升内存指针；重启中断显式未知。SFTP 仅系统 SSH Agent 和核对后的主机密钥，标准 v3 弱版本不能证明远端原子快照。公司绑定仅身份上下文，公司/成本/做账/税费模块仍未消费该来源；真实服务器、平台及成品另验。
+
+## 2026-11-19 WS 既有后端保护
+
+- `PUT /api/v1/companies/{id}/payroll` 仍为显式确认接口。社保保存与草稿生成 / 编辑 / 导出共用进程内写锁；在锁内核对 SHA，并在原子替换前重读 SHA 与目录身份。非法数值、人数、费率、月份或整批任一行格式不合法返回 422 `PAYROLL_INVALID`，不写任何月份；至少一方应缴金额须已知，显式零有效，另一方不适用可空。
+- GET / PUT payroll 的申报文件读取上限 2 MiB，拒绝根 / 草稿目录 / 文件链接；`社保明细` 或其中月份 / 金额 / 险种结构损坏返回 409 `PAYROLL_TAX_UNREADABLE` 并保留原文件。目录替换、revision 变化或保存失败返回 409 `PAYROLL_CONFLICT`，仅重新查询，不自动重放；未承诺外部 CLI / 编辑器的跨进程事务。
+- `GET .../vat-filing` 的连续前期若有未通过的手工测算，后续月份的 estimate 保持 `needs_review / null`，blocker 为 `TAX_CARRY_UNRESOLVED`；起始异常仍返回原 `TAX_CARRY_MISMATCH` / `TAX_EVIDENCE_MISSING` 等原因。只查询后续月也不能跳过前期。无连续手工假设的断档不推断留抵，下一段仍需用户显式确认 opening_credit。
+
+## 2026-11-17 P3 接口与流程
+
+- `GET /api/v1/companies/{id}/bank-layouts?files=1` 每文件增 `recognition:{kind,rows,chain_ok,breaks,footer:{ok,message},message}`，kind 为 builtin/confirmed/unrecognized/receipt/unavailable；返回 `recognition_complete`。32 个冷文件/5 秒后返回待核对，刷新继续；目录列不全整体拒绝。识别后复核公司根、目录、文件签名和档案哈希，变化 409。只有未识别文件有映射按钮。
+- preview/save 增 `account_fixed`，与源字节、映射和 revision 一同绑定；保留前导零，有账号列时必须完整唯一且相符，未映射的已识别账号列也不能隐藏冲突。档案含业务账号，只能私有保存；不改源文件。
+- CLI `python -m invoice_hub.bank <PDF/CSV/XLSX或目录> --company <显式公司根>` 读取同一档案；不猜父目录，全部输入须在该公司内。凭证 `prepare` 及页面生成同入口，页面使用公司映射的银行目录；原 BOC 优先且先对账单后回单。
+- `PUT .../voucher-drafts/{name}` 每凭证增 `delete_rows:[已有行号]`、`add_lines:[{row:唯一负整数,summary,code,debit,credit,supplier}]`；最多新增 100 行，最终 1—500 行，不新建/删除整张凭证。响应增 added_rows/deleted_rows。结构编辑与导出共锁、带 SHA revision，审核通过仍走同一 validate，失败整批不写；来源迁到首行，公式/合并审核表拒绝。保存未知只查询审核表，读失败保持写锁定。
+- `GET .../vat-filing` 行增 `tax_basis:{amount,label,source_kind}`、`tax_rate:{value,label}`、`rule_candidate`；增 `tax_total:{amount,status,excludes,start,end,snapshot_id,missing}`，排除 income，与本次快照/期间绑定。候选未签署，自动税种和完整合计保持 null/needs_review，不能将 VAT 小计冒充全部税费。
+- 做账的公司凭证/税费页不预加载经典 active-target frame；首次访问经典标签后 v-show 常驻。合成浏览器不拦截 HTTP，使用真实源读取、CAS 与保存。
+
+## 2026-11-17 P2 接口与恢复
+
+- `GET /api/v1/invoice-tags?include_usage=1`：usage 按全部登记公司的可见标记、票号全局去重；usage_unavailable 列不可读公司，usage_complete=false 时显示“已知 N 张”。普通查询保持轻量。删除定义后无该标签计数。
+- 往来比较 `records.a` 增 `flow_match:matched|unmatched|null`、`project` 与 `project_source:remark|manual|null`；项目沿用人工优先规则。只有真实匹配家族可为 matched；红冲/源过期/银行错误为 null。unmatched 还要求发票月有完整对账单期间，局部交易表不能证明未匹配。凭证墙不在前端推断。
+- `GET /api/v1/companies/{company_id}/bank-layouts?files=1` 返回 revision、layouts、files[{file_ref,name}]。file_ref 绑定公司/根/目录/相对文件/签名，10 分钟有效；不接受任意路径。`POST /api/v1/companies/{company_id}/bank-layouts/preview` 带 file_ref 和可选 mapping，返回 columns、guessed_mapping、至多五行 sample_rows、balance_chain{ok,breaks,direction}、save_blockers[]、layout_hash、revision。save_blockers 是保存时同一 `statement()` 检查（例如缺唯一本方账号列）的预判，非空时页面禁存。预览只读，计划绑定文件 SHA、映射、当前 revision，5 分钟有效。
+- `POST .../bank-layouts` 带 mapping/layout_hash/revision，重读源、验证唯一方向/完整余额链/账号后原子保存。409 刷新不重放；网络/5xx 结果未知只能 GET 档案查询 layout_hash。公司 bank reader 对新文件重新校验方向与余额，profile 哈希变化清缓存；原 BOC 优先。CLI 和生成凭证未接此档案。
+- `GET /api/v1/companies/{company_id}/vat-filing?start&end` 返回 revision、snapshot_id、分月六税种 rows 和增值税 totals；空范围仅已保存记录的首末月（无记录为当月），页面明确展示覆盖期间，最多 120 月。未知值 null 不作零，不完整期间无合计。
+- `PUT .../vat-filing` 带 revision 与 months{YYYY-MM:{tax_type:{declared,paid,source,assessment}}}；单税种 null 可移除记录，金额只接受到分十进制字符串，确认的零也需来源。一般纳税人普通一般计税的 assessment 仅手工明确输入四项值与 user_assumption/ordinary_only；保存不执行报税/付款/草稿更新。GET 的结果与解释同源且绑定身份/记录快照；未知写响应只查询，比较完整记录和手工输入，409 不自动重放。
+- 所有上述写操作经同源校验和线程池，跨进程锁位于 runtime/company-p2-locks，不写真实账套凭证目录。状态损坏、链接或目录替换拒绝写入，保留原文件；错误不暴露内部 OSError 路径。
+
+## 2026-11-17 工作区 P1 接口补齐
+
+- B1：`GET /api/v1/invoices` 与公司目录列表的 `stats.all/filtered.total_amount` 改为两位十进制字符串；后者先应用标签与其它筛选、后统计、最后分页。同票家族只计一次，新增 `total_amount_valid_count/missing_count/conflict_count`（完整字段名均以 `total_amount_` 开头）；Vue 兼容旧数字类型一个版本。
+- B2：`POST /api/v1/companies/detect` 只读返回根状态、六类子目录、文件数（受限或不可读为 null）与绑定目录身份的 `plan_hash`；不登记、补目录或切换 monitor。`POST /api/v1/companies` 带 `revision/plan_hash/create_missing`，重检后仅补选中的缺失空目录。执行意图、每个目录和登记结果保存在 runtime；`GET /api/v1/companies/registration-jobs/{plan_hash}` 查询。迟到检测被丢弃，未知写响应锁定查询，同一计划不执行两次，目录替换为 409。`failed` 只在写公司清单之前记录：同一计划再次提交时旧记录改名保留（`<plan_hash>.failed-<ns>.json`）并重新执行；Vue 读到 `failed` 自动重新检测，冲突/计划过期后提供“重新检测”按钮。
+- B4：`GET /api/v1/companies/{company_id}/voucher-drafts` 返回逐审核表及顶层 `months:[{month,vouchers,approved,blocked,exported}]` 和 `index_errors`；读取不改工作簿或导出历史。`POST /api/v1/companies/{company_id}/voucher-drafts/{name}/export` 支持 `dry_run:true`，仍校验 revision 和制单人，返回 format、columns、unmatched、至多五行 sample_rows、months 的整月阻断原因。可选 `month` 同时限制预览与正式导出；空值为当前审核表全部月份。页头月份来自索引，导出数量为当前审核表对应月份的后端值。
+- 正式导出仍须 `confirm:true`；Vue 生成 `request_id`，执行前落盘意图，完成后落盘结果，`GET /api/v1/companies/{company_id}/voucher-drafts/{name}/export-jobs/{token}` 读取。中断、未找到或损坏记录均不能视为未执行；未知响应只读结果，服务端同 token 不重放。`export()` 运行前的确定拒绝（`VOUCHER_DRAFT_INVALID/BOOKS_UNAVAILABLE/CONFLICT`）照常返回错误，回执记为 `state:rejected`（带 `code/message`）；Vue 报错后只 GET 一次回执，`rejected` 才放开导出按钮，`unknown`/读不到保持只读查询。`VOUCHER_DRAFT_UNREADABLE` 可能发生在写出中途，仍记 `unknown`。页头“导出凭证（N）”为已审核未导出张数。旧无 token API/CLI 调用保持兼容。
+- B6：`GET /api/v1/companies/{company_id}/cost-tax-profile?month=YYYY-MM` 只读公司生效身份与该公司的已保存销项率，返回 `source:company|fallback` 与 month。嵌入成本页按 2026-11-10 用户决定只锁纳税人身份（隐藏身份选择器，显示公司身份胶囊或“未设置，按…计算（回退口径）”），销项税率选择器与保存按钮保留可改，后端 `save_reference_status` 继续拒绝与公司清单不一致的身份；保留品目表。该只读接口当前没有页面消费方。实际 v1 成本投影仍按当前月身份计价，不将历史查询当作历史工作簿重算。
+- 已登记公司的手动汇总只读同公司映射的开具目录，缺失/链接不能回退到全局；未登记来源保留旧配置。API、daemon、后台子进程、手动汇总共同传递开具来源；缓存来源不匹配时页面、工作簿均排除旧销项并提示重新汇总。开具目录仍不被 monitor 自动扫描。
+
+
+## 2026-11-16 工作区对话框遮罩桥
+
+经典页面 → 外壳新增展示消息 `{channel:"invoicehub.workspace.v1", token, type:"modal", open:boolean}`：`workspace-embed.js` 观察 `.modal-backdrop` 可见性，变化时（rAF 合并）发送，`DOMContentLoaded` / `pageshow` 报告当前态，`pagehide` 补发关闭。`ClassicModuleView` 沿用同源 + 当前 frame window + 当前 view token 校验，写入 `modules.modals[module]`（仅活动模块为真）；`App.vue` 据此显示 `.ws-module-scrim`，当前 iframe 提升到遮罩之上。重载、`load`、隐藏与卸载都清除状态。消息只影响外观，不触发任何对话框动作或 API。适配器资源版本 `20261116-prototype-2`。
+
+## 2026-11-16 项目列与比较凭证（WS-03 / WS-04）
+
+`GET /api/v1/invoices` 及活动公司目录列表分页后附加 `project`、`project_source=manual/remark/conflict/none/unavailable`；项目读取失败保留发票列表并返回 `projects_error`。不写投影、不改变行身份与金额。人工归属来自当前公司根，备注来自当前成本明细。
+
+比较结果增加 `summary_details[{label,value,steps,record_ids}]`、每条 `records.a/b[].detail`。往来结果增加 `receipts[]`（日期、收付双方、金额、用途、来源页、匹配明细与可选 preview）；回单 → 对账单流水 → 发票的 ID 来自后端既有算法。跨期间匹配说明隐藏记录，不生成不可见行的预览。
+
+| 方法与路径 | 输入 / 输出与边界 |
+|---|---|
+| `POST /api/v1/companies/{company_id}/receipt-preview-jobs` | 严格接受后端 `preview={kind:receipt,company_id,receipt_id,token,page}`，无路径字段；复核公司 / 目录 / 源文件与 SHA，返回 `initial_page`、受限 PNG 页模板、续租 URL |
+| `GET /api/v1/companies/{company_id}/receipt-preview-jobs/{job_id}/pages/{page_number}` | 返回 PNG，渲染前后复核来源；不能跨公司访问 |
+| `POST /api/v1/companies/{company_id}/receipt-preview-jobs/{job_id}/keep-alive` | 同源续租，复核目录和源文件版本；闲置过期 / 未知 job 为 410，来源变化为 409 |
+
+回单响应 no-store；不返回源绝对路径，作业仅内存。Vue `CompareGallery` 每组最多六项，只有后端 preview 才请求，回单打开对应页；隐藏标签卸载缩略图并关闭大图，停止续租；恢复重新核对，迟到结果丢弃。非监控发票仍不能预览，回单是独立只读能力。
+
+## 2026-11-14 WS-02 后端与 WS-01 皮肤隔离
+
+- 原有补建 API 不变：`plan_hash` 新增根与每级目录身份绑定；同名替换返回 `COMPANY_PLAN_STALE`，执行中变化列入 `failed` 并保留已创建目录；逐层 mkdir 拒绝链接、junction 与文件父路径。公司 `root_status` 可返回 `outside_root/unreadable`，子目录均为 `root_unavailable`。登记前复核新建目录；清单 / 任务嵌套损坏分别以既有 409 `COMPANY_REGISTRY_CORRUPT/COMPANY_SETUP_STATE_INVALID` 拒绝。
+- 工作区与显式 `workspace_embed=1` 页在首屏注入同一隔离名单；Ink Pulse / Animal Island 不注入活动 CSS，Vue 与经典公共皮肤消费者后续读回也不应用。只影响展示，不写偏好、不删资产；独立经典页面沿原设置，浅色 / website-dark / no_skin 保留。皮肤页展示暂停范围，公共脚本版本为 `20261114-workspace-skin-isolation-1`。
+
+## 2026-11-14 工作区缓存与临时识别（WS-01 第五阶段）
+
+`/workspace/` 外壳常驻首页 / 临时识别 Vue 视图，以及首次访问后各自常驻的六个经典 iframe。`GET /costs|documents|bookkeeping|ocr|consistency|settings` 仅在 `workspace_embed=1` 时注入固定嵌入资源；`/skins` 与 `/invoices/{key}` 保持模块内详情导航，普通经典入口保持原控制器。页面桥携带每个浏览上下文的 view token，只接受同源、当前 source window 和 token；隐藏模块不能发起外壳导航。当前刷新替换该模块上下文，旧 window / token 不再消费。
+
+外壳单一 SSE 消费监控 / 目录 / 汇总变化及重连，刷新 health/settings/companies 并通知目录列表。当前 iframe 继续用原 SSE 控制器；隐藏时只关闭 transport，事件监听保留，恢复后 onopen 按原规则重新核对。普通模块切换不重载页面，首页标签只在首页显示；批量入库沿用 sessionStorage 的 target / key / path 草稿，经 `workspace:navigate` 进入单据模块并显式接收新批次。“更新”进入设置的 `#about`，恢复参数和皮肤同步各缓存页面，迟到皮肤读取不得覆盖更新的恢复状态。
+
+Vue `/workspace/temporary` 共用下方临时 API 与独立 worker，队列排序按 ids 提交，不扫描父目录；隐藏停止轮询并丢弃未复核的结果 / 预览，返回复核。另有 worker 运行且查看旧历史时同时检查两份来源；复制之前再 GET 当前 session，TSV 只含业务列。创建响应未知只提示查历史，不自动再次 POST。桌面拖入允许固定 origin 的经典首页和该临时页面（含尾斜线），其它工作区路径仍拒绝，不改变 OpenAPI 操作集合。
+
+## 2026-10-09 桌面交接完善
+
+两平台Tauri启动在原有严格build/ownership/静态页验证后，要求OpenAPI存在临时识别pick/drop/sessions、`GET /api/v1/cost-analysis/view`、删除计划POST、状态GET和确认POST；缺方法或路径拒绝接入。原生拖入仅送至固定http://127.0.0.1:8766的首页路径，允许selection_return/no_skin等页面状态查询，不对详情/其它来源开放。Windows删除结果同时要求成功HRESULT、未aborted及回收站目标；结果不明保持停止和核对提示。
+
+## 2026-10-09 勾选操作、来源追溯与按需预览
+
+| 路由 | 契约 |
+|---|---|
+| `POST /api/v1/invoices/trash-jobs` | 同源；必须 `target_id + items[{invoice_key,source_path}]`，最多10000条；核对当前记录、目录、非链接原文件，生成5分钟确认计划，返回不透明 job_id、相对文件名清单，不移动文件 |
+| `GET /api/v1/invoices/trash-jobs/{job_id}` | 只读执行日志，返回 state/trashed_count/files；404表示计划不存在，不能当作删除未执行而重发 |
+| `POST /api/v1/invoices/trash-jobs/{job_id}/confirm` | 同源，必须 `confirmed:true`；活动目录锁与非阻塞同步写锁内复核全部源签名，再逐项复核并调用原生废纸篓；409表示校验或同步占用失败，prepared仍未执行；非prepared只返回旧结果、不重复移动 |
+
+删除计划状态为 prepared/running/completed/partial，逐文件为 pending/moving/trashed/failed/unknown。原生操作前记录 moving、完成后记录 trashed；系统不确认或进程中断时不得自动重试，页面“读取执行结果”只发 GET。没有永久删除回退。成功或部分执行后清理预览缓存，发送 `invoices.trashed` 诊断事件并沿既有后台同步重建投影，`monitor.sync_completed` 刷新消费者；不启动 monitor，不删除手改覆盖。上述API均 private/no-store。
+
+勾选合计每个 project 新增 `source_invoices`，带已校验的 invoice_key/source_path/file_name/invoice_number/target_id；搜索与税率过滤仅作用明细，顶部金额口径不变。来源链接在同标签 sessionStorage 保存30分钟的勾选、首页筛选、分页、汇总搜索/税率，URL只带返回 token；`GET /api/v1/invoices/{invoice_key}` 可携带 target_id/source_path 并在读取前验证，过期位置返回409。详情左上角返回后重读汇总，目录切换或临时投影禁止恢复勾选。
+
+首页预览保留完整选择作为导航队列，创建 `/api/v1/invoices/preview-jobs` 时仅发送当前1条和捕获的 target_id；后端原有100条上限继续约束直接批量API，不再成为全选预览的门槛。前后翻阅及序号跳转按需创建当前文件作业；文件名下拉每窗最多100项，PNG/XML、缓存、页数、保活和恢复保护不放宽。删除确认清单也按100项分组。首页与详情脚本、独立 selection-workflow.css 使用 `20261009-selection-6`。
+
+
+## 2026-10-09 临时识别接口与流程
+
+预览新增 `GET /api/v1/temporary-recognition/files/{file_id}/preview`（name/type/pages/reason/size）、同路径 `/text`（JSON 纯文本）和 `/pages/{page_number}`（PNG）。草稿凭不透明选择 id，历史额外传 `session_id` 并校验归属和整个线程的源有效性；未知/过期选择404，源失效409，渲染错误按现有预览服务返回。各次读取前后复核来源，页面每3秒复核，失败清空内容并提供重新读取。缓存回收后自动按原身份重建并保留页码。队列和历史结果各有预览按钮，返回保留队列顺序，操作列不进入 TSV。
+
+`/api/v1/temporary-recognition` 独立于活动 TargetProfile；所有响应 `private, no-store`。写入保持同源检查，原生选择/拖入在 Tauri 中要求固定 origin。
+
+| 路由 | 契约 |
+|---|---|
+| `GET/PUT /api/v1/temporary-recognition/settings` | batch_limit（1–50，默认20）、auto_open（默认true） |
+| `POST /api/v1/temporary-recognition/pick` | 原生多选返回不透明 id、name、size；取消返回空 files |
+| `POST /api/v1/temporary-recognition/drop` | Tauri 同源页面登记原生拖入 paths；非宿主返回409，改用选择器 |
+| `GET/POST /api/v1/temporary-recognition/sessions` | 历史列表 / 按 ids 顺序创建一批识别，已有运行任务时409 |
+| `GET/PATCH/DELETE /api/v1/temporary-recognition/sessions/{session_id}` | 校验源文件并读取 / 改 title / 仅删除缓存记录；运行中禁止改名、删除 |
+
+页面 → picker 或桌面原生 drop → 短期选择 id → 独立 Python worker → 每文件原子发布进度 → 弹窗识别列表。普通浏览器 File 不含可信本机路径，拖入后须在原生多选框确认位置；不把上传副本冒充原文件。Tauri `pick_temporary_files` 是新增固定私有 RPC 枚举，不携带页面提供的任意命令；桌面仅向固定 localhost 首页发送拖入路径事件，不提供 IPC 或 Host RPC token。
+
+原文件缺失、移动、替换或内容变化时返回 unavailable 文件名且省略整个线程 items；查看、自动刷新和复制均重新校验。关闭弹窗保留草稿，识别继续；关闭 backend 收束 worker。关闭自动打开时通过“查看本次识别结果”或历史进入。图片/纯扫描件需 OCR，当前临时功能不启用 OCR。
+
+
+## 开发工具交接流程
+
+[交接工具](../AGENT_HANDOFF.md) CLI：init/bind 登记线程别名 → ticket/resolve 定位 → resume 一次读摘要 → claim 内置一次现场校验 → release --input 一次保存并交出。resume 默认不哈希目录，--verify/check 才显式核对；show --section/--full 按需展开。引用歧义不猜最新，无轮询、无网络读取聊天。增量事件 fsync 后仅更新本任务 CURRENT 与变化的 INDEX，revision 过期拒绝写入。
+
+功能约束按需读取：[页面/单据/预览/皮肤](rules/WEB_UI.md)、[监控与关闭](rules/MONITORING.md)、[做账](rules/BOOKKEEPING.md)、[Tauri 宿主](rules/TAURI_HOST.md)、[构建与发行](rules/RELEASE.md)。先按 [任务快速索引](AGENT_TASK_MAP.md#quick-lookup) 定位全部命中项，再读取规则全文及对应实现章节；AGENTS.md 保留全局必读规则。
+
+## 税务工作台接口草案（2026-09-11，未注册）
+
+拟议的单税/多税计算、nullable 公司绑定、角色检测、异步归集、取消、快照读取、归档、申报期限与申报表映射见[设计第 6—7 节](../TAX_WORKBENCH_DESIGN.md)。当前 main 未接入这些路由；设计不改变本文件下方已有 API 契约。
+
+后续链路为 `独立 tax router → 规范化输入/TaxWorkspaceService → 来源快照 → Decimal 引擎 → 同源结果与解释`。归集不得改变 `watch_dir`、成本投影或 W8/W9 状态；缺资料逐项阻断，旧绑定/任务/规则的完成结果不能覆盖新场景。实施时同时更新 API、SSE 重连消费、前端文本、缓存版本与契约。
+
+补充原生目录选择草案：`POST /api/v1/tax/workspace/pick-directory → platform.pick_directory → owned Host RPC pick_tax_company_dir → 系统单目录选择窗口 → 待保存草稿 → detect → PUT workspace`。这是尚未实现的独立税务 picker 草案；WS-02 已另增公司资料夹选择用途，不能把税务草案当作已实现产品能力；空请求、固定枚举、同源与 ownership 校验，选择成功仅返回 `selected_path/requires_save`，取消保留旧草稿，失败脱敏 503。草稿改变或页面关闭后丢弃旧请求返回，不因选择动作切换 `watch_dir` 或自动保存。
+
+申报衔接草案：`GET /api/v1/tax/filing-calendar` 只读返回申报期限与顺延，必须带来源与核对日期，未核验期间标注而不是给出推算日期；`GET /api/v1/tax/runs/{run_id}/form-mapping` 把一次运行映射到适用表式与行次，绑定表式版本，表式变更后返回 `stale` 而不是旧行次。期限信息只作提醒，不构成已申报证据；缺表式样例时不输出行次。来源分级与签署要求见[政策来源与核验](../TAX_POLICY_SOURCES_AND_REVIEW.md)。
+
+入口偏好草案：在现有 `GET/PUT /api/v1/preferences` 扩展 `tax_calculator_placement=floating|header` 与可选归一化 `tax_calculator_anchor`。20px 图标在界面内悬浮，或固定在置顶栏“首页”按钮左侧并纵向居中；置顶入口使用模块导航之前的独立工具槽，不插在各模块之间，同一页面只显示一处；切换位置不重置计算器草稿，不读取/切换公司资料。原型仅会话内展示，正式偏好持久化及失败恢复属于 D1。
+
+紧凑布局与自定义税率草案：正面固定按可用高度分配 20 键空间，长解释和结果独立滚动；税率预设与自定义编辑共用一行。自定义请求明确模式和 `custom_rate_percent` 十进制字符串，后端统一转换比例、验证 0—100%/最多四位小数并返回 `user_assumption`；不允许客户端同时提供比例字段。切换模式/修改税率使旧结果和解释失效，空值/非法输入不回退预设。当前原型只演示校验与待重算，生产契约待 D1 实施。
+
 2026-09-10：alpha.2 优化版 1 已完成同源 Mac 构建并发布，内置平台 Python/Java/OFD 组件；离线、包内两页 OFD 和实际正常配置的 ready/页面/monitor 验收通过。隔离 HOME 自动样本未通过，其他平台原生与签名限制仍保留。精确身份、发布状态与来源见[分支记录](../BRANCH_STATUS.md)；后续开发以 main 为准，制品身份由优化批次 Tag 固定。
 
 2026-09-09 Windows portable 完成暂存校验后的目录发布，只对 WinError 5/32/33 最多重试 20 次、累计 1.9 秒；其它错误或持续失败仍停止构建，不生成放行 receipt。
@@ -34,7 +305,7 @@ L10-R/C 定义的 lease、marker、fixed-loopback bridge 和 pure coordinator �
 flowchart LR
     Page["HTML 模板"] --> JS["页面 JS / common.js"]
     JS --> HTTP["FastAPI 页面、API、SSE"]
-    HTTP --> State["AppState 用例门面"]
+    HTTP --> State["领域服务 state.*（AppState 组装）"]
     State --> Service["monitor / projection / extraction / bookkeeping / skin / update / platform"]
     Service --> File["源发票与 CSV/XLSX/JSON/日志"]
     State --> Repo["SQLiteRepository"]
@@ -66,7 +337,12 @@ flowchart LR
 | `GET /backend` | `backend.html` 内联脚本 | health、settings、bridge/status | 不注入皮肤，不进入普通首要导航 | API/前端契约 |
 | `GET /invoices/{invoice_key}` | `detail.html` + `page-detail.js` | invoice detail、manual-fields、open-file、open-location | `invoice_key` 是当前汇总位置键，不是长期主键 | 详情与成本拆分 API 测试 |
 | `GET /invoices/print/{job_id}` | `invoice_print.html` 内联打印脚本 | print job、逐页 PNG | 不注入活动皮肤；全部图片完成 `load + decode` 和两次渲染帧后调用 `window.print()`；票面跟随实际页框；私有 no-store；macOS 子窗口只允许该同端口受控路径 | 打印服务/前端契约、真实浏览器分页与 macOS 策略测试 |
+| `GET /workspace`、`GET /workspace/{client_path:path}` | `web/static/app/index.html`（`frontend/` 的提交构建，Vue 3） | health、settings；首页（`/workspace/`，WS-01 侧栏 + 标签；旧 `/workspace/companies`、`/workspace/directory` 重定向到首页）另消费 `/api/v1/companies*`（§3.5.1；项目名称在侧栏展开公司时才读取 `projects`），写操作只有公司清单增删改、子目录补建确认、项目归属、发票标签与凭证草稿保存 / 导出（同号检查 `same-number` 只读，可跨两家公司；属期文件夹移动须在页面确认；工资社保确认写 申报数据.json），以及经确认的 `PUT /api/v1/settings` 切换监控目录；比较与同号检查的“原票”消费 `preview-jobs`（创建、页面、文本、续租）；监控目录的目录标签另消费经典首页同一组勾选接口（`selection-summary`、`preview-jobs` 完整源文件队列、`print-jobs`、`trash-jobs` 预备与确认、单据页入库会话交接）；侧栏置顶、展开与宽度只存浏览器 `localStorage` | 所有客户端路由返回同一外壳，`Cache-Control: no-store`；资源带 `?v=` 内容哈希走 immutable；`include_in_schema=false`，不改变桌面 OpenAPI 握手；构建缺失时 404；复用经典页面活动皮肤首屏注入，`no_skin` 跳过且不重置保存状态；外壳单一 SSE 与当前经典模块 SSE，隐藏模块暂停 transport；临时识别共用既有 API | `test_workspace_frontend.py`、`frontend/tests/*.spec.ts` |
 | `GET /favicon.ico` | 静态响应 | 无业务数据 | `include_in_schema=false`，但仍属于 FastAPI 路由契约 | API 静态契约 |
+
+API 路由分布：页面、官网、打印页、`/workspace`、health 与桌面握手在 `api/app.py`；其余 `/api/v1` 路由按领域在 `api/routes/*.py`，由 `create_app` 按原注册顺序 `include_router`，因此路径匹配顺序与拆分前一致；共享的来源校验、认证 transcript 与错误映射在 `api/common.py`。
+
+工作区外观另消费既有 `GET /api/v1/skins`、`POST /api/v1/skins/website-dark/enable` 与 `POST /api/v1/skins/reset`（写入 body 为 `{}`）：不生效的 CSS 先加载成功，保存响应身份一致才替换当前 link；失败保留外观，保存未知不重放，卸载取消迟到交接。Vue 色彩别名取同一皮肤变量，切换保留业务 DOM / 草稿 / 勾选；恢复入口固定浅色、不写设置，旧 / 未知深链接与经典导航保留参数。守护为 `appearance.spec.ts`、App 草稿 / 导航与工作区 HTTP 契约。
 
 所有普通页面由 `_template()` 做有限占位替换，不是 Jinja2 模板引擎。活动皮肤由服务端在 `</head>` 前注入；`/backend` 和带 `?no_skin=1` 的请求跳过注入。
 
@@ -106,7 +382,7 @@ flowchart LR
 
 | 方法与路径 | AppState 入口 | 主要请求/返回 | 消费者与错误 |
 |---|---|---|---|
-| `GET /api/v1/invoices` | `list_invoices` | 查询筛选；返回 `items/stats/snapshot/target_id/watch_dir` | 首页；读取普通汇总并应用手改覆盖 |
+| `GET /api/v1/invoices` | `list_invoices` | 查询筛选及可选 `page/page_size/date_sort`；返回 `items/count/stats/snapshot/target_id/watch_dir` | 首页；page 从 1 起，page_size 1—200；省略 page 保留完整正式结果 |
 | `POST /api/v1/invoices/selection-summary` | `invoice_selection_summary` | `{items:[{invoice_key,source_path}]}`；返回去重张数、三项金额和成本拆分 | 首页弹窗；JSON/字段错误 `400`，过期选择 `409` |
 | `POST /api/v1/invoices/preview-jobs` | `prepare_invoice_preview` | `{items:[{invoice_key,source_path}]}`；返回短期 job、按所选顺序的文件元数据和页面/text URL | 首页预览；选择过期 `409`，渲染/来源问题返回结构化 `4xx/503`，响应 no-store |
 | `POST /api/v1/invoices/preview-jobs/{job_id}/keep-alive` | `keep_invoice_preview_alive` | 轻量刷新预览 job 的 15 分钟闲置截止时间；返回 `job_id/expires_at/idle_timeout_seconds` | 只在预览弹窗打开期间调用；已过期 `410`、后端重启后未知 job `404`，响应 no-store |
@@ -123,7 +399,7 @@ flowchart LR
 
 `invoice_key` 当前来自汇总行下标。它只能和 `source_path` 一起用于短期页面选择；列表重建后不能把旧位置键当成同一张票。
 
-selection-summary 路由异步解析 JSON，随后将同步 `AppState.invoice_selection_summary()` 卸载到 Starlette 线程池。该方法会读取普通汇总、手改状态和当前成本 CSV 并执行聚合；不得再放回事件循环直接执行，否则文件 I/O 阻塞时 health 也无法调度。
+selection-summary 路由异步解析 JSON，随后将同步 `state.selection.invoice_selection_summary()` 卸载到 Starlette 线程池。该方法会读取普通汇总、手改状态和当前成本 CSV 并执行聚合；不得再放回事件循环直接执行，否则文件 I/O 阻塞时 health 也无法调度。
 
 同样，`manual-fields` 在 JSON 解析后在线程池执行。其写入与当前 profile 的 monitor 写锁串行化；若写入期间活动 profile 已切换，旧目录的手改真值可以完成，但不能清新目录缓存或发送新目录的刷新事件。
 
@@ -133,17 +409,20 @@ preview 和 print 都以短期内存 job 输出，不能把 PNG、XML 文本或�
 
 | 方法与路径 | AppState 入口 | 主要请求/返回 | 消费者与错误 |
 |---|---|---|---|
-| `GET /api/v1/cost-analysis` | `cost_snapshot` | 必含 watch/source/target、成本三路径、items/project_summary/invoice_reference/checks、状态统计、兼容 `reference_markup_rate`、`sync` | 成本页、设置页；在线程池读取，旧 schema 修复受 profile 写锁保护 |
-| `POST /api/v1/cost-analysis/reference-status` | `save_cost_reference_status` | `{items:[{key,invoiced_quantity,reference_markup_rate_percent,reference_markup_locked}]}` | 成本页；JSON 解析后在线程池写状态 JSON/工作簿，非法/超量数量或加价率 `400` |
+| `GET /api/v1/cost-analysis` | `cost_snapshot` | 必含 watch/source/target、成本三路径、items/project_summary/invoice_reference/checks、状态统计、兼容 `reference_markup_rate`、`reference_tax_profile`、`item_catalog`、`reference_exclusions`、`outbound_summary`、`sync`；`invoice_reference` 行另含 `reference_cost_unit_price/reference_cost_basis/reference_cost_note/reference_cost_basis_text` 、来源发票 `sources[]{id,invoice_number,source,seller,invoice_date,quantity,amount}`、品目表 `member_keys/merge_note/reference_output_tax_rate/reference_output_tax_rate_percent` 与销项比对 `outbound_quantity/outbound_amount/outbound_unit_price/outbound_invoice_count/actual_markup_rate/actual_markup_text/outbound_compare/outbound_compare_text/outbound_suggested_quantity`，`average_unit_price` 仍是纯不含税库存均价 | 兼容完整读取与设置页；在线程池读取，旧 schema 修复受 profile 写锁保护 |
+| `GET /api/v1/cost-analysis/view` | `cost_view` | `view=details/project/reference/checks`，page/page_size，可选 revision；返回当前标签行、全局 counts/stats、revision/provisional/editable/updating；临时 / 空快照的 `sync.review_count`、`sync.not_parsed_count` 为 null（未统计，不是 0） | 成本页；每页最多 200，旧 revision 返回 409；繁忙时读取缓存而不等待整轮汇总 |
+| `POST /api/v1/cost-analysis/reference-status` | `save_cost_reference_status` | `{items:[{key,invoiced_quantity,reference_markup_rate_percent,reference_markup_locked}], tax_profile?:{taxpayer_type,output_tax_rate_percent}, item_catalog?:{items:{原名称:{standard_name,type,output_tax_rate_percent}}}, reference_exclusions?:{keys:[reference_key], invoices:[invoice:号码|source:文件名]}}` | 成本页；JSON 解析后在线程池写状态 JSON/工作簿，非法/超量数量、加价率或税务设置（类型不在 general/small_scale、税率不在 [0,100)）、品目表（类型不在 goods/expense/fixed_asset、标准名称超 60 字、税率非法）或移除清单（键不是 40 位十六进制、发票标识非法）`400`；不带 `tax_profile` / `item_catalog` 时保留已保存设置；带 `item_catalog` 时先迁移已保存的已开状态 |
 | `POST /api/v1/cost-analysis/open-summary` | `open_cost_summary` | 打开当前 `watch_dir/成本发票汇总.xlsx` | 成本页；缺失时返回结构化失败 |
 
 `cost_snapshot` 的 schema 自愈和 `reference-status` 的状态/工作簿写入都使用所捕获 `TargetProfile` 的 monitor 写锁。完成前若活动 profile 改变，只保留旧 profile 自己的落盘结果，不清当前缓存且不发送当前 profile 的事件；这两条文件 I/O 路径不能在事件循环中等待锁。
+
+2026-10-09：成本页面保存额外携带 `target_id/revision`，服务端在原写锁内核对完整快照，过期拒绝（400）；旧消费者省略时保持原契约。页面草稿与勾选跨页保留，遇到代际改变保留草稿并要求重新核对，不静默应用到新结果。复制按当前标签逐页读取同一 revision，并核对 target；不缩小为当前页。`snapshot.provisional` 的首页列表与成本 `provisional` 明细只供查看，失败/终止保持提示；正式 CSV/完整快照就绪后切换。成本首次缓存聚合及初次源文件解析仍有成本，分页不宣称消除全部等待。
 
 ### 3.4 单据
 
 | 方法与路径 | AppState 入口 | 主要请求/返回 | 错误/消费者 |
 |---|---|---|---|
-| `GET /api/v1/documents/state` | `document_state` | 入/出库可选发票、目录、最近目录、默认值 | 单据页、设置页 |
+| `GET /api/v1/documents/state` | `document_state` | 入/出库可选发票、目录、最近目录、默认值；可选 selection_only/revalidate | selection_only 仅返回配置/目录身份及空候选，不启动索引；进度刷新 revalidate=false |
 | `POST /api/v1/documents/pick-outbound-dir` | `pick_outbound_invoice_dir` | 原生选择器结果 | 仅生成待保存草稿 |
 | `POST /api/v1/documents/validate-outbound-dir` | `validate_outbound_invoice_dir` | `{outbound_invoice_dir}` -> 可读性、格式统计和 warning | 单据页/macOS bridge；只检查，不保存 |
 | `PUT /api/v1/documents/outbound-dir` | `update_outbound_invoice_dir` | `{outbound_invoice_dir}` | 保存出库发票来源目录 |
@@ -162,6 +441,8 @@ preview 和 print 都以短期内存 job 输出，不能把 PNG、XML 文本或�
 | `POST /api/v1/documents/outbound/open-location` | `open_outbound_document_location` | `{invoice_number}` | 只打开受控目录 |
 
 首页 `>>` 的“批量开具入库单”通过同标签页 sessionStorage 传递 30 分钟内的勾选草稿，再进入 `/documents?batch=inbound`；URL 不含源路径，`no_skin=1` 保留。单据页只读核对后由用户明确批量导出，每张请求在工作线程执行并返回结果；停止只阻止剩余任务，当前请求仍收尾。缺成本明细/明细冲突逐票展示；断网或服务端 5xx 标为结果未确认并停止队列，同次页面重新核对不会自动重试该票。目标切换使队列失效，已确认导出或跳过的记录保持终态。
+
+2026-10-09：普通索引先发布 `inbound_ready`，出库在首条与后续有界时间间隔发布候选，`index.revision` 变化触发页面更新；运行中的候选可临时预览但导出返回 400，ready 后自动重建所选预览。首页批量入口先用 selection_only 和已有 selection API，只处理勾选票；用户点刷新列表或出库标签才恢复完整索引。export-status 只复用签名有效的目标文件名信息，正式导出仍执行原身份/路径和明细校验。
 
 入/出库预览新增模板 `layout`，网页通过 colgroup 使用真实列宽和最低明细行数。预览请求按递增序号防止迟到响应覆盖新选择。大写金额与工作簿共用无“人民币”前缀的结果；动态行高、合并范围与实际打印范围见数据算法第 10 节。
 
@@ -187,21 +468,22 @@ secret 已捕获到 app state 且 challenge 是合法 64 位小写 hex 时返回
 identity 检查确认 child 仍被拥有，才 arm 授权或创建 surface。未知监听者永远不会收到 secret
 或 WebView。
 
-四个既有 picker route 仍只把选择结果交回既有 `AppState` 草稿流程：
+五个单路径 picker route 只把选择结果交回相应服务的待保存 / 待登记草稿流程：
 
 | 路径 | Tauri host mode 的额外边界 |
 |---|---|
 | `POST /api/v1/settings/pick-watch-dir` | 必须精确 `Origin: http://127.0.0.1:8766` |
+| `POST /api/v1/companies/pick-directory` | 同一精确 origin；只接受空 body / `{}`，只返回待登记路径 |
 | `POST /api/v1/documents/pick-outbound-dir` | 必须精确 `Origin: http://127.0.0.1:8766` |
 | `POST /api/v1/ocr/pick-file` | 必须精确 `Origin: http://127.0.0.1:8766` |
 | `POST /api/v1/ocr/pick-folder` | 必须精确 `Origin: http://127.0.0.1:8766` |
 
 在非 Tauri mode，它们保留既有同源写入检查。Tauri host 只将 token 传给其直接启动的
-Python backend；backend 启动时捕获 token 并从 descendant 环境清除。该 Python client 的 picker 面只将四种固定 picker enum
+Python backend；backend 启动时捕获 token 并从 descendant 环境清除。该 Python client 的单路径 picker 面只将五种固定单路径 picker enum（另有临时识别多选 `pick_temporary_files`）
 发送到随机 loopback Host RPC listener，更新面独立地只允许 `update_check` / `update_install` 两个固定 enum；token 不会经过页面、
 Tauri command/event、API 响应或日志；Rust dialog 最多等待 120 秒，Python 以 125 秒预算保留响应余量。
 Host RPC 失败统一变为不含 token、URL 或 secret 的 `503 Native picker unavailable`；非
-Tauri 的 Tk 行为不变。授权先在 handshake 后 arm，backend child 退出后由 100 ms 有界
+Tauri 的既有 Tk 行为不变；公司选择新增 125 秒子进程总时限，失败与超时同样脱敏 503。授权先在 handshake 后 arm，backend child 退出后由 100 ms 有界
 Rust liveness watcher 撤销，watcher 不能重新授权已退出 child。握手完成后 host 才读取
 `GET /api/v1/preferences` 的严格 `{ok, preferences.startup_surface,
 allowed.desktop_available}` 形状并重新证明 ownership：desktop 创建空 IPC WebView，browser
@@ -285,6 +567,100 @@ L10-D 复用 L10-R/C 的 lease、marker、fixed-loopback bridge 和 pure coordin
 | `PATCH /api/v1/bookkeeping/import-result` | 废弃路由 | 固定 HTTP 410 `BATCH_FINALIZE_REQUIRED` | 禁止逐张绕过 batch finalize |
 | `GET /api/v1/bookkeeping/state` | `bookkeeping_state` | 公司、store revision、草稿和批次总览 | 页面只读后再发显式动作 |
 
+### 3.5.1 银行流水底稿命令行（2026-10-02，无 HTTP 路由）
+
+银行流水整理目前只有命令行入口，未注册 API、页面或 SSE；业务资料夹的“银行流水”统计仍只是文件计数。
+
+```text
+python -m invoice_hub.bank <对账单/回单 PDF 或目录...> [--out 目录] [--from YYYY-MM] [--to YYYY-MM]
+    [--book-balance 金额 --book-date YYYY-MM-DD] [--sales-invoices 销项发票目录]
+    [--invoice-csv 发票明细.csv ...] [--customer 名称 ...] [--supplier 名称 ...]
+    [--sensitive-term 词 ...] [--no-redacted]
+```
+
+| 退出码 | 含义 |
+|---|---|
+| 0 | 私有底稿已写出；未加 `--no-redacted` 时脱敏底稿也已写出且泄漏扫描通过 |
+| 2 | 参数错误（账面余额与日期须成对）、找不到可识别对账单、发票明细 CSV 缺列 |
+| 3 | 脱敏泄漏扫描命中，本次不写任何底稿 |
+
+```mermaid
+flowchart LR
+    PDF["对账单/回单 PDF（只读）"] --> Discover["discover：按内容识别版式"]
+    Discover --> Adapter["boc 适配器 → 标准记录"]
+    Adapter --> Checks["checks：余额/合计/断档/账面差额/重复"]
+    Adapter --> Match["matching：流水号+金额 → 日期+金额+方向"]
+    Match --> Classify["classify：角色 + 建议分录"]
+    Directory["往来单位.json（人工优先）"] --> Classify
+    Checks --> Build["build_tables（同一构建函数）"]
+    Classify --> Build
+    Build -->|RedactedView| Scan{"泄漏扫描"}
+    Scan -->|通过| Redacted["脱敏/ 底稿 + 报告"]
+    Scan -->|命中| Stop["退出码 3，不写出"]
+    Build -->|PrivateView| Private["私有底稿 + 往来单位.json"]
+```
+
+顺序约束：先解析全部对账单得到本公司账号，再解析回单判断收付方向；脱敏表先构建并扫描通过，才写私有底稿和脱敏底稿，避免留下“私有已更新、脱敏失败”的半套产物。
+
+### 3.5.2 参考凭证草稿命令行（2026-10-10，无 HTTP 路由）
+
+```text
+python -m invoice_hub.bank.voucher_cli draft  --company <公司资料夹> --from YYYY-MM --to YYYY-MM [--bank 目录] [--out 目录] [--month-end] [--ledger 科目表.json] [--booked 序时账.txt ...]
+python -m invoice_hub.bank.voucher_cli export --company <公司资料夹> [--draft 审核表] [--out 目录] [--voucher-type 记] [--allow-reexport] [--ledger 科目表.json] [--after YYYY-MM:NNN ...] --preparer 制单人
+```
+
+| 命令 | 退出码 |
+|---|---|
+| draft | 0 已生成审核表（首次同时生成 `申报数据.json` 模板）；2 缺科目表、发票明细、对账单或参数错误 |
+| export | 0 无校验错误（可能没有可导出的凭证）；1 有凭证未通过校验，相关月份整月未导出；2 找不到审核表或输入错误 |
+
+`--ledger`：在捷锐新建科目后，指向 `做账草稿/账套读回/` 下的科目表读回快照（结构同 `凭证/科目表.json`）；只读，不回写 `凭证/`，draft 与 export 须用同一份。
+
+`--booked`：已入账月份的捷锐“序时账”复制文本（9 列制表符分隔：日期、凭证号、摘要、科目编码、科目名称、数量、外币、借方、贷方），可多次指定；这些月份只补记漏掉的银行流水。draft 在终端逐月打印银行核对结论，并列出补记、账有银无与未生成凭证的流水。
+
+流程：draft 生成审核表 → 会计人员先看“月度核对”“银行对账”，再按“待补科目”在捷锐补建科目/供应商、补填 `申报数据.json` 后重跑 draft → 在审核表中修改并选“通过” → export 生成按月导入文件并更新习惯 → 会计人员在捷锐手工导入（首次只导入一张核对）。
+
+### 3.5.3 公司清单、按公司只读目录与发票账簿（WS-07 第 1—3 步）
+
+公司清单存于 `runtime/local_state/companies.json`（schema v1，见数据算法 §4.8），由 `state.companies`（`services/company_registry.py::CompanyRegistryService`）读写。它与单目录设置分开：任何清单操作都不改变活动 `watch_dir`、TargetProfile 或 monitor；没有清单文件时列表为空、`revision=0`，且读取不会创建文件。写请求经同源校验，并携带清单 `revision`（CAS）。
+
+| 方法与路径 | 服务入口 | 当前语义 | 错误与安全边界 |
+|---|---|---|---|
+| `GET /api/v1/companies` | `list_companies` | 全部公司、六个标准子目录状态（`present/missing/not_directory/outside_root/unreadable/root_unavailable`）、当前纳税人类型、`monitored`/`monitored_subdir_key` 与 `monitored_company_id` | 只做 stat，不递归扫描；清单损坏返回 409 `COMPANY_REGISTRY_CORRUPT` |
+| `POST /api/v1/companies` | `create_company` | 登记公司：名称、资料夹根、可选子目录映射与纳税人身份；未给出的子目录按标准名 → 唯一命中提示词 → 标准名（待创建）推断，返回 `subdir_sources` | 根须是已存在文件夹，不得与已登记公司重复或嵌套；名称不区分大小写唯一；最多 200 家 |
+| `POST /api/v1/companies/pick-directory` | `companies.pick_directory` | 空 body / `{}`；`selected/path/requires_save`，取消不带旧路径 | 同源写校验；host mode 精确 origin，`pick_company_directory` 固定 enum；不写清单或设置，失败 / 超时脱敏 503 |
+| `POST /api/v1/companies/setup-jobs` | `companies.setup.plan` | `revision/name/parent_dir/folder_name/subdirs/taxpayer_periods`；返回 `job_id/plan_hash/root_path/items/state`，只写 runtime 计划 | 根必须不存在，父目录已存在；拒绝重叠、非法 Windows 名；计划 5 分钟有效 |
+| `POST /api/v1/companies/setup-jobs/{job_id}/confirm` | `companies.setup.confirm` | `confirm=true + plan_hash`；返回创建结果与完成时的 company | 先重验再持久化排他意图，mkdir 后登记；失败保留空目录，重复 / 未决请求只返回现有结果 |
+| `GET /api/v1/companies/setup-jobs/{job_id}` | `companies.setup.get` | 只读 `prepared/completed/failed/unknown`、已创建目录与诊断 | 崩溃 / 登记观察未确认不能回退为 prepared 或自动重放；损坏日志保留且 409 |
+| `GET /api/v1/companies/{company_id}` | `get_company` | 单家公司当前状态 | 不存在返回 404 `COMPANY_NOT_FOUND` |
+| `PATCH /api/v1/companies/{company_id}` | `update_company` | 改名称/根/纳税人身份（整体替换）/子目录映射（按键合并） | 值未变化时不写文件、不递增 revision |
+| `DELETE /api/v1/companies/{company_id}?revision=N` | `delete_company` | 只删清单条目，返回 `files_touched=0` | 不删除、移动或改写公司资料夹内任何文件 |
+| `GET /api/v1/companies/{company_id}/subdirs/plan` | `subdir_plan` | 补建预览：逐项 `create/exists/blocked` 与 `plan_hash`；可选查询参数 `keys`（逗号分隔）仅预览指定子目录 | 零写；未知目录键返回 422；同名文件、链接或越出根目录为 `blocked` |
+| `POST /api/v1/companies/{company_id}/subdirs/create` | `create_subdirs` | `confirm=true` + 预览的 `plan_hash`（与可选 `keys`）后只新建空目录，返回 `created/skipped/failed` | 422 `COMPANY_CONFIRM_REQUIRED`；清单 revision 或任一路径状态变化返回 409 `COMPANY_PLAN_STALE`，须重新预览 |
+| `GET /api/v1/companies/{company_id}/directories` | `state.company_views.company_directories` | 六个子目录各自的 `target_id`、`active/read_only`、上次投影（`projection.summary_exists/summary_updated_at/cost_detail_exists/cost_detail_updated_at`）与 `freshness`（`monitored/fresh/stale/never_built/unknown/missing_dir/not_checked`，带 `added/updated/deleted/source_file_count/complete/message`） | `check_freshness=false` 跳过比对；比对只读、有界（20,000 项或 2 秒），不建目录、不修复状态文件、不触发汇总 |
+| `POST /api/v1/companies/{company_id}/refresh-data` | `state.company_views.refresh.start` | 启动（或复用运行中的）该公司非监控发票目录后台只读增量读取；可选 `keys`（限三类发票目录）与 `force`，仅把完整代际发布到本机 workspace（`source_exported=false`），不切 `watch_dir`、不向源目录写文件；完成后写 `company.data_refreshed` SSE 事件 | 需同源写校验；非法 `keys` 返回 422；服务关闭中返回 503；活动监控目录自动跳过 |
+| `GET /api/v1/companies/{company_id}/refresh-data` | `state.company_views.refresh.status` | 返回该公司最近一次只读读取任务的 `status`（`idle/running/completed/failed`）、进度文案与逐目录结果 | 只读查询，不触发扫描 |
+| `GET /api/v1/companies/{company_id}/ledger` | `state.company_views.company_ledger` | 进项（成本发票目录）与销项（开具发票目录）按 `granularity=month/quarter/year` 汇总，可选 `start/end`（YYYY-MM）；返回 `periods[]`（各期 `input/output` 的张数、不含税、税额、价税合计，票面差额，`taxpayer_types`）、`totals`、`undated`、`excluded[]`（原因 `amount_unrecognized/amount_conflict/amount_inconsistent`）、`merged_copies`、`out_of_range`、`parties`、`warnings[]`、`checks[]` 与 `checks_ok`、`sources`（两目录的投影与 `freshness`），以及 `basis=invoice_face`；`bank`（`include_bank=false` 时为 `null`）：银行流水目录的 `state=ok/no_statements/missing_dir/unreadable`、`message`、`file_count`、`cached`，`ok/no_statements` 时另有 `accounts[]`（尾号、户名、开户行、对账单覆盖月份、各期与合计的 `opening/inflow/outflow/closing/rows/missing_months/ok`）、`periods[]`（各账户合并，任一账户缺月则余额为 `null`、`complete=false`）、`totals`、`sources`（对账单/回单/未识别）、`issues[]`（对账单自检）、`checks[]` 与 `checks_ok` | 只读上次投影（含手改字段），不触发汇总；银行流水在请求时只读解析对账单 PDF（不解析回单，不写公司资料夹），按文件签名缓存在内存；422 `COMPANY_LEDGER_INVALID` 或参数校验失败；票面口径，不是利润或应纳税额；`bank.checks_ok` 不并入发票的 `checks_ok` |
+| `GET /api/v1/companies/{company_id}/compare?a=&b=` | `state.company_views.compare` | 按两类子目录的关系选算法（WS-07 第 4 步），`a`、`b` 顺序无关，可选 `start/end`（YYYY-MM）。三种关系都另返回 `records.{a,b}`（并排原始记录：`id`、号码、日期、对方、金额、文件，`a` 为发票目录，`b` 为开具发票 / 对账单行 / 清单行），各类目（进销存品类与规格、往来单位与逐笔对应、抵扣所属期与对上的清单行）带 `record_ids.{a,b}`，进销存逐月行、往来单位与抵扣所属期另带后端生成的计算过程 `steps[]`（WS-04）。`cost_invoice_dir` / `issued_invoice_dir` ⇄ `bank_flow_dir`（`relation=settlement`，`side=payable/receivable`，往来核对）：`state=ok/no_statements/missing_dir/unreadable`、`parties[]`（期初、本期发票、本期收付、期末、`unpaid[]`、`unallocated[]`）、`matches[]`（`kind=one_to_one/combination`、依据、流水与发票）、`red_offsets[]`、`red_unmatched[]`、`ambiguous_flows[]`、`non_invoice_flows[]`（`reason=no_party/no_name/own_account`）、`excluded_invoices[]`、`totals`、`warnings[]`、`checks[]` 与 `checks_ok`；`cost_invoice_dir` ⇄ `issued_invoice_dir`（`relation=inventory`，进销存）：`state=ok/no_details/missing_dir`、`first_month`、`cost_label`、`opening`（`source=ledger/zero`、`month`、`read_months[]`、`files[]`、`items[]`、`unassigned[]`、`error`、`ledger` 所用科目表相对路径）、`items[]`（品类、单位、`account_code`，期初/购入/销售/成本/期末，`oversold`、`sold_never_bought`、`months[]` 逐月含加权单价与说明、`specs[]` 规格细分只含购入数量/金额、销售数量与 `net_qty`）、`oversold[]`、`excluded[]`（燃油、无库存明细的电梯等做账不记库存商品的行也在此，`reason` 写明）、`totals`（含 `open_amount`）、`warnings[]`、`checks[]` 与 `checks_ok`；`cost_invoice_dir` ⇄ `input_deduction_dir`（`relation=deduction`，抵扣核对）：`state=ok/no_lists/missing_dir/unreadable`、`periods[]`（清单行数、当期开票、前期开票、其它、目录无原票、未勾选、有效抵扣税额）、`lists[]`、`matched[]`（`timing=current/carried/after_period/unknown`、清单税额与发票税额、`tax_ok`）、`list_only[]`、`not_selected[]`、`duplicates[]`、`not_listed`（`special[]` 带 `later_list_periods`、`ordinary` 计数、`unknown_type[]`）、`unrecognized[]`、`empty_lists`、`warnings[]`、`checks[]` 与 `checks_ok`、`sources` | 只读：成本发票读上次投影（进销存经 `CostProjectionService.read_only_inputs`，不刷新、不重写工作簿），清单在请求时只读解析并按文件签名缓存；没有勾稽关系的组合 422 `COMPANY_COMPARE_UNSUPPORTED`，月份不合法 422 `COMPANY_COMPARE_INVALID`；已勾选不等于已申报 |
+| `GET /api/v1/companies/{company_id}/same-number?a=&b=&b_company=` | `state.company_views.same_number` | 同号检查（WS-04）：两个没有勾稽关系的发票目录（成本发票 / 开具发票 / 费用报销），`b_company` 省略即同一公司；按发票号码列出两边都有的发票 `matches[]`（`kind=duplicate` 疑似重复 / `pair` 两家公司一方开具一方取得的同一张票，`amount_differs`、`party_differs`、两边摘要、`record_ids`、`steps`），`counts`、`records.a/b`（每张发票一条，同票多格式合并，无号码单列）、`checks[]`（有号码 + 无号码 = 原始记录合并后张数）、`warnings[]`（无号码、金额未识别、投影过期、两家纳税人身份不同）与 `sides`；比较（`compare`）与同号检查的 `records` 中，属于监控目录且列表非临时结果的发票记录另带 `preview: {target_id, items: [{invoice_key, source_path}]}`（同票各格式，最多 100 条），供页面原样提交 `preview-jobs`，其它目录的记录不带 | 只读上次投影，不写文件；非发票目录或同一目录 422 `COMPANY_COMPARE_INVALID`；同一公司有勾稽关系的组合 422 `COMPANY_COMPARE_UNSUPPORTED`（用 compare）；目录缺失 `state=missing_dir`；不按金额、日期或户名关联 |
+| `GET /api/v1/companies/{company_id}/projects` | `state.company_views.company_projects` | 公司项目汇总（WS-03）：可选 `granularity/start/end`；`projects[]`（项目名，`unassigned=true` 为未归属；进项/销项张数与金额、票面差额、`periods[]`）、`project_names`、`aliases`（重命名映射）、全量 `invoices[]`、`unassigned_invoices[]` 与 `manual_invoices[]`（`source=remark/manual/conflict/none`、备注识别到的名称、`assignable`）、`assignments_revision`、`warnings[]`、`checks[]`（与发票账簿合计一致）与 `checks_ok` | 只读；`项目归属.json` 损坏或 `aliases` 存在自映射/环时 409 `COMPANY_PROJECTS_UNREADABLE`；资料夹不可用 409 `COMPANY_ROOT_UNAVAILABLE`；票面口径，不是项目利润 |
+| `PUT /api/v1/companies/{company_id}/projects/assignments` | `save_project_assignments` | 请求 `{revision, assignments?: {发票号码: 项目名}, unassigned?: [发票号码]}`；非空名写入人工值，空字符串清除人工值恢复备注，`unassigned` 显式移出至未归属（覆盖备注）；写入公司资料夹根目录 `项目归属.json`，返回新 `assignments_revision` | 同源写；版本不符 409 `COMPANY_PROJECTS_CONFLICT`；同号冲突/号码非 8—20 位数字/项目名 >60 字 422 `COMPANY_PROJECTS_INVALID`；损坏文件拒绝覆盖 |
+| `POST /api/v1/companies/{company_id}/projects/rename/preview` | `preview_project_rename` | 请求 `{revision, from_name, to_name, sync_service_costs?}`；零写入计算全公司受影响人工/备注发票数、是否合并至已有项目、关联 `服务成本归集.json` 条数与版本，返回 `preview_hash` | 同源；原项目不存在/同名/超长 422；`revision` 不符或关联文件损坏 409 |
+| `POST /api/v1/companies/{company_id}/projects/rename` | `rename_project` | 请求 `{revision, from_name, to_name, preview_hash, confirm: true, sync_service_costs?, service_costs_revision?}`；在 `PRICING_LOCK -> _projects._lock` 锁序下重验 `preview_hash`，重写人工归属并单跳折叠 `aliases`，按勾选同步更新 `服务成本归集.json` | 同源写；不修改源发票；缺确认 422；预览过期/版本变化 409 `COMPANY_PROJECTS_CONFLICT` |
+| `GET /api/v1/invoice-tags`、`PUT /api/v1/invoice-tags` | `state.company_views.invoice_tags` / `save_invoice_tags` | 发票标签定义（WS-06）：`{revision, tags: [{id, name, color, meaning}]}`；PUT 以 `{revision, tags}` 整体替换（无 `id` 为新建），返回 `purged_companies` 与 `purge_failed`（删除标签时从各公司资料夹移除标记） | 存 `runtime/local_state/invoice_tags.json`；同源写；名称 1—12 字不重复、颜色 `#RRGGBB`、意义 ≤120 字、最多 30 个，否则 422 `INVOICE_TAGS_INVALID`；版本不符 409 `INVOICE_TAGS_CONFLICT`；损坏 409 `INVOICE_TAGS_UNREADABLE` |
+| `GET/PUT /api/v1/companies/{company_id}/invoice-tags` | `company_invoice_tags` / `save_company_invoice_tags` | 公司发票的标记：`{revision, invoices: {发票号码: [标签 id]}}`；PUT `{revision, changes: {发票号码: [标签 id]}}`，空列表清除 | 存公司资料夹根目录 `发票标签.json`；同源写；未知标签 422；版本不符 409；损坏文件拒绝覆盖。标签只用于显示，不改金额、状态、勾选合计或投影字段 |
+| `GET/PUT /api/v1/companies/{company_id}/payroll` | `payroll` / `save_payroll` | 工资社保（WS-05 第三阶段）：GET（可选 `reveal=true`）返回 `folder/folder_present`、`files[]`（`kind=excel/pdf/image/other`，`status=parsed/skipped/error`，图片提示不识别）、`months[]`（`month/source/rows[{insurance, total, unit, personal, checks[]}]/unit_total/personal_total/total/checks_ok`）、`confirmed`（已写入的社保明细）、`tax_file/tax_revision`、`people[]`（默认脱敏）与 `people_masked`；PUT `{revision, months: {YYYY-MM: {rows, source} | null}}` 写 `申报数据.json` 的 `社保明细`（null 删除该月） | GET 只读；PUT 同源写；没有 申报数据.json 409 `PAYROLL_TAX_MISSING`；文件损坏 409 `PAYROLL_TAX_UNREADABLE`（不覆盖）；revision 不符 409 `PAYROLL_CONFLICT`；月份或行格式不对 422 `PAYROLL_INVALID`；保留文件其他键 |
+| `GET /api/v1/companies/{company_id}/period-folders?key=`；`POST /api/v1/companies/{company_id}/period-folders/moves`、`POST /api/v1/companies/{company_id}/period-folders/moves/{job_id}/confirm`、`GET /api/v1/companies/{company_id}/period-folders/moves/{job_id}` | `period_folders` / `prepare_source_move` / `confirm_source_move` / `source_move` | 属期文件夹核对与移动（WS-05 第二阶段）：GET 按内容期间对照所在属期文件夹，返回 `folders[]`、`items[]`（`file` 子目录内相对路径、`folder/folder_period/content_period`、`status=ok/mismatch/outside/unknown`、建议 `target` 与 `target_exists`）与 `mismatched`；POST moves `{key, items: [{file, target}]}` 只生成计划（`job_id/state/files[{file, target, new_folder, status}]`），confirm `{confirmed: true}` 逐文件执行，GET 读执行日志 | `key` 只能是 `input_deduction_dir` / `bank_flow_dir`，否则 422 `SOURCE_MOVE_INVALID`；子目录缺失 409；同源写；目标已有同名、越出子目录、链接、新文件夹不是 `YYYY-MM`、与监控目录重叠 422；计划 5 分钟过期 409 `SOURCE_MOVE_EXPIRED`；文件或目标变化 409 `SOURCE_MOVE_STALE` 且一个都不移动；重放确认只返回已记录结果；不返回绝对路径 |
+| `GET/POST /api/v1/companies/{company_id}/voucher-drafts` | `state.company_views.voucher_drafts` / `generate_voucher_draft` | GET：列出公司资料夹 `做账草稿/` 下的 `凭证草稿_*.xlsx`（`name/size/modified_ns`），并带 `formats[]`（`key/label/status=verified|experimental|custom/note/file_suffix`，自定义模板另有 `usable/mapping/unmatched/missing`）与 `template_folder`，以及 `inputs`（`做账草稿/账套读回/` 下可选的 `booked` 序时账与 `ledgers` 科目表快照、`tax_file` 是否已有 申报数据.json、`current_month`）。POST（WS-05 第二阶段）`{from, to, month_end?, booked?, ledger?, confirm: true}`：与 `voucher_cli draft` 同一入口生成 `凭证草稿_<起>_<止>.xlsx`，已有同期表先备份到 `做账草稿/历史/` 并沿用审核；返回 `name/tax_file_created/vouchers/low_confidence/missing_accounts/backup/carried{kept, review_again, new, gone, summaries_kept}` | GET 只读；POST 同源写，未确认、月份格式 / 起晚于止 / 未来月份、读回文件不在列出范围 422 `VOUCHER_DRAFT_INVALID`；缺对账单 / 科目表 / 发票明细等生成失败 422 `VOUCHER_DRAFT_GENERATE_FAILED`；现有表无法读取 422 `VOUCHER_DRAFT_UNREADABLE`（不覆盖）；不写 `凭证/`、不连接账套 |
+| `GET/PUT /api/v1/companies/{company_id}/voucher-drafts/{name}` | `voucher_draft` / `save_voucher_draft` | GET 读“凭证审核”表，按凭证返回 `month/number/date/approval/debit_total/credit_total/errors/warnings/lines[]`（`row` 为表内行号；摘要、科目编码、科目名称、借贷、供应商、数量、待处理、置信度、依据），并带 `revision`（文件 SHA-256）、`books_error`、`books_source`、`approved`、`blocked`；校验复用导出的 `jierui.validate`，只读该草稿生成时用的科目表（`草稿生成参数.json` 记的 `做账草稿/账套读回/科目表_*.json` 快照或 `凭证/科目表.json`；命令行生成的表按最新快照，`books_source` 为其相对路径；记录的快照不在时全部不可审核）与 `辅助核算档案.json`；保存与导出用同一份。GET 另返回每张凭证的 `source_documents[]`（发票：种类、号码、开票日期、记入期、`cross` 跨期、`override` 人工调整、`movable`；银行流水：不可调整）、`periods_revision/periods_error/cross_period_hint`、草稿的只读核对表 `sheets[]`（`name/columns/rows/truncated`，每表最多 2000 行）与 `current_month`。PUT `{revision, vouchers: [{month, number, approval?, move_month?, date?, lines?: [{row, summary?, code?, debit?, credit?, supplier?}]}]}` 只改已有行的这几列（改编码时同步科目名称）、审核列，以及所属期 / 记账日期（移月时重编号），返回重读结果与 `saved_rows/saved_approvals/moved[]`（`from/to` 的月份与凭证号）；所属期为未来月份或格式不对 422 `VOUCHER_DRAFT_INVALID` | 同源写；只接受 `做账草稿/` 内非链接的 `凭证草稿_*.xlsx`，否则 422 `VOUCHER_DRAFT_INVALID` / 404 `VOUCHER_DRAFT_NOT_FOUND`；表不可读 422 `VOUCHER_DRAFT_UNREADABLE`；版本不符 409 `VOUCHER_DRAFT_CONFLICT`；要审核通过的凭证校验不过时 422 `VOUCHER_DRAFT_NOT_APPROVABLE`（`error.details[]` 逐张列原因），整批不写；改过且本次未重新审核的已通过凭证清空审核；不写 `凭证/`、不连接账套，导出仍由 `voucher_cli export` 读同一工作簿 |
+| `POST /api/v1/companies/{company_id}/voucher-drafts/{name}/rebook` | `rebook_voucher_invoice` | 改记入期（WS-05 第二阶段）：`{revision, number, month, reason}`，`month` 为空或等于开票月即撤销调整；写 `做账草稿/记入期调整.json` 后按该表上次生成参数重新生成（沿用审核）；返回 `periods_revision`、`generation_remembered`、`out_of_range`、`generated`（同生成结果） | 同源写；发票不在 成本发票明细.csv、月份格式错或晚于本月 422 `VOUCHER_DRAFT_INVALID`；revision 不符 409 `VOUCHER_PERIODS_CONFLICT`；调整文件损坏 409 `VOUCHER_PERIODS_UNREADABLE`；不移动任何源文件 |
+| `POST /api/v1/companies/{company_id}/voucher-drafts/{name}/export` | `export_voucher_draft` | 页面导出（WS-05 第二阶段 / BK-01）：请求 `{revision, preparer, after?: {YYYY-MM: 账套已用到的号}, format?: jierui|ningmeng|yonyou_t3|template:<文件名>, confirm: true}`，调用 `jierui.export`（format 决定写出格式，默认捷锐）（与 `voucher_cli export` 同一输入：科目表、辅助核算档案、`凭证/导入/模板原件.xlsx`，输出 `做账草稿/捷锐导入_<月>_<时间>.xlsx`、`已导出凭证.json`、`做账习惯.json`）；返回 `files[]`（只含文件名）、`exported/skipped`、`errors[]`、`blocked_months[]`、`warnings[]`、`duplicates[]`、`learned` | 同源写；未确认、缺制单人（1—20 字）、`after` 不是 0—999 整数、未知格式或模板缺必需列 422 `VOUCHER_DRAFT_INVALID`；缺科目表 409 `VOUCHER_DRAFT_BOOKS_UNAVAILABLE`；revision 不符（在导出锁内复核）409 `VOUCHER_DRAFT_CONFLICT`；只导出“通过”的凭证，某月有不合格凭证整月不写，已导出过的跳过；不写 `凭证/`、不连接账套 |
+| `GET /api/v1/companies/{company_id}/directories/{key}/invoices` | `directory_invoices` | 与 `GET /api/v1/invoices` 相同的筛选与分页参数和行结构（目录页的开票时间表头消费已有 `date_sort=asc/desc`，全选沿用同一参数，排序在分页之前），另有可选 `tag`（按标签筛选，先筛后分页）；每行附 `tags`（标签 id），返回 `tags_error`（标记文件读不出时说明原因，列表照常）；非活动目录读上次汇总，`read_only=true`、行内 `detail_url=""`；活动目录交给 `state.invoices`，`read_only=false` | 未知子目录 404 `COMPANY_DIRECTORY_NOT_FOUND`；只读行不能用于预览、打印、改名、删除（这些接口仍校验活动 `target_id`） |
+
+失败统一为 `{ok:false, detail, error:{code, message, field?}}`：422 `COMPANY_INVALID`（`field` 指向 `name/root_dir/subdirs.<key>/taxpayer_periods[...]/revision`）、409 `COMPANY_REVISION_CONFLICT`。
+
+纳税人类型以公司清单为准（2026-11-10 用户决定）：活动 `watch_dir` 所在公司在当月有登记时，`GET /api/v1/cost-analysis*` 的 `reference_tax_profile.taxpayer_type` 取自清单，新增字段 `taxpayer_source`（`company_registry/cost_settings/default`）与 `company_name`；`POST /api/v1/cost-analysis/reference-status` 提交不同的 `tax_profile.taxpayer_type` 返回 400，销项税率仍可保存。清单增删改使活动公司当月类型变化时，写接口响应带 `cost_workbook: {refreshed, reason}`（`sync_running` 表示正在同步、由该次同步写入，`no_cost_detail` 表示尚无成本明细）。
+
 ### 3.6 皮肤
 
 | 方法与路径 | AppState 入口 | 主要请求/返回 | HTTP 语义 |
@@ -303,21 +679,21 @@ L10-D 复用 L10-R/C 的 lease、marker、fixed-loopback bridge 和 pure coordin
 |---|---|---|---|
 | `GET /api/v1/bridge/status` | `bridge_status` | PID + lock 真值，返回 `running/ready/observer_active`、路径和最近状态 | 首页、设置页、backend |
 | `POST /api/v1/bridge/health-check` | `bridge_health_check` | bridge 结构化诊断 | 首页 |
-| `POST /api/v1/bridge/rebuild` | `bridge_rebuild` | 同步重建普通汇总和成本分析，记录 task/event | 首页、成本、设置 |
+| `POST /api/v1/bridge/rebuild` | `bridge_rebuild` | 同步重建普通汇总和成本分析，之后读取开具发票目录做销项比对（`detail.cost_analysis.outbound`，不含逐品目明细），记录 task/event | 首页、成本、设置 |
 | `POST /api/v1/bridge/start` | `bridge_start` | 启动独立 daemon，等待 `ready` | 首页、设置；启动不就绪返回 `ok=false` |
 | `POST /api/v1/bridge/stop` | `bridge_stop` | 请求 daemon 停止，超时后可强制终止 | 首页、设置；不停止 WebUI |
 | `POST /api/v1/bridge/open-log` | `open_monitor_log` | 打开业务监控日志 | 设置页 |
 | `POST /api/v1/bridge/open-runtime-dir` | `open_runtime_dir` | 打开当前运行状态目录 | 设置页 |
-| `GET /api/v1/ocr/settings` | `ocr_settings` | OCR 能力与候选目录 | OCR/设置；未启用能力 |
-| `PUT /api/v1/ocr/settings` | `ocr_settings` | 当前不保存专用 OCR 配置，只回传状态 | 兼容占位 |
-| `GET /api/v1/ocr/service-status` | `ocr_service_status` | `enabled=false` 等禁用状态 | OCR/设置 |
-| `POST /api/v1/ocr/service-start` | `ocr_service_status` | 不启动服务，只回传禁用状态 | 兼容占位 |
-| `POST /api/v1/ocr/service-stop` | `ocr_service_status` | 不停止独立 OCR，只回传禁用状态 | 兼容占位 |
+| `GET /api/v1/ocr/settings` | `ocr_settings` | OCR 能力、脱敏后的配置（`provider_mode`/`endpoint_url`/`timeout_seconds`/`cloud_consent_acknowledged`/`enabled_companies`/`token_configured`/`ready`）与候选目录；永不回传明文 token | OCR/设置 |
+| `PUT /api/v1/ocr/settings` | `update_ocr_settings` | 保存非秘密配置到 `runtime/ocr-settings.json`，token 单独写入 `runtime/.ocr-secrets.json`（`0o600`）并支持 `clear_token`；经同源写请求保护与 URL/凭据校验 | OCR/设置；非法参数 `400` |
+| `GET /api/v1/ocr/service-status` | `ocr_service_status` | 返回当前 OCR 提供方模式（`disabled`/`paddle_api`/`paddle_self_hosted`）、`ready` 与运行态摘要 | OCR/设置 |
+| `POST /api/v1/ocr/service-start` | `ocr_service_status` | 不拉起本地 OCR 进程，返回当前配置就绪状态 | 兼容占位 |
+| `POST /api/v1/ocr/service-stop` | `ocr_service_status` | 不停止独立 OCR 进程，返回当前配置状态 | 兼容占位 |
 | `POST /api/v1/ocr/open-log-dir` | `open_ocr_log_dir` | 打开候选诊断目录 | OCR 页 |
 | `POST /api/v1/ocr/pick-file` | `pick_ocr_file` | 原生文件选择器 | OCR 页 |
 | `POST /api/v1/ocr/pick-folder` | `pick_ocr_folder` | 原生目录选择器 | OCR/设置 |
 | `POST /api/v1/ocr/list-files` | `list_ocr_files` | 枚举候选目录支持文件 | OCR 页 |
-| `POST /api/v1/ocr/extract-text` | `ocr_extract_text` | 当前返回未内置提示 | OCR 页 |
+| `POST /api/v1/ocr/extract-text` | `ocr_extract_text` | 按当前配置调用 PaddleOCR 官方 API 或自建 HTTP 服务并命中 `runtime/ocr-cache.sqlite3` 内容哈希缓存，附带经规则校验的发票结构化字段；未启用返回 `ocr_disabled` | OCR 页；鉴权/限流/超时/网络错误返回脱敏 `error_code` |
 | `POST /api/v1/ocr/local-smoke` | 路由常量响应 | 始终 `ok=false`，说明 core 未内置 OCR | 未启用能力 |
 | `GET /api/v1/consistency-report` | `consistency_report` | `only_mismatch` 查询；同票多格式字段对照 | 一致性页 |
 | `GET /api/v1/tasks/{task_id}` | `get_task` | SQLite task 状态与 detail | 不存在 `404` |
@@ -332,7 +708,8 @@ health 的当前 API 契约是 `2026-08-02-release-update-v1`，做账协议是 
 |---|---|---|
 | `400` | 非法 JSON/字段、过量选择、非法数量/加价率、单据规则错误、关闭选择错误 | 页面显示业务信息，不把它误报为断网 |
 | `404` | 发票位置键、任务或单据候选不存在 | 刷新当前快照后让用户重选 |
-| `409` | `invoice_key + source_path` 已过期、皮肤 id 冲突等 | 不对新对象执行旧操作 |
+| `409` | `invoice_key + source_path` 已过期、皮肤 id 冲突、公司清单 revision/补建预览过期或清单损坏等 | 不对新对象执行旧操作 |
+| `422` | 公司清单字段校验失败（`COMPANY_INVALID`）或补建未确认 | 按 `error.field` 定位输入，不改写清单 |
 | `413` | 皮肤 ZIP 请求体超过上限 | 在解压前拒绝 |
 | `415` | 皮肤上传 media type 不是允许的 ZIP/二进制类型 | 不尝试猜测正文 |
 | `500` | WebUI 关闭等无法安全完成的内部错误 | 保留 WebUI，允许用户查看状态并重试 |
@@ -402,7 +779,7 @@ sequenceDiagram
     end
 ```
 
-`/` 返回 200 不表示后台投影已完成；`health.background_status` 和事件用于区分 `initializing/running/ready/failed`。正式 BAT 不能只把 `%ProgramFiles%\PowerShell\7\pwsh.exe` 当成 PS7 真值：固定路径不可用时继续通过 `where.exe pwsh.exe` 解析 `PATH`/Microsoft Store App Execution Alias，并验证主版本为 7；`INVOICE_HUB_FORCE_PS51=1` 仍直接选择 5.1。当前启动脚本实现以首页 200 为就绪探测，随后 `Get-IHHealth` 必须从原始响应流按 UTF-8 解码再解析 JSON，因为 PS5.1 会在 `application/json` 无 charset 时错误解释 `.Content`；中文空格路径还原后仍执行完整 PID、配置、runtime、build/package 身份校验。长期启动真值约束仍要求同时关注端口、PID 和 stale state，修改启动链时必须按 `AGENTS.md` 做相邻回归。
+`/` 返回 200 不表示后台投影已完成；`health.background_status` 和事件用于区分 `initializing/running/ready/failed`。正式 BAT 不能只把 `%ProgramFiles%\PowerShell\7\pwsh.exe` 当成 PS7 真值：固定路径不可用时继续通过 `where.exe pwsh.exe` 解析 `PATH`/Microsoft Store App Execution Alias，并验证主版本为 7；`INVOICE_HUB_FORCE_PS51=1` 仍直接选择 5.1。当前启动脚本实现以首页 200 为就绪探测，随后 `Get-IHHealth` 必须从原始响应流按 UTF-8 解码再解析 JSON，因为 PS5.1 会在 `application/json` 无 charset 时错误解释 `.Content`；中文空格路径还原后仍执行完整 PID、配置、runtime、build/package 身份校验。长期启动真值约束仍要求同时关注端口、PID 和 stale state，修改启动链时必须按 [Windows 规则](rules/WINDOWS.md) 与 [监控规则](rules/MONITORING.md) 做相邻回归。
 
 startup child、monitor daemon 与手动 `bridge/rebuild` 对同一 TargetProfile 都共用 `state_dir/.invoice_sync.lock` 的 profile 范围 OS 写锁，锁覆盖读取、决策、投影和 monitor 状态的完整写入段。子进程运行时显式关闭普通 sync SSE 与桌面通知；父进程只在 generation 和完整 profile 身份仍匹配时，才重建当前缓存、补发 `invoice.changed/cost_analysis.updated/monitor.sync_*` 与 `server.background_ready/failed`。身份不匹配时不改当前缓存或状态，只写含 captured/active target 的 `server.background_stale`。被替代的子进程和等待结果都有有界终止/等待；无法按时退出仅产生 `server.background_worker_retire_timeout` 诊断，不能把旧结果复活为当前目录状态。
 
@@ -476,7 +853,7 @@ flowchart TD
     Dup --> XLSX["workspace/发票汇总.xlsx"]
 ```
 
-PDF 的 20 位号码、日期和两个主体序列不再产出金额；结构化 XML/OFD 金额字段保持最高证据级，PDF 只在页内唯一三元组成立时使用三项金额，否则回退明确标签或留空。该变更只修正既有 `amount/pretax_amount/tax_amount` 值，不改变 CSV/XLSX 列、Pydantic 字段或 HTTP 响应结构。成本坐标明细继续独立校验票头，不能反向覆盖；普通投影最后应用人工覆盖。
+PDF 的 20 位号码、日期和两个主体序列不产出金额。PDF 优先使用页内唯一三元组；全票不征税且有等额合计与小写金额时可用严格的等额对，否则回退明确标签或留空。OFD 仍优先结构化字段；单页、同文档至多一个模板时允许坐标补空，保留原有结构化值，金额不一致时整组不补。既有 CSV/XLSX 列、Pydantic 字段和 HTTP 响应结构不变。成本坐标明细继续独立校验票头，不能反向覆盖；普通投影最后应用人工覆盖。单据逐文件缓存版本递增；已有普通与成本投影需重新汇总才会更新。
 
 ### 6.5 Excel 手改自动同步
 
@@ -798,3 +1175,7 @@ Actions artifact；发布到 GitHub Release 仍须单独授权。
 - [数据结构与算法](DATA_AND_ALGORITHMS.md)
 - [Agent 任务导航](AGENT_TASK_MAP.md)
 - [注释与设计原因地图](COMMENT_RATIONALE_MAP.md)
+
+## 2026-11-16 设计提案与原型（非生产能力）
+
+历史设计阶段的远程连接与增量流程见[WS-08/09 设计](../SERVER_CONNECTION_AND_CACHE_DESIGN.md) §5—9；当时尚未接入生产 API，当前只读试验版以本页顶部及设计 §0 为准。连接在线、同步状态与快照新鲜度分离；旧完整代际继续读，完成后原子切换，远程预览另建 source-bound 会话，不扩大现有本地接口。“打开服务器文件列表”只开右侧面板，目录名标签下拉选择子目录，面包屑返回祖先，统计取当前目录及子目录的缓存；空内容显示“无可读取的文件”，错误/无缓存不当空目录。移除独立服务器公司栏及全屏，两种面板宽度均限于主内容区，本机模块上下文保留。跨模块 SourceBinding 与完整 generation、首次清单/后续可靠 cursor/失效核对协议见设计 §11—12；标准 SMB/SFTP 不承诺断线重连免枚举。

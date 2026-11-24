@@ -10,12 +10,19 @@ import pytest
 
 from invoice_hub.platform import host_rpc
 from invoice_hub.platform import windows
-from invoice_hub.services.app_state import AppState
+from invoice_hub.services.about import AboutService
 
 
 TOKEN = "a" * 64
 RPC_URL = "http://127.0.0.1:43123/v1/host-rpc"
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def _api_source() -> str:
+    """app.py composes the route groups in api/routes/ and shares helpers from api/common.py."""
+    api = ROOT / "src" / "invoice_hub" / "api"
+    files = [api / "app.py", api / "common.py", *sorted((api / "routes").glob("*.py"))]
+    return "\n".join(path.read_text(encoding="utf-8") for path in files)
 
 
 class _Response:
@@ -110,7 +117,7 @@ def test_host_rpc_delegates_native_picker_main_thread_dispatch_to_the_plugin() -
 
 
 def test_picker_routes_map_host_rpc_errors_to_a_stable_redacted_5xx_contract() -> None:
-    app = (ROOT / "src" / "invoice_hub" / "api" / "app.py").read_text(encoding="utf-8")
+    app = _api_source()
 
     assert "NATIVE_PICKER_FAILURE_STATUS = 503" in app
     assert 'NATIVE_PICKER_FAILURE_DETAIL = "Native picker unavailable"' in app
@@ -122,7 +129,9 @@ def test_picker_routes_map_host_rpc_errors_to_a_stable_redacted_5xx_contract() -
         "pick_ocr_file",
         "pick_ocr_folder",
     ):
-        assert f"return _run_native_picker(_state(request).{method})" in app
+        # Routes call the owning domain service directly (ENG-08).
+        service = "ocr" if method.startswith("pick_ocr_") else "settings"
+        assert f"return _run_native_picker(_state(request).{service}.{method})" in app
 
 
 def test_host_rpc_rejects_an_external_endpoint_without_leaking_the_token(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -227,8 +236,8 @@ def test_host_updater_rejects_extra_or_inconsistent_private_response_fields(
         host_rpc.update_check()
 
 
-def _host_update_state(result: dict, events: list[str]) -> AppState:
-    state = object.__new__(AppState)
+def _host_update_state(result: dict, events: list[str]) -> AboutService:
+    state = object.__new__(AboutService)
     state._lock = threading.RLock()
     state._host_update_lock = threading.Lock()
     state._host_update_approval_version = ""

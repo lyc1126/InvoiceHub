@@ -279,12 +279,14 @@ def _generate_build_manifest(
     return payload
 
 
-def _launcher_text(python: Path) -> str:
+def _launcher_text(python: Path, ofd_component: Path) -> str:
     quoted_python = shlex.quote(str(python))
+    quoted_ofd_component = shlex.quote(str(ofd_component))
     return f"""#!/bin/sh
 set -eu
 
 PYTHON_EXECUTABLE={quoted_python}
+OFD_COMPONENT_DIR={quoted_ofd_component}
 
 case "$PYTHON_EXECUTABLE" in
   /*) ;;
@@ -318,12 +320,15 @@ unset PYTHONHOME
 export PYTHONPATH="$CORE_ROOT/src"
 export PYTHONNOUSERSITE=1
 export PYTHONDONTWRITEBYTECODE=1
+# Development builds do not embed the 78 MiB OFD runtime inside .dev-staging;
+# point OFDRenderer at the checkout's verified runtime/components/ofd-preview.
+export INVOICE_HUB_DEV_OFD_COMPONENT="$OFD_COMPONENT_DIR"
 exec "$PYTHON_EXECUTABLE" -m invoice_hub.api.main "$@"
 """
 
 
-def _write_launcher(path: Path, python: Path) -> str:
-    path.write_text(_launcher_text(python), encoding="utf-8")
+def _write_launcher(path: Path, python: Path, ofd_component: Path) -> str:
+    path.write_text(_launcher_text(python, ofd_component), encoding="utf-8")
     path.chmod(path.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
@@ -435,7 +440,11 @@ def stage(
             timestamp,
         )
         launcher_path = temporary_dir / LAUNCHER_NAME
-        launcher_sha256 = _write_launcher(launcher_path, validated_python)
+        launcher_sha256 = _write_launcher(
+            launcher_path,
+            validated_python,
+            resolved_root / "runtime" / "components" / "ofd-preview",
+        )
         host_manifest_path = temporary_dir / HOST_MANIFEST_NAME
         manifest_sha256 = _write_host_manifest(
             host_manifest_path,

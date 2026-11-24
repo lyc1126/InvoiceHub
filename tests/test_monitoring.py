@@ -510,3 +510,62 @@ def test_monitor_daemon_picks_up_new_file_event(tmp_path: Path, monkeypatch) -> 
         assert len(read_csv_rows(summary_csv)) == 1
     finally:
         bridge.stop(timeout=10)
+
+
+def test_monitor_sync_auto_rebuilds_when_parser_version_changes_or_manifest_missing(
+    tmp_path: Path, monkeypatch
+) -> None:
+    import json
+    from invoice_hub.projections import summary as summary_module
+
+    config = load_config(tmp_path)
+    watch = tmp_path / "发票文件"
+    watch.mkdir(exist_ok=True)
+    (watch / "sample.xml").write_text(_sample_xml(), encoding="utf-8")
+    profile = target_profile_for(config)
+    state = MonitorState(profile, tmp_path / "runtime" / "invoice_hub.db")
+    synchronizer = MonitorSynchronizer(state)
+
+    first = synchronizer.run_sync("startup_sync")
+    assert first["ok"] is True
+    assert first["rebuilt"] is True
+    manifest_path = Path(profile.workspace_dir) / "projection-manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert manifest["parser_versions"]["summary"] == summary_module.PARSER_VERSION
+
+    # Steady-state periodic check does not re-parse unchanged files.
+    steady = synchronizer.run_sync("periodic_sync")
+    assert steady["ok"] is True
+    assert steady["rebuilt"] is False
+
+    # Legacy pre-WS-08 workspace without projection-manifest.json auto-rebuilds and preserves manual edits.
+    manifest_path.unlink()
+    current_row = read_csv_rows(state.summary_csv)[0]
+    edited = dict(current_row)
+    edited["销售方"] = "手改保留销售方"
+    wb = Workbook()
+    ws = wb.active
+    ws.append(SUMMARY_HEADERS)
+    ws.append([edited.get(h, "") for h in SUMMARY_HEADERS])
+    wb.save(state.summary_xlsx)
+
+    migrated = synchronizer.run_sync("startup_sync")
+    assert migrated["ok"] is True
+    assert migrated["rebuilt"] is True
+    assert migrated["parser_refreshed"] is True
+    assert manifest_path.exists()
+    assert read_csv_rows(state.summary_csv)[0]["销售方"] == "手改保留销售方"
+
+    # Upgrading parser code (simulated by bumping PARSER_VERSION) triggers one incremental rebuild.
+    monkeypatch.setattr(summary_module, "PARSER_VERSION", "invoice-raw-1:upgraded-test-version")
+    upgraded = synchronizer.run_sync("startup_sync")
+    assert upgraded["ok"] is True
+    assert upgraded["rebuilt"] is True
+    assert upgraded["parser_refreshed"] is True
+    assert json.loads(manifest_path.read_text(encoding="utf-8"))["parser_versions"]["summary"] == "invoice-raw-1:upgraded-test-version"
+    assert read_csv_rows(state.summary_csv)[0]["销售方"] == "手改保留销售方"
+
+    # Subsequent periodic check is quiet again.
+    after_upgrade = synchronizer.run_sync("periodic_sync")
+    assert after_upgrade["ok"] is True
+    assert after_upgrade["rebuilt"] is False

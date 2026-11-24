@@ -21,12 +21,12 @@ from invoice_hub.monitoring.state import MonitorState
 from invoice_hub.projections.cost_analysis import DETAIL_HEADERS
 from invoice_hub.projections.summary import SUMMARY_HEADERS
 from invoice_hub.release.build_manifest import API_CAPABILITIES, API_CONTRACT_VERSION, BOOKKEEPING_PROTOCOL_VERSION, write_build_manifest
-from invoice_hub.services.app_state import AppState
+from invoice_hub.services.background_sync import BackgroundSyncService
 from invoice_hub.services.skins import MAX_SKIN_FILE_BYTES, MAX_SKIN_FILES
 from invoice_hub.storage.files import write_csv_rows
 from invoice_hub.targets import target_profile_for
 from invoice_hub.website import WEBSITE_ASSETS, copy_website
-from invoice_hub.version import CHANGELOG_URL, PUBLIC_SOURCE_URL, WEBSITE_URL
+from invoice_hub.version import CHANGELOG_URL, PUBLIC_SOURCE_URL
 
 
 def _slow_background_sync_worker(
@@ -35,8 +35,10 @@ def _slow_background_sync_worker(
     reference_markup_rate: str,
     trigger: str,
     result_sender,
+    company_taxpayer: dict | None = None,
+    company_outbound: str | None = None,
 ) -> None:
-    del db_path, reference_markup_rate
+    del db_path, reference_markup_rate, company_taxpayer
     try:
         time.sleep(1.0)
         result_sender.send(
@@ -58,15 +60,40 @@ def _slow_background_sync_worker(
         result_sender.close()
 
 
+def test_importing_the_api_module_builds_no_app_state(tmp_path: Path) -> None:
+    # A module-level instance used to sync the checkout's default target on import (ENG-07).
+    script = r"""
+import json
+
+from invoice_hub.services.app_state import AppState
+
+constructed = []
+original_init = AppState.__init__
+AppState.__init__ = lambda self, *args, **kwargs: (constructed.append(1), original_init(self, *args, **kwargs))[1]
+
+import invoice_hub.api.app as api_app
+
+print(json.dumps({"constructed": len(constructed), "has_app": hasattr(api_app, "app")}))
+"""
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(Path(__file__).resolve().parents[1] / "src")
+    result = subprocess.run(
+        [sys.executable, "-c", script], check=True, capture_output=True, text=True, env=env, cwd=tmp_path
+    )
+
+    assert json.loads(result.stdout.strip().splitlines()[-1]) == {"constructed": 0, "has_app": False}
+
+
 def test_cli_creates_exactly_one_app_state(tmp_path: Path) -> None:
     script = r"""
 import json
 import sys
 
 from invoice_hub.services.app_state import AppState
+from invoice_hub.services.background_sync import BackgroundSyncService
 
 startup_calls = []
-AppState.run_background_diagnostics = lambda self, trigger="startup_sync": startup_calls.append(trigger)
+BackgroundSyncService.run_background_diagnostics = lambda self, trigger="startup_sync": startup_calls.append(trigger)
 
 import uvicorn
 
@@ -107,8 +134,9 @@ import json
 import sys
 
 from invoice_hub.services.app_state import AppState
+from invoice_hub.services.background_sync import BackgroundSyncService
 
-AppState.run_background_diagnostics = lambda self, trigger="startup_sync": None
+BackgroundSyncService.run_background_diagnostics = lambda self, trigger="startup_sync": None
 
 import uvicorn
 
@@ -167,8 +195,9 @@ def test_cli_rejects_abbreviated_long_options(tmp_path: Path) -> None:
 import sys
 
 from invoice_hub.services.app_state import AppState
+from invoice_hub.services.background_sync import BackgroundSyncService
 
-AppState.run_background_diagnostics = lambda self, trigger="startup_sync": None
+BackgroundSyncService.run_background_diagnostics = lambda self, trigger="startup_sync": None
 
 import uvicorn
 
@@ -401,7 +430,7 @@ def test_api_contract_contains_cost_paths(tmp_path: Path) -> None:
 
 
 def test_preferences_api_defaults_and_persistence(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setattr("invoice_hub.services.app_state.AppState.run_background_diagnostics", lambda self, trigger="startup_sync": None)
+    monkeypatch.setattr("invoice_hub.services.background_sync.BackgroundSyncService.run_background_diagnostics", lambda self, trigger="startup_sync": None)
     app = create_app(tmp_path)
     client = TestClient(app)
 
@@ -489,7 +518,7 @@ def test_preferences_api_defaults_and_persistence(tmp_path: Path, monkeypatch) -
 
 
 def test_tauri_host_preferences_default_to_desktop_and_keep_explicit_surface(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setattr("invoice_hub.services.app_state.AppState.run_background_diagnostics", lambda self, trigger="startup_sync": None)
+    monkeypatch.setattr("invoice_hub.services.background_sync.BackgroundSyncService.run_background_diagnostics", lambda self, trigger="startup_sync": None)
     monkeypatch.setenv("INVOICE_HUB_DESKTOP_HOST", "tauri")
 
     for platform in ("windows", "macos"):
@@ -514,7 +543,7 @@ def test_tauri_host_preferences_default_to_desktop_and_keep_explicit_surface(tmp
 
 
 def test_portable_windows_keeps_legacy_desktop_but_cannot_select_it(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setattr("invoice_hub.services.app_state.AppState.run_background_diagnostics", lambda self, trigger="startup_sync": None)
+    monkeypatch.setattr("invoice_hub.services.background_sync.BackgroundSyncService.run_background_diagnostics", lambda self, trigger="startup_sync": None)
     monkeypatch.delenv("INVOICE_HUB_DESKTOP_HOST", raising=False)
     app = create_app(tmp_path)
     app.state.invoice_hub._package_manifest["platform"] = "windows"
@@ -532,7 +561,7 @@ def test_portable_windows_keeps_legacy_desktop_but_cannot_select_it(tmp_path: Pa
 
 
 def test_about_api_is_local_only_and_update_check_payload_is_strict(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setattr("invoice_hub.services.app_state.AppState.run_background_diagnostics", lambda self, trigger="startup_sync": None)
+    monkeypatch.setattr("invoice_hub.services.background_sync.BackgroundSyncService.run_background_diagnostics", lambda self, trigger="startup_sync": None)
     app = create_app(tmp_path)
     client = TestClient(app)
 
@@ -543,7 +572,7 @@ def test_about_api_is_local_only_and_update_check_payload_is_strict(tmp_path: Pa
     about = client.get("/api/v1/about")
     assert about.status_code == 200
     payload = about.json()
-    assert payload["product"]["version"] == "0.3.0-alpha.2"
+    assert payload["product"]["version"] == "1.0.0-beta.1"
     assert payload["package"]["manifest_status"] == "missing"
     assert payload["update"]["status"] == "idle"
     assert payload["links"]["website"] == "/website/"
@@ -567,7 +596,7 @@ def test_about_api_is_local_only_and_update_check_payload_is_strict(tmp_path: Pa
     assert update_calls
 
     opened_urls: list[str] = []
-    monkeypatch.setattr("invoice_hub.services.app_state.open_external_url", opened_urls.append)
+    monkeypatch.setattr("invoice_hub.services.about.open_external_url", opened_urls.append)
     assert client.post("/api/v1/about/links/github", json={}).json() == {"ok": True, "link_key": "github"}
     assert client.post("/api/v1/about/links/changelog", json={}).json() == {"ok": True, "link_key": "changelog"}
     assert opened_urls == [PUBLIC_SOURCE_URL, CHANGELOG_URL]
@@ -582,14 +611,14 @@ def test_about_api_is_local_only_and_update_check_payload_is_strict(tmp_path: Pa
     def unavailable_browser(_url: str) -> None:
         raise OSError("shell unavailable")
 
-    monkeypatch.setattr("invoice_hub.services.app_state.open_external_url", unavailable_browser)
+    monkeypatch.setattr("invoice_hub.services.about.open_external_url", unavailable_browser)
     failed = client.post("/api/v1/about/links/github", json={})
     assert failed.status_code == 503
     assert failed.json() == {"detail": "无法打开系统默认浏览器"}
 
 
 def test_business_pages_share_power_dialog_and_versioned_controls(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setattr("invoice_hub.services.app_state.AppState.run_background_diagnostics", lambda self, trigger="startup_sync": None)
+    monkeypatch.setattr("invoice_hub.services.background_sync.BackgroundSyncService.run_background_diagnostics", lambda self, trigger="startup_sync": None)
     client = TestClient(create_app(tmp_path))
     for route in ("/", "/costs", "/documents", "/bookkeeping", "/ocr", "/consistency", "/settings", "/skins"):
         for suffix in ("", "?no_skin=1"):
@@ -606,7 +635,7 @@ def test_business_pages_share_power_dialog_and_versioned_controls(tmp_path: Path
 
 
 def test_bundled_website_serves_only_packaged_assets_and_keeps_settings_navigation(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setattr("invoice_hub.services.app_state.AppState.run_background_diagnostics", lambda self, trigger="startup_sync": None)
+    monkeypatch.setattr("invoice_hub.services.background_sync.BackgroundSyncService.run_background_diagnostics", lambda self, trigger="startup_sync": None)
     app = create_app(tmp_path)
     client = TestClient(app)
     root = Path(__file__).resolve().parents[1]
@@ -623,12 +652,12 @@ def test_bundled_website_serves_only_packaged_assets_and_keeps_settings_navigati
         response = client.get(route)
         assert response.status_code == 200
         assert 'id="settingsAboutWebsiteLink" class="btn btn--ghost" href="/website/"' in response.text
-        assert "page-settings.js?v=20260907-desktop-integrated-2" in response.text
+        assert "page-settings.js?v=20261124-ocr-settings-1" in response.text
     assert "activeSkinStylesheet" not in client.get("/website/").text
 
 
 def test_bundled_website_uses_packaged_web_root_and_diagnoses_missing_assets(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setattr("invoice_hub.services.app_state.AppState.run_background_diagnostics", lambda self, trigger="startup_sync": None)
+    monkeypatch.setattr("invoice_hub.services.background_sync.BackgroundSyncService.run_background_diagnostics", lambda self, trigger="startup_sync": None)
     (tmp_path / "web/templates").mkdir(parents=True)
     (tmp_path / "web/static").mkdir()
     copy_website(Path(__file__).resolve().parents[1], tmp_path)
@@ -643,7 +672,7 @@ def test_bundled_website_uses_packaged_web_root_and_diagnoses_missing_assets(tmp
 
 
 def test_host_delegated_update_install_requires_an_empty_body_and_redacts_failures(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setattr("invoice_hub.services.app_state.AppState.run_background_diagnostics", lambda self, trigger="startup_sync": None)
+    monkeypatch.setattr("invoice_hub.services.background_sync.BackgroundSyncService.run_background_diagnostics", lambda self, trigger="startup_sync": None)
     monkeypatch.setattr(host_rpc, "_captured_configuration", ("", ""))
     monkeypatch.delenv(host_rpc.HOST_RPC_URL_ENV, raising=False)
     monkeypatch.delenv(host_rpc.HOST_RPC_TOKEN_ENV, raising=False)
@@ -655,7 +684,7 @@ def test_host_delegated_update_install_requires_an_empty_body_and_redacts_failur
         calls.append(True)
         return {"ok": True}
 
-    monkeypatch.setattr(app.state.invoice_hub, "install_update", successful_install)
+    monkeypatch.setattr(app.state.invoice_hub.about, "install_update", successful_install)
 
     assert client.post("/api/v1/update/install", json={"version": "0.3.0-alpha.2"}).status_code == 400
     assert client.post("/api/v1/update/install", json=[]).status_code == 400
@@ -671,7 +700,7 @@ def test_host_delegated_update_install_requires_an_empty_body_and_redacts_failur
     def unavailable_install() -> dict:
         raise host_rpc.HostRpcError("token=should-not-reach-the-browser")
 
-    monkeypatch.setattr(app.state.invoice_hub, "install_update", unavailable_install)
+    monkeypatch.setattr(app.state.invoice_hub.about, "install_update", unavailable_install)
     unavailable = client.post("/api/v1/update/install", json={})
     assert unavailable.status_code == 503
     assert unavailable.json() == {"detail": "Update installation unavailable"}
@@ -679,7 +708,7 @@ def test_host_delegated_update_install_requires_an_empty_body_and_redacts_failur
 
     monkeypatch.setattr(host_rpc, "_captured_configuration", ("http://127.0.0.1:43123/v1/host-rpc", "a" * 64))
     assert client.post("/api/v1/update/install", json={}).status_code == 403
-    monkeypatch.setattr(app.state.invoice_hub, "install_update", successful_install)
+    monkeypatch.setattr(app.state.invoice_hub.about, "install_update", successful_install)
     assert client.post(
         "/api/v1/update/install",
         headers={"Origin": host_rpc.HOST_RPC_EXPECTED_ORIGIN},
@@ -687,7 +716,7 @@ def test_host_delegated_update_install_requires_an_empty_body_and_redacts_failur
     ).json() == {"ok": True}
 
 def test_server_shutdown_api_preserves_or_stops_monitor_and_finalizes_state(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setattr("invoice_hub.services.app_state.AppState.run_background_diagnostics", lambda self, trigger="startup_sync": None)
+    monkeypatch.setattr("invoice_hub.services.background_sync.BackgroundSyncService.run_background_diagnostics", lambda self, trigger="startup_sync": None)
     monitor = {"running": True, "pid": 4321}
     stop_calls: list[bool] = []
     scheduled_states = []
@@ -700,8 +729,8 @@ def test_server_shutdown_api_preserves_or_stops_monitor_and_finalizes_state(tmp_
         monitor.update({"running": False, "pid": 0})
         return {"ok": True, "running": False, "status": dict(monitor)}
 
-    monkeypatch.setattr("invoice_hub.services.app_state.AppState.bridge_status", fake_bridge_status)
-    monkeypatch.setattr("invoice_hub.services.app_state.AppState.bridge_stop", fake_bridge_stop)
+    monkeypatch.setattr("invoice_hub.services.monitor_control.MonitorControlService.bridge_status", fake_bridge_status)
+    monkeypatch.setattr("invoice_hub.services.monitor_control.MonitorControlService.bridge_stop", fake_bridge_stop)
 
     app = create_app(tmp_path, shutdown_scheduler=scheduled_states.append)
     client = TestClient(app)
@@ -724,7 +753,7 @@ def test_server_shutdown_api_preserves_or_stops_monitor_and_finalizes_state(tmp_
     assert keep_payload["monitor_running"] is True
     assert stop_calls == []
     assert scheduled_states == [state]
-    assert state.server_shutdown_requested is True
+    assert state.shutdown.server_shutdown_requested is True
     assert client.get("/api/v1/preferences").json()["preferences"]["system_shutdown_behavior"] == "keep_monitor"
 
     stopping_state = json.loads(state.layout.server_state.read_text(encoding="utf-8"))
@@ -738,7 +767,7 @@ def test_server_shutdown_api_preserves_or_stops_monitor_and_finalizes_state(tmp_
     assert duplicate.json()["scheduled"] is False
     assert scheduled_states == [state]
 
-    state.finalize_server_shutdown()
+    state.shutdown.finalize_server_shutdown()
     assert not state.layout.server_pid.exists()
     stopped_state = json.loads(state.layout.server_state.read_text(encoding="utf-8"))
     assert stopped_state["status"] == "stopped"
@@ -761,16 +790,16 @@ def test_server_shutdown_api_preserves_or_stops_monitor_and_finalizes_state(tmp_
     assert len(stop_calls) == 1
     assert scheduled_states[-1] is stop_state
     assert stop_client.get("/api/v1/preferences").json()["preferences"]["system_shutdown_behavior"] == "ask"
-    stop_state.finalize_server_shutdown()
+    stop_state.shutdown.finalize_server_shutdown()
     assert json.loads(stop_state.layout.server_state.read_text(encoding="utf-8"))["status"] == "stopped"
 
 
 def test_event_stream_finishes_after_structured_shutdown_is_requested(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setattr("invoice_hub.services.app_state.AppState.run_background_diagnostics", lambda self, trigger="startup_sync": None)
+    monkeypatch.setattr("invoice_hub.services.background_sync.BackgroundSyncService.run_background_diagnostics", lambda self, trigger="startup_sync": None)
     monitor = {"running": False, "pid": 0}
-    monkeypatch.setattr("invoice_hub.services.app_state.AppState.bridge_status", lambda self: dict(monitor))
+    monkeypatch.setattr("invoice_hub.services.monitor_control.MonitorControlService.bridge_status", lambda self: dict(monitor))
     monkeypatch.setattr(
-        "invoice_hub.services.app_state.AppState.bridge_stop",
+        "invoice_hub.services.monitor_control.MonitorControlService.bridge_stop",
         lambda self: {"ok": True, "running": False, "status": dict(monitor)},
     )
     app = create_app(tmp_path, shutdown_scheduler=lambda state: None)
@@ -817,9 +846,9 @@ def test_event_stream_finishes_after_structured_shutdown_is_requested(tmp_path: 
         )
         try:
             await asyncio.wait_for(connected.wait(), timeout=1)
-            result = state.request_server_shutdown("stop_monitor")
+            result = state.shutdown.request_server_shutdown("stop_monitor")
             assert result["scheduled"] is True
-            assert state.server_shutdown_requested is True
+            assert state.shutdown.server_shutdown_requested is True
             await asyncio.wait_for(stream, timeout=3)
         finally:
             disconnect.set()
@@ -835,11 +864,11 @@ def test_event_stream_finishes_after_structured_shutdown_is_requested(tmp_path: 
 
 
 def test_server_shutdown_does_not_close_webui_when_monitor_remains_running(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setattr("invoice_hub.services.app_state.AppState.run_background_diagnostics", lambda self, trigger="startup_sync": None)
+    monkeypatch.setattr("invoice_hub.services.background_sync.BackgroundSyncService.run_background_diagnostics", lambda self, trigger="startup_sync": None)
     monitor_status = {"running": True, "pid": 4321}
-    monkeypatch.setattr("invoice_hub.services.app_state.AppState.bridge_status", lambda self: dict(monitor_status))
+    monkeypatch.setattr("invoice_hub.services.monitor_control.MonitorControlService.bridge_status", lambda self: dict(monitor_status))
     monkeypatch.setattr(
-        "invoice_hub.services.app_state.AppState.bridge_stop",
+        "invoice_hub.services.monitor_control.MonitorControlService.bridge_stop",
         lambda self: {"ok": True, "running": False, "status": dict(monitor_status)},
     )
     scheduled_states = []
@@ -860,7 +889,7 @@ def test_server_shutdown_does_not_close_webui_when_monitor_remains_running(tmp_p
 
 
 def test_diagnostics_apis_export_support_package(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setattr("invoice_hub.services.app_state.AppState.run_background_diagnostics", lambda self, trigger="startup_sync": None)
+    monkeypatch.setattr("invoice_hub.services.background_sync.BackgroundSyncService.run_background_diagnostics", lambda self, trigger="startup_sync": None)
     app = create_app(tmp_path)
     client = TestClient(app)
 
@@ -908,7 +937,7 @@ def test_diagnostics_apis_export_support_package(tmp_path: Path, monkeypatch) ->
         assert not any(any(forbidden in name for forbidden in forbidden_projection_names) for name in names)
 
 def test_events_stream_cursor_defaults_to_latest_and_keeps_explicit_replay(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setattr("invoice_hub.services.app_state.AppState.run_background_diagnostics", lambda self, trigger="startup_sync": None)
+    monkeypatch.setattr("invoice_hub.services.background_sync.BackgroundSyncService.run_background_diagnostics", lambda self, trigger="startup_sync": None)
     app = create_app(tmp_path)
     state = app.state.invoice_hub
     history = state.append_event("history.changed", {"phase": "old"})
@@ -919,7 +948,7 @@ def test_events_stream_cursor_defaults_to_latest_and_keeps_explicit_replay(tmp_p
 
 
 def test_events_stream_last_event_id_reads_only_following_events(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setattr("invoice_hub.services.app_state.AppState.run_background_diagnostics", lambda self, trigger="startup_sync": None)
+    monkeypatch.setattr("invoice_hub.services.background_sync.BackgroundSyncService.run_background_diagnostics", lambda self, trigger="startup_sync": None)
     app = create_app(tmp_path)
     state = app.state.invoice_hub
     first = state.append_event("history.first", {})
@@ -984,7 +1013,7 @@ def test_health_uses_capabilities_from_present_build_manifest(tmp_path: Path) ->
 
 
 def test_business_dossier_infers_company_folder_and_opens_known_links(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setattr("invoice_hub.services.app_state.AppState.run_background_diagnostics", lambda self, trigger="startup_sync": None)
+    monkeypatch.setattr("invoice_hub.services.background_sync.BackgroundSyncService.run_background_diagnostics", lambda self, trigger="startup_sync": None)
     monkeypatch.setenv("INVOICE_HUB_DISABLE_OPEN", "1")
     # Windows forbids ':' in directory names; this is an explicit synthetic
     # Chinese/percent-containing company-name fixture.
@@ -1040,10 +1069,40 @@ def test_business_dossier_infers_company_folder_and_opens_known_links(tmp_path: 
     assert "当前业务资料夹" in blocked["message"]
 
 
+def test_business_dossier_follows_watch_dir_switch(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr("invoice_hub.services.background_sync.BackgroundSyncService.run_background_diagnostics", lambda self, trigger="startup_sync": None)
+    monkeypatch.setenv("INVOICE_HUB_DISABLE_OPEN", "1")
+    first_cost = tmp_path / "公司甲" / "成本发票"
+    second_cost = tmp_path / "公司乙" / "成本发票"
+    second_bank = tmp_path / "公司乙" / "银行流水"
+    for folder in (first_cost, second_cost, second_bank):
+        folder.mkdir(parents=True)
+    config_path = tmp_path / "config" / "app.local.json"
+    config_path.parent.mkdir()
+    config_path.write_text(
+        json.dumps({"host": "127.0.0.1", "port": 8766, "watch_dir": str(first_cost), "runtime_dir": "./runtime"}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    client = TestClient(create_app(tmp_path))
+    state = client.app.state.invoice_hub
+    assert client.get("/api/v1/business-dossier").json()["business_dir"] == str(tmp_path / "公司甲")
+
+    state.update_settings({"watch_dir": str(second_cost)})
+    dossier = client.get("/api/v1/business-dossier").json()
+
+    assert dossier["business_dir"] == str(tmp_path / "公司乙")
+    assert dossier["target_id"] == state.active_profile.id
+    assert {link["key"] for link in dossier["links"]} >= {"business_dir", "watch_dir", "bank_flow_dir"}
+    opened = client.post("/api/v1/business-dossier/open", json={"key": "bank_flow_dir"}).json()
+    assert opened["ok"] is True and opened["path"] == str(second_bank.resolve())
+    stale = client.post("/api/v1/business-dossier/open", json={"path": str(first_cost)}).json()
+    assert stale["ok"] is False
+
+
 def test_business_dossier_scan_is_bounded_and_marks_partial_counts(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setattr("invoice_hub.services.app_state.AppState.run_background_diagnostics", lambda self, trigger="startup_sync": None)
-    monkeypatch.setattr("invoice_hub.services.app_state.BUSINESS_DOSSIER_SCAN_MAX_ENTRIES", 3)
-    monkeypatch.setattr("invoice_hub.services.app_state.BUSINESS_DOSSIER_SCAN_MAX_SECONDS", 30.0)
+    monkeypatch.setattr("invoice_hub.services.background_sync.BackgroundSyncService.run_background_diagnostics", lambda self, trigger="startup_sync": None)
+    monkeypatch.setattr("invoice_hub.services.dossier.BUSINESS_DOSSIER_SCAN_MAX_ENTRIES", 3)
+    monkeypatch.setattr("invoice_hub.services.dossier.BUSINESS_DOSSIER_SCAN_MAX_SECONDS", 30.0)
     company = tmp_path / "大型公司资料夹"
     cost = company / "成本发票"
     cost.mkdir(parents=True)
@@ -1082,7 +1141,7 @@ def test_business_dossier_scan_is_bounded_and_marks_partial_counts(tmp_path: Pat
 
 
 def test_business_dossier_iterator_oserror_returns_partial_lower_bound(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setattr("invoice_hub.services.app_state.AppState.run_background_diagnostics", lambda self, trigger="startup_sync": None)
+    monkeypatch.setattr("invoice_hub.services.background_sync.BackgroundSyncService.run_background_diagnostics", lambda self, trigger="startup_sync": None)
     company = tmp_path / "可部分读取的公司资料夹"
     cost = company / "成本发票"
     other = company / "其他资料"
@@ -1138,7 +1197,7 @@ def test_business_dossier_iterator_oserror_returns_partial_lower_bound(tmp_path:
             return InterruptedScandir(entries)
         return entries
 
-    monkeypatch.setattr("invoice_hub.services.app_state.os.scandir", scandir_with_interrupted_root)
+    monkeypatch.setattr("invoice_hub.services.dossier.os.scandir", scandir_with_interrupted_root)
 
     response = TestClient(create_app(tmp_path)).get("/api/v1/business-dossier")
 
@@ -1154,7 +1213,7 @@ def test_business_dossier_iterator_oserror_returns_partial_lower_bound(tmp_path:
 
 
 def test_business_dossier_open_runs_in_threadpool(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setattr("invoice_hub.services.app_state.AppState.run_background_diagnostics", lambda self, trigger="startup_sync": None)
+    monkeypatch.setattr("invoice_hub.services.background_sync.BackgroundSyncService.run_background_diagnostics", lambda self, trigger="startup_sync": None)
     monkeypatch.setenv("INVOICE_HUB_DISABLE_OPEN", "1")
     company = tmp_path / "公司资料夹"
     cost = company / "成本发票"
@@ -1175,7 +1234,7 @@ def test_business_dossier_open_runs_in_threadpool(tmp_path: Path, monkeypatch) -
         ),
         encoding="utf-8",
     )
-    api_module = importlib.import_module("invoice_hub.api.app")
+    api_module = importlib.import_module("invoice_hub.api.routes.dossier")
     calls: list[tuple[str, tuple[object, ...]]] = []
 
     async def capture_threadpool(function, *args, **kwargs):
@@ -1192,7 +1251,7 @@ def test_business_dossier_open_runs_in_threadpool(tmp_path: Path, monkeypatch) -
 
 
 def test_skin_api_defaults_to_no_skin_and_enables_builtin(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setattr("invoice_hub.services.app_state.AppState.run_background_diagnostics", lambda self, trigger="startup_sync": None)
+    monkeypatch.setattr("invoice_hub.services.background_sync.BackgroundSyncService.run_background_diagnostics", lambda self, trigger="startup_sync": None)
     client = TestClient(create_app(tmp_path))
 
     skins = client.get("/api/v1/skins").json()
@@ -1236,7 +1295,7 @@ def test_skin_api_defaults_to_no_skin_and_enables_builtin(tmp_path: Path, monkey
 
 
 def test_skin_import_stores_files_under_runtime_local_state(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setattr("invoice_hub.services.app_state.AppState.run_background_diagnostics", lambda self, trigger="startup_sync": None)
+    monkeypatch.setattr("invoice_hub.services.background_sync.BackgroundSyncService.run_background_diagnostics", lambda self, trigger="startup_sync": None)
     app = create_app(tmp_path)
     client = TestClient(app)
     watch_dir = Path(app.state.invoice_hub.active_profile.watch_dir).resolve()
@@ -1266,7 +1325,7 @@ def test_skin_import_stores_files_under_runtime_local_state(tmp_path: Path, monk
 
 
 def test_skin_import_accepts_wrapped_zip_with_safe_metadata(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setattr("invoice_hub.services.app_state.AppState.run_background_diagnostics", lambda self, trigger="startup_sync": None)
+    monkeypatch.setattr("invoice_hub.services.background_sync.BackgroundSyncService.run_background_diagnostics", lambda self, trigger="startup_sync": None)
     client = TestClient(create_app(tmp_path))
     payload = BytesIO()
     with ZipFile(payload, "w") as archive:
@@ -1301,7 +1360,7 @@ def test_skin_import_accepts_wrapped_zip_with_safe_metadata(tmp_path: Path, monk
 
 
 def test_skin_import_rejects_unsafe_zip_content(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setattr("invoice_hub.services.app_state.AppState.run_background_diagnostics", lambda self, trigger="startup_sync": None)
+    monkeypatch.setattr("invoice_hub.services.background_sync.BackgroundSyncService.run_background_diagnostics", lambda self, trigger="startup_sync": None)
     client = TestClient(create_app(tmp_path))
     cases = [
         {"skin.css": "@import url('other.css');"},
@@ -1342,7 +1401,7 @@ def test_skin_import_rejects_unsafe_zip_content(tmp_path: Path, monkeypatch) -> 
 
 
 def test_skin_replace_overwrites_imported_skin(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setattr("invoice_hub.services.app_state.AppState.run_background_diagnostics", lambda self, trigger="startup_sync": None)
+    monkeypatch.setattr("invoice_hub.services.background_sync.BackgroundSyncService.run_background_diagnostics", lambda self, trigger="startup_sync": None)
     client = TestClient(create_app(tmp_path))
 
     created = client.post("/api/v1/skins/import", content=_make_skin_zip("replaceable", {"skin.css": ".x { color: #111111; }"}), headers={"content-type": "application/zip"})
@@ -1369,7 +1428,7 @@ def test_skin_replace_overwrites_imported_skin(tmp_path: Path, monkeypatch) -> N
 
 
 def test_skin_page_injects_active_skin_and_no_skin_bypasses(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setattr("invoice_hub.services.app_state.AppState.run_background_diagnostics", lambda self, trigger="startup_sync": None)
+    monkeypatch.setattr("invoice_hub.services.background_sync.BackgroundSyncService.run_background_diagnostics", lambda self, trigger="startup_sync": None)
     client = TestClient(create_app(tmp_path))
     assert client.post("/api/v1/skins/animal-island/enable").status_code == 200
 
@@ -1385,7 +1444,7 @@ def test_skin_page_injects_active_skin_and_no_skin_bypasses(tmp_path: Path, monk
 
 
 def test_website_dark_persists_and_recovery_keeps_white_without_changing_saved_skin(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setattr("invoice_hub.services.app_state.AppState.run_background_diagnostics", lambda self, trigger="startup_sync": None)
+    monkeypatch.setattr("invoice_hub.services.background_sync.BackgroundSyncService.run_background_diagnostics", lambda self, trigger="startup_sync": None)
     client = TestClient(create_app(tmp_path))
     assert client.get("/api/v1/skins").json()["default_skin_id"] is None
     enabled = client.post("/api/v1/skins/website-dark/enable").json()
@@ -1412,7 +1471,8 @@ def test_website_dark_persists_and_recovery_keeps_white_without_changing_saved_s
     assert 'id="activeSkinStylesheet"' not in restarted.get("/").text
 
 
-def test_reference_status_api_rejects_quantity_over_total(tmp_path: Path) -> None:
+def test_reference_status_api_rejects_quantity_over_total(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(BackgroundSyncService, "run_background_diagnostics", lambda self, trigger="startup_sync": None)
     watch = tmp_path / "发票文件"
     watch.mkdir()
     write_csv_rows(
@@ -1453,13 +1513,14 @@ def test_reference_status_api_rejects_quantity_over_total(tmp_path: Path) -> Non
     assert "已开数量不能大于数量合计" in response.json()["detail"]
 
 
-def test_reference_status_api_accepts_row_markup_rate(tmp_path: Path) -> None:
+def test_reference_status_api_accepts_row_markup_rate(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(BackgroundSyncService, "run_background_diagnostics", lambda self, trigger="startup_sync": None)
     watch = tmp_path / "发票文件"
     watch.mkdir()
     app = create_app(tmp_path)
     client = TestClient(app)
     deadline = time.time() + 3
-    while time.time() < deadline and app.state.invoice_hub._background_status in {"initializing", "running"}:
+    while time.time() < deadline and app.state.invoice_hub.background._background_status in {"initializing", "running"}:
         time.sleep(0.05)
     write_csv_rows(
         watch / "成本发票明细.csv",
@@ -1523,7 +1584,7 @@ def test_reference_status_api_accepts_row_markup_rate(tmp_path: Path) -> None:
 
 
 def test_reference_status_api_waits_for_profile_lock_without_blocking_health(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setattr("invoice_hub.services.app_state.AppState.run_background_diagnostics", lambda self, trigger="startup_sync": None)
+    monkeypatch.setattr("invoice_hub.services.background_sync.BackgroundSyncService.run_background_diagnostics", lambda self, trigger="startup_sync": None)
     app = create_app(tmp_path)
     state = app.state.invoice_hub
     watch = Path(state.active_profile.watch_dir)
@@ -1532,7 +1593,7 @@ def test_reference_status_api_waits_for_profile_lock_without_blocking_health(tmp
         DETAIL_HEADERS,
         [_cost_detail_row("10000000000000000001", "cost.pdf", "项目", "规格", "2", "200", "26", "226")],
     )
-    reference = state.cost_snapshot()["invoice_reference"][0]
+    reference = state.costs.cost_snapshot()["invoice_reference"][0]
 
     holder_state = MonitorState(state.active_profile, state.layout.db_path)
     lock_entered = threading.Event()
@@ -1541,7 +1602,7 @@ def test_reference_status_api_waits_for_profile_lock_without_blocking_health(tmp
     save_finished = threading.Event()
     health_finished = threading.Event()
     responses = {}
-    original_save = state.save_cost_reference_status
+    original_save = state.costs.save_cost_reference_status
 
     def hold_lock() -> None:
         with holder_state.sync_write_lock():
@@ -1567,7 +1628,7 @@ def test_reference_status_api_waits_for_profile_lock_without_blocking_health(tmp
         finally:
             health_finished.set()
 
-    monkeypatch.setattr(state, "save_cost_reference_status", observed_save)
+    monkeypatch.setattr(state.costs, "save_cost_reference_status", observed_save)
     holder = threading.Thread(target=hold_lock)
     with TestClient(app) as client:
         holder.start()
@@ -1607,7 +1668,10 @@ def test_reference_status_api_waits_for_profile_lock_without_blocking_health(tmp
         workbook.close()
 
 
-def test_cost_analysis_project_summary_contains_tax_average_unit_price(tmp_path: Path) -> None:
+def test_cost_analysis_project_summary_contains_tax_average_unit_price(tmp_path: Path, monkeypatch) -> None:
+    # Only a projection is seeded here; startup sync would rebuild it empty
+    # without source invoices and race the read contract under test.
+    monkeypatch.setattr(BackgroundSyncService, "run_background_diagnostics", lambda *a, **kw: None)
     watch = tmp_path / "发票文件"
     watch.mkdir()
     write_csv_rows(
@@ -1645,7 +1709,8 @@ def test_cost_analysis_project_summary_contains_tax_average_unit_price(tmp_path:
     assert project["采购参考平均单价(含税)"] == 3728.89
 
 
-def test_cost_analysis_project_summary_splits_stock_and_purchase_reference_averages(tmp_path: Path) -> None:
+def test_cost_analysis_project_summary_splits_stock_and_purchase_reference_averages(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(BackgroundSyncService, "run_background_diagnostics", lambda *a, **kw: None)
     watch = tmp_path / "发票文件"
     watch.mkdir()
     rows = [
@@ -1709,7 +1774,7 @@ def test_cost_analysis_project_summary_splits_stock_and_purchase_reference_avera
 def test_cost_analysis_api_refreshes_old_cost_schema(monkeypatch, tmp_path: Path) -> None:
     from openpyxl import Workbook, load_workbook
 
-    monkeypatch.setattr("invoice_hub.services.app_state.AppState.run_background_diagnostics", lambda self, trigger="startup_sync": None)
+    monkeypatch.setattr("invoice_hub.services.background_sync.BackgroundSyncService.run_background_diagnostics", lambda self, trigger="startup_sync": None)
     config_path = tmp_path / "config" / "app.local.json"
     config_path.parent.mkdir()
     config_path.write_text(
@@ -1775,7 +1840,7 @@ def test_cost_analysis_api_refreshes_old_cost_schema(monkeypatch, tmp_path: Path
 
 
 def test_cost_analysis_schema_refresh_waits_for_profile_lock_without_blocking_health(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setattr("invoice_hub.services.app_state.AppState.run_background_diagnostics", lambda self, trigger="startup_sync": None)
+    monkeypatch.setattr("invoice_hub.services.background_sync.BackgroundSyncService.run_background_diagnostics", lambda self, trigger="startup_sync": None)
     app = create_app(tmp_path)
     state = app.state.invoice_hub
     watch = Path(state.active_profile.watch_dir)
@@ -1793,7 +1858,7 @@ def test_cost_analysis_schema_refresh_waits_for_profile_lock_without_blocking_he
     snapshot_finished = threading.Event()
     health_finished = threading.Event()
     responses = {}
-    original_snapshot = state.cost_snapshot
+    original_snapshot = state.costs.cost_snapshot
 
     def hold_lock() -> None:
         with holder_state.sync_write_lock():
@@ -1816,7 +1881,7 @@ def test_cost_analysis_schema_refresh_waits_for_profile_lock_without_blocking_he
         finally:
             health_finished.set()
 
-    monkeypatch.setattr(state, "cost_snapshot", observed_snapshot)
+    monkeypatch.setattr(state.costs, "cost_snapshot", observed_snapshot)
     holder = threading.Thread(target=hold_lock)
     with TestClient(app) as client:
         holder.start()
@@ -1847,7 +1912,7 @@ def test_cost_analysis_schema_refresh_waits_for_profile_lock_without_blocking_he
 
 def test_bridge_rebuild_and_events(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(
-        "invoice_hub.services.app_state.AppState.run_background_diagnostics",
+        "invoice_hub.services.background_sync.BackgroundSyncService.run_background_diagnostics",
         lambda self, trigger="startup_sync": None,
     )
     watch = tmp_path / "发票文件"
@@ -1867,9 +1932,45 @@ def test_bridge_rebuild_and_events(tmp_path: Path, monkeypatch) -> None:
     assert progress["percent"] == 100
 
 
+def test_bridge_rebuild_reads_outbound_invoices_into_cost_reference(tmp_path: Path, monkeypatch) -> None:
+    from tests.test_summary_and_costs import COMPANY, _cost_xml_text, _xml_invoice
+
+    monkeypatch.setattr(
+        "invoice_hub.services.background_sync.BackgroundSyncService.run_background_diagnostics",
+        lambda self, trigger="startup_sync": None,
+    )
+    watch = tmp_path / "发票文件"
+    outbound = tmp_path / "开具发票"
+    watch.mkdir()
+    outbound.mkdir()
+    (watch / "cost.xml").write_text(_cost_xml_text(), encoding="utf-8")
+    (outbound / "sale.xml").write_text(
+        _xml_invoice("20000000000000000001", COMPANY, "客户甲", [("12E", "2", "216.00", "28.08", "钢筋")]), encoding="utf-8"
+    )
+    client = TestClient(create_app(tmp_path))
+    assert client.put("/api/v1/documents/outbound-dir", json={"outbound_invoice_dir": str(outbound)}).json()["ok"] is True
+
+    before = client.get("/api/v1/cost-analysis").json()
+    result = client.post("/api/v1/bridge/rebuild").json()
+    cost = client.get("/api/v1/cost-analysis").json()
+    row = next(item for item in cost["invoice_reference"] if item["规格型号"] == "12E")
+
+    assert before["outbound_summary"]["read_at"] == ""
+    assert result["ok"] is True
+    assert result["detail"]["cost_analysis"]["outbound"]["used_invoice_count"] == 1
+    assert "items" not in result["detail"]["cost_analysis"]["outbound"]
+    assert cost["outbound_summary"]["matched_item_count"] == 1
+    assert row["outbound_quantity"] == 2.0
+    assert row["actual_markup_text"] == "8%"
+    assert row["outbound_compare"] == "outbound_more"
+    assert row["invoiced_quantity"] == 0.0
+    view = client.get("/api/v1/cost-analysis/view", params={"view": "reference"}).json()
+    assert view["outbound_summary"]["used_invoice_count"] == 1
+
+
 def test_bridge_progress_api_filters_to_active_profile_and_safe_fields(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(
-        "invoice_hub.services.app_state.AppState.run_background_diagnostics",
+        "invoice_hub.services.background_sync.BackgroundSyncService.run_background_diagnostics",
         lambda self, trigger="startup_sync": None,
     )
     app = create_app(tmp_path)
@@ -1883,7 +1984,7 @@ def test_bridge_progress_api_filters_to_active_profile_and_safe_fields(tmp_path:
     assert idle["background_sync_status"] == "initializing"
 
     with state._lock:
-        state._background_status = "running"
+        state.background._background_status = "running"
 
     monitor_state = MonitorState(state.active_profile, state.layout.db_path)
     monitor_state.write_sync_progress(
@@ -2001,7 +2102,7 @@ def test_bridge_rebuild_builds_xml_cost_analysis_details(tmp_path: Path) -> None
 
 
 def test_invoice_keyword_filter_matches_only_advertised_fields(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setattr("invoice_hub.services.app_state.AppState.run_background_diagnostics", lambda self, trigger="startup_sync": None)
+    monkeypatch.setattr("invoice_hub.services.background_sync.BackgroundSyncService.run_background_diagnostics", lambda self, trigger="startup_sync": None)
     app = create_app(tmp_path)
     state = app.state.invoice_hub
     watch = Path(state.active_profile.watch_dir)
@@ -2038,7 +2139,7 @@ def test_invoice_keyword_filter_matches_only_advertised_fields(tmp_path: Path, m
 
 
 def test_invoice_search_scope_with_large_snapshot(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setattr(AppState, "run_background_diagnostics", lambda self, trigger="startup_sync": None)
+    monkeypatch.setattr(BackgroundSyncService, "run_background_diagnostics", lambda self, trigger="startup_sync": None)
     app = create_app(tmp_path)
     state = app.state.invoice_hub
     rows = [{"文件名": f"SYNTHETIC-backup-{index}.pdf"} for index in range(6000)]
@@ -2048,12 +2149,12 @@ def test_invoice_search_scope_with_large_snapshot(tmp_path: Path, monkeypatch) -
         {"文件名": "number.pdf", "发票号码": "SYNTHETIC-123", "开票金额": "8.00"},
         {"文件名": "boundary.pdf", "销售方": "syn", "发票号码": "thetic"},
     ]
-    monkeypatch.setattr(state, "_summary_rows", lambda: rows)
+    monkeypatch.setattr(state.invoices, "_summary_rows", lambda source_path=None: rows)
     client = TestClient(app)
     invoice = client.get("/api/v1/invoices", params={"keyword": " synthetic ", "search_scope": "invoice"}).json()
     assert invoice["count"] == 2
     assert {item["source_file"] for item in invoice["items"]} == {"seller.xml", "number.pdf"}
-    assert invoice["stats"]["filtered"]["total_amount"] == 20
+    assert invoice["stats"]["filtered"]["total_amount"] == "20.00"
     assert invoice["stats"]["all"]["total"] == 7003
     assert client.get("/api/v1/invoices", params={"keyword": "synthetic", "search_scope": "filename"}).json()["count"] == 6000
     for scope in ({}, {"search_scope": "all"}):
@@ -2087,7 +2188,7 @@ def test_server_startup_background_sync_builds_invoice_summary(tmp_path: Path) -
 
 def test_background_startup_sync_uses_spawn_worker_and_clears_current_profile_cache(tmp_path: Path, monkeypatch) -> None:
     with monkeypatch.context() as startup_patch:
-        startup_patch.setattr(AppState, "run_background_diagnostics", lambda self, trigger="startup_sync": None)
+        startup_patch.setattr(BackgroundSyncService, "run_background_diagnostics", lambda self, trigger="startup_sync": None)
         app = create_app(tmp_path)
     state = app.state.invoice_hub
     calls: dict[str, object] = {}
@@ -2146,7 +2247,7 @@ def test_background_startup_sync_uses_spawn_worker_and_clears_current_profile_ca
             calls["process"] = kwargs
             return FakeProcess(**kwargs)
 
-    def fake_sync_worker(profile_payload, db_path, reference_markup_rate, trigger, result_sender) -> None:
+    def fake_sync_worker(profile_payload, db_path, reference_markup_rate, trigger, result_sender, company_taxpayer=None, company_outbound=None) -> None:
         calls["profile_payload"] = profile_payload
         calls["db_path"] = db_path
         calls["reference_markup_rate"] = reference_markup_rate
@@ -2154,14 +2255,14 @@ def test_background_startup_sync_uses_spawn_worker_and_clears_current_profile_ca
         result_sender.send({"ok": True, "sync": {"ok": True, "target_id": profile_payload["id"]}})
 
     context = SpawnContext()
-    monkeypatch.setattr("invoice_hub.services.app_state.multiprocessing.get_context", lambda method: calls.setdefault("context", method) and context)
-    monkeypatch.setattr("invoice_hub.services.app_state._run_background_sync_process", fake_sync_worker)
-    state._invoice_cache_key = (1, 1)
-    state._invoice_cache_rows = [{"文件名": "stale.csv"}]
+    monkeypatch.setattr("invoice_hub.services.background_sync.multiprocessing.get_context", lambda method: calls.setdefault("context", method) and context)
+    monkeypatch.setattr("invoice_hub.services.background_sync._run_background_sync_process", fake_sync_worker)
+    state.invoices._invoice_cache_key = (1, 1)
+    state.invoices._invoice_cache_rows = [{"文件名": "stale.csv"}]
 
-    state.run_background_diagnostics("startup_sync")
+    state.background.run_background_diagnostics("startup_sync")
     deadline = time.monotonic() + 2
-    while time.monotonic() < deadline and state._background_status != "ready":
+    while time.monotonic() < deadline and state.background._background_status != "ready":
         time.sleep(0.01)
 
     process = calls["process"]
@@ -2172,14 +2273,14 @@ def test_background_startup_sync_uses_spawn_worker_and_clears_current_profile_ca
     assert calls["profile_payload"] == state.active_profile.model_dump()
     assert calls["db_path"] == str(state.layout.db_path)
     assert calls["trigger"] == "startup_sync"
-    assert state._background_status == "ready"
-    assert state._invoice_cache_key is None
-    assert state._invoice_cache_rows == []
+    assert state.background._background_status == "ready"
+    assert state.invoices._invoice_cache_key is None
+    assert state.invoices._invoice_cache_rows == []
 
 
 def test_background_sync_completion_does_not_invalidate_new_active_profile_cache(tmp_path: Path, monkeypatch) -> None:
     with monkeypatch.context() as startup_patch:
-        startup_patch.setattr(AppState, "run_background_diagnostics", lambda self, trigger="startup_sync": None)
+        startup_patch.setattr(BackgroundSyncService, "run_background_diagnostics", lambda self, trigger="startup_sync": None)
         app = create_app(tmp_path)
     state = app.state.invoice_hub
     started = threading.Event()
@@ -2254,7 +2355,7 @@ def test_background_sync_completion_does_not_invalidate_new_active_profile_cache
         def Process(self, **kwargs) -> FakeProcess:
             return FakeProcess(**kwargs)
 
-    def blocked_sync_worker(profile_payload, db_path, reference_markup_rate, trigger, result_sender) -> None:
+    def blocked_sync_worker(profile_payload, db_path, reference_markup_rate, trigger, result_sender, company_taxpayer=None, company_outbound=None) -> None:
         started.set()
         assert release.wait(timeout=5)
         result_sender.send(
@@ -2273,18 +2374,18 @@ def test_background_sync_completion_does_not_invalidate_new_active_profile_cache
             }
         )
 
-    monkeypatch.setattr("invoice_hub.services.app_state.multiprocessing.get_context", lambda method: SpawnContext())
-    monkeypatch.setattr("invoice_hub.services.app_state._run_background_sync_process", blocked_sync_worker)
+    monkeypatch.setattr("invoice_hub.services.background_sync.multiprocessing.get_context", lambda method: SpawnContext())
+    monkeypatch.setattr("invoice_hub.services.background_sync._run_background_sync_process", blocked_sync_worker)
 
-    state.run_background_diagnostics("startup_sync")
+    state.background.run_background_diagnostics("startup_sync")
     assert started.wait(timeout=2)
     next_watch = tmp_path / "new-active-profile"
     next_watch.mkdir()
     next_profile = target_profile_for(state.config, next_watch)
     with state._lock:
         state._active_profile = next_profile
-        state._invoice_cache_key = (9, 9)
-        state._invoice_cache_rows = [{"文件名": "new-profile.csv"}]
+        state.invoices._invoice_cache_key = (9, 9)
+        state.invoices._invoice_cache_rows = [{"文件名": "new-profile.csv"}]
 
     try:
         release.set()
@@ -2311,14 +2412,14 @@ def test_background_sync_completion_does_not_invalidate_new_active_profile_cache
     }
     assert not ordinary_sync_events.intersection(event["event_type"] for event in state.wait_events(0))
     assert notifications == []
-    assert state._background_status == "running"
-    assert state._invoice_cache_key == (9, 9)
-    assert state._invoice_cache_rows == [{"文件名": "new-profile.csv"}]
+    assert state.background._background_status == "running"
+    assert state.invoices._invoice_cache_key == (9, 9)
+    assert state.invoices._invoice_cache_rows == [{"文件名": "new-profile.csv"}]
 
 
 def test_background_spawn_worker_keeps_fastapi_responsive_while_sync_runs(tmp_path: Path, monkeypatch) -> None:
     with monkeypatch.context() as startup_patch:
-        startup_patch.setattr(AppState, "run_background_diagnostics", lambda self, trigger="startup_sync": None)
+        startup_patch.setattr(BackgroundSyncService, "run_background_diagnostics", lambda self, trigger="startup_sync": None)
         app = create_app(tmp_path)
     state = app.state.invoice_hub
     real_get_context = multiprocessing.get_context
@@ -2338,15 +2439,15 @@ def test_background_spawn_worker_keeps_fastapi_responsive_while_sync_runs(tmp_pa
         assert method == "spawn"
         return SlowSpawnContext()
 
-    monkeypatch.setattr("invoice_hub.services.app_state.multiprocessing.get_context", get_slow_spawn_context)
+    monkeypatch.setattr("invoice_hub.services.background_sync.multiprocessing.get_context", get_slow_spawn_context)
     client = TestClient(app)
-    state.run_background_diagnostics("startup_sync")
+    state.background.run_background_diagnostics("startup_sync")
 
     process = None
     deadline = time.monotonic() + 5
     while time.monotonic() < deadline:
         with state._lock:
-            process = state._background_process
+            process = state.background._background_process
         if process is not None and process.is_alive():
             break
         time.sleep(0.01)
@@ -2360,14 +2461,14 @@ def test_background_spawn_worker_keeps_fastapi_responsive_while_sync_runs(tmp_pa
     assert health.json()["background_status"] == "running"
     assert time.monotonic() - request_started < 0.75
 
-    while time.monotonic() < deadline and state._background_status != "ready":
+    while time.monotonic() < deadline and state.background._background_status != "ready":
         time.sleep(0.02)
-    assert state._background_status == "ready"
+    assert state.background._background_status == "ready"
 
 
 def test_new_background_generation_retires_prior_worker_with_bounded_kill(tmp_path: Path, monkeypatch) -> None:
     with monkeypatch.context() as startup_patch:
-        startup_patch.setattr(AppState, "run_background_diagnostics", lambda self, trigger="startup_sync": None)
+        startup_patch.setattr(BackgroundSyncService, "run_background_diagnostics", lambda self, trigger="startup_sync": None)
         app = create_app(tmp_path)
     state = app.state.invoice_hub
 
@@ -2445,18 +2546,18 @@ def test_new_background_generation_retires_prior_worker_with_bounded_kill(tmp_pa
         def Process(self, **kwargs) -> FastProcess:
             return FastProcess(**kwargs)
 
-    def fast_sync_worker(profile_payload, db_path, reference_markup_rate, trigger, result_sender) -> None:
+    def fast_sync_worker(profile_payload, db_path, reference_markup_rate, trigger, result_sender, company_taxpayer=None, company_outbound=None) -> None:
         result_sender.send({"ok": True, "sync": {"ok": True, "target_id": profile_payload["id"], "rebuilt": False}})
 
     prior = PriorProcess()
     with state._lock:
-        state._background_process = prior
-        state._background_process_generation = 7
-    monkeypatch.setattr("invoice_hub.services.app_state.multiprocessing.get_context", lambda method: SpawnContext())
-    monkeypatch.setattr("invoice_hub.services.app_state._run_background_sync_process", fast_sync_worker)
+        state.background._background_process = prior
+        state.background._background_process_generation = 7
+    monkeypatch.setattr("invoice_hub.services.background_sync.multiprocessing.get_context", lambda method: SpawnContext())
+    monkeypatch.setattr("invoice_hub.services.background_sync._run_background_sync_process", fast_sync_worker)
 
     started = time.monotonic()
-    state.run_background_diagnostics("startup_sync")
+    state.background.run_background_diagnostics("startup_sync")
     assert time.monotonic() - started < 0.5
     assert prior.kill_called.wait(timeout=2)
     assert prior.terminated == 1
@@ -2468,7 +2569,7 @@ def test_new_background_generation_retires_prior_worker_with_bounded_kill(tmp_pa
 
 def test_background_retire_timeout_keeps_pid_snapshot_after_process_close(tmp_path: Path, monkeypatch) -> None:
     with monkeypatch.context() as startup_patch:
-        startup_patch.setattr(AppState, "run_background_diagnostics", lambda self, trigger="startup_sync": None)
+        startup_patch.setattr(BackgroundSyncService, "run_background_diagnostics", lambda self, trigger="startup_sync": None)
         app = create_app(tmp_path)
     state = app.state.invoice_hub
 
@@ -2496,7 +2597,7 @@ def test_background_retire_timeout_keeps_pid_snapshot_after_process_close(tmp_pa
             return None
 
     process = ProcessClosedByPeer()
-    state._retire_background_process_async(process, generation=4, reason="test_closed_process")
+    state.background._retire_background_process_async(process, generation=4, reason="test_closed_process")
 
     deadline = time.monotonic() + 2
     events = []
@@ -2517,12 +2618,12 @@ def test_background_retire_timeout_keeps_pid_snapshot_after_process_close(tmp_pa
 
 def test_background_worker_rejecting_kill_stays_managed_without_sync_failure(tmp_path: Path, monkeypatch) -> None:
     with monkeypatch.context() as startup_patch:
-        startup_patch.setattr(AppState, "run_background_diagnostics", lambda self, trigger="startup_sync": None)
+        startup_patch.setattr(BackgroundSyncService, "run_background_diagnostics", lambda self, trigger="startup_sync": None)
         app = create_app(tmp_path)
     state = app.state.invoice_hub
-    monkeypatch.setattr("invoice_hub.services.app_state.BACKGROUND_SYNC_MAX_SECONDS", 0.01)
-    monkeypatch.setattr("invoice_hub.services.app_state.BACKGROUND_SYNC_TERMINATE_JOIN_SECONDS", 0.0)
-    monkeypatch.setattr("invoice_hub.services.app_state.BACKGROUND_SYNC_KILL_JOIN_SECONDS", 0.0)
+    monkeypatch.setattr("invoice_hub.services.background_sync.BACKGROUND_SYNC_MAX_SECONDS", 0.01)
+    monkeypatch.setattr("invoice_hub.services.background_sync.BACKGROUND_SYNC_TERMINATE_JOIN_SECONDS", 0.0)
+    monkeypatch.setattr("invoice_hub.services.background_sync.BACKGROUND_SYNC_KILL_JOIN_SECONDS", 0.0)
 
     class ResultPipe:
         def __init__(self) -> None:
@@ -2607,12 +2708,12 @@ def test_background_worker_rejecting_kill_stays_managed_without_sync_failure(tmp
             created.append(process)
             return process
 
-    def fast_sync_worker(profile_payload, db_path, reference_markup_rate, trigger, result_sender) -> None:
+    def fast_sync_worker(profile_payload, db_path, reference_markup_rate, trigger, result_sender, company_taxpayer=None, company_outbound=None) -> None:
         result_sender.send({"ok": True, "sync": {"ok": True, "target_id": profile_payload["id"], "rebuilt": False}})
 
-    monkeypatch.setattr("invoice_hub.services.app_state.multiprocessing.get_context", lambda method: SpawnContext())
-    monkeypatch.setattr("invoice_hub.services.app_state._run_background_sync_process", fast_sync_worker)
-    state.run_background_diagnostics("startup_sync")
+    monkeypatch.setattr("invoice_hub.services.background_sync.multiprocessing.get_context", lambda method: SpawnContext())
+    monkeypatch.setattr("invoice_hub.services.background_sync._run_background_sync_process", fast_sync_worker)
+    state.background.run_background_diagnostics("startup_sync")
 
     deadline = time.monotonic() + 2
     while time.monotonic() < deadline:
@@ -2630,11 +2731,11 @@ def test_background_worker_rejecting_kill_stays_managed_without_sync_failure(tmp
     assert isinstance(refusing, RefusingProcess)
     assert "server.background_worker_retire_timeout" in event_types
     assert not {"monitor.sync_failed", "server.background_failed", "server.background_ready"}.intersection(event_types)
-    assert state._background_status == "running"
-    assert id(refusing) in state._retiring_background_processes
+    assert state.background._background_status == "running"
+    assert id(refusing) in state.background._retiring_background_processes
 
     before_retry = refusing.kill_calls
-    state.run_background_diagnostics("startup_sync")
+    state.background.run_background_diagnostics("startup_sync")
     retry_deadline = time.monotonic() + 2
     while time.monotonic() < retry_deadline and refusing.kill_calls <= before_retry:
         time.sleep(0.01)
@@ -2712,7 +2813,7 @@ def test_monitor_recovery_auth_signs_exact_response_and_rejects_replay(
     monkeypatch,
 ) -> None:
     monkeypatch.setattr(
-        "invoice_hub.services.app_state.AppState.run_background_diagnostics",
+        "invoice_hub.services.background_sync.BackgroundSyncService.run_background_diagnostics",
         lambda self, trigger="startup_sync": None,
     )
     secret = bytes.fromhex("5a" * 32)
@@ -2749,7 +2850,7 @@ def test_monitor_recovery_auth_rejects_tampered_or_incomplete_requests(
     monkeypatch,
 ) -> None:
     monkeypatch.setattr(
-        "invoice_hub.services.app_state.AppState.run_background_diagnostics",
+        "invoice_hub.services.background_sync.BackgroundSyncService.run_background_diagnostics",
         lambda self, trigger="startup_sync": None,
     )
     secret = bytes.fromhex("6b" * 32)
@@ -2795,7 +2896,7 @@ def test_monitor_recovery_auth_rejects_tampered_or_incomplete_requests(
 def test_bridge_open_runtime_paths_use_platform_open(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv('INVOICE_HUB_DISABLE_OPEN', '1')
     monkeypatch.setattr(
-        "invoice_hub.services.app_state.AppState.run_background_diagnostics",
+        "invoice_hub.services.background_sync.BackgroundSyncService.run_background_diagnostics",
         lambda self, trigger="startup_sync": None,
     )
     app = create_app(tmp_path)
@@ -2871,13 +2972,13 @@ def test_manual_fields_are_persisted_to_active_summary(tmp_path: Path, monkeypat
 
 def test_manual_fields_api_waits_for_current_profile_lock_without_blocking_health(tmp_path: Path, monkeypatch) -> None:
     with monkeypatch.context() as startup_patch:
-        startup_patch.setattr(AppState, "run_background_diagnostics", lambda self, trigger="startup_sync": None)
+        startup_patch.setattr(BackgroundSyncService, "run_background_diagnostics", lambda self, trigger="startup_sync": None)
         app = create_app(tmp_path)
     state = app.state.invoice_hub
     watch = Path(state.active_profile.watch_dir)
     source = watch / "sample.xml"
     source.write_text((Path(__file__).parent / "fixtures" / "sample_invoice.xml").read_text(encoding="utf-8"), encoding="utf-8")
-    assert state.bridge_rebuild()["ok"] is True
+    assert state.monitor.bridge_rebuild()["ok"] is True
 
     holder_state = MonitorState(state.active_profile, state.layout.db_path)
     lock_entered = threading.Event()
@@ -2886,7 +2987,7 @@ def test_manual_fields_api_waits_for_current_profile_lock_without_blocking_healt
     update_finished = threading.Event()
     health_finished = threading.Event()
     responses = {}
-    original_update = state.update_manual_fields
+    original_update = state.invoices.update_manual_fields
 
     def hold_lock() -> None:
         with holder_state.sync_write_lock():
@@ -2912,7 +3013,7 @@ def test_manual_fields_api_waits_for_current_profile_lock_without_blocking_healt
         finally:
             health_finished.set()
 
-    monkeypatch.setattr(state, "update_manual_fields", observed_update)
+    monkeypatch.setattr(state.invoices, "update_manual_fields", observed_update)
     holder = threading.Thread(target=hold_lock)
     with TestClient(app) as client:
         holder.start()
@@ -2938,23 +3039,23 @@ def test_manual_fields_api_waits_for_current_profile_lock_without_blocking_healt
     assert responses["health"].status_code == 200
     assert responses["update"].status_code == 200
     assert responses["update"].json()["ok"] is True
-    assert state.invoice_detail("0")["invoice"]["seller"] == "并发手工销售方"
+    assert state.invoices.invoice_detail("0")["invoice"]["seller"] == "并发手工销售方"
 
 
 def test_manual_fields_suppresses_stale_profile_event_after_old_profile_write(tmp_path: Path, monkeypatch) -> None:
     with monkeypatch.context() as startup_patch:
-        startup_patch.setattr(AppState, "run_background_diagnostics", lambda self, trigger="startup_sync": None)
+        startup_patch.setattr(BackgroundSyncService, "run_background_diagnostics", lambda self, trigger="startup_sync": None)
         app = create_app(tmp_path)
     state = app.state.invoice_hub
     first_profile = state.active_profile.model_copy(deep=True)
     source = Path(first_profile.watch_dir) / "sample.xml"
     source.write_text((Path(__file__).parent / "fixtures" / "sample_invoice.xml").read_text(encoding="utf-8"), encoding="utf-8")
-    assert state.bridge_rebuild()["ok"] is True
+    assert state.monitor.bridge_rebuild()["ok"] is True
     next_watch_dir = tmp_path / "切换后的发票文件"
     next_watch_dir.mkdir()
     next_profile = target_profile_for(state.config, next_watch_dir)
     event_seq = state.repo.event_bounds()["max_seq"]
-    app_state_module = importlib.import_module("invoice_hub.services.app_state")
+    app_state_module = importlib.import_module("invoice_hub.services.invoice_list")
     original_write_summary_xlsx = app_state_module.write_summary_xlsx
 
     def switch_profile_after_old_write(path: Path, rows: list[dict[str, str]]) -> None:
@@ -2964,7 +3065,7 @@ def test_manual_fields_suppresses_stale_profile_event_after_old_profile_write(tm
 
     monkeypatch.setattr(app_state_module, "write_summary_xlsx", switch_profile_after_old_write)
 
-    result = state.update_manual_fields("0", {"fields": {"销售方": "旧目录手工销售方"}})
+    result = state.invoices.update_manual_fields("0", {"fields": {"销售方": "旧目录手工销售方"}})
 
     assert result["ok"] is True
     assert state.active_profile.id == next_profile.id
@@ -2975,7 +3076,7 @@ def test_manual_fields_suppresses_stale_profile_event_after_old_profile_write(tm
 
 
 def test_invoice_detail_returns_cost_breakdown_by_invoice_number(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setattr("invoice_hub.services.app_state.AppState.run_background_diagnostics", lambda self, trigger="startup_sync": None)
+    monkeypatch.setattr("invoice_hub.services.background_sync.BackgroundSyncService.run_background_diagnostics", lambda self, trigger="startup_sync": None)
     app = create_app(tmp_path)
     state = app.state.invoice_hub
     watch = Path(state.active_profile.watch_dir)
@@ -2983,7 +3084,7 @@ def test_invoice_detail_returns_cost_breakdown_by_invoice_number(tmp_path: Path,
     source.write_text("<invoice />", encoding="utf-8")
     write_csv_rows(Path(state.active_profile.workspace_dir) / "发票汇总.csv", SUMMARY_HEADERS, [_summary_invoice_row(source)])
     write_csv_rows(
-        state.cost_service().detail_csv,
+        state.costs.cost_service().detail_csv,
         DETAIL_HEADERS,
         [
             _cost_detail_row("10000000000000000001", source, "螺纹钢", "HRB400E 12", "2", "200", "26", "226"),
@@ -3014,7 +3115,7 @@ def test_invoice_detail_returns_cost_breakdown_by_invoice_number(tmp_path: Path,
 
 
 def test_invoice_detail_cost_breakdown_falls_back_to_source_file(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setattr("invoice_hub.services.app_state.AppState.run_background_diagnostics", lambda self, trigger="startup_sync": None)
+    monkeypatch.setattr("invoice_hub.services.background_sync.BackgroundSyncService.run_background_diagnostics", lambda self, trigger="startup_sync": None)
     app = create_app(tmp_path)
     state = app.state.invoice_hub
     watch = Path(state.active_profile.watch_dir)
@@ -3022,7 +3123,7 @@ def test_invoice_detail_cost_breakdown_falls_back_to_source_file(tmp_path: Path,
     source.write_text("<invoice />", encoding="utf-8")
     write_csv_rows(Path(state.active_profile.workspace_dir) / "发票汇总.csv", SUMMARY_HEADERS, [_summary_invoice_row(source, invoice_number="999")])
     write_csv_rows(
-        state.cost_service().detail_csv,
+        state.costs.cost_service().detail_csv,
         DETAIL_HEADERS,
         [_cost_detail_row("10000000000000000001", source.name, "盘螺", "HPB300 10", "1.5", "150", "19.5", "169.5")],
     )
@@ -3039,7 +3140,7 @@ def test_invoice_detail_cost_breakdown_falls_back_to_source_file(tmp_path: Path,
 
 
 def test_invoice_detail_cost_breakdown_empty_when_cost_detail_missing(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setattr("invoice_hub.services.app_state.AppState.run_background_diagnostics", lambda self, trigger="startup_sync": None)
+    monkeypatch.setattr("invoice_hub.services.background_sync.BackgroundSyncService.run_background_diagnostics", lambda self, trigger="startup_sync": None)
     app = create_app(tmp_path)
     state = app.state.invoice_hub
     source = Path(state.active_profile.watch_dir) / "no-cost.xml"
@@ -3060,7 +3161,7 @@ def test_invoice_detail_cost_breakdown_empty_when_cost_detail_missing(tmp_path: 
 
 
 def test_invoice_selection_summary_deduplicates_conflicts_and_splits_tax_rates(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setattr("invoice_hub.services.app_state.AppState.run_background_diagnostics", lambda self, trigger="startup_sync": None)
+    monkeypatch.setattr("invoice_hub.services.background_sync.BackgroundSyncService.run_background_diagnostics", lambda self, trigger="startup_sync": None)
     app = create_app(tmp_path)
     state = app.state.invoice_hub
     watch = Path(state.active_profile.watch_dir)
@@ -3093,7 +3194,7 @@ def test_invoice_selection_summary_deduplicates_conflicts_and_splits_tax_rates(t
         _cost_detail_row(family_b_number, sources[2], "钢筋", "HRB400E 12", "1", "100", "9", "109", tax_rate="9%"),
         _cost_detail_row(family_b_number, sources[3], "钢筋", "HRB400E 14", "1", "80", "0", "80", tax_rate=""),
     ]
-    write_csv_rows(state.cost_service().detail_csv, DETAIL_HEADERS, cost_rows)
+    write_csv_rows(state.costs.cost_service().detail_csv, DETAIL_HEADERS, cost_rows)
     client = TestClient(app)
     invoice_items = client.get("/api/v1/invoices").json()["items"]
 
@@ -3150,7 +3251,7 @@ def test_invoice_selection_summary_deduplicates_conflicts_and_splits_tax_rates(t
 
 
 def test_invoice_selection_summary_does_not_block_health_while_sync_work_is_running(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setattr("invoice_hub.services.app_state.AppState.run_background_diagnostics", lambda self, trigger="startup_sync": None)
+    monkeypatch.setattr("invoice_hub.services.background_sync.BackgroundSyncService.run_background_diagnostics", lambda self, trigger="startup_sync": None)
     app = create_app(tmp_path)
     state = app.state.invoice_hub
     selection_started = threading.Event()
@@ -3165,7 +3266,7 @@ def test_invoice_selection_summary_does_not_block_health_while_sync_work_is_runn
             raise TimeoutError("test did not release selection summary")
         return {"ok": True, "items": payload.get("items", [])}
 
-    monkeypatch.setattr(state, "invoice_selection_summary", blocking_selection_summary)
+    monkeypatch.setattr(state.selection, "invoice_selection_summary", blocking_selection_summary)
 
     with TestClient(app) as client:
         def request_selection_summary() -> None:
@@ -3204,7 +3305,7 @@ def test_invoice_selection_summary_does_not_block_health_while_sync_work_is_runn
 
 
 def test_invoice_selection_summary_uses_filename_and_source_fallbacks(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setattr("invoice_hub.services.app_state.AppState.run_background_diagnostics", lambda self, trigger="startup_sync": None)
+    monkeypatch.setattr("invoice_hub.services.background_sync.BackgroundSyncService.run_background_diagnostics", lambda self, trigger="startup_sync": None)
     app = create_app(tmp_path)
     state = app.state.invoice_hub
     watch = Path(state.active_profile.watch_dir)
@@ -3230,7 +3331,7 @@ def test_invoice_selection_summary_uses_filename_and_source_fallbacks(tmp_path: 
         [*filename_rows, manual_row, missing_row],
     )
     write_csv_rows(
-        state.cost_service().detail_csv,
+        state.costs.cost_service().detail_csv,
         DETAIL_HEADERS,
         [
             _cost_detail_row(filename_number, filename_sources[0].name, "水泥", "P.O 42.5", "2", "100", "13", "113"),
@@ -3275,7 +3376,7 @@ def test_invoice_selection_summary_uses_filename_and_source_fallbacks(tmp_path: 
 
 
 def test_invoice_selection_summary_rejects_invalid_and_stale_requests(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setattr("invoice_hub.services.app_state.AppState.run_background_diagnostics", lambda self, trigger="startup_sync": None)
+    monkeypatch.setattr("invoice_hub.services.background_sync.BackgroundSyncService.run_background_diagnostics", lambda self, trigger="startup_sync": None)
     app = create_app(tmp_path)
     state = app.state.invoice_hub
     source = Path(state.active_profile.watch_dir) / "selected.xml"
@@ -3336,7 +3437,7 @@ def test_native_picker_contract_can_be_mocked(tmp_path: Path, monkeypatch) -> No
 
 
 def test_native_picker_routes_reject_cross_origin_writes(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setattr("invoice_hub.services.app_state.AppState.run_background_diagnostics", lambda self, trigger="startup_sync": None)
+    monkeypatch.setattr("invoice_hub.services.background_sync.BackgroundSyncService.run_background_diagnostics", lambda self, trigger="startup_sync": None)
     app = create_app(tmp_path)
     client = TestClient(app)
 
@@ -3351,7 +3452,7 @@ def test_native_picker_routes_reject_cross_origin_writes(tmp_path: Path, monkeyp
 
 
 def test_tauri_picker_routes_require_the_exact_localhost_origin(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setattr("invoice_hub.services.app_state.AppState.run_background_diagnostics", lambda self, trigger="startup_sync": None)
+    monkeypatch.setattr("invoice_hub.services.background_sync.BackgroundSyncService.run_background_diagnostics", lambda self, trigger="startup_sync": None)
     monkeypatch.setattr(host_rpc, "_captured_configuration", ("", ""))
     monkeypatch.setenv(host_rpc.HOST_RPC_URL_ENV, "http://127.0.0.1:43123/v1/host-rpc")
     monkeypatch.setenv(host_rpc.HOST_RPC_TOKEN_ENV, "a" * 64)
@@ -3364,7 +3465,7 @@ def test_tauri_picker_routes_require_the_exact_localhost_origin(tmp_path: Path, 
 
 
 def test_desktop_host_challenge_is_private_and_not_part_of_the_public_openapi(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setattr("invoice_hub.services.app_state.AppState.run_background_diagnostics", lambda self, trigger="startup_sync": None)
+    monkeypatch.setattr("invoice_hub.services.background_sync.BackgroundSyncService.run_background_diagnostics", lambda self, trigger="startup_sync": None)
     secret = "a" * 64
     challenge = "b" * 64
     monkeypatch.setenv(host_rpc.DESKTOP_HOST_SECRET_ENV, secret)

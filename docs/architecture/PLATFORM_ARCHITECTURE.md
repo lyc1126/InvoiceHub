@@ -1,11 +1,9 @@
 # InvoiceHub 平台架构：共享核心、Windows 与 macOS
 
-2026-09-08 本附录与开发架构总入口统一以 `main` 的 PR #20 合并提交为产品实现及后续发行源码基线，精确身份见 [分支记录](../BRANCH_STATUS.md)；下文旧分支名只记录来源，不能再作为并行真值。源码 CI 不替代平台成品验收。
+> **文档状态**：当前跨平台实现的权威附录（历史日期段落已收拢至 [CHANGELOG.md](../../CHANGELOG.md)）。
+> **公共基线**：单一脱敏根提交；开发版本真值见 [version.py](../../src/invoice_hub/version.py)（当前 `1.0.0-beta.1`），精确分支与提交以实时 Git 与 [分支记录](../BRANCH_STATUS.md) 为准。
 
-> 文档状态：当前跨平台实现的权威附录
-> 更新日期：2026-08-28
-> 公共基线：单一脱敏根提交。退休的私有提交、Tag、包和验证材料不属于公开发行输入。
-> 当前发行状态：候选树、保留 Git 对象和托管面验证已完成，仓库现为 public；`0.3.0-alpha.2` public-preview 的双平台组装、macOS package identity、LaunchServices/quarantine smoke、SSE 关闭修复与 receipt finalization 门禁均已进入 `main`。远端同名 Tag 仍指向此前基线，最终构建须从干净 `main` 经新的明确授权重建；此前 foundation、internal-alpha 与 recovery-smoke 结果保留为历史上下文；尚无 Release、资产、SignPath 请求或 Feed。
+功能约束按需读取：[Windows](rules/WINDOWS.md)、[macOS 参考壳](rules/MACOS.md)、[Tauri 宿主](rules/TAURI_HOST.md)、[构建与发行](rules/RELEASE.md)。先按 [任务快速索引](AGENT_TASK_MAP.md#quick-lookup) 定位全部命中项，再读取规则全文及对应实现章节；AGENTS.md 保留全局必读规则。
 
 本页只解释平台边界。领域模型、API、投影和 monitor 的详细契约分别见[开发架构总入口](../DEVELOPMENT_ARCHITECTURE.md)、[接口与运行流程](INTERFACES_AND_FLOWS.md)和[数据结构与算法](DATA_AND_ALGORITHMS.md)。
 
@@ -104,7 +102,7 @@ flowchart TB
 
 该一次 smoke 使用 development-only 的显式、已存在、绝对外置 state root，不读写真实 Application Support；host 会 canonicalize 它并拒绝其位于 bundle/core 内或包住 bundle/core。它确认 health/background ready、首页/静态资源和 `desktop_available=true` 的默认 desktop。外部 AppleScript quit 曾绕过 shutdown POST 并留下 stale server state，该外部路径仍不作有序退出承诺；P1-Q 随后在 clean-commit 样本上以真实 Cmd-Q 确认 shutdown POST 200、stopped state、monitor 未运行、host/backend/PID/端口清理，SSE 未及时退出时由显式 kill+wait 兜底。development manifest 明确禁用 updater，且 state-root override 不会传给 Python child。browser、tray 点击、单实例、native picker、打印、下载/验签/安装、DMG、Developer ID、公证和 Windows 均未覆盖。
 
-Host RPC 是 host 的随机 loopback listener；host 只将 token 传给其直接启动的 Python backend，backend 启动时捕获并从 descendant 环境清除。网页没有 token、Tauri command 或 event 通道，token 也不进入 API 响应或日志；backend 的 picker 面只能发起四种固定 picker enum，更新面独立地只能发起 `update_check` / `update_install` 两个固定 enum。同一进程具备 Tauri marker 与 private RPC 时，API、设置页和后台 timer 的公开更新检查都是 strict delegated-install preflight；只有非 Tauri/非 host 检查不获取 `_host_update_lock` 并保留 cache/ETag/nonblocking-busy 语义。host 检查锁竞争立即返回不持久化 busy，且不会调用 metadata/candidate 或清除既有 approval；install 锁竞争立即抛脱敏 `HostRpcError`，不消费 approval 或发第二次 RPC。
+Host RPC 是 host 的随机 loopback listener；host 只将 token 传给其直接启动的 Python backend，backend 启动时捕获并从 descendant 环境清除。网页没有 token、Tauri command 或 event 通道，token 也不进入 API 响应或日志；backend 的单路径 picker 面只能发起五种固定单路径 picker enum（公司资料夹为 `pick_company_directory`，另有临时识别多选），更新面独立地只能发起 `update_check` / `update_install` 两个固定 enum。同一进程具备 Tauri marker 与 private RPC 时，API、设置页和后台 timer 的公开更新检查都是 strict delegated-install preflight；只有非 Tauri/非 host 检查不获取 `_host_update_lock` 并保留 cache/ETag/nonblocking-busy 语义。host 检查锁竞争立即返回不持久化 busy，且不会调用 metadata/candidate 或清除既有 approval；install 锁竞争立即抛脱敏 `HostRpcError`，不消费 approval 或发第二次 RPC。
 
 Host candidate 最多保留 300 秒。启用 updater 的 profile 只在 startup gate 释放、`BackendHost` 注册后激活，从严格 identity 的 `runtime_dir` 打开 marker store，并先完成 authenticated startup restore；恢复失败保留 marker 和诊断界面并把 updater 固定为失败态。`update_install` 原子消费 fresh 完整候选、reserve runtime 并启动 latch-blocked worker；只有精确 `{"ok":true}` 完整写入并 flush 后才放行 Tauri download 内置验签 -> owned monitor pause/recheck -> install -> platform relaunch。响应写失败、worker spawn 失败或 latch 丢失固定进入 `CommitLost`，且不得下载、写 marker、停止 monitor 或安装。Updater metadata 与下载对象都固定 5 秒时限，不能使用插件默认的无时限请求永久占住 operation mutex。
 
@@ -229,7 +227,7 @@ monitor 的两次启动同步和 `ready/observer_active` 时序见[接口与运�
 
 | 验证层 | 共通 | Windows 追加 | macOS 追加 |
 |---|---|---|---|
-| 静态/单元 | pytest、compileall、JS syntax、文档契约 | BAT/PS1 编码和语法 | `swift test`、脚本 `bash -n` |
+| 静态/单元 | pytest、compileall、ruff、JS syntax 与 Node 交互测试、Vue 类型检查/组件测试、Rust fmt/clippy/test、文档契约 | BAT/PS1 编码和语法；Rust 测试与 clippy（暂只报告） | 脚本 `bash -n`；SwiftUI 参考壳 `swift test` 仅在相关路径变化时运行 |
 | 构建 | 三类 manifest、依赖锁、SBOM、敏感路径、资源版本 | 配置/RC preflight、隔离测试环境、产品 `python/Doc` 裁剪与基线保留、固定安装时间、`python/Scripts`/RECORD 规范、联网与离线各两次确定性 portable ZIP 且 SHA 相同 | `--build-only`；developer-local internal 的三份 ad-hoc App + ad-hoc DMG；正式 Release/arm64 Developer ID/notarized `.app/DMG/Sparkle ZIP` |
 | 运行 | health、API、投影、monitor ready | 正式 BAT、浏览器前台、Tk | `--verify`、WKWebView、NSOpenPanel、owned/external |
 | 发布 | 不携带本机/业务数据；新 RC 同一 source/core identity；Feed finalizer 复核实际资产/收据/源码与 release Tag | `v0.3` 需要 NSIS 安装/启动/托盘/更新烟测 | `v0.3` 需要 DMG/更新归档、签名、quarantine 与 Tauri updater 烟测 |

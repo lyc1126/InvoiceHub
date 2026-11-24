@@ -111,13 +111,76 @@ def test_missing_component_is_per_file_error_with_system_open(tmp_path):
     assert "系统打开" in job.files[0].reason
     assert service.get_file(job.job_id, 1).path == source
 
+    read_only_job = service.create_job([FilePreviewSource(source, source.name)], allow_system_open=False)
+    assert read_only_job.files[0].preview_type == "error"
+    assert read_only_job.files[0].error_code == "ofd_renderer_unavailable"
+    assert "系统打开" not in read_only_job.files[0].reason
+
+
+def test_dev_component_env_applies_only_outside_release_mode(tmp_path, monkeypatch):
+    fake_core = tmp_path / "bundle/invoice-hub-core"
+    fake_module = fake_core / "src/invoice_hub/services/ofd_rendering.py"
+    fake_module.parent.mkdir(parents=True)
+    fake_module.write_text("# synthetic\n", encoding="utf-8")
+    (fake_core / "invoice-hub-build.json").write_text("{}", encoding="utf-8")
+    dev_component = tmp_path / "repo/runtime/components/ofd-preview"
+    dev_component.mkdir(parents=True)
+    fake_prefix = tmp_path / "venv"
+    fake_prefix.mkdir()
+
+    monkeypatch.setattr(ofd, "__file__", str(fake_module))
+    monkeypatch.setattr(ofd.sys, "prefix", str(fake_prefix))
+    monkeypatch.delenv("INVOICE_HUB_RELEASE_MODE", raising=False)
+    monkeypatch.setenv(ofd.DEV_OFD_COMPONENT_ENV, str(dev_component))
+
+    # Development app bundle (invoice-hub-build.json without invoice-hub-package.json) honors absolute dev override.
+    assert ofd.OFDRenderer().component_dir == dev_component
+
+    # Relative override is ignored and stays fail-closed on packaged prefix.
+    monkeypatch.setenv(ofd.DEV_OFD_COMPONENT_ENV, "runtime/components/ofd-preview")
+    assert ofd.OFDRenderer().component_dir == fake_prefix / "components/ofd-preview"
+
+    # Release mode via env or invoice-hub-package.json ignores dev override unconditionally.
+    monkeypatch.setenv(ofd.DEV_OFD_COMPONENT_ENV, str(dev_component))
+    monkeypatch.setenv("INVOICE_HUB_RELEASE_MODE", "1")
+    assert ofd.OFDRenderer().component_dir == fake_prefix / "components/ofd-preview"
+
+    monkeypatch.delenv("INVOICE_HUB_RELEASE_MODE", raising=False)
+    (fake_core / "invoice-hub-package.json").write_text("{}", encoding="utf-8")
+    assert ofd.OFDRenderer().component_dir == fake_prefix / "components/ofd-preview"
+
+
+def test_verify_ofd_component_enforces_platform_and_hashes(tmp_path):
+    component = tmp_path / "ofd-preview"
+    files = {"java/bin/java.exe": b"win-java", "lib/ofd-preview.jar": b"jar"}
+    for name, content in files.items():
+        path = component / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(content)
+    manifest = {
+        "schema_version": 1,
+        "engine": "ofdrw-2.4.0",
+        "java_major": 21,
+        "platform": "windows-x64",
+        "source_fingerprint": ofd.COMPONENT_SOURCE_FINGERPRINT,
+        "files": {name: hashlib.sha256(content).hexdigest() for name, content in files.items()},
+    }
+    (component / "component.json").write_text(json.dumps(manifest), encoding="utf-8")
+    verified = ofd.verify_ofd_component(component, expected_platform="windows-x64")
+    assert verified["platform"] == "windows-x64"
+    with pytest.raises(ValueError, match="identity or source_fingerprint"):
+        ofd.verify_ofd_component(component, expected_platform="macos-arm64")
+    (component / "lib/ofd-preview.jar").write_bytes(b"tampered")
+    with pytest.raises(ValueError, match="SHA-256 mismatch"):
+        ofd.verify_ofd_component(component, expected_platform="windows-x64")
+
 
 def test_component_integrity_rejects_tampered_jar(tmp_path, monkeypatch):
     component = tmp_path / "component"; (component / "lib").mkdir(parents=True)
     (component / "lib/ofd-preview.jar").write_bytes(b"modified")
     (component / "component.json").write_text(json.dumps({"schema_version": 1, "engine": "ofdrw-2.4.0",
         "source_fingerprint": ofd.COMPONENT_SOURCE_FINGERPRINT, "java_major": 21, "platform": "macos-arm64",
-        "files": {"lib/ofd-preview.jar": hashlib.sha256(b"original").hexdigest()}}))
+        "files": {"lib/ofd-preview.jar": hashlib.sha256(b"original").hexdigest()}}), encoding="utf-8")
     monkeypatch.setattr(ofd, "_platform_id", lambda: "macos-arm64")
     with pytest.raises(ofd.OFDPreviewError, match="ofd_renderer_unavailable"):
         ofd.OFDRenderer(component)._component()
@@ -125,15 +188,16 @@ def test_component_integrity_rejects_tampered_jar(tmp_path, monkeypatch):
 
 def test_component_verification_cache_invalidates_on_file_changes(tmp_path, monkeypatch):
     component = tmp_path / "component"
+    platform_id = "windows-x64" if os.name == "nt" else "macos-arm64"
     java_name = "java/bin/java.exe" if os.name == "nt" else "java/bin/java"
     files = {java_name: b"java", "lib/ofd-preview.jar": b"jar"}
     for name, content in files.items():
         path = component / name; path.parent.mkdir(parents=True, exist_ok=True); path.write_bytes(content)
     manifest = {"schema_version": 1, "engine": "ofdrw-2.4.0", "java_major": 21,
-                "platform": "macos-arm64", "source_fingerprint": ofd.COMPONENT_SOURCE_FINGERPRINT,
+                "platform": platform_id, "source_fingerprint": ofd.COMPONENT_SOURCE_FINGERPRINT,
                 "files": {name: hashlib.sha256(content).hexdigest() for name, content in files.items()}}
-    (component / "component.json").write_text(json.dumps(manifest))
-    monkeypatch.setattr(ofd, "_platform_id", lambda: "macos-arm64")
+    (component / "component.json").write_text(json.dumps(manifest), encoding="utf-8")
+    monkeypatch.setattr(ofd, "_platform_id", lambda: platform_id)
     original_read = Path.read_bytes
     reads = []
     def read_bytes(path):
@@ -153,7 +217,7 @@ def test_component_verification_cache_invalidates_on_file_changes(tmp_path, monk
     jar.write_bytes(b"jar")
     assert renderer._component() == expected
     manifest["source_fingerprint"] = "wrong"
-    (component / "component.json").write_text(json.dumps(manifest))
+    (component / "component.json").write_text(json.dumps(manifest), encoding="utf-8")
     with pytest.raises(ofd.OFDPreviewError, match="ofd_renderer_unavailable"):
         renderer._component()
 
@@ -173,7 +237,7 @@ def test_worker_timeout_cleans_temp_and_does_not_inherit_secrets(tmp_path, monke
         assert kwargs["timeout"] == 25
         assert "-Djava.security.manager=default" in command
         assert source.as_posix() not in command
-        policy = (kwargs["cwd"] / "preview.policy").read_text()
+        policy = (kwargs["cwd"] / "preview.policy").read_text(encoding="utf-8")
         assert "SocketPermission" not in policy and '"execute"' not in policy
         raise subprocess.TimeoutExpired(command, 25)
     monkeypatch.setattr(ofd.subprocess, "run", run)
@@ -296,7 +360,7 @@ def test_native_api_mixed_preview_renewal_and_source_change(tmp_path, monkeypatc
     from invoice_hub.projections.summary import SUMMARY_HEADERS
     from invoice_hub.storage.files import write_csv_rows
     from test_file_preview import _summary_row, _write_pdf, _selection
-    monkeypatch.setattr("invoice_hub.services.app_state.AppState.run_background_diagnostics", lambda *a, **kw: None)
+    monkeypatch.setattr("invoice_hub.services.background_sync.BackgroundSyncService.run_background_diagnostics", lambda *a, **kw: None)
     app = create_app(tmp_path)
     state = app.state.invoice_hub
     state._file_preview_service._ofd_renderer = ofd.OFDRenderer(Path(COMPONENT))
@@ -323,3 +387,38 @@ def test_native_api_mixed_preview_renewal_and_source_change(tmp_path, monkeypatc
     assert client.get(url).status_code == 409
     pdf_entry = next(f for f in payload["files"] if f["file_name"] == "sample.pdf")
     assert client.get(pdf_entry["page_url_template"].replace("{page_number}", "1")).status_code == 200
+
+
+@pytest.mark.skipif(not COMPONENT, reason="requires explicitly built native OFD component")
+def test_native_mounted_source_ofd_preview_renders_all_pages(tmp_path):
+    from types import SimpleNamespace
+    from invoice_hub.services.sources import SourceService
+    from test_server_sources import wait
+
+    previews = FilePreviewService()
+    previews._ofd_renderer = ofd.OFDRenderer(Path(COMPONENT))
+    service = SourceService(
+        tmp_path / "private",
+        previews=previews,
+        companies=SimpleNamespace(get_company=lambda _: {"company": {"name": "合成", "taxpayer_periods": []}}),
+    )
+    try:
+        share = tmp_path / "share"
+        share.mkdir()
+        source = share / "remote-sample.ofd"
+        write_ofd(source)
+        sid = service.add({"protocol": "mounted", "name": "合成共享", "root": str(share)})["id"]
+        service.start(sid, "scan")
+        assert wait(service, sid)["connection"] == "online"
+        entry = service.entries(sid)["items"][0]
+        service.start(sid, "download", entry_id=entry["id"])
+        assert wait(service, sid)["sync"] == "idle"
+        preview = service.preview(sid, entry_ids=[entry["id"]])
+        assert preview["preview_type"] == "pages"
+        assert preview["page_count"] == 2
+        for page_number in (1, 2):
+            png = service.preview_content(sid, preview["job_id"], page_number, file_number=1)
+            assert png.startswith(b"\x89PNG\r\n\x1a\n")
+        service.release_preview(sid, preview["job_id"])
+    finally:
+        service.close()

@@ -6,9 +6,10 @@ import json
 import os
 import re
 import xml.etree.ElementTree as ET
+import unicodedata
 import zipfile
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from pathlib import Path
@@ -19,13 +20,29 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
 from invoice_hub.extraction import extract_invoice_record, normalize_classification_text
+from invoice_hub.extraction.classification import (
+    BUSINESS_TYPE_PASSENGER,
+    CLASSIFICATION_STATUS_OK,
+    INVOICE_TYPE_ORDINARY,
+    INVOICE_TYPE_SPECIAL,
+)
+from invoice_hub.targets.companies import taxpayer_type_for
 
 
 COST_DETAIL_CSV_NAME = "成本发票明细.csv"
+COST_PARSER_VERSION = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
 COST_SUMMARY_XLSX_NAME = "成本发票汇总.xlsx"
 COST_REFERENCE_STATUS_NAME = "成本开票状态.json"
 DEFAULT_REFERENCE_MARKUP_RATE = Decimal("0.08")
+# Default output rate when a company has no saved tax profile; keeps old status files unchanged.
 REFERENCE_OUTPUT_TAX_RATE = Decimal("0.13")
+TAXPAYER_GENERAL = "general"
+TAXPAYER_SMALL_SCALE = "small_scale"
+TAXPAYER_LABELS = {TAXPAYER_GENERAL: "一般纳税人", TAXPAYER_SMALL_SCALE: "小规模纳税人"}
+SMALL_SCALE_USUAL_RATES = {Decimal("0"), Decimal("0.01"), Decimal("0.03"), Decimal("0.05")}
+INPUT_TAX_DEDUCTIBLE = "deductible"
+INPUT_TAX_NON_DEDUCTIBLE = "non_deductible"
+INPUT_TAX_PENDING = "pending"
 
 DETAIL_HEADERS = [
     "销售方",
@@ -95,6 +112,12 @@ INVOICE_REFERENCE_HEADERS = [
     "未开参考价税合计",
     "参考加价率",
     "状态更新时间",
+    "成本口径",
+    "销项税率",
+    "销项数量",
+    "销项除税单价",
+    "实际加价率",
+    "销项比对",
 ]
 
 CHECK_HEADERS = [
@@ -376,11 +399,599 @@ def purchase_reference_average_unit_price_with_tax(rows: list[dict]) -> Decimal 
     return total / Decimal(count)
 
 
-def reference_output_average_unit_price_with_tax(avg_price: Decimal | None, markup_rate: object) -> Decimal | None:
+def reference_output_average_unit_price_with_tax(
+    avg_price: Decimal | None,
+    markup_rate: object,
+    output_tax_rate: Decimal = REFERENCE_OUTPUT_TAX_RATE,
+) -> Decimal | None:
     if avg_price is None:
         return None
     reference_average_unit_price = avg_price * reference_markup_multiplier(markup_rate)
-    return reference_average_unit_price * (Decimal("1") + REFERENCE_OUTPUT_TAX_RATE)
+    return reference_average_unit_price * (Decimal("1") + output_tax_rate)
+
+
+@dataclass(frozen=True)
+class ReferenceTaxProfile:
+    """Company-level tax settings saved in `watch_dir/成本开票状态.json` under `tax_profile`.
+
+    The workbook, the cost API, status saving and page-costs.js all price the 开票参考 from this
+    one profile; a missing profile means 一般纳税人 + 13%, which is the pre-profile behaviour.
+    """
+
+    taxpayer_type: str = TAXPAYER_GENERAL
+    output_tax_rate: Decimal = REFERENCE_OUTPUT_TAX_RATE
+    configured: bool = False
+    # Set by effective_tax_profile when the company registry supplies the taxpayer type; never
+    # written back to the status file, which keeps only what the cost page itself saved.
+    taxpayer_source: str = ""
+    company_name: str = ""
+    month: str = ""
+    taxpayer_periods: tuple = ()
+
+    def status_payload(self) -> dict:
+        return {
+            "taxpayer_type": self.taxpayer_type,
+            "output_tax_rate": _decimal_text(self.output_tax_rate, "0.000001"),
+            "output_tax_rate_percent": _decimal_text(self.output_tax_rate * Decimal("100"), "0.001"),
+        }
+
+    def api_payload(self) -> dict:
+        percent = _decimal_text(self.output_tax_rate * Decimal("100"), "0.001")
+        warning = ""
+        if self.taxpayer_type == TAXPAYER_SMALL_SCALE and self.output_tax_rate not in SMALL_SCALE_USUAL_RATES:
+            warning = "小规模纳税人通常按征收率 3%（或减按 1%）开票，请核对销项税率。"
+        return {
+            **self.status_payload(),
+            "taxpayer_type_label": TAXPAYER_LABELS[self.taxpayer_type],
+            "output_tax_rate_display": f"{percent}%",
+            "configured": self.configured,
+            "warning": warning,
+            # company_registry: type comes from the company list and cannot be changed here;
+            # cost_settings: saved on this page; default: nothing saved (一般纳税人 + 13%).
+            "taxpayer_source": self.taxpayer_source or ("cost_settings" if self.configured else "default"),
+            "company_name": self.company_name,
+            "source": "company" if self.taxpayer_source == "company_registry" else "fallback",
+            "month": self.month,
+        }
+
+
+def _tax_rate_from_percent(value: object) -> Decimal:
+    rate = _to_decimal(value)
+    if rate is None or not rate.is_finite() or rate < 0 or rate >= 100:
+        raise ValueError("销项税率必须是 0 到 100 之间的百分数")
+    return rate / Decimal("100")
+
+
+def parse_reference_tax_profile(value: object) -> ReferenceTaxProfile:
+    """Strict parser for user input (API); raises ValueError instead of silently defaulting."""
+    if not isinstance(value, dict):
+        raise ValueError("税务设置格式不正确")
+    taxpayer_type = _clean_text(value.get("taxpayer_type"))
+    if taxpayer_type not in TAXPAYER_LABELS:
+        raise ValueError("纳税人类型只能是一般纳税人或小规模纳税人")
+    return ReferenceTaxProfile(taxpayer_type, _tax_rate_from_percent(value.get("output_tax_rate_percent")), True)
+
+
+def effective_tax_profile(profile: ReferenceTaxProfile, company_taxpayer: dict | None) -> ReferenceTaxProfile:
+    """Apply the company registry's taxpayer type (it wins, 2026-11-10); keep the saved rate.
+
+    ``company_taxpayer`` comes from ``targets.companies.company_taxpayer_for``. The output rate
+    stays the cost page's own value: the registry does not choose between 3% and 1%, and a rate
+    that does not fit a small-scale company is flagged by ``api_payload`` instead of guessed.
+    """
+    taxpayer_type = str((company_taxpayer or {}).get("taxpayer_type") or "")
+    if company_taxpayer and company_taxpayer.get("periods"):
+        profile = replace(profile, taxpayer_periods=tuple(company_taxpayer["periods"]))
+    if taxpayer_type not in TAXPAYER_LABELS:
+        return profile
+    return replace(
+        profile,
+        taxpayer_type=taxpayer_type,
+        taxpayer_source="company_registry",
+        company_name=str(company_taxpayer.get("company_name") or ""),
+        month=str(company_taxpayer.get("month") or ""),
+        taxpayer_periods=tuple(company_taxpayer.get("periods") or ()),
+    )
+
+
+def reference_tax_profile_from_status(payload: object) -> ReferenceTaxProfile:
+    """Tolerant reader for saved status files: anything unreadable falls back to the default."""
+    raw = payload.get("tax_profile") if isinstance(payload, dict) else None
+    if not isinstance(raw, dict):
+        return ReferenceTaxProfile()
+    try:
+        return parse_reference_tax_profile(raw)
+    except ValueError:
+        return ReferenceTaxProfile()
+
+
+def input_tax_deductibility(invoice: dict | None) -> str:
+    """Whether a general taxpayer may deduct this cost invoice's input VAT.
+
+    Only 增值税专用发票 and the 旅客运输 普票 are deductible; other 普票 put their VAT into cost.
+    An unconfirmed classification stays `pending` and is priced like before (不含税) so a
+    recognition gap never silently raises the reference price.
+    """
+    invoice = invoice or {}
+    invoice_type = normalize_classification_text(invoice.get("发票大类"))
+    status = _clean_text(invoice.get("类型识别状态"))
+    if status != CLASSIFICATION_STATUS_OK or invoice_type not in {INVOICE_TYPE_SPECIAL, INVOICE_TYPE_ORDINARY}:
+        return INPUT_TAX_PENDING
+    if invoice_type == INVOICE_TYPE_SPECIAL:
+        return INPUT_TAX_DEDUCTIBLE
+    if normalize_classification_text(invoice.get("特定业务类型")) == BUSINESS_TYPE_PASSENGER:
+        return INPUT_TAX_DEDUCTIBLE
+    return INPUT_TAX_NON_DEDUCTIBLE
+
+
+def input_tax_index(check_rows: Iterable[dict] | None) -> dict[str, str]:
+    """源文件 -> deductibility, read from the 发票校验 rows that carry each invoice's classification."""
+    return {
+        _clean_text(row.get("源文件")): input_tax_deductibility(row)
+        for row in check_rows or []
+        if _clean_text(row.get("源文件"))
+    }
+
+
+def purchase_taxpayer_type(tax_profile: ReferenceTaxProfile, issued: object) -> str | None:
+    """Purchase VAT follows the invoice month, including an uncovered history."""
+    if not tax_profile.taxpayer_periods:
+        return tax_profile.taxpayer_type
+    matched = re.match(r"(\d{4})\s*[-/.年]\s*(\d{1,2})", str(issued or ""))
+    month = f"{matched[1]}-{int(matched[2]):02d}" if matched and 1 <= int(matched[2]) <= 12 else ""
+    return taxpayer_type_for(list(tax_profile.taxpayer_periods), month) if month else None
+
+
+def reference_cost_basis(
+    rows: list[dict],
+    tax_profile: ReferenceTaxProfile,
+    deductibility: dict[str, str] | None = None,
+) -> dict:
+    """Weighted cost per unit used as the 开票参考 base: 金额(除税) + 不可抵扣的税金, divided by 数量.
+
+    小规模纳税人 cannot deduct any input VAT, so every row carries its tax; 一般纳税人 only for
+    non-deductible invoices. Any bad row makes the price empty, matching stock_average_unit_price.
+    """
+    deductibility = deductibility or {}
+    total_cost = Decimal("0")
+    total_quantity = Decimal("0")
+    taxed_rows = 0
+    pending_sources: set[str] = set()
+    unknown_identity = False
+    unit_price: Decimal | None = None
+    for row in rows:
+        amount = _to_decimal(row.get("金额(除税)"))
+        quantity = _to_decimal(row.get("数量"))
+        if amount is None or quantity is None or quantity <= 0 or amount < 0:
+            total_quantity = Decimal("0")
+            break
+        source = _clean_text(row.get("源文件"))
+        # Purchase VAT belongs to the invoice month. Today's output tax setting must not
+        # retroactively remove VAT from purchases made while the company was small-scale.
+        taxpayer = purchase_taxpayer_type(tax_profile, row.get("开票日期"))
+        if taxpayer is None:
+            # Unknown historical identity cannot be priced using today's taxpayer type.
+            unknown_identity = True
+            total_quantity = Decimal("0")
+            break
+        status = INPUT_TAX_NON_DEDUCTIBLE if taxpayer == TAXPAYER_SMALL_SCALE else deductibility.get(source, INPUT_TAX_PENDING)
+        if status == INPUT_TAX_NON_DEDUCTIBLE:
+            tax_amount = _to_decimal(row.get("税金"))
+            if tax_amount is None or tax_amount < 0:
+                total_quantity = Decimal("0")
+                break
+            amount += tax_amount
+            taxed_rows += 1
+        elif status == INPUT_TAX_PENDING:
+            pending_sources.add(source)
+        total_cost += amount
+        total_quantity += quantity
+    if total_quantity > 0:
+        unit_price = total_cost / total_quantity
+    if not rows or taxed_rows == 0:
+        label = "不含税"
+    elif taxed_rows == len(rows):
+        label = "含税"
+    else:
+        label = "部分含税"
+    note = "开票日期或历史纳税人身份未覆盖，成本单价待核对" if unknown_identity else f"{len(pending_sources)} 张发票类型待核对，暂按不含税计成本" if pending_sources else ""
+    return {"unit_price": unit_price, "label": label, "note": note}
+
+
+def reference_cost_basis_text(basis: dict) -> str:
+    return f"{basis['label']}（{basis['note']}）" if basis.get("note") else basis["label"]
+
+
+OUTBOUND_QUANTITY_TOLERANCE = Decimal("0.0005")
+UNIFORM_MARKUP_MIN_ITEMS = 3
+
+
+def outbound_reference_fields(
+    outbound_item: dict | None,
+    quantity_total: Decimal,
+    invoiced_quantity: Decimal,
+    cost_unit_price: Decimal | None,
+) -> dict:
+    """Compare one 开票参考 row with the 销项 (issued invoice) lines read for the same key.
+
+    The hand-entered 已开数量 stays authoritative: sales may be invoiced before their files are
+    filed, so the comparison only suggests a quantity and never overwrites saved status.
+    """
+    item = outbound_item or {}
+    quantity = _to_decimal(item.get("quantity")) or Decimal("0")
+    amount = _to_decimal(item.get("amount")) or Decimal("0")
+    unit_price = amount / quantity if quantity > 0 else None
+    markup = None
+    if unit_price is not None and cost_unit_price is not None and cost_unit_price > 0:
+        markup = unit_price / cost_unit_price - Decimal("1")
+    if not item or quantity == 0:
+        compare, text = "none", "无销项"
+    elif abs(invoiced_quantity - quantity) <= OUTBOUND_QUANTITY_TOLERANCE:
+        compare, text = "match", "一致"
+    elif quantity > invoiced_quantity:
+        compare, text = "outbound_more", f"销项多 {_decimal_text(quantity - invoiced_quantity, '0.001')}"
+    else:
+        compare, text = "manual_more", f"手填多 {_decimal_text(invoiced_quantity - quantity, '0.001')}（可能有未归档的销项）"
+    if quantity > quantity_total + OUTBOUND_QUANTITY_TOLERANCE:
+        text += f"；销项超过进项 {_decimal_text(quantity - quantity_total, '0.001')}"
+    suggested = min(max(quantity, Decimal("0")), quantity_total) if quantity_total > 0 else Decimal("0")
+    return {
+        "outbound_quantity": quantity,
+        "outbound_amount": amount,
+        "outbound_unit_price": unit_price,
+        "outbound_invoice_count": int(item.get("invoice_count") or 0),
+        "actual_markup_rate": markup,
+        "actual_markup_text": f"{_decimal_text(markup * Decimal('100'), '0.01')}%" if markup is not None else "",
+        "outbound_compare": compare,
+        "outbound_compare_text": text,
+        "outbound_suggested_quantity": suggested,
+    }
+
+
+ITEM_TYPE_GOODS = "goods"
+ITEM_TYPE_LABELS = {"goods": "货物", "service": "服务", "expense": "费用", "fixed_asset": "固定资产"}
+ITEM_STANDARD_NAME_MAX = 60
+# Top-level keys of 成本开票状态.json that belong to the company, not to one reference row;
+# every writer of the status file must carry them over unchanged.
+STATUS_PRESERVED_KEYS = ("tax_profile", "item_catalog", "reference_exclusions")
+REFERENCE_KEY_PATTERN = re.compile(r"^[0-9a-f]{40}$")
+
+
+def _catalog_name(value: object) -> str:
+    return re.sub(r"\s+", " ", unicodedata.normalize("NFKC", str(value or ""))).strip()
+
+
+def normalize_spec_text(value: object) -> str:
+    """规格只统一全角半角与空白；不改大小写，也不去掉 E 后缀（18E 与 18 是不同牌号）。"""
+    return re.sub(r"\s+", "", unicodedata.normalize("NFKC", str(value or "")))
+
+
+def parse_item_catalog(value: object) -> dict[str, dict]:
+    """Strict parser for the 品目表 the page saves: {原名称: {standard_name, type, output_tax_rate_percent}}."""
+    raw = value.get("items") if isinstance(value, dict) and isinstance(value.get("items"), dict) else value
+    if not isinstance(raw, dict):
+        raise ValueError("品目表格式不正确")
+    items: dict[str, dict] = {}
+    for name, entry in raw.items():
+        name = _catalog_name(name)
+        if not name or not isinstance(entry, dict):
+            raise ValueError("品目表名称不能为空")
+        standard = _catalog_name(entry.get("standard_name")) or name
+        if len(standard) > ITEM_STANDARD_NAME_MAX:
+            raise ValueError(f"标准名称不能超过 {ITEM_STANDARD_NAME_MAX} 个字：{standard[:20]}…")
+        item_type = _clean_text(entry.get("type")) or ITEM_TYPE_GOODS
+        if item_type not in ITEM_TYPE_LABELS:
+            raise ValueError(f"品目类型只能是货物、服务、费用或固定资产：{name}")
+        rate_text = _clean_text(entry.get("output_tax_rate_percent"))
+        if rate_text:
+            _tax_rate_from_percent(rate_text)
+        if standard == name and item_type == ITEM_TYPE_GOODS and not rate_text:
+            continue  # default entry; keeping it out of the file keeps old companies unchanged
+        items[name] = {"standard_name": standard, "type": item_type, "output_tax_rate_percent": rate_text}
+    return items
+
+
+def item_catalog_from_status(payload: object) -> dict[str, dict]:
+    """Tolerant reader for the saved 品目表; an unreadable catalog behaves like no catalog."""
+    raw = payload.get("item_catalog") if isinstance(payload, dict) else None
+    if not isinstance(raw, dict):
+        return {}
+    try:
+        return parse_item_catalog(raw)
+    except ValueError:
+        return {}
+
+
+def resolve_item(catalog: dict[str, dict], name: object) -> dict:
+    """标准名称 / 类型 / 税率 for one invoice item name, following 改名 chains (A→B→C) safely."""
+    current = _catalog_name(name)
+    seen: set[str] = set()
+    entry = catalog.get(current, {})
+    item_type = entry.get("type") or ITEM_TYPE_GOODS
+    rate = entry.get("output_tax_rate_percent") or ""
+    while current in catalog and current not in seen:
+        seen.add(current)
+        target = catalog[current].get("standard_name") or current
+        if target == current:
+            break
+        current = target
+        # The standard name's own settings win, so a merged group has one type and one rate.
+        if current in catalog:
+            item_type = catalog[current].get("type") or item_type
+            rate = catalog[current].get("output_tax_rate_percent") or rate
+    return {"standard_name": current, "type": item_type, "output_tax_rate_percent": rate}
+
+
+def reference_invoice_id(row: dict) -> str:
+    """Stable id of the invoice a cost line came from: its number, else the source file name."""
+    number = _valid_invoice_number(row.get("发票号码"))
+    return f"invoice:{number}" if number else f"source:{Path(_clean_text(row.get('源文件'))).name}"
+
+
+def parse_reference_exclusions(value: object) -> dict[str, list[str]]:
+    """Strict parser for the page's 移除 lists: {"keys": [reference_key], "invoices": [invoice id]}."""
+    if not isinstance(value, dict):
+        raise ValueError("移除清单格式不正确")
+    keys = value.get("keys") or []
+    invoices = value.get("invoices") or []
+    if not isinstance(keys, list) or not isinstance(invoices, list):
+        raise ValueError("移除清单格式不正确")
+    keys = sorted({_clean_text(key) for key in keys})
+    invoices = sorted({_clean_text(item) for item in invoices})
+    if any(not REFERENCE_KEY_PATTERN.match(key) for key in keys):
+        raise ValueError("移除的开票参考行标识不正确")
+    if any(not re.match(r"^(invoice:\d{8,20}|source:[^/\\]+)$", item) for item in invoices):
+        raise ValueError("移除的来源发票标识不正确")
+    return {"keys": keys, "invoices": invoices}
+
+
+def reference_exclusions_from_status(payload: object) -> dict[str, dict]:
+    """Saved 移除 lists with their display info; unreadable entries are ignored, never guessed."""
+    raw = payload.get("reference_exclusions") if isinstance(payload, dict) else None
+    result: dict[str, dict] = {"keys": {}, "invoices": {}}
+    if not isinstance(raw, dict):
+        return result
+    for field, pattern in (("keys", REFERENCE_KEY_PATTERN), ("invoices", re.compile(r"^(invoice:\d{8,20}|source:[^/\\]+)$"))):
+        entries = raw.get(field)
+        if isinstance(entries, dict):
+            for key, info in entries.items():
+                if pattern.match(str(key)):
+                    result[field][str(key)] = dict(info) if isinstance(info, dict) else {}
+    return result
+
+
+def canonical_reference_rows(
+    rows: list[dict],
+    catalog: dict[str, dict] | None,
+    exclusions: dict[str, dict] | None = None,
+) -> list[dict]:
+    """Rows as the 开票参考 groups them: name → 标准名称, spec whitespace/width unified, non-goods dropped.
+
+    Each row keeps `_member_key`, its pre-catalog grouping key, so status saved before a merge (or a
+    spec normalisation) is still found; with no catalog and clean specs every key is unchanged.
+    """
+    catalog = catalog or {}
+    # 移除 only takes lines out of the 开票参考; cost details, the workbook detail sheet and the
+    # saved 已开 status stay untouched so 恢复 brings the row back exactly as it was.
+    excluded_keys = set((exclusions or {}).get("keys") or {})
+    excluded_invoices = set((exclusions or {}).get("invoices") or {})
+    result = []
+    for row in rows:
+        values = (row.get("发票代码(**内文字)"), row.get("内部项目名称"), row.get("规格型号"), row.get("单位"))
+        item = resolve_item(catalog, values[1])
+        if item["type"] != ITEM_TYPE_GOODS:
+            continue
+        if excluded_invoices and reference_invoice_id(row) in excluded_invoices:
+            continue
+        canonical = dict(row)
+        canonical["内部项目名称"] = item["standard_name"] if catalog.get(_catalog_name(values[1])) else _clean_text(values[1])
+        canonical["规格型号"] = normalize_spec_text(values[2])
+        canonical["_member_key"] = _reference_key(*values)
+        canonical["_raw_values"] = values
+        canonical["_output_tax_rate_percent"] = item["output_tax_rate_percent"]
+        if excluded_keys and _reference_key(
+            canonical.get("发票代码(**内文字)"), canonical["内部项目名称"], canonical["规格型号"], canonical.get("单位")
+        ) in excluded_keys:
+            continue
+        result.append(canonical)
+    return result
+
+
+def canonical_outbound_items(
+    items: dict[str, dict] | None,
+    catalog: dict[str, dict] | None,
+    exclusions: dict[str, dict] | None = None,
+) -> dict[str, dict]:
+    """Regroup the saved 销项 summary (keyed by raw names) by the current 品目表 without re-reading files.
+
+    Removed 开票参考 rows drop their sales too, so they do not reappear as 未对上; removed source
+    invoices are purchase-side only and do not affect sales.
+    """
+    merged: dict[str, dict] = {}
+    key_exclusions = {"keys": (exclusions or {}).get("keys") or {}}
+    for item in (items or {}).values():
+        rows = canonical_reference_rows(
+            [{"发票代码(**内文字)": item.get("item_code"), "内部项目名称": item.get("item_name"), "规格型号": item.get("spec"), "单位": item.get("unit")}],
+            catalog,
+            key_exclusions,
+        )
+        if not rows:
+            continue
+        row = rows[0]
+        key = _reference_key(row["发票代码(**内文字)"], row["内部项目名称"], row["规格型号"], row["单位"])
+        target = merged.setdefault(key, {
+            "item_code": row["发票代码(**内文字)"] or "", "item_name": row["内部项目名称"], "spec": row["规格型号"], "unit": row["单位"] or "",
+            "quantity": Decimal("0"), "amount": Decimal("0"), "tax": Decimal("0"), "invoice_count": 0,
+        })
+        target["quantity"] += _to_decimal(item.get("quantity")) or Decimal("0")
+        target["amount"] += _to_decimal(item.get("amount")) or Decimal("0")
+        target["tax"] += _to_decimal(item.get("tax")) or Decimal("0")
+        target["invoice_count"] += int(item.get("invoice_count") or 0)
+    return merged
+
+
+MERGED_SNAPSHOT_FIELDS = ("invoiced_reference_amount", "invoiced_reference_tax", "invoiced_reference_total_with_tax")
+
+
+def merged_status_item(
+    status_items: dict[str, dict] | None,
+    key: str,
+    member_quantities: dict[str, Decimal],
+    lookup: Callable[[str], dict] | None = None,
+) -> dict:
+    """Saved 已开 status for one (possibly merged) 开票参考 group.
+
+    A status saved for exactly this member set is used as is. Otherwise the members' own saved
+    statuses are added up (已开数量 and 已开快照金额), so merging two names never loses an invoiced
+    snapshot; a status saved for a larger, since-split group is shared out by quantity. Both cases
+    are flagged with `merge_note` so the page asks the user to check before saving.
+    """
+    status_items = status_items or {}
+    lookup = lookup or (lambda alias: status_items.get(alias) if isinstance(status_items.get(alias), dict) else {})
+    members = sorted(member_quantities)
+    own = lookup(key)
+    if own and sorted(own.get("member_keys") or [key]) == members:
+        return dict(own)
+    parts: list[tuple[dict, Decimal]] = []
+    for member in members:
+        item = lookup(member)
+        if item and sorted(item.get("member_keys") or [member]) == [member]:
+            parts.append((item, Decimal("1")))
+    covered = {member for member in members if lookup(member) and sorted(lookup(member).get("member_keys") or [member]) == [member]}
+    # Members that were saved inside a bigger merged group that no longer exists: take their share.
+    for saved_key, saved in status_items.items():
+        if not isinstance(saved, dict):
+            continue
+        saved_members = saved.get("member_keys") or []
+        shared = [member for member in members if member in saved_members and member not in covered]
+        if not shared or len(saved_members) <= 1:
+            continue
+        total_quantity = _to_decimal(saved.get("quantity_total")) or Decimal("0")
+        mine = sum((member_quantities[member] for member in shared), Decimal("0"))
+        if total_quantity > 0:
+            parts.append((saved, min(mine / total_quantity, Decimal("1"))))
+            covered.update(shared)
+    if not parts:
+        return {}
+    if len(parts) == 1 and parts[0][1] == 1 and len(members) == 1:
+        return dict(parts[0][0])  # same single group, only re-keyed (e.g. spec whitespace unified)
+    result: dict = {"member_keys": members, "merge_note": "合并或拆分后按原已保存状态推算，请核对已开数量后保存"}
+    invoiced = Decimal("0")
+    for item, share in parts:
+        invoiced += (_to_decimal(item.get("invoiced_quantity")) or Decimal("0")) * share
+    result["invoiced_quantity"] = _decimal_text(invoiced, "0.000001")
+    for field in MERGED_SNAPSHOT_FIELDS:
+        values = [(_to_decimal(item.get(field)), share) for item, share in parts if _to_decimal(item.get("invoiced_quantity"))]
+        if values and all(value is not None for value, _ in values):
+            result[field] = _decimal_text(sum((value * share for value, share in values), Decimal("0")), "0.000001")
+    largest = max(parts, key=lambda part: _to_decimal(part[0].get("quantity_total")) or Decimal("0"))[0]
+    for field in ("reference_markup_rate", "reference_markup_rate_percent", "reference_markup_locked"):
+        if field in largest:
+            result[field] = largest[field]
+    rates = {_clean_text(item.get("reference_markup_rate_percent") or item.get("reference_markup_rate")) for item, _ in parts}
+    if invoiced == 0 and len(rates - {""}) <= 1:
+        # Nothing was invoiced and the markups agree: there is nothing for the user to check.
+        result.pop("merge_note")
+    return result
+
+
+def item_catalog_overview(rows: list[dict], catalog: dict[str, dict]) -> list[dict]:
+    """One line per invoice item name for the 品目表 dialog (what appears on the cost invoices)."""
+    grouped: dict[str, dict] = {}
+    for row in rows:
+        name = _catalog_name(row.get("内部项目名称"))
+        if not name:
+            continue
+        entry = grouped.setdefault(name, {"name": name, "specs": set(), "units": set(), "quantity": Decimal("0"), "row_count": 0})
+        entry["specs"].add(normalize_spec_text(row.get("规格型号")))
+        if _clean_text(row.get("单位")):
+            entry["units"].add(_clean_text(row.get("单位")))
+        entry["quantity"] += _to_decimal(row.get("数量")) or Decimal("0")
+        entry["row_count"] += 1
+    result = []
+    for name, entry in sorted(grouped.items()):
+        saved = catalog.get(name, {})
+        resolved = resolve_item(catalog, name)
+        result.append({
+            "name": name,
+            "standard_name": saved.get("standard_name") or name,
+            "resolved_name": resolved["standard_name"],
+            "type": saved.get("type") or ITEM_TYPE_GOODS,
+            "type_label": ITEM_TYPE_LABELS[saved.get("type") or ITEM_TYPE_GOODS],
+            "output_tax_rate_percent": saved.get("output_tax_rate_percent") or "",
+            "spec_count": len(entry["specs"]),
+            "units": "、".join(sorted(entry["units"])),
+            "quantity": _decimal_text(entry["quantity"], "0.001"),
+            "row_count": entry["row_count"],
+        })
+    return result
+
+
+def _outbound_sheet_cells(fields: dict) -> dict:
+    has_outbound = fields["outbound_compare"] != "none"
+    return {
+        "销项数量": _number(fields["outbound_quantity"], "0.001") if has_outbound else "",
+        "销项除税单价": _number(fields["outbound_unit_price"]) if fields["outbound_unit_price"] is not None else "",
+        "实际加价率": fields["actual_markup_text"],
+        "销项比对": fields["outbound_compare_text"],
+    }
+
+
+def outbound_overview(summary: dict | None, reference_keys: Iterable[str], row_fields: Iterable[dict]) -> dict:
+    """Page-level 销项 summary: what was read, what did not match a 开票参考 row, and the
+    COST-05 hint when every matched item carries exactly the same markup."""
+    summary = summary if isinstance(summary, dict) else {}
+    items = summary.get("items") if isinstance(summary.get("items"), dict) else {}
+    keys = set(reference_keys)
+    unmatched = [item for key, item in items.items() if key not in keys]
+    markups: set[str] = set()
+    counts = {"match": 0, "pending": 0, "oversold": 0, "none": 0}
+    for fields in row_fields:
+        # Quantity is the reconciliation principle: these counts drive the page's at-a-glance chips.
+        compare = fields.get("outbound_compare")
+        if compare == "match":
+            counts["match"] += 1
+        elif compare in {"outbound_more", "manual_more"}:
+            counts["pending"] += 1
+        elif compare == "none":
+            counts["none"] += 1
+        total = _to_decimal(fields.get("quantity"))
+        sold = _to_decimal(fields.get("outbound_quantity")) or Decimal("0")
+        if total is not None and sold > total + OUTBOUND_QUANTITY_TOLERANCE:
+            counts["oversold"] += 1
+        # Accepts the Decimal fields of outbound_reference_fields or the API's float/str copies.
+        rate = _to_decimal(fields.get("actual_markup_rate"))
+        quantity = _to_decimal(fields.get("outbound_quantity")) or Decimal("0")
+        if rate is not None and quantity > 0:
+            markups.add(_decimal_text(rate * Decimal("100"), "0.01"))
+    matched_count = sum(1 for key in items if key in keys)
+    uniform = ""
+    if matched_count >= UNIFORM_MARKUP_MIN_ITEMS and len(markups) == 1:
+        uniform = (
+            f"已对上的 {matched_count} 个品目实际加价率都是 {next(iter(markups))}%，售价完全跟随成本；"
+            "请留存合同定价条款、送货与签收单据。"
+        )
+    return {
+        "configured": bool(summary.get("configured")),
+        "outbound_dir": _clean_text(summary.get("outbound_dir")),
+        "read_at": _clean_text(summary.get("read_at")),
+        "invoice_count": int(summary.get("invoice_count") or 0),
+        "used_invoice_count": int(summary.get("used_invoice_count") or 0),
+        "excluded_invoice_count": int(summary.get("excluded_invoice_count") or 0),
+        "no_detail_invoice_count": int(summary.get("no_detail_invoice_count") or 0),
+        "matched_item_count": matched_count,
+        "unmatched_item_count": len(unmatched),
+        "unmatched_items": [
+            " / ".join(part for part in (_clean_text(item.get("item_name")), _clean_text(item.get("spec")), _clean_text(item.get("unit"))) if part)
+            for item in unmatched[:20]
+        ],
+        "warning": _clean_text(summary.get("warning")),
+        "uniform_markup_warning": uniform,
+        "quantity_match_count": counts["match"],
+        "quantity_pending_count": counts["pending"],
+        "oversold_count": counts["oversold"],
+        "no_outbound_count": counts["none"],
+    }
 
 
 def _round(value: Decimal | None, places: str = "0.01") -> Decimal | None:
@@ -530,6 +1141,7 @@ def selection_cost_breakdown(rows: list[dict], invoice_families: list[dict]) -> 
 
     matched_rows: list[dict] = []
     seen_rows: set[int] = set()
+    row_sources: dict[int, dict[str, dict]] = defaultdict(dict)
     matched_invoice_count = 0
     match_strategy_counts = {"invoice_number": 0, "source_file": 0}
 
@@ -547,6 +1159,9 @@ def selection_cost_breakdown(rows: list[dict], invoice_families: list[dict]) -> 
             match_strategy_counts[match_strategy] += 1
         for row in family_rows:
             row_identity = id(row)
+            # Provenance follows matched rows, independently of money de-duplication.
+            for source in family.get("source_invoices") or []:
+                row_sources[row_identity][str(source["invoice_key"])] = source
             if row_identity in seen_rows:
                 continue
             seen_rows.add(row_identity)
@@ -564,6 +1179,10 @@ def selection_cost_breakdown(rows: list[dict], invoice_families: list[dict]) -> 
         key=lambda item: (item[0][0], item[0][1] or "\uffff"),
     ):
         project = _cost_project_breakdown(project_name, project_rows)
+        sources = {}
+        for row in project_rows:
+            sources.update(row_sources[id(row)])
+        project["source_invoices"] = list(sources.values())
         project.update(
             {
                 "tax_rate": tax_rate,
@@ -1357,9 +1976,24 @@ def _xml_cost_row_values(path: Path) -> list[dict[str, str]]:
     return rows
 
 
+def _xml_remark_project_name(path: Path) -> str:
+    try:
+        root = ET.parse(path).getroot()
+    except Exception:
+        return ""
+    for element in root.iter():
+        if _local_name(element.tag) in {"remark", "bz", "note"}:
+            found = _extract_project_name("".join(element.itertext()))
+            if found:
+                return found
+    return ""
+
+
 def analyze_xml_costs(xml_path: Path, metadata: dict | None = None) -> dict:
     source_path = Path(xml_path)
     base_meta = _invoice_base_metadata(source_path, metadata)
+    if not base_meta.get("备注项目名称"):
+        base_meta["备注项目名称"] = _xml_remark_project_name(source_path)
     rows = [
         row
         for values in _xml_cost_row_values(source_path)
@@ -1513,7 +2147,7 @@ def _normalize_metadata_index(invoice_metadata: object) -> dict[str, dict]:
     for row in iterable or []:
         if not isinstance(row, dict):
             continue
-        path_value = row.get("文件路径") or row.get("file_path") or row.get("path")
+        path_value = row.get("文件路径") or row.get("file_path") or row.get("path") or row.get("源文件")
         key = _canonical_path(path_value)
         if key:
             index[key] = dict(row)
@@ -1576,6 +2210,15 @@ def _write_reference_status(
         "reference_markup_locked": bool(reference_markup_locked),
         "items": normalized,
     }
+    # Rewriting items (e.g. merging workbook status during 重新汇总) must not drop company-level
+    # settings such as the tax profile or the 品目表.
+    try:
+        existing = json.loads(path.read_text(encoding="utf-8-sig")) if path.exists() else {}
+    except Exception:
+        existing = {}
+    for preserved in STATUS_PRESERVED_KEYS:
+        if isinstance(existing, dict) and isinstance(existing.get(preserved), dict):
+            payload[preserved] = existing[preserved]
     tmp_path = path.with_name(f"{path.name}.tmp")
     tmp_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     os.replace(tmp_path, path)
@@ -1733,10 +2376,13 @@ def _analysis_attempt_summary(attempts: list[dict]) -> str:
     return " / ".join(parts)
 
 
-def _select_cost_analysis(candidates: list[tuple[Path, dict]]) -> tuple[dict | None, list[dict]]:
+def _select_cost_analysis(candidates: list[tuple[Path, dict]], cache=None) -> tuple[dict | None, list[dict]]:
     attempts: list[dict] = []
     for source_path, metadata in sorted(candidates, key=lambda item: (_cost_source_priority(item[0]), str(item[0]).casefold())):
-        analysis = _finalize_cost_analysis(dict(analyze_cost_invoice(source_path, metadata=metadata)))
+        version = COST_PARSER_VERSION + hashlib.sha256(json.dumps(metadata, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
+        raw = (cache.read("cost", source_path, version, lambda: analyze_cost_invoice(source_path, metadata=metadata))
+               if cache else analyze_cost_invoice(source_path, metadata=metadata))
+        analysis = _finalize_cost_analysis(dict(raw))
         analysis["source_format"] = source_path.suffix.lower().lstrip(".")
         analysis["source_path"] = str(source_path)
         attempts.append(analysis)
@@ -1829,10 +2475,19 @@ def _invoice_reference_summary(
     rows: list[dict],
     status_items: dict[str, dict] | None = None,
     reference_markup_rate: object = DEFAULT_REFERENCE_MARKUP_RATE,
+    tax_profile: ReferenceTaxProfile | None = None,
+    check_rows: list[dict] | None = None,
+    outbound_items: dict[str, dict] | None = None,
+    item_catalog: dict[str, dict] | None = None,
+    exclusions: dict[str, dict] | None = None,
 ) -> list[dict]:
     fallback_markup_rate = normalize_reference_markup_rate(reference_markup_rate)
+    # Group by the 品目表's standard names (and outbound lines by the same catalog) before pricing.
+    outbound_items = canonical_outbound_items(outbound_items, item_catalog, exclusions)
+    tax_profile = tax_profile or ReferenceTaxProfile()
+    deductibility = input_tax_index(check_rows)
     grouped: dict[tuple, list[dict]] = defaultdict(list)
-    for row in rows:
+    for row in canonical_reference_rows(rows, item_catalog, exclusions):
         key = (
             _clean_text(row.get("发票代码(**内文字)")),
             _clean_text(row.get("内部项目名称")),
@@ -1843,16 +2498,25 @@ def _invoice_reference_summary(
     result = []
     for key, group_rows in sorted(grouped.items()):
         quantity = _sum_decimal(group_rows, "数量")
-        amount = _sum_decimal(group_rows, "金额(除税)")
-        avg_price = stock_average_unit_price(group_rows)
+        cost_basis = reference_cost_basis(group_rows, tax_profile, deductibility)
+        avg_price = cost_basis["unit_price"]
         status_key = _reference_key(*key)
-        status_item = _reference_status_item(status_items, status_key, *key)
+        member_quantities: dict[str, Decimal] = defaultdict(lambda: Decimal("0"))
+        for row in group_rows:
+            member_quantities[row["_member_key"]] += _to_decimal(row.get("数量")) or Decimal("0")
+        member_raw = {row["_member_key"]: row["_raw_values"] for row in group_rows}
+        status_item = merged_status_item(
+            status_items, status_key, dict(member_quantities),
+            lambda alias: _reference_status_item(status_items, alias, *member_raw.get(alias, ())),
+        )
+        rate_percent = group_rows[0].get("_output_tax_rate_percent") or ""
+        output_tax_rate = _tax_rate_from_percent(rate_percent) if rate_percent else tax_profile.output_tax_rate
         markup = _row_markup_meta(status_item, fallback_markup_rate)
         markup_multiplier = reference_markup_multiplier(markup["rate"])
-        reference_avg_price_with_tax = reference_output_average_unit_price_with_tax(avg_price, markup["rate"])
+        reference_avg_price_with_tax = reference_output_average_unit_price_with_tax(avg_price, markup["rate"], output_tax_rate)
         reference_base_amount = avg_price * quantity if avg_price is not None and quantity > 0 else Decimal("0")
         reference_amount = reference_base_amount * markup_multiplier
-        reference_tax = reference_amount * REFERENCE_OUTPUT_TAX_RATE
+        reference_tax = reference_amount * output_tax_rate
         reference_total = reference_amount + reference_tax
         invoiced_quantity = _to_decimal(status_item.get("invoiced_quantity")) or Decimal("0")
         invoiced_quantity = _clamp_decimal(invoiced_quantity, Decimal("0"), quantity if quantity > 0 else Decimal("0"))
@@ -1903,6 +2567,11 @@ def _invoice_reference_summary(
                 "未开参考价税合计": _number(uninvoiced_reference_total),
                 "参考加价率": markup["display"],
                 "状态更新时间": _clean_text(status_item.get("updated_at")),
+                "成本口径": reference_cost_basis_text(cost_basis),
+                "销项税率": f"{_decimal_text(output_tax_rate * Decimal('100'), '0.001')}%",
+                **_outbound_sheet_cells(
+                    outbound_reference_fields(outbound_items.get(status_key), quantity, invoiced_quantity, avg_price)
+                ),
             }
         )
     return result
@@ -2076,6 +2745,10 @@ def _write_workbook(
     check_rows: list[dict],
     status_items: dict[str, dict] | None = None,
     reference_markup_rate: object = DEFAULT_REFERENCE_MARKUP_RATE,
+    tax_profile: ReferenceTaxProfile | None = None,
+    outbound_items: dict[str, dict] | None = None,
+    item_catalog: dict[str, dict] | None = None,
+    exclusions: dict[str, dict] | None = None,
 ) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     wb = Workbook()
@@ -2088,7 +2761,17 @@ def _write_workbook(
         wb,
         "开票参考",
         INVOICE_REFERENCE_HEADERS,
-        _invoice_reference_summary(detail_rows, status_items=status_items, reference_markup_rate=reference_markup_rate),
+        # 发票校验 rows carry each invoice's 发票大类, which decides whether its input VAT is cost.
+        _invoice_reference_summary(
+            detail_rows,
+            status_items=status_items,
+            reference_markup_rate=reference_markup_rate,
+            tax_profile=tax_profile,
+            check_rows=check_rows,
+            outbound_items=outbound_items,
+            item_catalog=item_catalog,
+            exclusions=exclusions,
+        ),
     )
     _append_sheet(wb, "发票校验", CHECK_HEADERS, check_rows)
     wb.save(path)
@@ -2100,6 +2783,10 @@ def build_cost_analysis_outputs(
     invoice_metadata: object = None,
     reference_markup_rate: object = DEFAULT_REFERENCE_MARKUP_RATE,
     progress: Callable[[int, int], None] | None = None,
+    on_rows: Callable | None = None,
+    outbound_items: dict[str, dict] | None = None,
+    company_taxpayer: Callable[[], dict | None] | None = None,
+    *, cache=None, source_files: list[Path] | None = None,
 ) -> dict:
     watch_folder = Path(watch_folder)
     output_folder = Path(output_folder)
@@ -2107,7 +2794,7 @@ def build_cost_analysis_outputs(
     analyses = []
     detail_rows: list[dict] = []
     all_attempts: list[dict] = []
-    source_files = _iter_cost_invoice_files(watch_folder)
+    source_files = source_files if source_files is not None else _iter_cost_invoice_files(watch_folder)
     format_counts = {
         "pdf": len([path for path in source_files if path.suffix.lower() == ".pdf"]),
         "ofd": len([path for path in source_files if path.suffix.lower() == ".ofd"]),
@@ -2120,17 +2807,23 @@ def build_cost_analysis_outputs(
         source_groups[_cost_family_key(source_path, metadata)].append((source_path, metadata))
 
     total_sources = len(source_groups)
+    if on_rows:
+        on_rows([], 0, total_sources)
     if progress:
         progress(0, total_sources)
     for index, candidates in enumerate(source_groups.values(), start=1):
-        analysis, attempts = _select_cost_analysis(candidates)
+        analysis, attempts = _select_cost_analysis(candidates, cache=cache)
         all_attempts.extend(attempts)
         if analysis is None:
+            if on_rows:
+                on_rows([], index, total_sources)
             if progress:
                 progress(index, total_sources)
             continue
         analyses.append(analysis)
         detail_rows.extend(analysis.get("rows") or [])
+        if on_rows:
+            on_rows(analysis.get("rows") or [], index, total_sources)
         if progress:
             progress(index, total_sources)
 
@@ -2147,11 +2840,28 @@ def build_cost_analysis_outputs(
             status_payload = {}
     markup_rate = normalize_reference_markup_rate(status_payload.get("reference_markup_rate", reference_markup_rate))
     markup_locked = _truthy(status_payload.get("reference_markup_locked", False))
+    # Looked up after parsing, just before the workbook is written, so a registry edit made
+    # during a long sync is not overwritten by a value read when the sync started.
+    tax_profile = effective_tax_profile(
+        reference_tax_profile_from_status(status_payload), company_taxpayer() if company_taxpayer else None
+    )
+    item_catalog = item_catalog_from_status(status_payload)
+    exclusions = reference_exclusions_from_status(status_payload)
     status_items, status_changed = _merge_reference_status(_load_reference_status(status_json), _load_workbook_reference_status(summary_xlsx))
     if status_changed:
         _write_reference_status(status_json, status_items, reference_markup_rate=markup_rate, reference_markup_locked=markup_locked)
     _write_csv(detail_csv, detail_rows)
-    _write_workbook(summary_xlsx, detail_rows, check_rows, status_items=status_items, reference_markup_rate=markup_rate)
+    _write_workbook(
+        summary_xlsx,
+        detail_rows,
+        check_rows,
+        status_items=status_items,
+        reference_markup_rate=markup_rate,
+        tax_profile=tax_profile,
+        outbound_items=outbound_items,
+        item_catalog=item_catalog,
+        exclusions=exclusions,
+    )
 
     failed = [item for item in analyses if item.get("status") == "failed"]
     skipped = [item for item in analyses if item.get("status") == "skipped"]

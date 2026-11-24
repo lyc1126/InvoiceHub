@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import copy
 import hashlib
-import os
 import re
+import shutil
+from functools import wraps
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
+from invoice_hub.storage.read_views import ReadViews, ProgressiveRows, file_signature
+from invoice_hub.storage import generations
 from typing import Any, Callable
 
 from invoice_hub.domain import CostAnalysisSnapshot, CostSyncStatus
@@ -18,7 +22,7 @@ from invoice_hub.projections.cost_analysis import (
     DETAIL_HEADERS,
     INVOICE_REFERENCE_HEADERS,
     PROJECT_SPEC_SUMMARY_HEADERS,
-    REFERENCE_OUTPUT_TAX_RATE,
+    ReferenceTaxProfile,
     average_unit_price,
     detail_rows_with_tax_average,
     build_cost_analysis_outputs,
@@ -31,8 +35,29 @@ from invoice_hub.projections.cost_analysis import (
     reference_markup_percent_text,
     average_unit_price_with_tax,
     purchase_reference_average_unit_price_with_tax,
+    STATUS_PRESERVED_KEYS,
+    canonical_outbound_items,
+    canonical_reference_rows,
+    input_tax_index,
+    item_catalog_from_status,
+    item_catalog_overview,
+    merged_status_item,
+    parse_item_catalog,
+    parse_reference_exclusions,
+    reference_exclusions_from_status,
+    reference_invoice_id,
+    _tax_rate_from_percent,
+    outbound_overview,
+    outbound_reference_fields,
+    parse_reference_tax_profile,
+    reference_cost_basis,
+    reference_cost_basis_text,
+    reference_tax_profile_from_status,
+    effective_tax_profile,
+    TAXPAYER_LABELS,
     _write_workbook,
 )
+from invoice_hub.projections.cost_outbound import OUTBOUND_SUMMARY_NAME, _empty_summary as _empty_outbound_summary, load_outbound_summary, read_outbound_summary
 from invoice_hub.storage.files import atomic_write_json, read_csv_rows, read_json_object, write_csv_rows
 
 COST_SOURCE_EXTS = {".pdf", ".ofd", ".xml"}
@@ -188,20 +213,38 @@ def _write_reference_status(
     items: dict[str, dict],
     reference_markup_rate: object = DEFAULT_REFERENCE_MARKUP_RATE,
     reference_markup_locked: bool = False,
+    tax_profile: ReferenceTaxProfile | None = None,
+    item_catalog: dict[str, dict] | None = None,
+    reference_exclusions: dict[str, dict] | None = None,
 ) -> None:
     markup_rate = normalize_reference_markup_rate(reference_markup_rate)
     normalized = {key: dict(value) for key, value in sorted(items.items()) if key and isinstance(value, dict)}
-    atomic_write_json(
-        path,
-        {
-            "version": 1,
-            "updated_at": utc_now_text(),
-            "reference_markup_rate": _decimal_text(markup_rate, "0.000001"),
-            "reference_markup_rate_percent": reference_markup_percent_text(markup_rate),
-            "reference_markup_locked": bool(reference_markup_locked),
-            "items": normalized,
-        },
-    )
+    payload = {
+        "version": 1,
+        "updated_at": utc_now_text(),
+        "reference_markup_rate": _decimal_text(markup_rate, "0.000001"),
+        "reference_markup_rate_percent": reference_markup_percent_text(markup_rate),
+        "reference_markup_locked": bool(reference_markup_locked),
+        "items": normalized,
+    }
+    # Saving row status without touching company settings keeps whatever the company saved.
+    existing = _read_reference_status_payload(path)
+    for preserved in STATUS_PRESERVED_KEYS:
+        if isinstance(existing.get(preserved), dict):
+            payload[preserved] = existing[preserved]
+    if tax_profile is not None and tax_profile.configured:
+        payload["tax_profile"] = tax_profile.status_payload()
+    if item_catalog is not None:
+        if item_catalog:
+            payload["item_catalog"] = {"version": 1, "items": item_catalog}
+        else:
+            payload.pop("item_catalog", None)
+    if reference_exclusions is not None:
+        if reference_exclusions.get("keys") or reference_exclusions.get("invoices"):
+            payload["reference_exclusions"] = {"version": 1, **reference_exclusions}
+        else:
+            payload.pop("reference_exclusions", None)
+    atomic_write_json(path, payload)
 
 
 def _valid_invoice_number(value: object) -> str:
@@ -255,26 +298,120 @@ def _keys_from_rows(rows: list[dict]) -> set[str]:
     return keys
 
 
+def _reference_sources(rows: list[dict]) -> list[dict]:
+    """Invoices behind one 开票参考 row, for the 来源 dialog (one line per invoice, not per detail line)."""
+    sources: dict[str, dict] = {}
+    for row in rows:
+        invoice_id = reference_invoice_id(row)
+        item = sources.setdefault(invoice_id, {
+            "id": invoice_id,
+            "invoice_number": str(row.get("发票号码") or ""),
+            "source": Path(str(row.get("源文件") or "")).name,
+            "seller": str(row.get("销售方") or ""),
+            "invoice_date": str(row.get("开票日期") or ""),
+            "quantity": Decimal("0"),
+            "amount": Decimal("0"),
+        })
+        item["quantity"] += _decimal(row.get("数量"))
+        item["amount"] += _decimal(row.get("金额(除税)"))
+    return [
+        {**item, "quantity": _decimal_text(item["quantity"], "0.001"), "amount": _decimal_text(item["amount"], "0.01")}
+        for item in sorted(sources.values(), key=lambda value: (value["invoice_date"], value["invoice_number"]))
+    ]
+
+
+def _complete_read(method):
+    @wraps(method)
+    def read(self, *args, **kwargs):
+        manifest = generations.current(self.workspace_dir, self.watch_dir)
+        if not manifest or getattr(self, "_generation_bound", False):
+            return method(self, *args, **kwargs)
+        view = copy.copy(self)
+        view._generation_bound = True
+        for attr, name in (("detail_csv", COST_DETAIL_CSV_NAME), ("summary_xlsx", COST_SUMMARY_XLSX_NAME),
+                           ("status_json", COST_REFERENCE_STATUS_NAME), ("summary_csv", "发票汇总.csv"), ("outbound_summary_json", OUTBOUND_SUMMARY_NAME)):
+            setattr(view, attr, generations.resolve(self.workspace_dir, self.watch_dir, name, manifest))
+        result = method(view, *args, **kwargs)
+        if isinstance(result, CostAnalysisSnapshot):
+            result.output_detail_csv_path = str(self.detail_csv)
+            result.output_summary_xlsx_path = str(self.summary_xlsx)
+            result.reference_status_path = str(self.status_json)
+        return result
+    return read
+
+
 class CostProjectionService:
-    def __init__(self, watch_dir: Path, workspace_dir: Path, target_id: str, reference_markup_rate: str = "0.08"):
+    def __init__(
+        self,
+        watch_dir: Path,
+        workspace_dir: Path,
+        target_id: str,
+        reference_markup_rate: str = "0.08",
+        *,
+        company_taxpayer: Callable[[], dict | None] | None = None,
+        company_outbound: Callable[[], str | None] | None = None,
+        output_dir: Path | None = None,
+    ):
         self.watch_dir = Path(watch_dir)
+        # Registry lookup (targets.companies.company_taxpayer_for) supplied by every caller —
+        # API, monitor daemon, background child, manual rebuild — so the workbook and the page
+        # price the reference with the same taxpayer type. None means "no registry company".
+        self._company_taxpayer = company_taxpayer
+        self._company_outbound = company_outbound
         self.workspace_dir = Path(workspace_dir)
         self.target_id = target_id
         self.reference_markup_rate = reference_markup_rate
-        self.detail_csv = self.watch_dir / COST_DETAIL_CSV_NAME
-        self.summary_xlsx = self.watch_dir / COST_SUMMARY_XLSX_NAME
-        self.status_json = self.watch_dir / COST_REFERENCE_STATUS_NAME
+        self.output_dir = Path(output_dir) if output_dir is not None else self.watch_dir
+        self.detail_csv = self.output_dir / COST_DETAIL_CSV_NAME
+        self.summary_xlsx = self.output_dir / COST_SUMMARY_XLSX_NAME
+        self.status_json = self.output_dir / COST_REFERENCE_STATUS_NAME
         self.summary_csv = self.workspace_dir / "发票汇总.csv"
+        self.outbound_summary_json = self.workspace_dir / OUTBOUND_SUMMARY_NAME
 
-    def rebuild(self, progress: Callable[[int, int], None] | None = None) -> dict:
-        result = build_cost_analysis_outputs(
-            self.watch_dir,
-            self.watch_dir,
-            invoice_metadata=self._summary_metadata(),
-            reference_markup_rate=self._markup_meta()["rate"],
-            progress=progress,
-        )
+    def rebuild(self, progress: Callable[[int, int], None] | None = None, *, cache=None, source_files=None, preview_workspace=None) -> dict:
+        # Retain a consistent complete generation before replacing any projection.
+        # Read-only pages can use it while the monitor owns the write lock.
+        if self.detail_csv.exists():
+            self.cache_snapshot()
+        with ProgressiveRows(preview_workspace or self.workspace_dir, "costs") as preview:
+            result = build_cost_analysis_outputs(
+                self.watch_dir,
+                self.output_dir,
+                invoice_metadata=self._summary_metadata(),
+                reference_markup_rate=self._markup_meta()["rate"],
+                progress=progress,
+                on_rows=preview.add,
+                outbound_items=self._outbound_items(),
+                company_taxpayer=self.company_taxpayer,
+                cache=cache, source_files=source_files,
+            )
+        self.cache_snapshot()
+        self._save_tax_dependency()
+        if self.output_dir == self.watch_dir:
+            generations.publish_exports(self.workspace_dir, self.watch_dir)
         return result
+
+    def company_taxpayer(self) -> dict | None:
+        return self._company_taxpayer() if self._company_taxpayer else None
+
+    def read_detail_path(self) -> Path:
+        return generations.resolve(self.workspace_dir, self.watch_dir, COST_DETAIL_CSV_NAME)
+
+    @_complete_read
+    def read_fingerprint(self):
+        # The registry taxpayer type changes prices without touching any projection file, so it
+        # is part of the read generation; otherwise the paged view keeps serving old prices.
+        return [str(self.watch_dir.resolve()), self.target_id, str(self.reference_markup_rate), self.company_taxpayer(),
+                self._company_outbound() if self._company_outbound else None,
+                *[file_signature(path) for path in (self.detail_csv, self.summary_xlsx, self.status_json, self.summary_csv,
+                                                    self.outbound_summary_json)]]
+
+    def cache_snapshot(self):
+        views = ReadViews(self.workspace_dir)
+        meta, _ = views.read("cost:details", page_size=0)
+        if meta.get("fingerprint") != self.read_fingerprint():
+            snapshot = self.snapshot().model_dump(mode="json")
+            views.save_cost(snapshot, self.read_fingerprint())
 
     def _markup_meta(self) -> dict[str, Any]:
         payload = _read_reference_status_payload(self.status_json)
@@ -285,6 +422,154 @@ class CostProjectionService:
             "percent": reference_markup_percent_text(rate),
             "locked": _truthy(payload.get("reference_markup_locked", False)),
         }
+
+    def _outbound_summary(self) -> dict:
+        summary = load_outbound_summary(self.outbound_summary_json.parent)
+        expected = self._company_outbound() if self._company_outbound else None
+        # Registry mapping is authoritative. A cached global/previous source must never
+        # leak into the company's page or workbook while waiting for manual rebuild.
+        if expected is not None and (not expected or str(Path(str(summary.get("outbound_dir") or "")).resolve()) != str(Path(expected).resolve())):
+            return {**_empty_outbound_summary(expected, "本公司开具目录尚未读取、已变化或不可用，请重新汇总。"), "read_at": ""}
+        return summary
+
+    def _outbound_items(self) -> dict[str, dict]:
+        items = self._outbound_summary().get("items")
+        return items if isinstance(items, dict) else {}
+
+    def refresh_outbound(self, outbound_dir: str | Path | None, progress: Callable[[int, int], None] | None = None) -> dict:
+        """Re-read the issued-invoice folder (manual 重新汇总 only) and rewrite the workbook with the comparison.
+
+        Monitor-driven rebuilds reuse the last saved summary, so the outbound folder is never
+        watched and a stale summary is shown with its read time rather than silently dropped.
+        """
+        if self.output_dir == self.watch_dir and not getattr(self, "_generation_bound", False):
+            generations.recover_exports(self.workspace_dir, self.watch_dir)
+        try:
+            summary = read_outbound_summary(outbound_dir, self.watch_dir, read_csv_rows(self.detail_csv), self.workspace_dir, progress)
+        except Exception as exc:
+            # A broken sales file must not fail the cost rebuild; keep the reason visible on the page.
+            summary = {**_empty_outbound_summary(str(outbound_dir or ""), f"读取开具发票失败：{exc}")}
+            atomic_write_json(self.outbound_summary_json, summary)
+        self._refresh_workbook_from_current_detail(self._markup_meta()["rate"])
+        return summary
+
+    def _outbound_overview(self, invoice_reference: list[dict]) -> dict:
+        summary = self._outbound_summary()
+        # Matched / unmatched must use the same 品目表 grouping as the reference rows.
+        summary = {**summary, "items": canonical_outbound_items(summary.get("items"), self._item_catalog(), self._exclusions())}
+        return outbound_overview(summary, [row["key"] for row in invoice_reference], invoice_reference)
+
+    def _exclusions(self) -> dict[str, dict]:
+        return reference_exclusions_from_status(_read_reference_status_payload(self.status_json))
+
+    def _exclusions_overview(self, detail_rows: list[dict]) -> dict:
+        exclusions = self._exclusions()
+        present_keys = {_reference_key(row) for row in canonical_reference_rows(detail_rows, self._item_catalog())}
+        present_invoices = {reference_invoice_id(row) for row in detail_rows}
+        keys = [{"key": key, **info, "present": key in present_keys} for key, info in sorted(exclusions["keys"].items())]
+        invoices = [{"id": key, **info, "present": key in present_invoices} for key, info in sorted(exclusions["invoices"].items())]
+        return {"keys": keys, "invoices": invoices, "count": len(keys) + len(invoices)}
+
+    def _merge_exclusions(self, requested: dict[str, list[str]], detail_rows: list[dict]) -> dict[str, dict]:
+        """Keep display info for each removed row / invoice so the restore list stays readable later."""
+        saved = self._exclusions()
+        rows_by_key: dict[str, dict] = {}
+        for row in canonical_reference_rows(detail_rows, self._item_catalog()):
+            rows_by_key.setdefault(_reference_key(row), row)
+        invoices_by_id: dict[str, dict] = {}
+        for row in detail_rows:
+            invoices_by_id.setdefault(reference_invoice_id(row), row)
+        now = utc_now_text()
+        keys = {}
+        for key in requested["keys"]:
+            row = rows_by_key.get(key)
+            keys[key] = saved["keys"].get(key) or {
+                "item_code": str((row or {}).get("发票代码(**内文字)") or ""),
+                "item_name": str((row or {}).get("内部项目名称") or ""),
+                "spec": str((row or {}).get("规格型号") or ""),
+                "unit": str((row or {}).get("单位") or ""),
+                "excluded_at": now,
+            }
+        invoices = {}
+        for invoice_id in requested["invoices"]:
+            row = invoices_by_id.get(invoice_id)
+            invoices[invoice_id] = saved["invoices"].get(invoice_id) or {
+                "invoice_number": str((row or {}).get("发票号码") or ""),
+                "source": Path(str((row or {}).get("源文件") or "")).name,
+                "seller": str((row or {}).get("销售方") or ""),
+                "invoice_date": str((row or {}).get("开票日期") or ""),
+                "excluded_at": now,
+            }
+        return {"keys": keys, "invoices": invoices}
+
+    def _item_catalog(self) -> dict[str, dict]:
+        return item_catalog_from_status(_read_reference_status_payload(self.status_json))
+
+    @_complete_read
+    def read_only_inputs(self) -> dict:
+        """Detail rows, 发票校验 rows, item catalog and tax profile of the last projection, nothing else.
+
+        For folders that are not the active watch_dir (WS-07 comparisons): unlike ``snapshot`` it
+        never refreshes the schema or rewrites the workbook, so reading cannot change the folder.
+        """
+        return {
+            "detail_rows": read_csv_rows(self.detail_csv),
+            "check_rows": self._read_workbook_sheet("发票校验", CHECK_HEADERS),
+            "item_catalog": self._item_catalog(),
+            "tax_profile": self._tax_profile(),
+        }
+
+    @_complete_read
+    def read_pricing_inputs(self, on: str) -> dict:
+        """V2 reads one complete generation, including v1 manual-price snapshots, without repairs."""
+        from datetime import date
+
+        inputs = self.read_only_inputs()
+        rows = []
+        for row in inputs["detail_rows"]:
+            try:
+                invoice_date = date.fromisoformat(str(row.get("开票日期") or "").strip()).isoformat()
+            except ValueError:
+                # Keep unreadable dates visible for the inventory check's exclusions;
+                # silently dropping them would make a partial cost look complete.
+                invoice_date = ""
+            if not invoice_date or invoice_date <= on:
+                for field in ("数量", "金额(除税)", "税金", "价税合计"):
+                    text = str(row.get(field) or "").replace(",", "").strip()
+                    if text:
+                        try:
+                            number = Decimal(text)
+                            if not number.is_finite() or abs(number) >= Decimal("1e15") or number.as_tuple().exponent < -8:
+                                raise InvalidOperation
+                        except InvalidOperation as exc:
+                            raise ValueError("成本投影包含无效或超限数值，请核对来源后重新汇总；未改写投影。") from exc
+                rows.append(row)
+        references = self._build_reference_rows(rows, check_rows=inputs["check_rows"],
+                                                tax_profile=inputs["tax_profile"], item_catalog=inputs["item_catalog"])
+        return {**inputs, "detail_rows": rows, "references": references, "reference_exclusions": self._exclusions(),
+                "reference_statuses": self._reference_statuses, "default_markup_percent": self._markup_meta()["percent"]}
+
+    def _tax_profile(self) -> ReferenceTaxProfile:
+        return effective_tax_profile(
+            reference_tax_profile_from_status(_read_reference_status_payload(self.status_json)), self.company_taxpayer()
+        )
+
+    def refresh_workbook_tax_profile(self) -> bool:
+        """Rewrite the workbook after the registry changed this company's taxpayer type."""
+        if self.output_dir == self.watch_dir and not getattr(self, "_generation_bound", False):
+            generations.recover_exports(self.workspace_dir, self.watch_dir)
+        if not self.detail_csv.exists():
+            return False
+        self._refresh_workbook_from_current_detail(self._markup_meta()["rate"])
+        self._save_tax_dependency()
+        return True
+
+    def needs_tax_profile_refresh(self) -> bool:
+        saved = read_json_object(self.workspace_dir / "cost-tax-dependency.json", {})
+        return saved.get("company") != self.company_taxpayer()
+
+    def _save_tax_dependency(self) -> None:
+        atomic_write_json(self.workspace_dir / "cost-tax-dependency.json", {"company": self.company_taxpayer()})
 
     def _summary_metadata(self) -> list[dict]:
         rows = []
@@ -308,6 +593,46 @@ class CostProjectionService:
         return rows
 
     def _refresh_workbook_from_current_detail(self, reference_markup_rate: object) -> None:
+        # Non-monitored company folders built via CompanyDataRefreshService use
+        # export_to_source=False, so watch_dir has no fixed CSV/XLSX. Republish a new
+        # manifest-bound generation in workspace so V2 read_only_inputs/read_pricing_inputs
+        # immediately consume the updated catalog/status without writing CSV/XLSX to source.
+        manifest = generations.current(self.workspace_dir, self.watch_dir) if self.output_dir == self.watch_dir else {}
+        if manifest and not manifest.get("source_exported", True):
+            gen_detail = generations.resolve(self.workspace_dir, self.watch_dir, COST_DETAIL_CSV_NAME, manifest)
+            if not gen_detail.exists():
+                return
+            detail_rows = read_csv_rows(gen_detail)
+            gen_summary = generations.resolve(self.workspace_dir, self.watch_dir, COST_SUMMARY_XLSX_NAME, manifest)
+            checks = self._read_workbook_sheet("发票校验", CHECK_HEADERS, path=gen_summary)
+            with generations.candidate(self.workspace_dir) as stage:
+                for name in generations.SUMMARY + generations.OPTIONAL + (generations.COST[0],):
+                    existing = generations.resolve(self.workspace_dir, self.watch_dir, name, manifest)
+                    if existing.exists():
+                        shutil.copyfile(existing, stage / name)
+                if self.status_json.exists():
+                    shutil.copyfile(self.status_json, stage / generations.COST[2])
+                _write_workbook(
+                    stage / generations.COST[1],
+                    detail_rows,
+                    checks,
+                    status_items=_read_reference_status(self.status_json),
+                    reference_markup_rate=reference_markup_rate,
+                    tax_profile=self._tax_profile(),
+                    outbound_items=self._outbound_items(),
+                    item_catalog=self._item_catalog(),
+                    exclusions=self._exclusions(),
+                )
+                generations.publish(
+                    self.workspace_dir,
+                    self.watch_dir,
+                    stage,
+                    expected=manifest["generation"],
+                    coverage=manifest["coverage"],
+                    export_to_source=False,
+                    parser_versions=manifest.get("parser_versions") if isinstance(manifest.get("parser_versions"), dict) else None,
+                )
+            return
         if not self.detail_csv.exists():
             return
         detail_rows = read_csv_rows(self.detail_csv)
@@ -318,7 +643,13 @@ class CostProjectionService:
             checks,
             status_items=_read_reference_status(self.status_json),
             reference_markup_rate=reference_markup_rate,
+            tax_profile=self._tax_profile(),
+            outbound_items=self._outbound_items(),
+            item_catalog=self._item_catalog(),
+            exclusions=self._exclusions(),
         )
+        if self.output_dir == self.watch_dir:
+            generations.publish_exports(self.workspace_dir, self.watch_dir)
 
     def _read_csv_headers(self) -> list[str]:
         if not self.detail_csv.exists():
@@ -368,6 +699,8 @@ class CostProjectionService:
         return False
 
     def refresh_schema_from_current_detail(self) -> bool:
+        if self.output_dir == self.watch_dir and not getattr(self, "_generation_bound", False):
+            generations.recover_exports(self.workspace_dir, self.watch_dir)
         if not self.detail_csv.exists():
             return False
         detail_rows = read_csv_rows(self.detail_csv)
@@ -390,11 +723,18 @@ class CostProjectionService:
             checks,
             status_items=status_items,
             reference_markup_rate=markup["rate"],
+            tax_profile=self._tax_profile(),
+            outbound_items=self._outbound_items(),
+            item_catalog=self._item_catalog(),
+            exclusions=self._exclusions(),
         )
+        if self.output_dir == self.watch_dir and not getattr(self, "_generation_bound", False):
+            generations.publish_exports(self.workspace_dir, self.watch_dir)
         return True
 
+    @_complete_read
     def snapshot(self, from_cache: bool = False) -> CostAnalysisSnapshot:
-        if self.needs_schema_refresh():
+        if not getattr(self, "_generation_bound", False) and self.needs_schema_refresh():
             try:
                 self.refresh_schema_from_current_detail()
             except OSError:
@@ -403,7 +743,8 @@ class CostProjectionService:
         checks = self._read_workbook_sheet("发票校验", CHECK_HEADERS)
         project_summary = self._project_summary_rows()
         markup = self._markup_meta()
-        invoice_reference = self._build_reference_rows(detail_rows)
+        tax_profile = self._tax_profile()
+        invoice_reference = self._build_reference_rows(detail_rows, check_rows=checks, tax_profile=tax_profile)
         sync = self._sync_status(detail_rows, checks)
         mismatch_count = sum(1 for row in checks if str(row.get("校验状态") or "").strip() != "通过")
         return CostAnalysisSnapshot(
@@ -415,6 +756,10 @@ class CostProjectionService:
             reference_status_path=str(self.status_json),
             reference_status_exists=self.status_json.exists(),
             reference_markup_rate=markup["display"],
+            reference_tax_profile=tax_profile.api_payload(),
+            item_catalog=item_catalog_overview(detail_rows, self._item_catalog()),
+            reference_exclusions=self._exclusions_overview(detail_rows),
+            outbound_summary=self._outbound_overview(invoice_reference),
             detail_count=len(detail_rows),
             check_count=len(checks),
             mismatch_count=mismatch_count,
@@ -434,19 +779,66 @@ class CostProjectionService:
         return self._read_workbook_sheet("项目规格汇总", PROJECT_SPEC_SUMMARY_HEADERS)
 
     def save_reference_status(self, payload: dict) -> dict:
+        if self.output_dir == self.watch_dir and not getattr(self, "_generation_bound", False):
+            generations.recover_exports(self.workspace_dir, self.watch_dir)
         current = _read_reference_status(self.status_json)
         fallback_markup = self._markup_meta()
+        # Preserve workbook-only invoiced/markup state (same fallback that snapshot() displays and
+        # rebuild() recovers) so saving one row cannot wipe another row's legacy workbook status
+        # when 成本开票状态.json is missing or partial; skip default zero/fallback rows to avoid noise.
         workbook_status = self._read_reference_status_from_workbook()
-        reference_rows = self._build_reference_rows(read_csv_rows(self.detail_csv), current)
+        for wb_key, workbook_item in workbook_status.items():
+            if wb_key not in current:
+                wb_qty = _decimal(workbook_item.get("invoiced_quantity"))
+                wb_rate = normalize_reference_markup_rate(
+                    workbook_item.get("reference_markup_rate"),
+                    fallback_markup["rate"],
+                )
+                if wb_qty > 0 or wb_rate != fallback_markup["rate"]:
+                    current[wb_key] = dict(workbook_item)
+                continue
+            for field, value in workbook_item.items():
+                if str(current[wb_key].get(field) or "").strip() == "" and str(value or "").strip() != "":
+                    current[wb_key][field] = value
+        tax_profile_changed = "tax_profile" in payload
+        saved_tax_profile = parse_reference_tax_profile(payload.get("tax_profile")) if tax_profile_changed else None
+        company = self.company_taxpayer()
+        if saved_tax_profile is not None and company and saved_tax_profile.taxpayer_type != company["taxpayer_type"]:
+            raise ValueError(
+                f"纳税人类型以公司清单为准（{company['company_name']}：{TAXPAYER_LABELS[company['taxpayer_type']]}），"
+                "请在公司清单修改；这里只能修改销项税率。"
+            )
+        tax_profile = effective_tax_profile(saved_tax_profile, company) if saved_tax_profile is not None else self._tax_profile()
+        catalog_changed = "item_catalog" in payload
+        item_catalog = parse_item_catalog(payload.get("item_catalog")) if catalog_changed else self._item_catalog()
+        exclusions_changed = "reference_exclusions" in payload
+        requested_exclusions = parse_reference_exclusions(payload.get("reference_exclusions")) if exclusions_changed else None
+        detail_path = self.detail_csv
+        summary_path = self.summary_xlsx
+        if self.output_dir == self.watch_dir and not detail_path.exists():
+            manifest = generations.current(self.workspace_dir, self.watch_dir)
+            if manifest:
+                gen_detail = generations.resolve(self.workspace_dir, self.watch_dir, COST_DETAIL_CSV_NAME, manifest)
+                gen_summary = generations.resolve(self.workspace_dir, self.watch_dir, COST_SUMMARY_XLSX_NAME, manifest)
+                if gen_detail.exists():
+                    detail_path = gen_detail
+                if gen_summary.exists():
+                    summary_path = gen_summary
+        checks = self._read_workbook_sheet("发票校验", CHECK_HEADERS, path=summary_path)
+        detail_rows = read_csv_rows(detail_path)
+        if catalog_changed:
+            current = self._migrate_statuses_to_catalog(detail_rows, current, checks, tax_profile, item_catalog)
+        reference_rows = self._build_reference_rows(
+            detail_rows, current, check_rows=checks, tax_profile=tax_profile, item_catalog=item_catalog
+        )
         by_key = {row["key"]: row for row in reference_rows}
         for item in payload.get("items", []):
             key = str(item.get("key") or "").strip()
             if not key or key not in by_key:
                 continue
             row = by_key[key]
-            row_with_aliases = dict(row)
-            row_with_aliases["aliases"] = _reference_aliases(row)
-            existing = self._status_for_reference(row_with_aliases, current, workbook_status)
+            # Already resolved through member keys by _build_reference_rows (merged groups included).
+            existing = dict(self._reference_statuses.get(key) or {})
             existing_markup = _row_markup_meta(existing, fallback_markup["rate"], fallback_markup["locked"])
             quantity = _decimal(row.get("quantity"))
             if "invoiced_quantity" in item:
@@ -474,15 +866,19 @@ class CostProjectionService:
             else:
                 row_locked = existing_markup["locked"]
             row_multiplier = reference_markup_multiplier(row_rate)
-            reference_average_unit_price = _decimal(row.get("average_unit_price")) * row_multiplier
+            reference_average_unit_price = _decimal(row.get("reference_cost_unit_price")) * row_multiplier
             reference_amount = reference_average_unit_price * quantity
-            reference_tax = reference_amount * REFERENCE_OUTPUT_TAX_RATE
+            reference_tax = reference_amount * tax_profile.output_tax_rate
             reference_total = reference_amount + reference_tax
             ratio = Decimal("0") if quantity == 0 else invoiced_quantity / quantity
             status = "已开具" if invoiced_quantity >= quantity and quantity > 0 else ("未开具" if invoiced_quantity == 0 else "部分开具")
             for alias in _reference_aliases(row):
                 if alias != key:
                     current.pop(alias, None)
+            for member in row.get("member_keys") or []:
+                saved = current.get(member)
+                if member != key and isinstance(saved, dict) and len(saved.get("member_keys") or [member]) <= 1:
+                    current.pop(member, None)  # folded into this merged group's saved status
 
             def locked_part(field: str, current_total: Decimal) -> Decimal:
                 if invoiced_quantity <= 0:
@@ -501,6 +897,7 @@ class CostProjectionService:
                 continue
             current[key] = {
                 "reference_key": key,
+                "member_keys": row.get("member_keys") or [key],
                 "item_code": row.get("发票代码(**内文字)", ""),
                 "item_name": row.get("内部项目名称", ""),
                 "spec": row.get("规格型号", ""),
@@ -524,18 +921,56 @@ class CostProjectionService:
             current,
             reference_markup_rate=fallback_markup["rate"],
             reference_markup_locked=fallback_markup["locked"],
+            tax_profile=saved_tax_profile,
+            item_catalog=item_catalog if catalog_changed else None,
+            reference_exclusions=self._merge_exclusions(requested_exclusions, detail_rows) if exclusions_changed else None,
         )
         self._refresh_workbook_from_current_detail(fallback_markup["rate"])
         return {"ok": True, "reference_status_path": str(self.status_json), "workbook_updated": self.summary_xlsx.exists()}
 
-    def _read_workbook_sheet(self, sheet_name: str, headers: list[str]) -> list[dict]:
-        if not self.summary_xlsx.exists():
+    def _migrate_statuses_to_catalog(
+        self,
+        detail_rows: list[dict],
+        current: dict[str, dict],
+        checks: list[dict],
+        tax_profile: ReferenceTaxProfile,
+        item_catalog: dict[str, dict],
+    ) -> dict[str, dict]:
+        """Re-key saved 已开 status once when the 品目表 changes, so the file matches the new grouping.
+
+        Merged groups add up their members' saved status; split groups take a quantity share of the
+        old merged status. Both keep `merge_note` until the user saves the row, and statuses of names
+        that left the 开票参考 (e.g. marked 费用) stay untouched so switching back restores them.
+        """
+        rows = self._build_reference_rows(detail_rows, current, check_rows=checks, tax_profile=tax_profile, item_catalog=item_catalog)
+        migrated = dict(current)
+        group_keys = {row["key"] for row in rows}
+        for row in rows:
+            status = self._reference_statuses.get(row["key"]) or {}
+            for member in row["member_keys"]:
+                if member != row["key"]:
+                    migrated.pop(member, None)
+            if status:
+                migrated[row["key"]] = {
+                    **status,
+                    "reference_key": row["key"],
+                    "member_keys": row["member_keys"],
+                    "quantity_total": _decimal_text(_decimal(row.get("quantity")), "0.001"),
+                }
+        # A merged status saved under a name no longer used has been shared out above.
+        for key in [key for key, item in migrated.items() if key not in group_keys and len(item.get("member_keys") or []) > 1]:
+            migrated.pop(key, None)
+        return migrated
+
+    def _read_workbook_sheet(self, sheet_name: str, headers: list[str], *, path: Path | None = None) -> list[dict]:
+        target = path or self.summary_xlsx
+        if not target.exists():
             return []
         wb = None
         try:
             from openpyxl import load_workbook
 
-            wb = load_workbook(self.summary_xlsx, data_only=True, read_only=True)
+            wb = load_workbook(target, data_only=True, read_only=True)
             if sheet_name not in wb.sheetnames:
                 return []
             ws = wb[sheet_name]
@@ -559,12 +994,26 @@ class CostProjectionService:
             )
         return result
 
-    def _build_reference_rows(self, detail_rows: list[dict], status_items: dict[str, dict] | None = None) -> list[dict]:
+    def _build_reference_rows(
+        self,
+        detail_rows: list[dict],
+        status_items: dict[str, dict] | None = None,
+        check_rows: list[dict] | None = None,
+        tax_profile: ReferenceTaxProfile | None = None,
+        item_catalog: dict[str, dict] | None = None,
+    ) -> list[dict]:
         status_items = status_items if status_items is not None else _read_reference_status(self.status_json)
         workbook_status = self._read_reference_status_from_workbook()
         fallback_markup = self._markup_meta()
+        tax_profile = tax_profile or self._tax_profile()
+        item_catalog = self._item_catalog() if item_catalog is None else item_catalog
+        # Same formula as cost_analysis._invoice_reference_summary; the workbook and this API must agree.
+        deductibility = input_tax_index(check_rows)
+        exclusions = self._exclusions()
+        outbound_items = canonical_outbound_items(self._outbound_items(), item_catalog, exclusions)
+        self._reference_statuses: dict[str, dict] = {}
         grouped: dict[str, dict] = {}
-        for row in detail_rows:
+        for row in canonical_reference_rows(detail_rows, item_catalog, exclusions):
             key = _reference_key(row)
             if key not in grouped:
                 grouped[key] = {
@@ -579,8 +1028,11 @@ class CostProjectionService:
                     "total_with_tax": Decimal("0"),
                     "source_rows": [],
                     "aliases": _reference_aliases(row),
+                    "members": {},
                 }
             grouped[key]["source_rows"].append(row)
+            member = grouped[key]["members"].setdefault(row["_member_key"], {"quantity": Decimal("0"), "raw": row["_raw_values"]})
+            member["quantity"] += _decimal(row.get("数量"))
             grouped[key]["quantity"] += _decimal(row.get("数量"))
             grouped[key]["amount"] += _decimal(row.get("金额(除税)"))
             grouped[key]["tax_amount"] += _decimal(row.get("税金"))
@@ -588,16 +1040,29 @@ class CostProjectionService:
         result = []
         for key, row in grouped.items():
             quantity = row["quantity"]
-            status = self._status_for_reference(row, status_items, workbook_status)
+            members = row["members"]
+
+            def lookup(alias: str, members=members) -> dict:
+                raw = members.get(alias, {}).get("raw")
+                aliases = _reference_aliases(dict(zip(("发票代码(**内文字)", "内部项目名称", "规格型号", "单位"), raw))) if raw else [alias]
+                return self._status_for_reference({"key": alias, "aliases": aliases}, status_items, workbook_status)
+
+            # Status saved before a 品目表 merge or spec normalisation is found through member keys.
+            status = merged_status_item(status_items, key, {k: v["quantity"] for k, v in members.items()}, lookup)
+            self._reference_statuses[key] = status
+            rate_percent = row["source_rows"][0].get("_output_tax_rate_percent") or ""
+            output_tax_rate = _tax_rate_from_percent(rate_percent) if rate_percent else tax_profile.output_tax_rate
             markup = _row_markup_meta(status, fallback_markup["rate"], fallback_markup["locked"])
             markup_multiplier = reference_markup_multiplier(markup["rate"])
             avg_price = average_unit_price(row.get("source_rows") or [])
             avg_price_with_tax = average_unit_price_with_tax(row.get("source_rows") or [])
             purchase_avg_price_with_tax = purchase_reference_average_unit_price_with_tax(row.get("source_rows") or [])
-            reference_avg_price_with_tax = reference_output_average_unit_price_with_tax(avg_price, markup["rate"])
-            reference_base_amount = avg_price * quantity if avg_price is not None and quantity > 0 else Decimal("0")
+            cost_basis = reference_cost_basis(row.get("source_rows") or [], tax_profile, deductibility)
+            cost_price = cost_basis["unit_price"]
+            reference_avg_price_with_tax = reference_output_average_unit_price_with_tax(cost_price, markup["rate"], output_tax_rate)
+            reference_base_amount = cost_price * quantity if cost_price is not None and quantity > 0 else Decimal("0")
             reference_amount = reference_base_amount * markup_multiplier
-            reference_tax = reference_amount * REFERENCE_OUTPUT_TAX_RATE
+            reference_tax = reference_amount * output_tax_rate
             reference_total = reference_amount + reference_tax
             invoiced_quantity = _decimal(status.get("invoiced_quantity"))
             if invoiced_quantity > quantity:
@@ -605,14 +1070,24 @@ class CostProjectionService:
             locked_amount = self._locked_reference_part(status, "invoiced_reference_amount", reference_amount, quantity, invoiced_quantity)
             locked_tax = self._locked_reference_part(status, "invoiced_reference_tax", reference_tax, quantity, invoiced_quantity)
             locked_total = self._locked_reference_part(status, "invoiced_reference_total_with_tax", reference_total, quantity, invoiced_quantity)
+            outbound = outbound_reference_fields(outbound_items.get(key), quantity, invoiced_quantity, cost_price)
             invoice_status = status.get("invoice_status") or ("已开具" if quantity > 0 and invoiced_quantity >= quantity else ("未开具" if invoiced_quantity == 0 else "部分开具"))
             result.append(
                 {
-                    **{k: v for k, v in row.items() if not isinstance(v, Decimal) and k not in {"aliases", "source_rows"}},
+                    **{k: v for k, v in row.items() if not isinstance(v, Decimal) and k not in {"aliases", "source_rows", "members"}},
+                    "member_keys": sorted(members),
+                    "sources": _reference_sources(row["source_rows"]),
+                    "merge_note": str(status.get("merge_note") or ""),
+                    "reference_output_tax_rate": _decimal_text(output_tax_rate, "0.000001"),
+                    "reference_output_tax_rate_percent": _decimal_text(output_tax_rate * Decimal("100"), "0.001"),
                     "quantity": float(quantity),
                     "average_unit_price": float(avg_price) if avg_price is not None else 0,
                     "average_unit_price_with_tax": float(avg_price_with_tax) if avg_price_with_tax is not None else 0,
                     "purchase_reference_average_unit_price_with_tax": float(purchase_avg_price_with_tax) if purchase_avg_price_with_tax is not None else 0,
+                    "reference_cost_unit_price": float(cost_price) if cost_price is not None else 0,
+                    "reference_cost_basis": cost_basis["label"],
+                    "reference_cost_note": cost_basis["note"],
+                    "reference_cost_basis_text": reference_cost_basis_text(cost_basis),
                     "amount": float(row["amount"]),
                     "tax_amount": float(row["tax_amount"]),
                     "total_with_tax": float(row["total_with_tax"]),
@@ -635,6 +1110,15 @@ class CostProjectionService:
                     "uninvoiced_reference_tax": float(max(Decimal("0"), reference_tax - locked_tax)),
                     "uninvoiced_reference_total_with_tax": float(max(Decimal("0"), reference_total - locked_total)),
                     "status_updated_at": str(status.get("updated_at") or ""),
+                    "outbound_quantity": float(outbound["outbound_quantity"]),
+                    "outbound_amount": float(outbound["outbound_amount"]),
+                    "outbound_unit_price": float(outbound["outbound_unit_price"]) if outbound["outbound_unit_price"] is not None else None,
+                    "outbound_invoice_count": outbound["outbound_invoice_count"],
+                    "actual_markup_rate": _decimal_text(outbound["actual_markup_rate"], "0.000001") if outbound["actual_markup_rate"] is not None else "",
+                    "actual_markup_text": outbound["actual_markup_text"],
+                    "outbound_compare": outbound["outbound_compare"],
+                    "outbound_compare_text": outbound["outbound_compare_text"],
+                    "outbound_suggested_quantity": float(outbound["outbound_suggested_quantity"]),
                 }
             )
         return sorted(result, key=lambda item: item["key"])

@@ -14,9 +14,9 @@ from invoice_hub.bookkeeping.mapping import MappingStoreBinding, write_mapping
 from invoice_hub.bookkeeping.paths import company_bookkeeping_paths
 from invoice_hub.bookkeeping.repository import canonical_sha256, file_sha256
 from invoice_hub.bookkeeping.status import load_voucher_status, write_voucher_status
-from invoice_hub.domain.models import AccountMappingRule, VoucherDraft, VoucherLine, VoucherStatusItem
+from invoice_hub.domain.models import AccountMappingRule, VoucherDraft, VoucherLine
 from invoice_hub.projections.cost_analysis import DETAIL_HEADERS
-from invoice_hub.services.app_state import AppState
+from invoice_hub.services.background_sync import BackgroundSyncService
 
 FACTS_COLUMNS_SHA1 = "c62bac018b0e7bd3f3e4f77a1254ad1d0656ecf1"
 COMPANY_ID = "company-export-test"
@@ -61,7 +61,7 @@ def test_jierui_import_xlsx_matches_facts_columns_and_grouping(tmp_path: Path) -
 
 
 def _ready_client(tmp_path: Path, monkeypatch, dates: tuple[str, ...] = ("2026-07-06",)) -> tuple[TestClient, object]:
-    monkeypatch.setattr(AppState, "run_background_diagnostics", lambda self, trigger="startup_sync": None)
+    monkeypatch.setattr(BackgroundSyncService, "run_background_diagnostics", lambda self, trigger="startup_sync": None)
     company = tmp_path / "公司 A"
     watch_dir = company / "成本发票"
     watch_dir.mkdir(parents=True)

@@ -48,20 +48,37 @@ class FilePreviewError(Exception):
         self.status_code = status_code
 
 
-def _ofd_preview_error(error: OFDPreviewError) -> FilePreviewError:
-    messages = {
-        "ofd_renderer_unavailable": "OFD 预览组件未安装或校验失败，请使用包含 OFD 组件的版本；也可使用系统打开原文件。",
-        "ofd_renderer_busy": "正在生成另一张 OFD 票面，请稍后重试。",
-        "ofd_render_timeout": "OFD 票面生成超时，请重试或使用系统打开原文件。",
-        "ofd_font_unavailable": "OFD 票面所需字体或字形不可用，为避免显示缺字票面，请使用系统打开原文件。",
-        "ofd_unsafe_document": "OFD 包含不安全的路径或 XML 内容，已拒绝预览。",
-        "ofd_source_too_large": "OFD 文件超过预览容量上限，请使用系统打开原文件。",
-        "ofd_unsupported_document": "暂不支持含多个文档的 OFD，请使用系统打开原文件。",
-        "ofd_invalid_document": "OFD 页面结构无效或文件已损坏，请使用系统打开原文件。",
-        "page_not_found": "预览页面不存在。",
-    }
+def _ofd_preview_error(error: OFDPreviewError, *, allow_system_open: bool = True) -> FilePreviewError:
+    if allow_system_open:
+        messages = {
+            "ofd_renderer_unavailable": "OFD 预览组件未安装或校验失败，请使用包含 OFD 组件的版本；也可使用系统打开原文件。",
+            "ofd_renderer_busy": "正在生成另一张 OFD 票面，请稍后重试。",
+            "ofd_render_timeout": "OFD 票面生成超时，请重试或使用系统打开原文件。",
+            "ofd_font_unavailable": "OFD 票面所需字体或字形不可用，为避免显示缺字票面，请使用系统打开原文件。",
+            "ofd_unsafe_document": "OFD 包含不安全的路径或 XML 内容，已拒绝预览。",
+            "ofd_source_too_large": "OFD 文件超过预览容量上限，请使用系统打开原文件。",
+            "ofd_unsupported_document": "暂不支持含多个文档的 OFD，请使用系统打开原文件。",
+            "ofd_invalid_document": "OFD 页面结构无效或文件已损坏，请使用系统打开原文件。",
+            "page_not_found": "预览页面不存在。",
+        }
+        fallback = "OFD 票面生成失败，请使用系统打开原文件。"
+    else:
+        # Read-only server sources intentionally omit local system-open actions so
+        # cache paths are never exposed or edited; keep messages honest about that.
+        messages = {
+            "ofd_renderer_unavailable": "OFD 预览组件未安装或校验失败，请使用包含 OFD 组件的版本。",
+            "ofd_renderer_busy": "正在生成另一张 OFD 票面，请稍后重试。",
+            "ofd_render_timeout": "OFD 票面生成超时，请稍后重试。",
+            "ofd_font_unavailable": "OFD 票面所需字体或字形不可用，为避免显示缺字票面，已停止渲染。",
+            "ofd_unsafe_document": "OFD 包含不安全的路径或 XML 内容，已拒绝预览。",
+            "ofd_source_too_large": "OFD 文件超过预览容量上限，无法在页面内预览。",
+            "ofd_unsupported_document": "暂不支持含多个文档的 OFD。",
+            "ofd_invalid_document": "OFD 页面结构无效或文件已损坏，无法预览。",
+            "page_not_found": "预览页面不存在。",
+        }
+        fallback = "OFD 票面生成失败，请稍后重试。"
     # A missing OFD component is a per-file failure: PDF/XML selections remain usable.
-    return FilePreviewError(messages.get(error.code, "OFD 票面生成失败，请使用系统打开原文件。"),
+    return FilePreviewError(messages.get(error.code, fallback),
                             code=error.code, status_code=404 if error.code == "page_not_found" else 422)
 
 
@@ -128,6 +145,7 @@ class FilePreviewJob:
     expires_monotonic: float
     record_count: int
     files: tuple[FilePreviewEntry, ...]
+    allow_system_open: bool = True
 
     @property
     def cached_bytes(self) -> int:
@@ -449,7 +467,13 @@ class FilePreviewService:
                 status_code=400,
             )
 
-    def _entry_for_source(self, source: FilePreviewSource, file_number: int) -> FilePreviewEntry:
+    def _entry_for_source(
+        self,
+        source: FilePreviewSource,
+        file_number: int,
+        *,
+        allow_system_open: bool = True,
+    ) -> FilePreviewEntry:
         path = source.path
         signature = _source_signature(path)
         extension = path.suffix.casefold()
@@ -466,7 +490,7 @@ class FilePreviewService:
                 try:
                     page_count = self._ofd_renderer.page_count(path)
                 except OFDPreviewError as exc:
-                    raise _ofd_preview_error(exc) from exc
+                    raise _ofd_preview_error(exc, allow_system_open=allow_system_open) from exc
             elif extension in DOCUMENT_EXTENSIONS or extension == ".svg":
                 preview_type = "pages"
                 page_count = _mupdf_page_count(path, extension)
@@ -476,7 +500,11 @@ class FilePreviewService:
             elif extension == ".xml":
                 preview_type = "text"
             else:
-                reason = "此格式不支持在页面内显示内容，可使用系统打开。"
+                reason = (
+                    "此格式不支持在页面内显示内容，可使用系统打开。"
+                    if allow_system_open
+                    else "此格式不支持在页面内显示内容。"
+                )
         except FilePreviewError as exc:
             if exc.status_code in {400, 503}:
                 raise
@@ -499,7 +527,12 @@ class FilePreviewService:
             text_truncated=text_truncated,
         )
 
-    def create_job(self, sources: list[FilePreviewSource]) -> FilePreviewJob:
+    def create_job(
+        self,
+        sources: list[FilePreviewSource],
+        *,
+        allow_system_open: bool = True,
+    ) -> FilePreviewJob:
         if not sources:
             raise FilePreviewError("请至少勾选一个源文件。", code="empty_selection", status_code=400)
         if len(sources) > MAX_PREVIEW_SELECTION_RECORDS:
@@ -511,7 +544,7 @@ class FilePreviewService:
         entries: list[FilePreviewEntry] = []
         renderable_pages = 0
         for file_number, source in enumerate(sources, start=1):
-            entry = self._entry_for_source(source, file_number)
+            entry = self._entry_for_source(source, file_number, allow_system_open=allow_system_open)
             renderable_pages += entry.page_count if entry.preview_type == "pages" else 0
             if renderable_pages > MAX_PREVIEW_PAGES:
                 raise FilePreviewError(
@@ -532,6 +565,7 @@ class FilePreviewService:
             expires_monotonic=now_monotonic + PREVIEW_JOB_TTL_SECONDS,
             record_count=len(sources),
             files=tuple(entries),
+            allow_system_open=allow_system_open,
         )
         with self._lock:
             self._remove_expired_locked(now_monotonic)
@@ -590,6 +624,7 @@ class FilePreviewService:
             return page
 
     def get_page(self, job_id: str, file_number: int, page_number: int) -> FilePreviewPage:
+        job = self.get_job(job_id)
         entry = self.get_file(job_id, file_number)
         if entry.preview_type == "error":
             raise FilePreviewError(entry.reason or "文件无法渲染。", code=entry.error_code or "render_failed")
@@ -604,7 +639,7 @@ class FilePreviewService:
                 rendered = self._ofd_renderer.render(entry.path, page_number)
                 page = FilePreviewPage(rendered.content, rendered.width_pixels, rendered.height_pixels, rendered.orientation)
             except OFDPreviewError as exc:
-                raise _ofd_preview_error(exc) from exc
+                raise _ofd_preview_error(exc, allow_system_open=job.allow_system_open) from exc
         elif entry.path.suffix.casefold() in RASTER_IMAGE_EXTENSIONS:
             page = _render_image_frame(entry.path, page_number)
         else:
@@ -656,6 +691,10 @@ class FilePreviewService:
             self._make_byte_capacity_locked(text.byte_size, protected_job_id=job_id)
             current_entry.text = text
         return text
+
+    def release_job(self, job_id: str) -> None:
+        with self._lock:
+            self._mark_expired_locked(job_id, time.monotonic())
 
     def clear(self) -> None:
         with self._lock:

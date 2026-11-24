@@ -11,6 +11,7 @@ from invoice_hub.extraction import BUSINESS_TYPES, extract_invoice_record
 from invoice_hub.extraction.classification import (
     BUSINESS_TYPE_BUILDING,
     BUSINESS_TYPE_RARE_EARTH,
+    BUSINESS_TYPE_REFINED_OIL,
     BUSINESS_TYPE_STANDARD,
     CLASSIFICATION_STATUS_CONFLICT,
     CLASSIFICATION_STATUS_NEEDS_REVIEW,
@@ -216,6 +217,95 @@ def test_ofd_uses_explicit_custom_tag_classification(tmp_path: Path) -> None:
     assert record.invoice_type == INVOICE_TYPE_SPECIAL
     assert record.business_type == BUSINESS_TYPE_BUILDING
     assert record.classification_status == CLASSIFICATION_STATUS_OK
+
+
+def test_refined_oil_business_type_uses_context_not_company_or_item_names(tmp_path: Path, monkeypatch) -> None:
+    import fitz
+
+    # PDF upper-left business label ("成品油") classifies as 成品油.
+    class FakePage:
+        rect = fitz.Rect(0, 0, 600, 400)
+
+        def get_text(self, mode: str = "text"):
+            if mode == "words":
+                return [
+                    (110, 40, 145, 52, "成品油", 0, 0, 0),
+                    (220, 40, 380, 56, "电子发票（增值税专用发票）", 1, 0, 0),
+                ]
+            return "\n".join(
+                [
+                    "电子发票（增值税专用发票）",
+                    "发票号码：26327000000000000001",
+                    "开票日期：2026年07月29日",
+                    "购买方：示例采购有限公司",
+                    "销售方：示例能源销售分公司",
+                    "价税合计（小写）¥8800.00",
+                ]
+            )
+
+    class FakeDoc:
+        page_count = 1
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def __iter__(self):
+            yield FakePage()
+
+        def __getitem__(self, index: int):
+            if index != 0:
+                raise IndexError(index)
+            return FakePage()
+
+    pdf_path = tmp_path / "refined-oil.pdf"
+    pdf_path.write_bytes(b"%PDF-1.4")
+    monkeypatch.setattr(fitz, "open", lambda _path: FakeDoc())
+    pdf_record = extract_invoice_record(pdf_path)
+    assert pdf_record.invoice_type == INVOICE_TYPE_SPECIAL
+    assert pdf_record.business_type == BUSINESS_TYPE_REFINED_OIL
+    assert pdf_record.classification_status == CLASSIFICATION_STATUS_OK
+
+    # XML explicit business field classifies as 成品油; company/item words alone stay 标准电子发票.
+    xml_explicit = tmp_path / "refined-oil.xml"
+    xml_explicit.write_text(
+        """<?xml version="1.0" encoding="utf-8"?>
+<EInvoice>
+  <InvoiceType>电子发票（增值税专用发票）</InvoiceType>
+  <BusinessType>成品油</BusinessType>
+  <InvoiceNumber>26327000000000000002</InvoiceNumber>
+  <SellerName>示例能源分公司</SellerName>
+  <BuyerName>示例采购公司</BuyerName>
+  <TotalTaxIncludedAmount>1130.00</TotalTaxIncludedAmount>
+</EInvoice>
+""",
+        encoding="utf-8",
+    )
+    assert extract_invoice_record(xml_explicit).business_type == BUSINESS_TYPE_REFINED_OIL
+
+    xml_company_only = tmp_path / "company-word-only.xml"
+    xml_company_only.write_text(
+        """<?xml version="1.0" encoding="utf-8"?>
+<EInvoice>
+  <InvoiceType>电子发票（增值税专用发票）</InvoiceType>
+  <InvoiceNumber>26327000000000000003</InvoiceNumber>
+  <SellerName>示例成品油贸易有限公司</SellerName>
+  <BuyerName>示例采购公司</BuyerName>
+  <ItemName>*成品油*92号车用汽油</ItemName>
+  <TotalTaxIncludedAmount>1130.00</TotalTaxIncludedAmount>
+</EInvoice>
+""",
+        encoding="utf-8",
+    )
+    company_only_record = extract_invoice_record(xml_company_only)
+    assert company_only_record.business_type == ""
+
+    # OFD structured field classifies as 成品油.
+    ofd_path = tmp_path / "refined-oil.ofd"
+    _write_classified_ofd(ofd_path, business_type="成品油")
+    assert extract_invoice_record(ofd_path).business_type == BUSINESS_TYPE_REFINED_OIL
 
 
 def _record(

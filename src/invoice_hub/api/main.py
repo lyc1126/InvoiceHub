@@ -80,10 +80,12 @@ def main() -> int:
     if failure:
         print(failure, file=sys.stderr)
         return 1
-    from invoice_hub.api.app import app
+    # Build the app only after INVOICE_HUB_ROOT/CONFIG are set above. app.py has no
+    # module-level instance, so importing it (tests, tooling) never syncs a default target.
+    from invoice_hub.api.app import create_app
 
     uvicorn.run(
-        app,
+        create_app(),
         host=host,
         port=port,
         log_level="info",

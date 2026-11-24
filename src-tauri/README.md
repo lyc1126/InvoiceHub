@@ -89,7 +89,8 @@ token goes only to the directly spawned Python backend, which captures it and
 removes it from descendants; it never reaches Web content, Tauri commands or
 events, API responses, or logs.
 
-The private loopback listener accepts four picker enums and the two updater
+The private loopback listener accepts five fixed single-path picker enums (including company folders),
+the temporary-files multi-picker and the two updater
 enums `update_check` and `update_install`. A complete host-owned candidate is
 bounded to 300 seconds; updater metadata and the retained download object both
 use a five-second timeout. Updater-disabled profiles remain inert. An enabled
@@ -182,3 +183,7 @@ exercise browser, tray clicking, second-instance, native-picker, printing,
 download, signature validation, monitor-stop-for-install, installation,
 restart, Windows, DMG, Developer ID, notarization, Release, or Feed behavior.
 L10-E does not widen those claims. Neither profile is release evidence.
+
+### Company folder picker
+
+`pick_company_directory` is a fixed, owned Host RPC command with no caller-supplied path or metadata. It opens the asynchronous folder dialog and only returns a registration draft. Workspace creation is a separately confirmed Python plan; the host command never saves settings, creates folders or switches monitoring. Native desktop/browser acceptance remains separate from source and synthetic API tests.

@@ -428,8 +428,8 @@ def rule_applies_to_context(
         "match_item": normalize_match_text(item),
         "match_internal_project": normalize_match_text(internal_project),
     }
-    for field, value in context.items():
-        expected = getattr(normalized, field)
+    for field_name, value in context.items():
+        expected = getattr(normalized, field_name)
         if expected and expected != value:
             return False
     context_date = _normalized_iso_date(effective_date, "effective_date")

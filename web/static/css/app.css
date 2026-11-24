@@ -146,7 +146,6 @@ a { color: inherit; text-decoration: none; }
   flex-wrap: wrap;
 }
 .toolbar { margin-bottom: 14px; }
-.cost-actions { margin-bottom: 0; }
 .sync-progress {
   --sync-progress-inline-size: 184px;
   --sync-progress-block-size: 30px;
@@ -805,12 +804,17 @@ textarea { min-height: 160px; resize: vertical; }
   color: var(--primary-strong);
   background: #eef4ff;
 }
+/* page-costs.js measures the viewport on every show and writes left, data-placement,
+   --cost-tooltip-arrow-x and --cost-tooltip-max-height; these defaults are the no-JS fallback. */
 .cost-formula-tooltip {
   position: absolute;
-  right: 0;
+  left: 0;
   bottom: calc(100% + 10px);
   z-index: 30;
-  width: min(460px, calc(100vw - 48px));
+  display: flex;
+  flex-direction: column;
+  width: min(460px, calc(100vw - 24px));
+  max-height: var(--cost-tooltip-max-height, none);
   padding: 12px 14px;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -826,17 +830,47 @@ textarea { min-height: 160px; resize: vertical; }
   transition: opacity 160ms ease, transform 160ms ease, visibility 160ms ease;
   pointer-events: none;
 }
+.cost-formula-tooltip[data-placement="bottom"] {
+  top: calc(100% + 10px);
+  bottom: auto;
+  transform: translateY(-4px);
+}
+/* Hover bridge across the 10px gap so the pointer can reach (and scroll) the panel. */
+.cost-formula-tooltip::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 100%;
+  height: 12px;
+}
+.cost-formula-tooltip[data-placement="bottom"]::before {
+  top: auto;
+  bottom: 100%;
+}
+.cost-formula-tooltip__body {
+  min-height: 0;
+  overflow-y: auto;
+}
 .cost-formula-tooltip::after {
   content: "";
   position: absolute;
-  right: 10px;
+  left: calc(var(--cost-tooltip-arrow-x, 15px) - 5px);
   bottom: -6px;
   width: 10px;
   height: 10px;
   border-right: 1px solid var(--line);
   border-bottom: 1px solid var(--line);
-  background: #fff;
+  /* Skin selectors such as :is(...) cannot match ::after; inheriting keeps the arrow on the panel color. */
+  background: inherit;
   transform: rotate(45deg);
+}
+.cost-formula-tooltip[data-placement="bottom"]::after {
+  top: -6px;
+  bottom: auto;
+  border: 0;
+  border-top: 1px solid var(--line);
+  border-left: 1px solid var(--line);
 }
 .cost-formula-tooltip strong {
   display: block;
@@ -851,6 +885,8 @@ textarea { min-height: 160px; resize: vertical; }
   margin-top: 8px;
   padding-top: 8px;
   border-top: 1px solid #eef2f7;
+  /* Follow the panel text color so dark skins do not get bright white rules. */
+  border-top-color: color-mix(in srgb, currentColor 14%, transparent);
 }
 .cost-formula-help-wrap:hover .cost-formula-tooltip,
 .cost-formula-help-wrap:focus-within .cost-formula-tooltip {
@@ -1015,19 +1051,20 @@ body[data-page="ocr"] .table-shell {
 #projectTable th:nth-child(9), #projectTable td:nth-child(9) { width: 108px; }
 #projectTable th:nth-child(10), #projectTable td:nth-child(10) { width: 118px; }
 .table--invoice-list {
-  min-width: 1430px;
+  min-width: 1580px;
   table-layout: fixed;
 }
 .table--invoice-list th:nth-child(1), .table--invoice-list td:nth-child(1) { width: 240px; }
 .table--invoice-list th:nth-child(2), .table--invoice-list td:nth-child(2) { width: 76px; }
 .table--invoice-list th:nth-child(3), .table--invoice-list td:nth-child(3) { width: 220px; }
-.table--invoice-list th:nth-child(4), .table--invoice-list td:nth-child(4) { width: 150px; }
-.table--invoice-list th:nth-child(5), .table--invoice-list td:nth-child(5) { width: 72px; }
-.table--invoice-list th:nth-child(6), .table--invoice-list td:nth-child(6) { width: 130px; }
-.table--invoice-list th:nth-child(7), .table--invoice-list td:nth-child(7) { width: 136px; }
+.table--invoice-list th:nth-child(5), .table--invoice-list td:nth-child(5) { width: 150px; }
+.table--invoice-list th:nth-child(6), .table--invoice-list td:nth-child(6) { width: 72px; }
+.table--invoice-list th:nth-child(7), .table--invoice-list td:nth-child(7) { width: 130px; }
 .table--invoice-list th:nth-child(8), .table--invoice-list td:nth-child(8) { width: 136px; }
-.table--invoice-list th:nth-child(9), .table--invoice-list td:nth-child(9) { width: 190px; }
-.table--invoice-list th:nth-child(10), .table--invoice-list td:nth-child(10) { width: 76px; }
+.table--invoice-list th:nth-child(9), .table--invoice-list td:nth-child(9) { width: 136px; }
+.table--invoice-list th:nth-child(10), .table--invoice-list td:nth-child(10) { width: 190px; }
+.table--invoice-list th:nth-child(11), .table--invoice-list td:nth-child(11) { width: 76px; }
+.table--invoice-list th:nth-child(4), .table--invoice-list td:nth-child(4) { width: 150px; overflow-wrap: anywhere; }
 .data-table th, .data-table td, .table th, .table td {
   border-bottom: 1px solid var(--line);
   padding: 9px 10px;
@@ -1342,7 +1379,8 @@ body[data-page="index"] .table--invoice-list .invoice-type-pill--ordinary {
   padding-right: 4px;
 }
 #referenceTable {
-  min-width: 1560px;
+  /* Quantity block (columns 1–12, 1294px) stays visible on a normal window; price columns scroll. */
+  min-width: 2228px;
   table-layout: fixed;
 }
 #referenceTable th,
@@ -1352,20 +1390,145 @@ body[data-page="index"] .table--invoice-list .invoice-type-pill--ordinary {
   text-align: center;
   vertical-align: middle;
 }
+/* Widths follow referenceColumns in page-costs.js; reorder both together. */
 #referenceTable th:nth-child(1), #referenceTable td:nth-child(1) { width: 52px; text-align: center; }
-#referenceTable th:nth-child(2), #referenceTable td:nth-child(2) { width: 136px; }
+#referenceTable th:nth-child(2), #referenceTable td:nth-child(2) { width: 120px; }
 #referenceTable th:nth-child(3), #referenceTable td:nth-child(3) { width: 170px; }
 #referenceTable th:nth-child(4), #referenceTable td:nth-child(4) { width: 88px; }
 #referenceTable th:nth-child(5), #referenceTable td:nth-child(5) { width: 56px; text-align: center; }
 #referenceTable th:nth-child(6), #referenceTable td:nth-child(6) { width: 88px; }
-#referenceTable th:nth-child(7), #referenceTable td:nth-child(7) { width: 132px; }
-#referenceTable th:nth-child(8), #referenceTable td:nth-child(8) { width: 132px; }
-#referenceTable th:nth-child(9), #referenceTable td:nth-child(9) { width: 132px; }
-#referenceTable th:nth-child(10), #referenceTable td:nth-child(10) { width: 122px; }
+#referenceTable th:nth-child(7), #referenceTable td:nth-child(7) { width: 72px; }
+#referenceTable th:nth-child(8), #referenceTable td:nth-child(8) { width: 122px; }
+#referenceTable th:nth-child(9), #referenceTable td:nth-child(9) { width: 96px; }
+#referenceTable th:nth-child(10), #referenceTable td:nth-child(10) { width: 230px; }
 #referenceTable th:nth-child(11), #referenceTable td:nth-child(11) { width: 88px; }
 #referenceTable th:nth-child(12), #referenceTable td:nth-child(12) { width: 112px; }
-#referenceTable th:nth-child(13), #referenceTable td:nth-child(13) { width: 150px; }
-#referenceTable th:nth-child(14), #referenceTable td:nth-child(14) { width: 138px; }
+#referenceTable th:nth-child(13), #referenceTable td:nth-child(13) { width: 132px; }
+#referenceTable th:nth-child(14), #referenceTable td:nth-child(14) { width: 132px; }
+#referenceTable th:nth-child(15), #referenceTable td:nth-child(15) { width: 100px; }
+#referenceTable th:nth-child(16), #referenceTable td:nth-child(16) { width: 132px; }
+#referenceTable th:nth-child(17), #referenceTable td:nth-child(17) { width: 150px; }
+#referenceTable th:nth-child(18), #referenceTable td:nth-child(18) { width: 138px; }
+#referenceTable th:nth-child(19), #referenceTable td:nth-child(19) { width: 150px; }
+/* 数量比对 can carry a long note plus a button; wrap inside the cell instead of spilling over 未开数量. */
+.reference-compare { display: inline-flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 4px; max-width: 100%; }
+.reference-compare .status-pill { white-space: normal; text-align: center; }
+/* 成本页：税务设置与销项数量比对并排，窄窗口改为上下排列。 */
+.cost-context-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+  gap: 12px;
+  margin: 0 0 12px;
+}
+.cost-context-grid > .inline-panel { margin: 0; display: flex; flex-direction: column; gap: 6px; }
+.cost-panel-title { color: var(--text); font-size: 14px; }
+.cost-panel-note { margin: 0; font-size: 12px; color: var(--muted); }
+.cost-panel-warning { margin: 0; font-size: 12px; color: #92400e; }
+.cost-tax-profile__controls { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px 12px; }
+.cost-tax-profile__field { display: inline-flex; flex-direction: column; gap: 4px; font-size: 12px; }
+.cost-tax-profile__field .input { min-width: 128px; }
+.cost-outbound__head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; }
+.cost-outbound__counts { display: inline-flex; flex-wrap: wrap; gap: 6px; }
+.cost-outbound__summary { display: flex; flex-direction: column; gap: 4px; }
+.cost-outbound__summary p { margin: 0; }
+.cost-outbound__unmatched { font-size: 12px; }
+.cost-outbound__unmatched summary { cursor: pointer; color: var(--text); }
+@media (max-width: 1100px) {
+  .cost-context-grid { grid-template-columns: minmax(0, 1fr); }
+}
+.item-catalog-dialog {
+  width: min(1040px, calc(100vw - 48px));
+  max-height: calc(100vh - 64px);
+  padding: 18px 20px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  display: none;
+  flex-direction: column;
+  gap: 10px;
+}
+.item-catalog-dialog[open] { display: flex; }
+.item-catalog-dialog h3 { margin: 0; }
+.item-catalog-shell { max-height: min(60vh, 560px); overflow: auto; }
+#itemCatalogTable { table-layout: fixed; min-width: 900px; }
+#itemCatalogTable th:nth-child(1), #itemCatalogTable td:nth-child(1) { width: 220px; text-align: left; }
+#itemCatalogTable th:nth-child(2), #itemCatalogTable td:nth-child(2) { width: 220px; }
+#itemCatalogTable th:nth-child(3), #itemCatalogTable td:nth-child(3) { width: 120px; }
+#itemCatalogTable th:nth-child(4), #itemCatalogTable td:nth-child(4) { width: 120px; }
+#itemCatalogTable td { vertical-align: middle; }
+#itemCatalogTable td .input { width: 100%; }
+.item-catalog-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.cost-dialog-subtitle { margin: 4px 0 0; font-size: 14px; }
+/* 成本页命令区：视图切换在左，刷新 / 重新汇总（唯一主按钮）/ 更多 在右。 */
+.cost-command-bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 16px; }
+.cost-command-bar .cost-view-switcher { margin: 0; }
+.cost-command-bar__actions { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+.cost-more { position: relative; }
+.cost-more__toggle { display: inline-flex; align-items: center; gap: 6px; }
+.cost-more__chevron { transition: transform 160ms ease-out; }
+.cost-more__toggle[aria-expanded="true"] .cost-more__chevron { transform: rotate(180deg); }
+.cost-more__menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  z-index: 40;
+  min-width: 180px;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: 0 8px 24px rgba(36, 37, 32, 0.12);
+  display: flex;
+  flex-direction: column;
+}
+.cost-more__menu[hidden] { display: none; }
+.cost-more__item {
+  min-height: 40px;
+  padding: 8px 12px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.cost-more__item:hover, .cost-more__item:focus-visible { background: var(--surface-2); outline: none; }
+/* 勾选或有未保存修改时才出现的底部操作条；内容区预留底部空间，表格不会被遮住。 */
+.cost-action-bar {
+  position: fixed;
+  left: 50%;
+  bottom: 16px;
+  z-index: 30;
+  transform: translateX(-50%);
+  width: min(100% - 32px, 1560px);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 20px;
+  padding: 10px 14px;
+  border: 1px solid var(--line-strong);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: 0 12px 32px rgba(36, 37, 32, 0.18);
+}
+.cost-action-bar[hidden], .cost-action-bar__zone[hidden] { display: none; }
+.cost-action-bar__zone { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
+.cost-action-bar__save { margin-left: auto; }
+.cost-action-bar__group { display: inline-flex; align-items: center; gap: 6px; padding-left: 12px; border-left: 1px solid var(--line); }
+.cost-action-bar__count { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.cost-action-bar__label { font-size: 12px; color: var(--muted); }
+.cost-action-bar__remove { color: #991b1b; }
+body.has-cost-action-bar .shell { padding-bottom: 120px; }
+.reference-select-tools { display: inline-flex; gap: 6px; margin: 0 8px; }
+/* Sheet switch: fade the incoming sheet only (no movement); a sheet still loading keeps the old height. */
+.cost-view.is-entering { animation: cost-view-enter 140ms ease-out; }
+@keyframes cost-view-enter { from { opacity: 0; } to { opacity: 1; } }
+.cost-view[aria-busy="true"] .table-shell { opacity: 0.55; transition: opacity 120ms ease-out; }
+@media (prefers-reduced-motion: reduce) {
+  .cost-more__chevron { transition: none; }
+  .cost-view.is-entering { animation: none; }
+}
 .reference-text {
   display: block;
   max-width: 100%;
@@ -2178,12 +2341,6 @@ body[data-page="documents"] .document-preview-scroll {
   }
   .cost-view-switcher { align-items: flex-start; flex-direction: column; }
   .cost-formula-help { width: 30px; }
-  .cost-formula-tooltip {
-    right: auto;
-    left: 0;
-    width: min(460px, calc(100vw - 32px));
-  }
-  .cost-formula-tooltip::after { right: auto; left: 10px; }
   .watch-dir-history__group { grid-template-columns: 1fr; gap: 4px; }
   .watch-dir-option { max-width: 100%; width: 100%; }
   .invoice-selection-tools {

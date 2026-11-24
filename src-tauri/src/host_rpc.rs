@@ -40,9 +40,11 @@ const UPDATE_CANDIDATE_TTL: Duration = Duration::from_secs(300);
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HostRpcCommand {
     PickWatchDirectory,
+    PickCompanyDirectory,
     PickOutboundInvoiceDirectory,
     PickOcrDirectory,
     PickOcrFile,
+    PickTemporaryFiles,
     UpdateCheck,
     UpdateInstall,
     SetAppIcon(AppIconId),
@@ -52,9 +54,11 @@ impl HostRpcCommand {
     fn parse(value: &str) -> Option<Self> {
         match value {
             "pick_watch_dir" => Some(Self::PickWatchDirectory),
+            "pick_company_directory" => Some(Self::PickCompanyDirectory),
             "pick_outbound_invoice_dir" => Some(Self::PickOutboundInvoiceDirectory),
             "pick_ocr_directory" => Some(Self::PickOcrDirectory),
             "pick_ocr_file" => Some(Self::PickOcrFile),
+            "pick_temporary_files" => Some(Self::PickTemporaryFiles),
             "update_check" => Some(Self::UpdateCheck),
             "update_install" => Some(Self::UpdateInstall),
             _ => None,
@@ -154,9 +158,11 @@ impl HostRpcAuthorizer {
         matches!(
             command,
             "pick_watch_dir"
+                | "pick_company_directory"
                 | "pick_outbound_invoice_dir"
                 | "pick_ocr_directory"
                 | "pick_ocr_file"
+                | "pick_temporary_files"
                 | "update_check"
                 | "update_install"
                 | "set_app_icon"
@@ -320,6 +326,8 @@ impl UpdaterRuntimeGate {
         )
     }
 
+    // Only macOS requests an explicit post-install relaunch; Windows updater exits via on_before_exit.
+    #[cfg(target_os = "macos")]
     fn prepare_relaunch(&self) -> Result<(), HostRpcServerError> {
         self.transition(
             UpdaterRuntimeState::CommitExecuting,
@@ -594,7 +602,9 @@ impl HostUpdater {
                 update: pending.update,
             };
             let mut relauncher = HostRelaunchRequester {
+                #[cfg(target_os = "macos")]
                 app_handle: self.app_handle.clone(),
+                #[cfg(target_os = "macos")]
                 runtime_gate: Arc::clone(&self.runtime_gate),
             };
             let mut coordinator =
@@ -642,15 +652,22 @@ impl UpdateInstaller for HostUpdateInstaller {
 
 #[derive(Debug)]
 enum HostRelaunchError {
+    #[cfg(target_os = "macos")]
     BackendUnavailable,
+    #[cfg(target_os = "macos")]
     BackendShutdownFailed,
+    #[cfg(target_os = "macos")]
     StateTransitionRejected,
     #[cfg(not(target_os = "macos"))]
     UnsupportedPlatform,
 }
 
+// Windows updater launches its installer in on_before_exit and exits directly, so the
+// post-install relaunch handles are only compiled on macOS to keep Windows clippy -D warnings clean.
 struct HostRelaunchRequester {
+    #[cfg(target_os = "macos")]
     app_handle: tauri::AppHandle<tauri::Wry>,
+    #[cfg(target_os = "macos")]
     runtime_gate: Arc<UpdaterRuntimeGate>,
 }
 
@@ -671,7 +688,7 @@ impl RelaunchRequester for HostRelaunchRequester {
                 .prepare_relaunch()
                 .map_err(|_| HostRelaunchError::StateTransitionRejected)?;
             self.app_handle.request_restart();
-            return Ok(());
+            Ok(())
         }
         #[cfg(not(target_os = "macos"))]
         {
@@ -876,10 +893,15 @@ fn handle_request(
     authorizer.authorize(&request.origin, &token, command_name(command))?;
     match command {
         HostRpcCommand::PickWatchDirectory
+        | HostRpcCommand::PickCompanyDirectory
         | HostRpcCommand::PickOutboundInvoiceDirectory
         | HostRpcCommand::PickOcrDirectory
         | HostRpcCommand::PickOcrFile => select_path(app_handle.clone(), command)
             .map(HostRpcResponse::Picker)
+            .map(HostRpcReply::immediate)
+            .map_err(|_| HostRpcAuthorizationError::CommandRejected),
+        HostRpcCommand::PickTemporaryFiles => select_temporary_files(app_handle.clone())
+            .map(HostRpcResponse::Files)
             .map(HostRpcReply::immediate)
             .map_err(|_| HostRpcAuthorizationError::CommandRejected),
         HostRpcCommand::UpdateCheck => updater
@@ -998,16 +1020,40 @@ fn read_request(stream: &mut TcpStream) -> Result<RpcRequest, HostRpcAuthorizati
     })
 }
 
+fn select_temporary_files(
+    app_handle: tauri::AppHandle<tauri::Wry>,
+) -> Result<Vec<String>, HostRpcServerError> {
+    let (sender, receiver) = mpsc::sync_channel(1);
+    app_handle
+        .dialog()
+        .file()
+        .add_filter("发票文件", &["pdf", "ofd", "xml"])
+        .pick_files(move |selection| {
+            let paths = selection
+                .unwrap_or_default()
+                .into_iter()
+                .filter_map(|path| path.into_path().ok())
+                .map(|path| path.to_string_lossy().into_owned())
+                .collect();
+            let _ = sender.send(paths);
+        });
+    receiver
+        .recv_timeout(PICKER_TIMEOUT)
+        .map_err(|_| HostRpcServerError::PickerUnavailable)
+}
+
 fn select_path(
     app_handle: tauri::AppHandle<tauri::Wry>,
     command: HostRpcCommand,
 ) -> Result<Option<String>, HostRpcServerError> {
     let pick_file = match command {
         HostRpcCommand::PickWatchDirectory
+        | HostRpcCommand::PickCompanyDirectory
         | HostRpcCommand::PickOutboundInvoiceDirectory
         | HostRpcCommand::PickOcrDirectory => false,
         HostRpcCommand::PickOcrFile => true,
-        HostRpcCommand::UpdateCheck
+        HostRpcCommand::PickTemporaryFiles
+        | HostRpcCommand::UpdateCheck
         | HostRpcCommand::UpdateInstall
         | HostRpcCommand::SetAppIcon(_) => return Err(HostRpcServerError::PickerUnavailable),
     };
@@ -1021,7 +1067,13 @@ fn select_path(
     // tauri-plugin-dialog already marshals its asynchronous picker onto Tauri's
     // main thread. A second dispatch can be rejected before the plugin receives
     // the request, turning a usable native dialog into a redacted 503.
-    if pick_file {
+    if command == HostRpcCommand::PickCompanyDirectory {
+        app_handle
+            .dialog()
+            .file()
+            .set_title("选择公司资料夹或新建位置")
+            .pick_folder(respond);
+    } else if pick_file {
         app_handle.dialog().file().pick_file(respond);
     } else {
         app_handle.dialog().file().pick_folder(respond);
@@ -1130,6 +1182,7 @@ impl HostRpcReply {
 
 enum HostRpcResponse {
     Picker(Option<String>),
+    Files(Vec<String>),
     UpdateCheck { available: bool, version: String },
     UpdateInstall,
     AppIconUpdated,
@@ -1159,6 +1212,7 @@ fn write_rpc_reply<W: Write>(writer: &mut W, mut reply: HostRpcReply) -> std::io
 
 fn write_response<W: Write>(writer: &mut W, response: HostRpcResponse) -> std::io::Result<()> {
     let body = match response {
+        HostRpcResponse::Files(paths) => json!({"ok": true, "paths": paths}),
         HostRpcResponse::Picker(selected) => json!({
             "ok": true,
             "selected": selected.is_some(),
@@ -1199,9 +1253,11 @@ fn write_rejected_response(stream: &mut TcpStream) -> std::io::Result<()> {
 fn command_name(command: HostRpcCommand) -> &'static str {
     match command {
         HostRpcCommand::PickWatchDirectory => "pick_watch_dir",
+        HostRpcCommand::PickCompanyDirectory => "pick_company_directory",
         HostRpcCommand::PickOutboundInvoiceDirectory => "pick_outbound_invoice_dir",
         HostRpcCommand::PickOcrDirectory => "pick_ocr_directory",
         HostRpcCommand::PickOcrFile => "pick_ocr_file",
+        HostRpcCommand::PickTemporaryFiles => "pick_temporary_files",
         HostRpcCommand::UpdateCheck => "update_check",
         HostRpcCommand::UpdateInstall => "update_install",
         HostRpcCommand::SetAppIcon(_) => "set_app_icon",
@@ -1296,6 +1352,31 @@ mod tests {
         }
     }
 
+    // A blocking accept() hangs the whole test binary when the sender thread
+    // cannot connect (for example a host firewall blocking loopback); fail instead.
+    fn accept_within(listener: &TcpListener, limit: Duration) -> TcpStream {
+        listener
+            .set_nonblocking(true)
+            .expect("nonblocking listener");
+        let deadline = Instant::now() + limit;
+        loop {
+            match listener.accept() {
+                Ok((stream, _)) => {
+                    stream.set_nonblocking(false).expect("blocking stream");
+                    return stream;
+                }
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                    assert!(
+                        Instant::now() < deadline,
+                        "no loopback connection within {limit:?}"
+                    );
+                    thread::sleep(Duration::from_millis(10));
+                }
+                Err(error) => panic!("accept failed: {error}"),
+            }
+        }
+    }
+
     fn reserved_runtime_gate() -> Arc<UpdaterRuntimeGate> {
         let gate = Arc::new(UpdaterRuntimeGate::new(true));
         assert!(gate.begin_activation().expect("activation begins"));
@@ -1317,7 +1398,7 @@ mod tests {
             let mut stream = TcpStream::connect(address).expect("connect test listener");
             stream.write_all(request.as_bytes()).expect("send request");
         });
-        let (mut stream, _) = listener.accept().expect("accept request");
+        let mut stream = accept_within(&listener, Duration::from_secs(5));
         let parsed = read_request(&mut stream).expect("urllib-shaped request is accepted");
         sender.join().expect("sender exits");
 
@@ -1334,7 +1415,7 @@ mod tests {
                 .write_all(b"POST /v1/host-rpc HTTP/1.1 extra\r\nContent-Length: 0\r\n\r\n")
                 .expect("send invalid request");
         });
-        let (mut invalid_stream, _) = invalid_listener.accept().expect("accept invalid request");
+        let mut invalid_stream = accept_within(&invalid_listener, Duration::from_secs(5));
         assert!(read_request(&mut invalid_stream).is_err());
         invalid_sender.join().expect("invalid sender exits");
     }
@@ -1409,6 +1490,31 @@ mod tests {
         );
         assert!(clear_candidate_if_current(&candidate, 8).expect("matching expiry clears"));
         assert!(candidate.lock().expect("candidate lock").is_none());
+    }
+
+    #[test]
+    fn temporary_multi_picker_is_a_fixed_command_with_structured_paths() {
+        assert_eq!(
+            super::HostRpcCommand::parse("pick_temporary_files"),
+            Some(super::HostRpcCommand::PickTemporaryFiles)
+        );
+        assert!(super::HostRpcCommand::from_payload(
+            br#"{"command":"pick_temporary_files","path":"untrusted"}"#
+        )
+        .is_err());
+        let mut response = Vec::new();
+        super::write_response(
+            &mut response,
+            super::HostRpcResponse::Files(vec!["synthetic.xml".into()]),
+        )
+        .unwrap();
+        let text = String::from_utf8(response).unwrap();
+        assert!(text.contains(r#""paths":["synthetic.xml"]"#));
+        let mut cancelled = Vec::new();
+        super::write_response(&mut cancelled, super::HostRpcResponse::Files(vec![])).unwrap();
+        assert!(String::from_utf8(cancelled)
+            .unwrap()
+            .contains(r#""paths":[]"#));
     }
 
     #[test]
@@ -1550,5 +1656,22 @@ mod tests {
                 "tampered-signature",
             )
         );
+    }
+}
+
+#[cfg(test)]
+mod company_picker_tests {
+    use super::HostRpcCommand;
+
+    #[test]
+    fn company_picker_accepts_only_the_fixed_payload_without_paths() {
+        assert_eq!(
+            HostRpcCommand::from_payload(br#"{"command":"pick_company_directory"}"#),
+            Ok(HostRpcCommand::PickCompanyDirectory)
+        );
+        assert!(HostRpcCommand::from_payload(
+            br#"{"command":"pick_company_directory","path":"/untrusted"}"#
+        )
+        .is_err());
     }
 }

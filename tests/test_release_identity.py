@@ -44,13 +44,13 @@ def _payload() -> dict:
 
 
 def test_release_version_identity_is_consistent() -> None:
-    assert invoice_hub.__version__ == PYTHON_PACKAGE_VERSION == "0.3.0a2"
-    assert PRODUCT_VERSION == "0.3.0-alpha.2"
+    assert invoice_hub.__version__ == PYTHON_PACKAGE_VERSION == "1.0.0b1"
+    assert PRODUCT_VERSION == "1.0.0-beta.1"
     assert RELEASE_PYTHON_VERSION == "3.14.6"
-    assert UPDATE_CHANNEL == "alpha"
+    assert UPDATE_CHANNEL == "beta"
     assert WEBSITE_URL == "https://lyc1126.github.io/InvoiceHub/"
     assert UPDATE_FEED_URL.startswith("https://lyc1126.github.io/InvoiceHub/")
-    assert UPDATE_FEED_URL.endswith("/updates/alpha/latest.json")
+    assert UPDATE_FEED_URL.endswith("/updates/beta/latest.json")
     assert API_CONTRACT_VERSION == "2026-08-02-release-update-v1"
 
 

@@ -1,29 +1,23 @@
 # InvoiceHub 开发架构与工程导航
 
-2026-09-10：alpha.2 优化版 1 已完成同源 Mac 构建并发布，内置平台 Python/Java/OFD 组件；离线、包内两页 OFD 和实际正常配置的 ready/页面/monitor 验收通过。隔离 HOME 自动样本未通过，其他平台原生与签名限制仍保留。精确身份、发布状态与来源见[分支记录](BRANCH_STATUS.md)；后续开发以 main 为准，制品身份由优化批次 Tag 固定。
+> **当前状态总览**（按日期的历史阶段演进已统一收拢至 [CHANGELOG.md](../CHANGELOG.md)，本页只描述当前架构与有效边界）
+>
+> - **版本与基线**：当前开发线版本真值 [version.py](../src/invoice_hub/version.py) 为 `1.0.0-beta.1`（`UPDATE_CHANNEL = "beta"`）；公开图以经过审计的单一脱敏根提交建立 `main`，精确分支与提交以实时 Git 与 [分支记录](BRANCH_STATUS.md) 为准。
+> - **共享业务核心**：Python/FastAPI `/api/v1` + 独立 monitor daemon + Vue 3 工作区（`frontend/` → `web/static/app/`，桌面默认进入 `/workspace/`，与经典 `/` 互切）+ 经典页面（单据、成本 v1、做账、OCR、一致性、设置）+ 独立产品官网（`/website/`）。
+> - **已落地核心能力**：
+>   - **发票与提取底座**：PDF/OFD/XML 提取与成品油/电费等特定业务分类、同票家族纠偏、解析器版本感知自动重算、OFD 专用 Java 21 / OFDRW 渲染预览（[OFD 预览说明](OFD_PREVIEW.md)）、渐进分页读取（`storage/read_views.py`）、临时识别弹窗与勾选批量操作/原生回收站（[勾选工作流](architecture/AGENT_TASK_MAP.md#task-selection-workflow)）。
+>   - **增量缓存、服务器只读来源与容量治理（WS-08/09、ENG-09）**：逐文件 SQLite 原始解析缓存（`storage/parse_cache.py`）、完整投影代际与兼容导出回执（`storage/generations.py`）、已挂载 SMB 共享与 SSH-Agent SFTP 只读来源（`services/sources.py` + `source_worker.py`）、以及代际/解析缓存/来源副本的 LRU 与活动租约安全回收（[设计文档](SERVER_CONNECTION_AND_CACHE_DESIGN.md) · [任务入口](architecture/AGENT_TASK_MAP.md#task-source-cache)）。
+>   - **多公司工作区与做账（WS-01—07/10、BK-01、BUG-06）**：公司登记与六类标准子目录补建、项目全量人工归属与重命名、监控/非监控批量标签、进销存/往来/抵扣/同号勾稽与原始凭证缩略图墙、银行通用版式引擎（`bank/layouts.py`）、工资/社保确认计提与可编辑凭证草稿（服务品目与库存隔离）、默认软件无关的「通用凭证表」标准导出（`bank/export_profiles.py`）。
+>   - **成本分析 V2（COST-01—06）**：公司级品目台账、6 类定价规则（加价率/目标毛利/固定加价/固定价/阶梯/人工市场参照）、新旧对照迁移、报价归档与内存 XLSX 导出、账面库存月末核对、货物/服务项目毛利与价格监控（[V2 设计](COST_ANALYSIS_V2_DESIGN.md)）。
+>   - **OCR（OCR-01）与产品反馈（FEEDBACK-01）**：默认关闭本地重型 OCR，支持用户按需配置 PaddleOCR 官方 API（独立密钥文件 + 云端隐私确认 + 按公司授权）或自建 PaddleOCR 服务，覆盖单文件识别与社保截图解析；应用内建议与反馈代码已接入，中转服务待部署决策（[反馈设计](FEEDBACK_DESIGN.md)）。
+>   - **桌面宿主与自动化门禁（Tauri 2、ENG-05/10）**：固定 `127.0.0.1:8766` 宿主所有权握手、旧 InvoiceHub 端口冲突引导恢复、桌面窗口创建失败转默认浏览器兜底、Linux Playwright 合成浏览器回归（[浏览器回归说明](BROWSER_E2E.md) · [启动排障](STARTUP_TROUBLESHOOTING.md)）。
+> - **明确未包含边界**：完整税务政策引擎 D0–D5 仍为设计阶段（[税务工作台设计](TAX_WORKBENCH_DESIGN.md)，当前 B8 仅含手工记录与显式假设测算）；外置 Agent MCP 网关（`AGENT-01—04`）与服务器来源接入公司业务模块排期在 `v1.1+`。
 
-2026-09-09 本地 main 已同步 PR #24，Windows 加固在 `codex/windows-alpha2-startup-hardening`：保留 HTTP framing 与浏览器兜底，增加内置 Python 的 PYTHONHOME 隔离、spawn 阶段诊断与真实 Winsock 回归。稳定源码仍为 main；alpha.2 新候选的身份和验证范围见本轮 CHANGELOG，公开资产不变。
+## 开发工具接力入口
 
-2026-09-09 启动修复的功能来源为 `codex/fix-backend-startup-probe`，开发实现与稳定源码统一随 main 维护：`backend.rs → local_http.rs` 以有界 HTTP framing 读取后端响应；诊断与启动共享读取规则。`main.rs` 在已验证后端上处理单次启动方式覆盖和 Windows 窗口失败后的浏览器确认，不能绕过 ownership。已发布 alpha.2 尚未包含这些改动；主线精确集成身份见[分支记录](BRANCH_STATUS.md)及实时 Git，细节见[启动排障](STARTUP_TROUBLESHOOTING.md)。
+[通用交接协议](AGENT_HANDOFF.md) 与任务导航的交接行定义独立开发小工具。它以仓库外 JSONL 为任务事实、Markdown/JSON 为可重建交接视图，复用现有文档导航，不接入 InvoiceHub 产品 API、数据库或源发票目录。
 
-2026-09-08 OFD 专用预览纳入 main 统一源码基线，功能来源为 `codex/ofd-preview-renderer`，精确集成身份见 [分支记录](BRANCH_STATUS.md) 与实时 Git。`file_preview.py → ofd_rendering.py → Java 21/OFDRW → PNG` 独立于发票提取；短期 PNG 继续留在原预览 job 内存，组件构建、边界与验收见 [OFD 预览说明](OFD_PREVIEW.md)。稳定源码随 main 维护，已发布的 alpha.2 制品身份与未覆盖项保持原记录，本次源码集成不代表发布新包。
-
-2026-09-08：[`v0.3.0-alpha.2` 双平台预览](https://github.com/lyc1126/InvoiceHub/releases/tag/v0.3.0-alpha.2) 已按所有者确认的验收范围发布。Windows x64 portable ZIP 与 macOS arm64 preview DMG 同源，包含校验和、收据和平台 Python SBOM；Mac 离线核验与实际默认配置验收通过，隔离 HOME 自动烟测仍未通过，未启用安装 updater 或更新 Feed。精确发布身份和限制见[分支与发布记录](BRANCH_STATUS.md)。
-
-
-
-2026-09-07 大列表实现在 `codex/fix-large-list-responsiveness`：`services/document_index.py` 用单个 spawn 进程建立单据索引，runtime 保存逐文件缓存、入库选项及进度，API 安排/读取/停止。出库预览经索引定位仍实时校验文件；首页和单据候选每页 100 条，既有提取/投影业务规则保持。
-
-2026-09-07 首页搜索跟进位于 `codex/fix-invoice-search-scope`：沿用列表筛选与 generation 刷新链，增加 `search_scope` 显式字段枚举。首页默认销售方/发票号，文件名与全部范围可选，旧 API 缺省 all 保持兼容；不改变发票提取、投影或监控架构。接口、算法与最低验收详见对应专题的同日补充。
-
-2026-09-07 当前实现整合公开 main 上的最新前端与既有 Windows Desktop 分支：图标选择经 `app_icons.py → app_state → host_rpc → app_icon.rs` 后保存运行态；默认 `website` 为白底 hi.，另外三款兼容既有状态。保留打印弹窗偏好、WebView 独立目录、picker 插件调度、monitor 状态串行化和同步进度。当前公共资源 `20260907-desktop-integrated-2`；源码工作区不以单独旧分支作为打包输入，必须形成含两边功能的干净快照。
-
-> 文档状态：当前开发实现的权威架构入口
-> 更新日期：2026-09-08
-> 公共权威基线：经过审计的单一脱敏根提交；旧私有提交、Tag、二进制和验证材料不在公开图中
-> 公开状态：候选树、保留 Git 对象和托管面已完成一次内容与凭据审计；公开图从脱敏根提交开始，详见 `docs/release/HISTORY_SANITIZATION_EXECUTION.md`
-> 发行边界：alpha.2 已按公开 Release 所列范围发布，源码实现基线继续跟随 main；源自同一提交的 Windows portable 与 macOS preview 具有相同核心构建身份。自动隔离烟测与签名/原生功能的未覆盖项不因发布而改记为通过。
-> 校验规则：精确的本地与 GitHub HEAD 以实时 `git rev-parse`、`git ls-remote` 和双向差异为准；发行源码候选不等于双平台成品 RC 或 GitHub 已发布版本
+功能约束按需读取：[提取与分类](architecture/rules/INVOICE_EXTRACTION.md)、[成本](architecture/rules/COST_ANALYSIS.md)、[监控与关闭](architecture/rules/MONITORING.md)、[页面/单据/预览/皮肤](architecture/rules/WEB_UI.md)、[做账](architecture/rules/BOOKKEEPING.md)、[税务设计](architecture/rules/TAX_WORKBENCH.md)、[Windows](architecture/rules/WINDOWS.md)、[macOS 参考壳](architecture/rules/MACOS.md)、[Tauri 宿主](architecture/rules/TAURI_HOST.md)、[构建与发行](architecture/rules/RELEASE.md)。先按 [任务快速索引](architecture/AGENT_TASK_MAP.md#quick-lookup) 定位全部命中项，再读取规则全文及对应实现章节；AGENTS.md 保留全局必读规则。
 
 ## 1. 这套文档解决什么问题
 
@@ -64,7 +58,7 @@ InvoiceHub 不是只有一个 FastAPI 页面。它同时包含发票提取、文
 
 | 优先级 | 来源 | 用途 |
 |---|---|---|
-| 1 | `AGENTS.md` | 产品边界、长期规则、不可破坏的不变量 |
+| 1 | `AGENTS.md` 与按任务引用的 `docs/architecture/rules/` | 全局边界与所属功能的强制规则；规则页迁移不降低约束效力 |
 | 2 | 当前基线源码与测试 | 当前真正执行的行为、接口和数据结构 |
 | 3 | `README.md`、`IMPLEMENTATION_STATUS.md` 等真值文档 | 运行方式、完成状态和验收口径 |
 | 4 | `CHANGELOG.md` | 设计如何演进、某个保护逻辑为什么出现 |
@@ -144,7 +138,7 @@ flowchart TB
     Entry["Windows 启动器 / macOS SwiftUI 壳"]
     Web["web/templates + web/static"]
     API["api/app.py<br/>HTTP、错误码、SSE"]
-    Service["services/AppState<br/>业务编排入口"]
+    Service["services/ 领域服务<br/>AppState 组装"]
     Monitor["monitoring<br/>独立 daemon 与同步状态机"]
     Extract["extraction<br/>PDF / OFD / XML 票头提取"]
     Projection["projections<br/>普通汇总、成本、单据"]
@@ -179,7 +173,7 @@ flowchart TB
     Release --> Web
 ```
 
-理想依赖方向是“外层适配器依赖内层领域和服务”。当前真实结构中，`AppState` 同时依赖几乎所有子系统，是路由统一入口，也是最明显的架构债务。文档不会把它伪装成已经拆分完成的整洁服务层。
+理想依赖方向是“外层适配器依赖内层领域和服务”。ENG-03 之后，用例实现在 `services/` 下的领域服务里；`AppState` 是组装根，持有共享的 config、活动 TargetProfile 与 RLock，把各领域服务暴露为公开属性，并保留切换 watch_dir、删除所选两条跨域编排；路由以 `state.<服务>.<方法>` 直接调用领域服务（ENG-08）。
 
 ## 5. 目录树与职责
 
@@ -197,12 +191,13 @@ flowchart TB
 ├─ src/invoice_hub/
 │  ├─ domain/                                领域模型与外部契约
 │  ├─ bookkeeping/                           W8/W9 做账状态、校验、映射和批次
+│  ├─ bank/                                  银行对账单/回单整理、勾稽、建议分录与脱敏底稿（命令行）
 │  ├─ extraction/                            票头提取、分类、同票纠偏
 │  ├─ projections/                           汇总、成本、单据及 Excel 模板
 │  ├─ targets/                               配置解析、运行目录和档案隔离
 │  ├─ storage/                               原子文件操作与 SQLite 仓库
 │  ├─ monitoring/                            daemon、lock、事件合并和同步
-│  ├─ services/                              AppState、monitor bridge、皮肤与更新服务
+│  ├─ services/                              AppState 组装根、各领域服务、monitor bridge、皮肤与更新服务
 │  ├─ api/                                   FastAPI 页面/API/SSE 适配
 │  ├─ platform/                              Windows 原生交互边界
 │  ├─ release/                               双平台清单、组装、验证、SBOM、Feed、源码快照
@@ -249,9 +244,10 @@ flowchart LR
 | `extraction` | `extract_invoice_record`、`apply_invoice_family_corrections` | 票头证据、分类、同票纠偏 | CSV/XLSX 展示 |
 | `projections` | `build_summary`、`CostProjectionService`、单据函数 | 可重建投影和报表 | 长期主数据 |
 | `bookkeeping` | `VoucherExecutabilityValidator`、映射/迁移/批次仓储 | W8/W9 做账协议与确定性状态 | 浏览器自动化和平台窗口 |
+| `bank` | `workpaper.run`、`boc` 适配器、`RedactedView` | 银行流水标准记录、勾稽、回单匹配、建议分录与私有/脱敏底稿 | `凭证/` 状态写入、账套或税局操作、HTTP 路由 |
 | `storage` | `atomic_write_json`、`SQLiteRepository` | 原子读写、任务、事件 | 发票主存储 |
 | `monitoring` | `run_monitor`、`MonitorSynchronizer.run_sync` | 持续观察、变化判断、自动重建 | Web 页面生命周期 |
-| `services` | `AppState`、`MonitorBridge`、`SkinService`、`UpdateService` | 用例编排、并发锁、平台协调与受限更新检查 | HTTP 细节 |
+| `services` | `AppState`（组装根）、各领域服务（`bookkeeping`、`documents`、`costs`、`dossier`、`preview_print`、`invoice_selection`、`invoice_list`、`invoice_rename`、`settings`、`diagnostics`、`monitor_control`、`background_sync`、`about`、`appearance`、`ocr`、`server_shutdown`、`company_registry`（WS-07 公司清单，`state.companies`）、`company_views`（按公司只读目录，`state.company_views`））、`MonitorBridge`、`SkinService`、`UpdateService` | 用例编排、并发锁、平台协调与受限更新检查 | HTTP 细节 |
 | `api` | `create_app` | HTTP、错误码、静态文件、SSE | 重复业务算法 |
 | `platform` | `pick_directory`、`open_local_path` | Windows Python 适配；macOS 原生适配在 Swift 壳 | 领域判断 |
 | `release` | `build_core`、三类 manifest、`provenance`、`update_metadata`、`sbom`、`source_snapshot` | 脱敏确定性包、身份/依赖证明、从真实产物/收据/Tag 派生的更新元数据与对应源码；公开 Feed 在 macOS 用 Tag 派生验证器复验实际成品 | 用户业务数据迁移或外部平台发布 |
@@ -262,7 +258,7 @@ flowchart LR
 
 ```text
 BAT/页面/monitor 触发
-  → AppState.bridge_rebuild 或 MonitorSynchronizer.run_sync
+  → MonitorControlService.bridge_rebuild或 MonitorSynchronizer.run_sync
   → supported_invoice_files
   → extract_invoice_record(PDF/OFD/XML)
   → apply_invoice_family_corrections
@@ -277,13 +273,13 @@ BAT/页面/monitor 触发
 
 接口、错误和完整时序见 [INTERFACES_AND_FLOWS.md](architecture/INTERFACES_AND_FLOWS.md)。算法和数据校验见 [DATA_AND_ALGORITHMS.md](architecture/DATA_AND_ALGORITHMS.md)。
 
-源文件预览也是主数据链旁边的只读流程：`AppState` 逐条复核选择身份和 `watch_dir` 边界，`FilePreviewService` 保存短期不透明作业、文件签名和按需 PNG/纯文本缓存；PDF/OFD/SVG 与打印复用 `document_rendering.py` 的 MuPDF 层，常见图片由 Pillow 解码，未知格式只提供元信息。浏览器不接收绝对路径，主动内容不进入 DOM，流程不写源票、投影、runtime 文件或 SQLite 发票主数据。
+源文件预览也是主数据链旁边的只读流程：`services/preview_print.py`逐条复核选择身份和 `watch_dir` 边界，`FilePreviewService` 保存短期不透明作业、文件签名和按需 PNG/纯文本缓存；PDF/OFD/SVG 与打印复用 `document_rendering.py` 的 MuPDF 层，常见图片由 Pillow 解码，未知格式只提供元信息。浏览器不接收绝对路径，主动内容不进入 DOM，流程不写源票、投影、runtime 文件或 SQLite 发票主数据。
 
-批量打印是主数据链旁边的只读流程：`AppState` 重新校验勾选身份并按同票家族选出当前 `watch_dir` 内的 PDF，`InvoicePrintService` 在工作线程中生成有时限和容量上限的内存 PNG 页。独立打印页等待全部票面完成 `load + decode` 和两次浏览器渲染帧，再调用 `window.print()`；命名页只声明横/纵方向，纸型沿用打印机或用户选择，票面盒使用页框百分比而非固定 A4 或动态打印视口尺寸，避免预览重排反馈。该流程不写源发票、普通/成本投影或 SQLite 发票主数据，也不能把浏览器对话框状态解释为实体打印结果。
+批量打印是主数据链旁边的只读流程：`services/preview_print.py`重新校验勾选身份并按同票家族选出当前 `watch_dir` 内的 PDF，`InvoicePrintService` 在工作线程中生成有时限和容量上限的内存 PNG 页。独立打印页等待全部票面完成 `load + decode` 和两次浏览器渲染帧，再调用 `window.print()`；命名页只声明横/纵方向，纸型沿用打印机或用户选择，票面盒使用页框百分比而非固定 A4 或动态打印视口尺寸，避免预览重排反馈。该流程不写源发票、普通/成本投影或 SQLite 发票主数据，也不能把浏览器对话框状态解释为实体打印结果。
 
 ## 9. 新开发者阅读顺序
 
-1. 先读 `AGENTS.md`，理解产品边界和不可破坏规则。
+1. 先完整读取 `AGENTS.md`，再按任务快速索引读取命中的功能规则；下列源码学习路线用于相应模块，不要求每个窄任务遍历全部步骤。
 2. 阅读本页第 3 至第 8 节，建立系统模型。
 3. 阅读 `domain/models.py` 和 `targets/paths.py`，理解契约和路径。
 4. 阅读 `extraction/parsers.py`、`projections/summary.py`，跟一次普通汇总。
@@ -297,11 +293,11 @@ BAT/页面/monitor 触发
 
 | 状态 | 事实 | 维护含义 |
 |---|---|---|
-| 架构债务 | `services/app_state.py` 聚合大量跨域用例 | 改动前必须按用例定位，避免把不相关逻辑一起重构 |
+| 当前实现 | 用例按领域在 `services/` 下，路由直接调用 | ENG-03 拆分、ENG-08 删除转发后，AppState 只剩组装、共享状态、health 与两条跨域编排；新用例写进对应领域服务，不加入 AppState（接线测试会检查 AppState 的公开方法集合）。HTTP 层按领域在 `api/routes/` |
 | 架构债务 | `cost_analysis.py` 与 `costs.py` 有参考键、加价和锁定快照的对应实现 | 修改公式必须双向核对并跑成本全链测试 |
 | 架构债务 | 路径规范化在 `targets`、`monitoring`、成本和选择合计中有不同语境实现 | 不能仅凭函数同名就机械合并 |
 | 架构债务 | `base_head.html` 存在，但页面仍各自维护 head 和资源版本 | 静态资源变更必须逐模板核对版本参数 |
-| 架构债务 | 当前前端自动化主要是静态契约测试 | UI 改动仍需要真实浏览器/DOM 验收 |
+| 架构债务 | 工作区 P3 和成本 V2 已有合成资料、真实 FastAPI 与 Chromium 的本机回归。经典首页关键流程仍主要靠静态契约与 Node 交互测试 | 待补 Linux CI 和经典首页局部刷新回归，见 [ENG-05](PRODUCT_BACKLOG.md#eng-05) |
 | 架构债务 | Windows 首版没有内置桌面 WebView 壳 | macOS development `.app` 的单次 L9 smoke 不改变这一事实；`startup_surface=desktop` 仍须在当前 Windows source/portable 路径 fail closed，不能让设置项暗示已实现 |
 | 发布阻断 | Windows 与 macOS 正式脚本已实现但真机/签名证据未齐 | 自动化通过不等于 ZIP/DMG 已放行，必须分别执行平台手册 |
 | 未启用能力 | OCR 页面和 API 保留候选文件入口 | core 包未内置正式本地 OCR，提取接口返回禁用状态 |

@@ -28,7 +28,7 @@ from urllib import error, request
 HOST = "127.0.0.1"
 PORT = 8766
 ORIGIN = f"http://{HOST}:{PORT}"
-PRODUCT_VERSION = "0.3.0-alpha.2"
+PRODUCT_VERSION = "1.0.0-beta.1"
 PACKAGE_ID = "com.invoicehub.macos.arm64.preview-dmg"
 PACKAGE_TYPE = "preview-dmg"
 BUNDLE_IDENTIFIER = "com.invoicehub.desktop"

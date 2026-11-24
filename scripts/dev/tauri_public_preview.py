@@ -7,7 +7,6 @@ import argparse
 import hashlib
 import importlib.util
 import json
-import os
 import platform
 import shutil
 import subprocess
@@ -68,7 +67,7 @@ def _sha256_file(path: Path) -> str:
 
 
 def _launcher_text() -> str:
-    return f'''#!/bin/sh
+    return '''#!/bin/sh
 set -eu
 
 RESOURCE_ROOT=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
@@ -83,6 +82,7 @@ if [ ! -x "$PYTHON_EXECUTABLE" ] || [ ! -f "$CORE_ROOT/src/invoice_hub/api/main.
   exit 78
 fi
 unset PYTHONHOME INVOICE_HUB_DEV_STATE_ROOT
+unset INVOICE_HUB_DEV_OFD_COMPONENT
 export PYTHONPATH="$CORE_ROOT/src"
 export PYTHONDONTWRITEBYTECODE=1
 exec "$PYTHON_EXECUTABLE" -B -m invoice_hub.api.main "$@"

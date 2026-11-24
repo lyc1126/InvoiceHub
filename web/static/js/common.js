@@ -184,6 +184,9 @@ window.app = {
     const params = new URLSearchParams(window.location.search || "");
     return ["1", "true", "yes", "on"].includes(String(params.get("no_skin") || "").toLowerCase());
   },
+  workspaceSkinIsolated(id) {
+    return !!id && String(document.documentElement.dataset.workspaceIsolatedSkins || "").split(" ").includes(id);
+  },
   hydrateServerSkin() {
     if (document.body?.dataset.page === "backend") return null;
     if (this.skinBypassRequested()) {
@@ -197,6 +200,7 @@ window.app = {
     }
     const href = String(link.getAttribute("href") || "").trim();
     const id = String(link.dataset.skinId || "").trim();
+    if (this.workspaceSkinIsolated(id)) { this.clearSkin(); return null; }
     if (!href || !id) return null;
     document.documentElement.dataset.activeSkin = id;
     const body = document.body;
@@ -240,6 +244,9 @@ window.app = {
       || (activeId && activeHref ? { id: activeId, stylesheet_url: activeHref } : null);
     const href = this.skinCssHref(active, payload);
     const id = this.skinId(active) || activeId;
+    // Embedded modules consume the workspace's policy on every read-back, not just
+    // first paint; saved standalone preferences and business drafts remain intact.
+    if (this.workspaceSkinIsolated(id)) { this.clearSkin(); return null; }
     if (!active || !href || !id) {
       this.clearSkin();
       return null;

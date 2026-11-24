@@ -283,9 +283,18 @@ function renderOcr(data, errors) {
   const settings = data.ocrSettings;
   const status = data.ocrStatus;
   const diagnostics = data.settings?.diagnostics || {};
+  const modeLabels = {
+    disabled: "未启用（可在 OCR 页按需配置）",
+    paddle_api: "PaddleOCR 官方 API",
+    paddle_self_hosted: "PaddleOCR 自建服务",
+  };
+  const mode = settings?.provider_mode || "disabled";
+  const ready = Boolean(status?.running || settings?.ready);
+  const statusLabel = ready ? "已就绪" : (mode === "disabled" ? "未启用" : "待完善配置");
   renderRows(settingsRefs.ocrList, [
-    { label: "本地 OCR", html: settings?.local_ocr_supported ? statusValue("可用", "success") : statusValue("未内置", "muted") },
-    { label: "服务状态", html: statusValue(status?.status || "disabled", status?.running ? "success" : "muted") },
+    { label: "识别模式", html: statusValue(modeLabels[mode] || mode, ready ? "success" : "muted") },
+    { label: "服务状态", html: statusValue(statusLabel, ready ? "success" : "muted") },
+    { label: "内置本地引擎", html: settings?.local_ocr_supported ? statusValue("可用", "success") : statusValue("未内置（核心包零重依赖）", "muted") },
     { label: "服务消息", value: status?.message || settings?.message || "--" },
     { label: "日志位置", html: pathText(diagnostics.runtime_dir) },
   ], errors.ocrSettings || errors.ocrStatus);
@@ -2099,6 +2108,8 @@ app.connectEvents(settingsRefs.eventState, () => loadSettings("event"), { refres
     productName: document.getElementById("settingsAboutProductName"),
     version: document.getElementById("settingsAboutVersion"),
     identityList: document.getElementById("settingsAboutIdentityList"),
+    technicalList: document.getElementById("settingsAboutTechnicalList"),
+    feedback: document.getElementById("settingsAboutFeedbackLink"),
     website: document.getElementById("settingsAboutWebsiteLink"),
     github: document.getElementById("settingsAboutGithubLink"),
     changelog: document.getElementById("settingsAboutChangelogLink"),
@@ -2184,6 +2195,8 @@ app.connectEvents(settingsRefs.eventState, () => loadSettings("event"), { refres
     if (refs.changelog) refs.changelog.href = safeExternalHref(payload?.links?.release_notes);
     renderRows(refs.identityList, [
       { label: "平台与架构", value: `${packageInfo.platform || "--"} / ${packageInfo.architecture || "--"}` },
+    ]);
+    renderRows(refs.technicalList, [
       { label: "包类型", value: packageInfo.type || "--" },
       { label: "Package ID", value: packageInfo.id || "--" },
       { label: "核心 Build ID", html: `<code class="about-hash">${app.escapeHtml(build.id || "--")}</code>` },
@@ -2251,6 +2264,7 @@ app.connectEvents(settingsRefs.eventState, () => loadSettings("event"), { refres
   }
 
   // Remote links use the host opener; the bundled website keeps same-tab navigation.
+  if (refs.feedback && app.skinBypassRequested()) refs.feedback.href = "/workspace/settings?feedback=1&no_skin=1#about";
   refs.github?.addEventListener("click", (event) => {
     event.preventDefault();
     openAboutLink("github", refs.github);
