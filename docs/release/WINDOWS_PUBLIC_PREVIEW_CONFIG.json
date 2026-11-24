@@ -1,12 +1,12 @@
 {
   "schema_version": 1,
-  "product_version": "0.3.0-alpha.2",
+  "product_version": "1.0.0-beta.1",
   "architecture": "x64",
   "manifest_architecture": "x86_64",
   "package_id": "com.invoicehub.windows.x86_64.nsis-preview",
-  "artifact_name": "InvoiceHub-v0.3.0-alpha.2-windows-x64-setup.exe",
-  "sha256_name": "InvoiceHub-v0.3.0-alpha.2-windows-x64-setup.exe.sha256",
-  "receipt_name": "InvoiceHub-v0.3.0-alpha.2-windows-x64-setup.build-receipt.json",
+  "artifact_name": "InvoiceHub-v1.0.0-beta.1-windows-x64-setup.exe",
+  "sha256_name": "InvoiceHub-v1.0.0-beta.1-windows-x64-setup.exe.sha256",
+  "receipt_name": "InvoiceHub-v1.0.0-beta.1-windows-x64-setup.build-receipt.json",
   "webview2": {
     "download_id": "2124701",
     "url": "https://msedge.sf.dl.delivery.mp.microsoft.com/filestreamingservice/files/89620190-81af-46a2-bb59-6228918a312e/MicrosoftEdgeWebView2RuntimeInstallerX64.exe",

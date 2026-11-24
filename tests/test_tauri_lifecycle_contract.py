@@ -468,3 +468,19 @@ def test_tauri_print_popup_policy_only_allows_local_print_jobs() -> None:
     assert ".window_features(features)" in main
     assert ".on_navigation(|destination| is_print_popup_navigation_url(destination.as_str()))" in main
     assert "tauri::webview::NewWindowResponse::Deny" in main
+
+
+def test_tauri_fixed_port_conflict_recovery_requires_confirmation_and_revalidation() -> None:
+    main = (ROOT / "src-tauri" / "src" / "main.rs").read_text(encoding="utf-8")
+    backend = (ROOT / "src-tauri" / "src" / "backend.rs").read_text(encoding="utf-8")
+    diag = (ROOT / "src-tauri" / "src" / "startup_diagnostics.rs").read_text(encoding="utf-8")
+
+    setup = main[main.index(".setup(move |app|") : main.index(".build(context)")]
+    assert setup.index("resolve_fixed_port_conflict") < setup.index("BackendHost::launch")
+    assert "startup_diagnostics::offer_existing_invoicehub_shutdown(app.handle(), claim)" in setup
+    assert "pub fn resolve_port_conflict_with" in backend
+    assert "claim.same_instance(&rechecked)" in backend
+    assert "ExistingInstanceChanged" in backend
+    assert "ExistingInstanceShutdownTimedOut" in backend
+    assert "pub fn offer_existing_invoicehub_shutdown" in diag
+    assert "--no-startup-dialog" in diag[diag.index("pub fn offer_existing_invoicehub_shutdown") :]

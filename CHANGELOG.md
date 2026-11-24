@@ -2,6 +2,18 @@
 
 ## 未发布
 
+### 2026-11-24 收口 Windows 发布版本配置漂移与工程项 ENG-01 / ENG-02 / ENG-10
+
+- 需求与起点：基于 `codex/workspace-p3@9f3d485` 按 `v1.0.0` 版本收口路线推进第一批代码与工程收尾：修复 `1.0.0-beta.1` 升级后遗留的 Windows 发布配置版本漂移、清零 PR #32 采集的 3 条 Windows Rust clippy dead-code 警告并开启 `-D warnings` 阻断（`ENG-01`）、判定并修复开票参考保存时工作簿独有状态漏合并问题（`ENG-02`），以及实现固定 8766 端口冲突识别与用户确认后优雅关闭旧 InvoiceHub 的引导恢复（`ENG-10`，保留桌面窗口创建失败转默认浏览器兜底）。
+- 采用方案：
+  - **Windows 发布配置版本对齐与同步守护**：将 `docs/release/WINDOWS_REPACKAGE_CONFIG.json`、`docs/release/WINDOWS_PUBLIC_PREVIEW_CONFIG.json` 及 `.github/workflows/windows-public-preview.yml` 的版本与产物流水名同步至 `1.0.0-beta.1`；扩展 `scripts/dev/tauri_version_sync.py` 在 `--check` / `--write` 中同步校验并写回两份 Windows 发布配置锁，防止后续升至 `1.0.0` 再次漂移，并扩展 `tests/test_tauri_foundation.py` 覆盖两份配置锁漂移修复。
+  - **ENG-01（Windows Rust clippy 清零并阻断）**：为 `src-tauri/src/host_rpc.rs` 中仅 macOS 重启路径使用的 `UpdaterRuntimeState::prepare_relaunch`、`HostRelaunchError::{BackendUnavailable, BackendShutdownFailed, StateTransitionRejected}` 与 `HostRelaunchRequester::{app_handle, runtime_gate}` 加上 `#[cfg(target_os = "macos")]`（Windows updater 2.10.1 经 `on_before_exit` 直接退出并拉起安装器，不走 `request_relaunch`）；将 `.github/workflows/ci.yml` 中 `windows-latest` 的 `clippy_flags` 切换为 `-D warnings`。
+  - **ENG-02（开票参考保存合并工作簿独有状态）**：确认 `projections/costs.py::save_reference_status` 此前读取 `_read_reference_status_from_workbook()` 后丢弃导致保存 A 行时会清空仅存于 `成本发票汇总.xlsx` 的 B 行已开/自定义加价率状态；改为仅合并非默认（`invoiced_quantity > 0` 或非默认加价率）的工作簿独有条目及既有条目空白字段，移除 `# noqa: F841`，并在 `tests/test_summary_and_costs.py` 新增 `test_save_reference_status_preserves_workbook_only_status_for_untouched_rows`（含显式归零重置验证）。
+  - **ENG-10（固定 8766 端口冲突识别与引导恢复）**：严守固定 `127.0.0.1:8766`、不换端口、不接管/不强杀未知进程边界，在 `src-tauri/src/backend.rs` 新增 `ExistingInvoiceHubClaim`、`parse_existing_invoicehub_claim`（要求 `ok=true`、`pid>0`、`api_contract_version`、`product_version`、`package_type`、`config_path`、`runtime_dir` 完整契约字段并剔除控制字符）、`resolve_port_conflict_with` / `resolve_port_conflict_at` / `resolve_fixed_port_conflict`；在 `src-tauri/src/startup_diagnostics.rs` 新增 `offer_existing_invoicehub_shutdown`（Windows 用默认选“否”的 `MessageBoxW`，macOS 用 `tauri-plugin-dialog` 确认框，`--no-startup-dialog` 直接拒绝）；在 `src-tauri/src/main.rs` 的 `BackendHost::launch` 前接入冲突恢复：仅在用户明确确认且二次重检仍为同一 PID/版本/运行目录时，发送标准 `POST /api/v1/server/shutdown`（`{"shutdown_behavior":"keep_monitor","remember":false}`）并等待端口释放，超时或占用者变化立即 fail closed；既有桌面窗口创建失败转默认浏览器兜底链路及全部 `startup_tests` 保持不变。同步更新 `docs/PRODUCT_BACKLOG.md`、`docs/architecture/rules/TAURI_HOST.md` 与 `docs/architecture/COMMENT_RATIONALE_MAP.md`。
+- 验证范围与未覆盖项：
+  - 已运行并通过：本机 macOS ARM64 固定工具链 `1.85.0` 的 `cargo fmt --check`、`cargo clippy --offline --locked --all-targets -- -D warnings`、`cargo test --offline --locked`（共 107 项全过：lib 61、main 6、lifecycle_contract 10 含新增 ENG-10 状态机与真实回环 HTTP 测试、monitor_recovery_contract 17、update_coordinator_contract 12、windows_marker_store_contract 1）；Ruff、Python `compileall`、`tests/test_windows_release_contract.py`、`tests/test_tauri_foundation.py`、`tests/test_tauri_lifecycle_contract.py`（含新增 ENG-10 契约测试）、`tests/test_tauri_host_rpc.py`、`tests/test_tauri_recovery_smoke.py`、`tests/test_source_snapshot.py`、`tests/test_build_manifest.py`、`tests/test_summary_and_costs.py`、`tests/test_company_costs.py`、`tests/test_development_documentation.py`、`git diff --check`。
+  - 未覆盖项：Windows `clippy_flags: "-D warnings"` 与 Windows `MessageBoxW` 端口冲突弹窗仍需推送触发远端 `windows-latest` CI 与 Windows x64 实机验证；未覆盖真实默认配置、正式 Windows BAT、浏览器前台拉起、系统原生选择器与双平台打包产物验收；本轮未推送远端或合并 `main`。
+
 ### 2026-11-24 收口 SSH / SFTP 只读试验版交互与诊断并完成本机 OpenSSH 端到端联调（WS-09 方案 A）
 
 - 需求与起点：基于 `codex/workspace-p3@9569f5f` 按用户确认的方案 A 对 SSH / SFTP 只读试验版做上线前轻量收口：补齐路径规范化、添加后自动指纹探测、SSH Agent/网络/权限细分诊断，并补一轮真实 OpenSSH `sshd` + `sftp-server` + `ssh-agent` + OFD 预览端到端联调（密码/系统钥匙串凭据、跳板机与远程写入维持后续版本边界）。

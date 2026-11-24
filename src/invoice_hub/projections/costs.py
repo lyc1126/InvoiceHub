@@ -742,9 +742,23 @@ class CostProjectionService:
             generations.recover_exports(self.workspace_dir, self.watch_dir)
         current = _read_reference_status(self.status_json)
         fallback_markup = self._markup_meta()
-        # Unconsumed workbook read kept as-is until ENG-02 decides whether save should
-        # merge workbook-only statuses like rebuild() does; removing it changes failure behaviour.
-        workbook_status = self._read_reference_status_from_workbook()  # noqa: F841
+        # Preserve workbook-only invoiced/markup state (same fallback that snapshot() displays and
+        # rebuild() recovers) so saving one row cannot wipe another row's legacy workbook status
+        # when 成本开票状态.json is missing or partial; skip default zero/fallback rows to avoid noise.
+        workbook_status = self._read_reference_status_from_workbook()
+        for wb_key, workbook_item in workbook_status.items():
+            if wb_key not in current:
+                wb_qty = _decimal(workbook_item.get("invoiced_quantity"))
+                wb_rate = normalize_reference_markup_rate(
+                    workbook_item.get("reference_markup_rate"),
+                    fallback_markup["rate"],
+                )
+                if wb_qty > 0 or wb_rate != fallback_markup["rate"]:
+                    current[wb_key] = dict(workbook_item)
+                continue
+            for field, value in workbook_item.items():
+                if str(current[wb_key].get(field) or "").strip() == "" and str(value or "").strip() != "":
+                    current[wb_key][field] = value
         tax_profile_changed = "tax_profile" in payload
         saved_tax_profile = parse_reference_tax_profile(payload.get("tax_profile")) if tax_profile_changed else None
         company = self.company_taxpayer()

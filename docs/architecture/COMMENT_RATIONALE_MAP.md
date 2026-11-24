@@ -370,8 +370,9 @@
 - `api/app.py::create_app` 的 `include_router` 顺序：每个路由组放在其路由原来注册的位置，FastAPI 0.141 以 `_IncludedRouter` 按序惰性匹配，故重叠路径（发票详情与 trash-jobs、皮肤 `{skin_id}` 与固定动作）的命中顺序不变。守护：拆分时 OpenAPI 逐字节一致、792 个方法×路径样本命中同一端点，以及 `test_api_contract.py`。
 - `frontend/vite.config.ts::versionQuery`：构建产物提交在 `web/` 内，固定文件名让发布白名单、Core Build ID 文件集合与 FILE_MAP 不随每次构建漂移；缓存刷新改由 `?v=` 内容哈希承担，与旧页面同一缓存规则。守护：`test_workspace_frontend.py` 与 CI 的构建可复现检查。
 - `requirements/lint-tools-py314.lock` 独立于 `test-tools-py314.lock`：后者由 Windows 重打包配置引用，改动会牵动发布核对；lint 工具不进入任何成品。
-- `.github/workflows/ci.yml` 的 Windows clippy 不带 `-D warnings`：`cfg(windows)` 代码此前从未经过 clippy，本机 macOS 无法验证；清理后改为阻断（ENG-01）。
-- `projections/costs.py::save_reference_status` 的未使用工作簿读取以 `noqa` 保留：删除会改变工作簿损坏时的失败行为，是否应像 rebuild 一样合并工作簿状态待 ENG-02 判定。
+- `.github/workflows/ci.yml` 的 Windows clippy 已在 2026-11-24（ENG-01）对 `host_rpc.rs` 仅 macOS 重启路径符号加 `#[cfg(target_os = "macos")]` 后切换为 `-D warnings` 阻断；Windows updater 2.10.1 经 `on_before_exit` 直接退出并拉起安装器，不走 `request_relaunch`。
+- `projections/costs.py::save_reference_status` 已在 2026-11-24（ENG-02）改为合并工作簿独有的非默认已开/加价率状态与既有行空白字段并移除 `noqa`，避免保存一行时重写工作簿而抹掉仅存于工作簿的其他行状态。守护：`test_save_reference_status_preserves_workbook_only_status_for_untouched_rows`。
+- `src-tauri/src/backend.rs::resolve_port_conflict_with`（ENG-10）：用户确认关闭旧 InvoiceHub 对话框耗时不可控，确认后必须先重检端口并再次比对 `pid/product_version/runtime_dir`，防止旧进程中途退出后被非 InvoiceHub 服务接替端口而误发 shutdown；`--no-startup-dialog` 始终拒绝自动关闭。守护：`port_conflict_state_machine_guards_unknown_decline_and_toctou_changes`、`loopback_port_conflict_recovery_shuts_down_confirmed_invoicehub_and_rejects_unknown`、`test_tauri_fixed_port_conflict_recovery_requires_confirmation_and_revalidation`。
 - `api/main.py` 在设置 `INVOICE_HUB_ROOT/CONFIG` 后才调用 `create_app()`，`api/app.py` 不再有模块级实例：旧实例让任何导入都按仓库默认配置做启动同步，测试会改写 checkout 的 `runtime/` 与 `发票文件/`（ENG-07）。守护：`test_importing_the_api_module_builds_no_app_state`、`test_cli_creates_exactly_one_app_state` 与 `tests/conftest.py` 的仓库状态快照。
 - `host_rpc.rs` 测试的 `accept_within`：阻塞 `accept()` 在发送线程无法连接时会让整个测试二进制挂起，改为有时限失败。
 

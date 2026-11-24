@@ -20,7 +20,8 @@ use tauri_plugin_opener::OpenerExt;
 
 use invoicehub_desktop::app_icon::{self, AppIconId};
 use invoicehub_desktop::backend::{
-    default_bundle_root, load_bundle_manifest, BackendHost, BackendShutdownOutcome, StartupSurface,
+    default_bundle_root, load_bundle_manifest, resolve_fixed_port_conflict, BackendHost,
+    BackendShutdownOutcome, PortConflictOutcome, StartupSurface,
 };
 use invoicehub_desktop::startup_diagnostics;
 
@@ -245,6 +246,18 @@ fn main() -> ExitCode {
             // Tauri executes setup during run(), where returning Err panics instead of
             // reaching Builder::build's error arm. Present and request an orderly exit here.
             let outcome = (|| -> Result<(), Box<dyn Error>> {
+            // If another local InvoiceHub owns fixed port 8766, let the user explicitly
+            // confirm a standard keep_monitor shutdown before launching our own backend.
+            // Unknown occupants fail closed immediately; never switch ports or auto-kill.
+            if let PortConflictOutcome::RecoveredByShutdown { pid } =
+                resolve_fixed_port_conflict(|claim| {
+                    startup_diagnostics::offer_existing_invoicehub_shutdown(app.handle(), claim)
+                })?
+            {
+                eprintln!(
+                    "InvoiceHub gracefully shut down previous backend PID {pid} (keep_monitor) before launch"
+                );
+            }
             let backend = BackendHost::launch(manifest, app.handle().clone())?;
             let mut startup_surface = surface_override.unwrap_or(backend.startup_surface());
             let app_icon_id = app_icon::load_selected(backend.runtime_dir());

@@ -98,7 +98,7 @@
 | [WS-08](#ws-08) | 汇总缓存增量刷新：先读缓存，只更新增删改 | P1 | 首版已实现（原始缓存/完整代际，远程可靠游标另做） | v1.0.0（远程可靠游标 v1.1+） |
 | [WS-09](#ws-09) | 服务器链接（试验版）：SMB / SSH 文件浏览与只读汇总 | P2 | 试验版已实现（挂载共享/SFTP；公司模块与实服验收另做） | v1.0.0（试验版边界；业务模块接入 v1.1+） |
 | [ENG-09](#eng-09) | 完整代际与原始解析缓存的容量治理 | P2 | 已排期 | v1.0.0 |
-| [ENG-10](#eng-10) | 正式版 8766 端口冲突识别与引导恢复（保留桌面失败转默认浏览器兜底） | P1 | 已排期 | v1.0.0 |
+| [ENG-10](#eng-10) | 正式版 8766 端口冲突识别与引导恢复（保留桌面失败转默认浏览器兜底） | P1 | 已实现（待双平台实机弹窗与成品验收） | v1.0.0 |
 | [WS-10](#ws-10) | 工作区与原型的结构性差异（弹窗化、缺失视图与数据） | P1 | 进行中（P1—P3 既有范围已接入；B8 手工基础，自动规则待复核） | v1.0.0（自动规则 v1.2+） |
 | [BANK-01](#bank-01) | 通用银行对账单版式引擎（无模型，余额链自校验） | P1 | 首批公司表格已接入，余项按样本推进 | v1.0.0（有限收口） |
 | [BK-01](#bk-01) | 凭证导出改为通用格式，记账软件按导入模板适配 | P1 | 进行中（通用模型与导出配置已实现，非捷锐格式待实测） | v1.0.0（去品牌化与单模板实测） |
@@ -107,8 +107,8 @@
 | [AGENT-02](#agent-02) | Agent 事件订阅、活动面板与审计 | P2 | 待评估 | v1.1+ |
 | [AGENT-04](#agent-04) | Agent 辅助导入：识别失败的表格 / PDF 由 Agent 起草版式或纠错，软件校验后进暂存 | P2 | 待评估 | v1.1+ |
 | [AGENT-03](#agent-03) | Agent 写入：应用内审批与 L1/L2 写工具 | P3 | 暂缓（先只读） | v1.1+ |
-| [ENG-01](#eng-01) | Windows Rust clippy 清零后改为阻断 | P2 | 已排期（待 Draft PR 收集警告） | v1.0.0 |
-| [ENG-02](#eng-02) | 判定开票参考保存时未使用的工作簿状态读取 | P2 | 已排期 | v1.0.0 |
+| [ENG-01](#eng-01) | Windows Rust clippy 清零后改为阻断 | P2 | 已实现（待远端 Windows CI 复验） | v1.0.0 |
+| [ENG-02](#eng-02) | 判定开票参考保存时未使用的工作簿状态读取 | P2 | 已完成（2026-11-24） | v1.0.0 |
 | [ENG-03](#eng-03) | AppState 按领域拆分为独立服务 | P1 | 已完成（2026-11-10） | v1.0.0 |
 | [ENG-04](#eng-04) | 架构入口文档只描述当前状态 | P2 | 已排期 | v1.0.0 |
 | [ENG-05](#eng-05) | 真实浏览器 E2E（合成目录 + 本机后端） | P1 | 三组本机回归、刷新故障检出与 CI 接线已接入，远端稳定性待验 | v1.0.0 |
@@ -220,7 +220,7 @@
 
 ### ENG-10 正式版 8766 端口冲突识别与引导恢复（保留桌面失败转默认浏览器兜底）
 
-- 优先级 / 状态 / 目标版本：P1 / 已排期 / v1.0.0（2026-11-23 用户明确要求：正式版避免端口争抢，且必须保留原版桌面窗口启动失败后转默认浏览器的兜底备案）。
+- 优先级 / 状态 / 目标版本：P1 / 已实现（待双平台实机弹窗与成品验收） / v1.0.0（2026-11-24 已在 `src-tauri` 接入端口占用严格识别、默认拒绝确认弹窗、二次身份重验后 `keep_monitor` 优雅关闭与端口释放等待，并通过 107 项 Rust 测试与 Python 生命周期契约回归；桌面窗口创建失败转默认浏览器兜底链路及全部 `startup_tests` 保持不变）。
 - 问题与证据：当前 Tauri 宿主已有单实例（`tauri-plugin-single-instance`）防同安装重复启动，也已保留并测试“成功握手后桌面窗口创建失败 → 经用户确认重验 ownership 后转默认浏览器打开”的兜底机制（见 [TAURI_HOST 规则](architecture/rules/TAURI_HOST.md) 与 `src-tauri/src/main.rs`）。但当旧版/开发版或手工启动的 `InvoiceHub` 后端仍占着固定端口 `127.0.0.1:8766` 时，新启动的桌面端会直接报端口占用退出，普通用户难以分辨是旧版 InvoiceHub 还是其他程序占用。
 - 方案：在严守固定端口 `127.0.0.1:8766`、不换端口、不私自接管未知进程的安全边界前提下，增强启动预检诊断——区分“同机旧 InvoiceHub 进程占用（显示版本、PID、运行目录）”与“非 InvoiceHub 程序占用”；对已识别的本机旧 InvoiceHub 实例，经用户明确确认后调用标准 `keep_monitor` 优雅关闭并等待端口释放再继续拉起，同时不破坏单实例锁与“桌面窗口创建失败 → 确认后转默认浏览器”的既有兜底路径。
 - 验收标准：同安装双开继续由单实例唤回既有窗口；非 InvoiceHub 占用 8766 仍明确拒绝并列出占用信息；旧 InvoiceHub 占用 8766 时可按用户确认优雅关闭（不误杀独立 monitor）并成功启动新实例；桌面窗口创建失败转默认浏览器的 Rust 契约测试（`accepted_fallback_revalidates_before_opening_browser_once` 等）全部保持通过。
@@ -463,7 +463,7 @@
 
 ### ENG-01 Windows Rust clippy 清零后改为阻断
 
-- 优先级 / 状态 / 目标版本：P2 / 已排期（已采集 PR #32 首轮警告清单） / v1.0.0
+- 优先级 / 状态 / 目标版本：P2 / 已实现（待远端 Windows CI 复验） / v1.0.0（2026-11-24 已为 `host_rpc.rs` 3 处仅 macOS 重启路径符号加 `#[cfg(target_os = "macos")]`，并将 `.github/workflows/ci.yml` 的 Windows `clippy_flags` 切换为 `-D warnings`）。
 - 问题与证据：`cfg(windows)` 代码（Windows marker store、Win32 进程/端口诊断等）此前未经 clippy；macOS 上已清零并以 `-D warnings` 阻断，Windows 作业暂只报告。2026-11-23 PR #32 首轮 CI（run `45119681382`）仅报告 3 条 dead-code 警告：`method prepare_relaunch is never used`、`variants BackendUnavailable, BackendShutdownFailed, and StateTransitionRejected are never constructed`、`fields app_handle and runtime_gate are never read`。
 - 方案：读取首轮 Windows CI 的 clippy 输出，逐条修复或局部 `allow` 并说明原因。
 - 验收标准：`ci.yml` 中 Windows 的 `clippy_flags` 改为 `-D warnings` 且 CI 通过；修复不改变 marker store 的 no-reparse/handle-relative 语义，Rust 合约测试全过。
@@ -473,7 +473,7 @@
 
 ### ENG-02 判定开票参考保存时未使用的工作簿状态读取
 
-- 优先级 / 状态 / 目标版本：P2 / 待评估 / 待定
+- 优先级 / 状态 / 目标版本：P2 / 已完成（2026-11-24） / v1.0.0（确认为漏合并：保存一行时会覆盖重写工作簿并抹掉仅存于工作簿的其他行状态；已改为在 `save_reference_status` 中合并工作簿非默认状态与既有行空白字段，移除 `noqa` 并补 `test_save_reference_status_preserves_workbook_only_status_for_untouched_rows`）。
 - 问题与证据：ruff 发现 `projections/costs.py::save_reference_status` 读取 `_read_reference_status_from_workbook()` 后从未使用；`rebuild` 会把仅存在于工作簿的状态并入，保存路径不会。可能是遗留死代码（每次保存多读一次 XLSX），也可能是漏合并。
 - 方案：用合成目录构造“状态只在工作簿、不在 JSON”的场景，比较保存前后开票参考结果，决定删除读取还是补合并。
 - 验收标准：新增成本测试覆盖该场景；按结论删除 `noqa` 行或补合并，成本全链测试通过。

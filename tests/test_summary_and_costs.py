@@ -1129,6 +1129,42 @@ def test_cost_rebuild_restores_status_json_from_existing_workbook(monkeypatch, t
     assert payload["items"][key]["updated_at"] == "2026-05-21T07:37:45Z"
 
 
+def test_save_reference_status_preserves_workbook_only_status_for_untouched_rows(tmp_path: Path) -> None:
+    from openpyxl import Workbook
+
+    watch = tmp_path / "发票文件"
+    workspace = tmp_path / "workspace"
+    watch.mkdir()
+    workspace.mkdir()
+    row_a = _cost_detail_row(内部项目名称="项目A", 规格型号="A1")
+    row_b = _cost_detail_row(内部项目名称="项目B", 规格型号="B1")
+    write_csv_rows(watch / "成本发票明细.csv", DETAIL_HEADERS, [row_a, row_b])
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "开票参考"
+    ws.append(INVOICE_REFERENCE_HEADERS)
+    ws.append(["材料", "项目A", "A1", "吨", 10, 0, 10, "未开具", 10.8, 12.204, 108, 14.04, 122.04, 0, 108, 14.04, 122.04, "8%", ""])
+    ws.append(["材料", "项目B", "B1", "吨", 10, 5, 5, "部分开具", 10.8, 12.204, 108, 14.04, 122.04, 61.02, 54, 7.02, 61.02, "20%", "2026-05-21T07:37:45Z"])
+    wb.save(watch / "成本发票汇总.xlsx")
+
+    key_a = _reference_key("材料", "项目A", "A1", "吨")
+    key_b = _reference_key("材料", "项目B", "B1", "吨")
+    service = CostProjectionService(watch, workspace, "target")
+    service.save_reference_status({"items": [{"key": key_a, "invoiced_quantity": "2"}]})
+
+    payload = read_json_object(watch / "成本开票状态.json")
+    assert payload["items"][key_a]["invoiced_quantity"] == "2"
+    assert payload["items"][key_b]["invoiced_quantity"] == "5"
+    assert payload["items"][key_b]["reference_markup_rate_percent"] == "20"
+    assert payload["items"][key_b]["invoiced_reference_total_with_tax"] == "61.02"
+
+    # Explicitly resetting a workbook-only row still removes it cleanly.
+    service.save_reference_status({"items": [{"key": key_b, "invoiced_quantity": "0", "reference_markup_rate_percent": "8"}]})
+    payload_after_reset = read_json_object(watch / "成本开票状态.json")
+    assert key_b not in payload_after_reset["items"]
+    assert payload_after_reset["items"][key_a]["invoiced_quantity"] == "2"
+
+
 def test_cost_sync_matches_summary_absolute_paths_to_detail_file_names(tmp_path: Path) -> None:
     watch = tmp_path / "发票文件"
     workspace = tmp_path / "workspace"

@@ -94,24 +94,53 @@ def synchronize(root: Path, *, write: bool) -> dict[str, str]:
         root / "src-tauri" / "tauri.public-preview.conf.json",
         root / "src-tauri" / "tauri.windows-preview.conf.json",
     )
+    windows_repackage_path = root / "docs" / "release" / "WINDOWS_REPACKAGE_CONFIG.json"
+    windows_preview_path = root / "docs" / "release" / "WINDOWS_PUBLIC_PREVIEW_CONFIG.json"
     for path in (package_path, cargo_path, *tauri_paths):
         if not path.is_file():
             raise VersionSyncError(f"derived identity target is missing: {path}")
 
-    _validate_or_update_json(package_path, {"version": identity["product_version"]}, write=write)
+    version = identity["product_version"]
+    _validate_or_update_json(package_path, {"version": version}, write=write)
     for tauri_path in tauri_paths:
         _validate_or_update_json(
             tauri_path,
             {
                 "productName": identity["product_name"],
-                "version": identity["product_version"],
+                "version": version,
                 "identifier": identity["bundle_identifier"],
             },
             write=write,
         )
 
+    # Keep Windows release parameter locks aligned with version.py whenever present so version bumps
+    # cannot leave portable/preview configs behind on an older pre-release tag.
+    if windows_repackage_path.is_file():
+        _validate_or_update_json(
+            windows_repackage_path,
+            {
+                "product_version": version,
+                "artifact_name": f"InvoiceHub-v{version}-windows-x64-portable.zip",
+                "build_receipt": f"dist/InvoiceHub-v{version}-windows-x64-portable.build-receipt.json",
+                "evidence_root": f"dist/evidence/windows-v{version}",
+            },
+            write=write,
+        )
+    if windows_preview_path.is_file():
+        preview_artifact = f"InvoiceHub-v{version}-windows-x64-setup.exe"
+        _validate_or_update_json(
+            windows_preview_path,
+            {
+                "product_version": version,
+                "artifact_name": preview_artifact,
+                "sha256_name": f"{preview_artifact}.sha256",
+                "receipt_name": f"InvoiceHub-v{version}-windows-x64-setup.build-receipt.json",
+            },
+            write=write,
+        )
+
     cargo_text = cargo_path.read_text(encoding="utf-8")
-    updated_cargo = _replace_cargo_version(cargo_text, identity["product_version"], cargo_path)
+    updated_cargo = _replace_cargo_version(cargo_text, version, cargo_path)
     if cargo_text != updated_cargo:
         if not write:
             raise VersionSyncError(f"derived identity drift in {cargo_path}: package version")

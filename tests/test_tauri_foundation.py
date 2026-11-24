@@ -44,6 +44,8 @@ def _copy_foundation(tmp_path: Path) -> Path:
         "src-tauri/tauri.alpha.conf.json",
         "src-tauri/tauri.public-preview.conf.json",
         "src-tauri/tauri.windows-preview.conf.json",
+        "docs/release/WINDOWS_REPACKAGE_CONFIG.json",
+        "docs/release/WINDOWS_PUBLIC_PREVIEW_CONFIG.json",
         "package.json",
         "pnpm-lock.yaml",
         "rust-toolchain.toml",
@@ -83,6 +85,14 @@ def test_version_sync_repairs_a_single_derived_version_drift(tmp_path: Path) -> 
     config = json.loads(config_path.read_text(encoding="utf-8"))
     config["version"] = "9.9.9"
     config_path.write_text(json.dumps(config), encoding="utf-8")
+    repackage_path = root / "docs/release/WINDOWS_REPACKAGE_CONFIG.json"
+    repackage = json.loads(repackage_path.read_text(encoding="utf-8"))
+    repackage["product_version"] = "9.9.9"
+    repackage_path.write_text(json.dumps(repackage), encoding="utf-8")
+    preview_path = root / "docs/release/WINDOWS_PUBLIC_PREVIEW_CONFIG.json"
+    preview = json.loads(preview_path.read_text(encoding="utf-8"))
+    preview["product_version"] = "9.9.9"
+    preview_path.write_text(json.dumps(preview), encoding="utf-8")
 
     assert _run(VERSION_SYNC, "--root", str(root), "--check").returncode == 2
     repaired = _run(VERSION_SYNC, "--root", str(root), "--write")
@@ -92,6 +102,8 @@ def test_version_sync_repairs_a_single_derived_version_drift(tmp_path: Path) -> 
     assert json.loads(package_path.read_text(encoding="utf-8"))["version"] == PRODUCT_VERSION
     assert f'version = "{PRODUCT_VERSION}"' in cargo_path.read_text(encoding="utf-8")
     assert json.loads(config_path.read_text(encoding="utf-8"))["version"] == PRODUCT_VERSION
+    assert json.loads(repackage_path.read_text(encoding="utf-8"))["product_version"] == PRODUCT_VERSION
+    assert json.loads(preview_path.read_text(encoding="utf-8"))["product_version"] == PRODUCT_VERSION
 
 
 def test_doctor_fails_closed_for_a_missing_cargo_lock_without_installing_tools(tmp_path: Path) -> None:

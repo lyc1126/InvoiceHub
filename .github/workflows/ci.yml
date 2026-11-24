@@ -141,10 +141,8 @@ jobs:
         include:
           - os: macos-15
             clippy_flags: "-D warnings"
-          # cfg(windows) code has never been linted; report its warnings without
-          # blocking until ENG-01 clears them, then switch this to -D warnings.
           - os: windows-latest
-            clippy_flags: ""
+            clippy_flags: "-D warnings"
     runs-on: ${{ matrix.os }}
     timeout-minutes: 40
     defaults:

@@ -326,6 +326,8 @@ impl UpdaterRuntimeGate {
         )
     }
 
+    // Only macOS requests an explicit post-install relaunch; Windows updater exits via on_before_exit.
+    #[cfg(target_os = "macos")]
     fn prepare_relaunch(&self) -> Result<(), HostRpcServerError> {
         self.transition(
             UpdaterRuntimeState::CommitExecuting,
@@ -600,7 +602,9 @@ impl HostUpdater {
                 update: pending.update,
             };
             let mut relauncher = HostRelaunchRequester {
+                #[cfg(target_os = "macos")]
                 app_handle: self.app_handle.clone(),
+                #[cfg(target_os = "macos")]
                 runtime_gate: Arc::clone(&self.runtime_gate),
             };
             let mut coordinator =
@@ -648,15 +652,22 @@ impl UpdateInstaller for HostUpdateInstaller {
 
 #[derive(Debug)]
 enum HostRelaunchError {
+    #[cfg(target_os = "macos")]
     BackendUnavailable,
+    #[cfg(target_os = "macos")]
     BackendShutdownFailed,
+    #[cfg(target_os = "macos")]
     StateTransitionRejected,
     #[cfg(not(target_os = "macos"))]
     UnsupportedPlatform,
 }
 
+// Windows updater launches its installer in on_before_exit and exits directly, so the
+// post-install relaunch handles are only compiled on macOS to keep Windows clippy -D warnings clean.
 struct HostRelaunchRequester {
+    #[cfg(target_os = "macos")]
     app_handle: tauri::AppHandle<tauri::Wry>,
+    #[cfg(target_os = "macos")]
     runtime_gate: Arc<UpdaterRuntimeGate>,
 }
 
