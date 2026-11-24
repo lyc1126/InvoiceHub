@@ -405,4 +405,88 @@ describe("服务器只读来源面板与工作区视图", () => {
     expect(wrapper.get('[role="alert"]').text()).not.toContain("授权过期");
     wrapper.unmount();
   });
+
+  it("auto-probes host fingerprint after adding an SFTP source in ServerConnectModal", async () => {
+    const taskBodies: unknown[] = [];
+    const okJson = (body: unknown) =>
+      new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === "/api/v1/sources" && (!init?.method || init.method === "GET")) {
+        return okJson({ ok: true, sources: [], capabilities: { mounted: true, sftp_agent: true } });
+      }
+      if (url === "/api/v1/sources/mounted-shares") {
+        return okJson({ ok: true, shares: [] });
+      }
+      if (url === "/api/v1/sources" && init?.method === "POST") {
+        return okJson({
+          ok: true,
+          source: {
+            id: sid,
+            name: "远端SFTP",
+            protocol: "sftp",
+            root: "/invoices",
+            host: "files.example.test",
+            port: 22,
+            username: "reader",
+            revision: 1,
+            connection: "offline",
+            sync: "idle",
+            error: "",
+            fingerprints: [],
+            generation: "",
+            snapshot: "none",
+            last_complete_at: "",
+            cached_count: 0,
+            entry_count: 0,
+            cache_budget: 256 * 1024 ** 2,
+          },
+        });
+      }
+      if (url === `/api/v1/sources/${sid}/tasks` && init?.method === "POST") {
+        taskBodies.push(JSON.parse(String(init.body)));
+        return okJson({
+          ok: true,
+          source: {
+            id: sid,
+            name: "远端SFTP",
+            protocol: "sftp",
+            root: "/invoices",
+            host: "files.example.test",
+            port: 22,
+            username: "reader",
+            revision: 1,
+            connection: "offline",
+            sync: "connecting",
+            error: "",
+            fingerprints: [],
+            generation: "",
+            snapshot: "none",
+            last_complete_at: "",
+            cached_count: 0,
+            entry_count: 0,
+            cache_budget: 256 * 1024 ** 2,
+          },
+        });
+      }
+      return okJson({ ok: true });
+    }));
+
+    const wrapper = mount(ServerConnectModal, {
+      props: { open: true },
+      global: { plugins: [createPinia()], stubs: { Teleport: true } },
+    });
+    await flushPromises();
+    await wrapper.findAll('[role="tab"]').find((b) => b.text().includes("SSH / SFTP"))!.trigger("click");
+    expect(wrapper.text()).toContain("仅支持已解锁 SSH Agent 的只读 SFTP（试验版）");
+    await wrapper.get('input[placeholder*="远程资料库"]').setValue("远端SFTP");
+    await wrapper.get('input[placeholder*="files.example.test"]').setValue("files.example.test");
+    await wrapper.get('input[autocomplete="off"]').setValue("reader");
+    await wrapper.get('input[placeholder="/invoices"]').setValue("/invoices/");
+    await wrapper.get("form").trigger("submit");
+    await flushPromises();
+
+    expect(taskBodies).toEqual([{ kind: "probe" }]);
+    expect(wrapper.emitted("connected")?.[0]).toEqual([sid]);
+    wrapper.unmount();
+  });
 });

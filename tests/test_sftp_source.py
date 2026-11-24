@@ -118,3 +118,66 @@ def test_sftp_rejects_truncated_or_large_packets():
         Cursor(b'\x00').number()
     with pytest.raises(SourceError):
         Cursor(u32(1024*1024+1)).text()
+
+
+@pytest.mark.parametrize(
+    ('stderr_text', 'ssh_add_rc', 'expected_code', 'expected_text'),
+    [
+        (b'Permission denied (publickey).', 1, 'auth_required', 'ssh-add'),
+        (b'Permission denied (publickey).', 2, 'auth_required', '未连接到系统 SSH Agent'),
+        (b'Permission denied (publickey).', 0, 'auth_required', '公钥认证'),
+        (b'ssh: connect to host example.invalid port 22: Connection refused', 0, 'connection_failed', '拒绝'),
+        (b'ssh: Could not resolve hostname example.invalid: nodename nor servname provided', 0, 'connection_failed', '解析主机名'),
+        (b'ssh: connect to host example.invalid port 22: Operation timed out', 0, 'connection_failed', '超时'),
+        (b'subsystem request failed on channel 0', 0, 'protocol_error', 'SFTP 子系统'),
+        (b'Host key verification failed.', 0, 'host_key_changed', '指纹不匹配'),
+    ],
+)
+def test_sftp_classifies_ssh_stderr_and_agent_states(tmp_path, monkeypatch, stderr_text, ssh_add_rc, expected_code, expected_text):
+    import subprocess
+    from invoice_hub.storage.source_adapters import sftp as sftp_mod
+
+    class FailingProcess:
+        def __init__(self, command, **kwargs):
+            self.stdin = io.BytesIO()
+            self.stdout = io.BytesIO(b'')
+            self.stderr = io.BytesIO(stderr_text)
+
+        def terminate(self):
+            pass
+
+        def wait(self, timeout=None):
+            return 255
+
+    monkeypatch.setattr(sftp_mod.subprocess, 'Popen', FailingProcess)
+    monkeypatch.setattr(sftp_mod.shutil, 'which', lambda name: f'/synthetic/{name}')
+    monkeypatch.setattr(
+        sftp_mod.subprocess,
+        'run',
+        lambda *a, **kw: subprocess.CompletedProcess(a, ssh_add_rc, b'', b''),
+    )
+    with pytest.raises(SourceError) as exc_info:
+        SFTP(
+            {'host': 'server.invalid', 'port': 22, 'username': 'reader', 'root': '/invoices', 'host_key': 'ssh-ed25519 c3ludGhldGlj'},
+            tmp_path,
+        )
+    assert exc_info.value.code == expected_code
+    assert expected_text in str(exc_info.value)
+
+
+def test_sftp_probe_accepts_key_lines_with_comment_and_validates_base64(monkeypatch):
+    import base64
+    import subprocess
+    from invoice_hub.storage.source_adapters import sftp as sftp_mod
+
+    key_b64 = base64.b64encode(b'synthetic-ed25519-key-material').decode('ascii')
+    stdout = f'server.invalid ssh-ed25519 {key_b64} comment-text\nserver.invalid ssh-rsa not!valid\n'.encode('utf-8')
+    monkeypatch.setattr(sftp_mod.shutil, 'which', lambda name: f'/synthetic/{name}')
+    monkeypatch.setattr(
+        sftp_mod.subprocess,
+        'run',
+        lambda *a, **kw: subprocess.CompletedProcess(a, 0, stdout, b''),
+    )
+    keys = sftp_mod.probe({'host': 'server.invalid', 'port': 22})
+    assert len(keys) == 1
+    assert next(iter(keys.values())) == f'ssh-ed25519 {key_b64}'

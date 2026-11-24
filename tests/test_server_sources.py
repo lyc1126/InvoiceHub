@@ -386,3 +386,38 @@ def test_server_source_ofd_error_omits_system_open_and_preserves_batch_siblings(
         service.release_preview(sid, preview['job_id'])
     finally:
         service.close()
+
+
+def test_sftp_add_normalizes_trailing_slash_and_rejects_non_canonical_paths(service):
+    added = service.add({
+        'protocol': 'sftp',
+        'name': '远端SFTP',
+        'host': ' files.example.test ',
+        'port': 2222,
+        'username': ' reader ',
+        'root': '/invoices/2026/',
+    })
+    assert added['root'] == '/invoices/2026'
+    assert added['host'] == 'files.example.test'
+    assert added['username'] == 'reader'
+
+    root_slash = service.add({
+        'protocol': 'sftp',
+        'name': '根目录',
+        'host': 'files.example.test',
+        'port': 22,
+        'username': 'reader',
+        'root': '/',
+    })
+    assert root_slash['root'] == '/'
+
+    for bad_root in ('/invoices//2026', '/invoices/../secret', 'invoices/2026'):
+        with pytest.raises(SourceError, match='规范绝对路径'):
+            service.add({
+                'protocol': 'sftp',
+                'name': '非法路径',
+                'host': 'files.example.test',
+                'port': 22,
+                'username': 'reader',
+                'root': bad_root,
+            })

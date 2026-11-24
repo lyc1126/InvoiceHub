@@ -66,6 +66,30 @@ class Cursor:
         return result
 
 
+def _ssh_agent_auth_message() -> str:
+    """Distinguish missing agent, empty agent, and server key rejection without prompting."""
+    tool = shutil.which("ssh-add")
+    if not tool:
+        return "SSH Agent 认证失败；请确认系统已安装 OpenSSH 并通过 ssh-add 加载私钥。"
+    env = {**os.environ, "SSH_ASKPASS": "", "SSH_ASKPASS_REQUIRE": "never"}
+    try:
+        result = subprocess.run(
+            [tool, "-l"],
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            timeout=2,
+            check=False,
+            env=env,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return "无法查询系统 SSH Agent 状态；请确认 SSH Agent 已启动并加载私钥。"
+    if result.returncode == 0:
+        return "服务器拒绝了当前 SSH Agent 中的公钥认证，请确认该账号已配置对应公钥且允许 SFTP 登录。"
+    if result.returncode == 1:
+        return "SSH Agent 已运行但尚未加载私钥；请先在终端执行 ssh-add（macOS 可用 ssh-add --apple-use-keychain）后重试。"
+    return "未连接到系统 SSH Agent；请先启动 SSH Agent 并通过 ssh-add 加载私钥（macOS 桌面端需先在终端完成 ssh-add --apple-use-keychain）。"
+
+
 def probe(profile):
     tool = shutil.which("ssh-keyscan")
     if not tool or not shutil.which("ssh"):
@@ -75,16 +99,16 @@ def probe(profile):
     keys = {}
     if len(result.stdout) > 65536:
         raise SourceError("主机密钥响应过大。")
-    for line in result.stdout.decode("ascii", errors="strict").splitlines():
+    for line in result.stdout.decode("utf-8", errors="replace").splitlines():
         parts = line.split()
-        if len(parts) != 3 or not parts[1].startswith(("ssh-", "ecdsa-")):
+        if len(parts) < 3 or not parts[1].startswith(("ssh-", "ecdsa-")):
             continue
         try:
             raw = base64.b64decode(parts[2], validate=True)
         except ValueError:
             continue
         fingerprint = "SHA256:" + base64.b64encode(hashlib.sha256(raw).digest()).decode().rstrip("=")
-        keys[fingerprint] = " ".join(parts[1:])
+        keys[fingerprint] = f"{parts[1]} {parts[2]}"
     if not keys:
         raise SourceError("无法取得主机密钥，请检查 DNS、端口和网络。", "connection_failed")
     return keys
@@ -129,8 +153,19 @@ class SFTP:
             block = self.process.stdout.read(count - len(result))
             if not block:
                 error = self.process.stderr.read(65536).decode(errors="replace").casefold()
-                code = "host_key_changed" if "host key verification failed" in error or "host identification has changed" in error else "auth_required" if "permission denied" in error else "connection_failed"
-                raise SourceError({"host_key_changed": "主机密钥不匹配，连接已阻断。", "auth_required": "SSH Agent 认证不可用或目录无权访问。"}.get(code, "SFTP 连接中断，请检查网络与服务。"), code)
+                if "host key verification failed" in error or "host identification has changed" in error:
+                    raise SourceError("主机密钥与已确认指纹不匹配，连接已阻断。", "host_key_changed")
+                if "permission denied" in error:
+                    raise SourceError(_ssh_agent_auth_message(), "auth_required")
+                if "could not resolve hostname" in error or "nodename nor servname" in error or "name or service not known" in error:
+                    raise SourceError("无法解析主机名，请检查服务器地址和网络。", "connection_failed")
+                if "connection refused" in error:
+                    raise SourceError("连接被服务器拒绝，请检查 SSH 服务是否开启及端口号是否正确。", "connection_failed")
+                if "timed out" in error:
+                    raise SourceError("SSH/SFTP 连接超时，请检查网络、VPN 或防火墙配置。", "connection_failed")
+                if "subsystem request failed" in error:
+                    raise SourceError("服务器未启用 SFTP 子系统，请联系管理员开启 SFTP 服务。", "protocol_error")
+                raise SourceError("SFTP 连接中断，请检查网络与服务。", "connection_failed")
             result.extend(block)
         return bytes(result)
 
@@ -153,7 +188,11 @@ class SFTP:
             if code in {0, 1}:
                 cur.status = code
                 return 101, cur
-            raise SourceError("SFTP 文件不存在、权限不足或读取失败。", "auth_required" if code == 3 else "source_unavailable")
+            if code == 2:
+                raise SourceError("远端目录或文件不存在，请检查服务器根目录或刷新目录。", "source_unavailable")
+            if code == 3:
+                raise SourceError("账号无权访问该远端目录或文件，请检查服务器目录权限。", "auth_required")
+            raise SourceError(f"SFTP 读取失败（状态码 {code}）。", "source_unavailable")
         return answer, cur
 
     def attrs(self, path):
@@ -168,7 +207,7 @@ class SFTP:
             raise SourceError("SFTP 根或子目录包含链接。", "unsafe_path")
         kind, cur = self.request(16, string(path))
         if kind != 104 or cur.number() != 1 or cur.text().decode() != path:
-            raise SourceError("SFTP 路径经链接重定向或不是规范绝对路径。", "unsafe_path")
+            raise SourceError("SFTP 路径经符号链接重定向或不是规范绝对路径，请改填服务器上的真实目录路径。", "unsafe_path")
 
     def entries(self, report):
         rows, pending = [], [(self.root, "", 0)]

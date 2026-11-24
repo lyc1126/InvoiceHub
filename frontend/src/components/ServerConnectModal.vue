@@ -137,17 +137,17 @@ async function submitAdd(): Promise<void> {
     });
     store.upsert(result.source);
     store.selectedId = result.source.id;
-    // Newly-added mounted SMB shares can scan immediately; SFTP waits for explicit fingerprint verification.
-    if (result.source.protocol === "mounted") {
-      try {
-        const scanned = await request<{ source: ServerSource }>(`/api/v1/sources/${result.source.id}/tasks`, {
-          method: "POST",
-          body: { kind: "scan" },
-        });
-        store.upsert(scanned.source);
-      } catch {
-        // Keep the saved source open in the panel so the user can inspect or retry.
-      }
+    // Newly-added mounted SMB shares scan immediately; SFTP probes host keys so
+    // the user can verify and confirm the fingerprint without extra clicks.
+    const initialTask = result.source.protocol === "mounted" ? "scan" : "probe";
+    try {
+      const started = await request<{ source: ServerSource }>(`/api/v1/sources/${result.source.id}/tasks`, {
+        method: "POST",
+        body: { kind: initialTask },
+      });
+      store.upsert(started.source);
+    } catch {
+      // Keep the saved source open in the panel so the user can inspect or retry.
     }
     resetForm(protocol.value);
     emit("connected", result.source.id);
@@ -251,7 +251,7 @@ async function submitAdd(): Promise<void> {
             <label class="field">端口<input v-model.number="port" type="number" min="1" max="65535" required></label>
           </div>
           <label class="field">用户名<input v-model="username" required autocomplete="off"></label>
-          <p class="overview-notice">认证仅使用本机 OpenSSH 与 SSH Agent，不保存密码或私钥；首次连接须核对主机指纹。</p>
+          <p class="overview-notice">仅支持已解锁 SSH Agent 的只读 SFTP（试验版），不保存密码或私钥；保存后将自动读取主机指纹供核对。</p>
         </template>
         <label class="field">
           {{ protocol === "mounted" ? "系统挂载目录" : "服务器根目录" }}

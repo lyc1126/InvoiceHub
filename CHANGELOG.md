@@ -2,6 +2,18 @@
 
 ## 未发布
 
+### 2026-11-24 收口 SSH / SFTP 只读试验版交互与诊断并完成本机 OpenSSH 端到端联调（WS-09 方案 A）
+
+- 需求与起点：基于 `codex/workspace-p3@9569f5f` 按用户确认的方案 A 对 SSH / SFTP 只读试验版做上线前轻量收口：补齐路径规范化、添加后自动指纹探测、SSH Agent/网络/权限细分诊断，并补一轮真实 OpenSSH `sshd` + `sftp-server` + `ssh-agent` + OFD 预览端到端联调（密码/系统钥匙串凭据、跳板机与远程写入维持后续版本边界）。
+- 采用方案：
+  - **路径规范化与细分诊断**：`services/sources.py::add` 对 SFTP 根目录去除首尾空白并规范化非根路径尾斜杠（如 `/invoices/2026/` → `/invoices/2026`，`/` 保留，仍拒绝 `..`、`//` 与相对路径），同步裁剪 `host`/`username` 首尾空白；`storage/source_adapters/sftp.py` 新增只读 `_ssh_agent_auth_message()`（调用无提示 `ssh-add -l`，区分「未连接 SSH Agent」「Agent 已运行但未加载私钥、给出 `ssh-add` 提示」「服务器拒绝公钥认证」），并拆分 `Connection refused`、DNS 解析失败、超时、`subsystem request failed`、主机指纹失配及 SFTP 状态码 `2/3` 与符号链接重定向提示；放宽 `probe()` 允许主机公钥行尾附带注释字段，仍严格校验 key 类型与 base64。
+  - **连接弹窗体验收顺**：`frontend/src/components/ServerConnectModal.vue` 在添加 SFTP 来源后自动触发一次 `{ kind: "probe" }` 读取主机密钥指纹（与 SMB 自动 `scan` 对齐），并在表单内明确说明「仅支持已解锁 SSH Agent 的只读 SFTP（试验版），不保存密码或私钥」；重建 `web/static/app/` 并同步功能规则与注释地图。
+- 验证范围与未覆盖项：
+  - 已运行并通过：Ruff、Python `compileall`、`tests/test_sftp_source.py`、`tests/test_server_sources.py`、`tests/test_ofd_rendering.py`（携带 `INVOICE_HUB_TEST_OFD_COMPONENT=runtime/components/ofd-preview`）、`tests/test_workspace_frontend.py`、`tests/test_frontend_contract.py`、`tests/test_api_contract.py`、`tests/test_development_documentation.py`、Vue `vue-tsc --noEmit`、`vitest run`（20 文件 171 项）、`vite build`、`git diff --check`。
+  - 真实 OpenSSH 联调：在临时隔离目录内启动真实回环 `/usr/sbin/sshd`（`/usr/libexec/sftp-server`）与独立 `ssh-agent`，端到端验证 SFTP 尾斜杠路径登记、`ssh-keyscan` 真实指纹核验、扫描、子目录汇总、OFD 双页 Java 21 原生 PNG 渲染（`15,343` / `16,224` bytes）+ XML 预览、断连后离线显式预览，以及 `ssh-add -D` 空 Agent 触发 `auth_required` + `ssh-add` 诊断提示，随后彻底终止临时进程并清理临时目录。
+  - 开发版打包：本地 DCO 提交后使用 `scripts/dev/tauri_dev_app.py build` 从干净提交重建 macOS ARM64 开发版 `InvoiceHub.app`（保留产物在 `src-tauri/target/release/bundle/macos/InvoiceHub.app`，未强行中断当前运行中的 `/Applications/InvoiceHub.app`）。
+  - 未覆盖项：未覆盖跨网段/公网真实 Linux 或 NAS 服务器、VPN、Windows 11 OpenSSH 客户端实机、真实默认配置、正式 Windows BAT、浏览器前台拉起、系统原生选择器与签名/公证 DMG；本轮仅本地提交，未推送远端或合并 `main`。
+
 ### 2026-11-24 修复开发版桌面端与 SMB 只读模式 OFD 预览并补齐双平台发布验包门禁
 
 - 需求与起点：基于 `codex/workspace-p3@979c5e7` 专项排查并修复用户实测 SMB 只读模式下 OFD 识别正常但无法预览的问题。根因核实为三层叠加：(1) 本地 macOS Tauri 开发版 `InvoiceHub.app` 内含 `invoice-hub-build.json` 触发打包分支，导致 `OFDRenderer` 只查 `.venv/components/ofd-preview` 而找不到仓库内已构建的 `runtime/components/ofd-preview`；(2) 双平台正式/预览组包与验包脚本尚未对 `components/ofd-preview` 实施 fail-closed 强校验；(3) 服务器只读预览透传了无效的“也可使用系统打开原文件”引导，且多页 OFD 在 `ServerPreviewDrawer` / `SourcePreview` 中并发加载缩略图 `<img>` 会撞上单 worker `_RENDER_SLOT`（`ofd_renderer_busy`），渲染期 `422` 错误也会被泛化为“授权过期”。

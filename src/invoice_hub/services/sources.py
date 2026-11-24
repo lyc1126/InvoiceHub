@@ -246,9 +246,14 @@ class SourceService:
                 raise SourceError("请选择系统已挂载的绝对目录；不能输入 smb:// 或 sftp:// 地址。", "invalid_config")
             root = str(Path(root))
         else:
+            root = root.strip()
+            if len(root) > 1 and root.endswith("/"):
+                root = root.rstrip("/") or "/"
+            host = str(payload.get("host", "")).strip()
+            username = str(payload.get("username", "")).strip()
             if not root.startswith("/") or "\\" in root or any(p in {".", ".."} for p in root.split("/")) or str(PurePosixPath(root)) != root:
                 raise SourceError("SFTP 根须为规范绝对路径，不含链接或上级跳转。", "invalid_config")
-            if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9.:-]{0,252}", str(payload.get("host", ""))) or not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.@-]{0,63}", str(payload.get("username", ""))):
+            if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9.:-]{0,252}", host) or not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.@-]{0,63}", username):
                 raise SourceError("主机名或 SSH 用户名无效，不接受 URL、口令或命令。", "invalid_config")
             if type(payload.get("port")) is not int or not 1 <= payload["port"] <= 65535:
                 raise SourceError("端口须为 1—65535。", "invalid_config")
@@ -259,7 +264,7 @@ class SourceService:
                        "connection": "offline", "sync": "idle", "error": "", "error_code": "", "task_id": "", "epoch": 0,
                        "cache_budget": DEFAULT_BUDGET, "binding": None, "summary": ""}
             if protocol == "sftp":
-                profile.update({key: payload[key] for key in ("host", "port", "username")})
+                profile.update({"host": host, "port": payload["port"], "username": username})
             self.profiles[profile["id"]], self.snapshots[profile["id"]] = profile, {}
             self._dir(profile["id"])
             self._save()
