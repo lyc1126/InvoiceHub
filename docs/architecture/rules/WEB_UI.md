@@ -66,6 +66,7 @@
 
 ## Vue 工作区前端
 
+- 2026-11-24 标签色点尺寸与紧凑结构列：`DirectoryInvoices.vue` 以 `.tag-dots` 包裹色点，`.tag-cell .tag-dot` 保持 `14px × 14px`（带 `1.5px var(--surface)` 叠放分隔环与 `-3px` 叠距，菜单内 `.tag-dot` 为 `12px`）；`.directory-invoices-table .tag-cell` 与 `.select-cell` 使用 `width: 1%` 保持紧凑不随隐藏列拉宽，`.directory-toolbar button:first-of-type { margin-left: auto; }` 保证右侧操作按钮成组贴齐。
 - 2026-11-23 工作区活动目录重算与规则过期提示：`DirectoryPanel.vue` 与 `CompanyDirectories.vue` 对当前活动监控发票目录提供「重新汇总」按钮（调用 `POST /api/v1/bridge/rebuild`，保留 busy 态与迟到响应丢弃，完成后派发 `workspace:company-refreshed`）；非监控目录因解析器版本升级进入 `freshness.parser_stale` 时明确提示“识别规则已更新”，不显示“新增 0、改动 0、删除 0”。
 - 2026-11-23 目录发票列表列宽、居中与显隐：`DirectoryInvoices.vue` 外包 `.directory-invoices-wrap` 横向滚动容器并保持真实 `<table>` 与完整文本复制；`.invoice-party__text`（196px）与 `.invoice-project__text`（180px）以 `inline-block` 单行省略加完整 `title` 约束固有宽度，避免单条超长名称在 `销售方 / 购买方` 间拉出大段空白；`.directory-invoices-table` 全部显示列（含金额列，保留 `tabular-nums`）居中对齐；数据列显隐按 `dirKey` 存本机 `localStorage`（`stores/workspace.ts::hiddenInvoiceColumns`，至少保留 1 列，不写公司资料夹或后端），支持「显示列」菜单与表头右键切换及一键恢复，菜单层级 35 高于批量选择条且隐藏 KeepAlive 标签不拦截 Esc。
 - 2026-11-23 新版工作区交互补齐与排版守护：目录发票勾选操作条点击「合计详情 ›」通过宽 `WsModal` 完整展示 `selection-summary` 的 `cost_breakdown`（按开票项目+明细税率拆组、规格型号/单位/数量/算术与加权均价表、来源发票预览入口及关键字/税率筛选），筛选只缩窄明细列表、不改顶部总额；做账页分栏 `.voucher-list button` 必须保留 `flex: 0 0 auto`（禁止 `min-height: 0` 在纵向 Flex 滚动容器内压扁行高导致重叠）。登记已有资料夹成功后自动触发 `POST /api/v1/companies/{id}/refresh-data` 并在页面内提供“读取数据 / 更新数据”入口，实时监控、通知与源文件操作继续限定在当前监控目录。

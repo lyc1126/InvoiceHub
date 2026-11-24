@@ -2,6 +2,18 @@
 
 ## 未发布
 
+### 2026-11-24 调整工作区发票列表标签色点尺寸、标签列紧凑宽度与工具栏按钮间距
+
+- 需求与起点：基于 `codex/workspace-p3@4d229dc` 响应用户反馈：工作区发票列表左侧标签色点偏小且与销售方列之间空白显得过宽；同时一并修正目录工具栏中「重新汇总」与「检查变动」按钮分散排版的问题。
+- 采用方案：
+  - **标签色点放大与叠放清晰度**：`DirectoryInvoices.vue` 用 `.tag-dots`（`inline-flex`）包裹色点确保居中对齐；`frontend/src/styles.css` 将表内 `.tag-cell .tag-dot` 由 `10px` 调整为 `14px × 14px`、叠加 `1.5px var(--surface)` 分隔环与 `-3px` 叠放（标签菜单 `.tag-dot` 同步调至 `12px`），在浅色、`website-dark` 与 `?no_skin=1` 下均清晰可辨。
+  - **紧凑标签列宽与工具栏对齐**：`frontend/src/prototype.css` 与 `styles.css` 将 `.directory-invoices-table .tag-cell` 及 `.select-cell` 固定为 `width: 1%`（`min-width: 44px` / `40px`），并收紧 `.tag-cell` 右侧与紧邻首列左侧内距（`padding-right: 2px` / `padding-left: 6px`），避免隐藏部分数据列后 `table-layout: auto` 将多余表宽分配进标签列；同步将 `.directory-toolbar button` 改为 `.directory-toolbar button:first-of-type { margin-left: auto; }`，使「重新汇总」与「检查变动」在工具栏右侧成组对齐。重建 `web/static/app/` 并更新 `WEB_UI.md` 与 `frontend/tests/directory-preview.spec.ts`。
+- 验证范围与未覆盖项：
+  - 已运行并通过：Vue `vue-tsc --noEmit`、`vitest run`（20 文件 167 项）、`vite build`、`tests/test_workspace_frontend.py`、`tests/test_frontend_contract.py`、`tests/test_development_documentation.py`、`node --test tests/*.test.cjs`（40 项）、Ruff、`git diff --check`。
+  - 合成 Chromium 实测（使用最新构建 `app.css` 与 `website-dark/skin.css`，覆盖 1100px 浅色/深色与 390px 窄屏）及独立隔离本地预览服务实机预览（`1280×800`，零控制台错误）：确认 `.tag-dot` 为 `14×14px`、`.tag-cell` 收束为 `48px`、工具栏按钮间距 `12px`、390px 无整页横向溢出；临时预览服务与合成目录已清理。
+  - 开发版打包：本地 DCO 提交后使用 `scripts/dev/tauri_dev_app.py build` 重建 macOS ARM64 开发版 `InvoiceHub.app` 并更新至 `/Applications/InvoiceHub.app`。
+  - 未覆盖项：未覆盖真实默认配置、正式 Windows BAT、Windows 打包产物、系统原生选择器与签名/公证 DMG；本轮仅本地提交，未推送远端或合并 `main`。
+
 ### 2026-11-23 解析器版本感知自动重算、成品油业务类型与工作区活动目录「重新汇总」
 
 - 需求与起点：基于 `codex/workspace-p3@380a359`（保留同日未提交的工作区发票列表列宽/显隐/居中改动，本轮一起提交），排查并根治用户升级至 `1.0.0-beta.1` 后成品油专票在界面上仍显示空白销售方的问题。只读核查确认：新版解析器（BUG-04）本身已完整提取销售方、购买方、除税价与税金，界面空白源自三项叠加原因：(1) 既有工作区汇总文件停留在 BUG-04 之前且无 `projection-manifest.json`；(2) `MonitorSynchronizer` 未检测解析器版本变化，文件未变动时不自动重算；(3) 新版工作区对当前活动监控目录缺少手动「重新汇总」入口；同时用户确认将「成品油」补齐为独立特定业务类型，并在提交后更新本机开发版 `InvoiceHub.app`。

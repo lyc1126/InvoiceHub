@@ -141,9 +141,11 @@ button.link { border: 0; background: none; padding: 0 2px; color: inherit; curso
 }
 
 /* WS-06 invoice tags */
-.tag-cell { width: 34px; min-width: 34px; padding-right: 0; white-space: nowrap; }
-.tag-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; border: 1px solid rgba(0, 0, 0, 0.15); vertical-align: middle; }
-.tag-cell .tag-dot + .tag-dot { margin-left: -4px; }
+.tag-cell { width: 1%; min-width: 44px; padding-right: 4px; white-space: nowrap; }
+.tag-dots { display: inline-flex; align-items: center; justify-content: center; vertical-align: middle; }
+.tag-dot { display: inline-block; width: 12px; height: 12px; border-radius: 50%; border: 1px solid rgba(0, 0, 0, 0.16); vertical-align: middle; flex: none; }
+.tag-cell .tag-dot { width: 14px; height: 14px; box-shadow: 0 0 0 1.5px var(--surface); }
+.tag-cell .tag-dot + .tag-dot { margin-left: -3px; }
 /* The workspace selection bar is at 20; it must not intercept tag-menu clicks. */
 .tag-menu { position: fixed; z-index: 30; display: flex; flex-direction: column; gap: 4px; min-width: 160px; max-width: calc(100vw - 16px); max-height: calc(100vh - 16px); overflow: auto; padding: 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); box-shadow: 0 6px 20px rgba(0, 0, 0, 0.12); }
 .tag-menu label { display: flex; align-items: center; gap: 6px; cursor: pointer; }

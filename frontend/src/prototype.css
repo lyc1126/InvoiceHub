@@ -99,7 +99,7 @@ html[data-active-skin='website-dark'] .ws-row:hover, html[data-active-skin='webs
 .status-chip--live { color:var(--green); border-color:color-mix(in srgb,var(--green) 25%,var(--surface)); background:var(--ws-success-bg); }
 .overview-notice--warn { border-left-color:var(--amber); background:color-mix(in srgb,var(--amber) 7%,var(--surface)); color:color-mix(in srgb,var(--amber) 55%,var(--text)); }
 .directory-toolbar { align-items:center; gap:8px 12px; padding:12px 0; margin-bottom:4px; border-top:1px solid var(--line); font-size:13px; }
-.directory-toolbar button { margin-left:auto; }
+.directory-toolbar button:first-of-type { margin-left:auto; }
 .detail-header h2 { font-size:24px; line-height:1.5; display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
 .detail-header p { margin:4px 0 0; font-family:Consolas,'SFMono-Regular',monospace; font-size:12.5px; }
 .company-sections { border:0; margin:0 0 16px; gap:2px; overflow-x:auto; }
@@ -346,8 +346,11 @@ button.ghost { color:var(--muted); min-height:30px; padding:0 10px; font-size:13
 .directory-invoices-table { display:table; width:100%; border:0; border-radius:0; background:transparent; }
 .directory-invoices-table :is(th,td) { white-space:nowrap; padding:8px 10px; text-align:center; vertical-align:middle; }
 .directory-invoices-table .num { text-align:center; font-variant-numeric:tabular-nums; }
-.directory-invoices-table .tag-cell { width:36px; min-width:36px; padding-left:6px; padding-right:6px; }
-.directory-invoices-table .select-cell { width:40px; min-width:40px; padding-left:6px; padding-right:6px; }
+/* Keep structural tag-dot and checkbox slots shrink-to-fit (width:1%) so hiding data columns
+   never stretches their width into a wide blank margin next to 销售方. */
+.directory-invoices-table .tag-cell { width:1%; min-width:44px; padding-left:10px; padding-right:2px; }
+.directory-invoices-table .tag-cell + :is(th,td) { padding-left:6px; }
+.directory-invoices-table .select-cell { width:1%; min-width:40px; padding-left:6px; padding-right:6px; }
 .directory-invoices-table thead th button.link { min-height:0; padding:0 2px; }
 .directory-invoices-table tbody tr:hover { background:color-mix(in srgb,var(--primary) 9%,var(--surface)); }
 .dir-list-head__actions { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }

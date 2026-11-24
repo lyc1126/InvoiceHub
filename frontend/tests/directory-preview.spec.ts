@@ -268,11 +268,14 @@ describe("directory invoice list and shared source preview", () => {
     reloadedCost.unmount();
   });
 
-  it("centers directory invoice columns and caps party column width in CSS", () => {
+  it("centers directory invoice columns, caps party column width, and keeps tag dots crisp and compact in CSS", () => {
     const stylesCss = readFileSync(resolve(__dirname, "../src/styles.css"), "utf-8");
     const protoCss = readFileSync(resolve(__dirname, "../src/prototype.css"), "utf-8");
     expect(protoCss).toMatch(/\.directory-invoices-table\s+:is\(th,\s*td\)\s*\{[^}]*text-align:\s*center/);
     expect(protoCss).toMatch(/\.directory-invoices-table\s+\.num\s*\{[^}]*text-align:\s*center/);
+    expect(protoCss).toMatch(/\.directory-invoices-table\s+\.tag-cell\s*\{[^}]*width:\s*1%/);
+    expect(protoCss).toMatch(/\.directory-toolbar\s+button:first-of-type\s*\{\s*margin-left:\s*auto/);
+    expect(stylesCss).toMatch(/\.tag-cell\s+\.tag-dot\s*\{[^}]*width:\s*14px[^}]*height:\s*14px/);
     expect(stylesCss).toMatch(/\.directory-invoices-table\s+\.invoice-party__text\s*\{[^}]*max-width:\s*196px/);
     expect(stylesCss).toMatch(/\.directory-invoices-table\s+\.invoice-party__text\s*\{[^}]*text-overflow:\s*ellipsis/);
   });

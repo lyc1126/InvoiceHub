@@ -691,7 +691,9 @@ onBeforeUnmount(() => {
             >
               <!-- Fixed-width slot so names stay aligned; several tags stack like Finder dots. -->
               <td class="tag-cell">
-                <span v-for="id in row.tags ?? []" :key="id" class="tag-dot" :style="{ background: tagStore.byId.get(id)?.color }" :title="tagTitle(id)" />
+                <span v-if="(row.tags ?? []).length" class="tag-dots">
+                  <span v-for="id in row.tags ?? []" :key="id" class="tag-dot" :style="{ background: tagStore.byId.get(id)?.color }" :title="tagTitle(id)" />
+                </span>
               </td>
               <td v-if="isColumnVisible('seller')" class="invoice-party">
                 <span class="invoice-party__text" :title="row.seller || ''">{{ row.seller }}</span>
