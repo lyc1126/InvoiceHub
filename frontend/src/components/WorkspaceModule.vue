@@ -31,11 +31,13 @@ function selectSection(id: string): void { section.value = id; opened.value.add(
 // Legacy modules still consume the single active target. A different company must
 // never relabel that data; show a deliberate handoff until its API is company-aware.
 const activeSource = computed(() => !!company.value?.monitored && (!subdir.value || company.value.monitored_subdir_key === subdir.value.key));
+// Settings and OCR are global tools/configuration pages not bound to a single monitored company.
+const isGlobalModule = computed(() => props.module === "settings" || props.module === "ocr");
 // Costs: the company-aware V2 workbench is the default view for any registered company;
 // the classic /costs frame (v1 workbook, issued snapshots) stays one tab away and still
 // requires the company to be the active monitor target.
 const costSection = ref<"v2" | "classic">("v2");
-const classicVisible = computed(() => props.module === "settings"
+const classicVisible = computed(() => isGlobalModule.value
   || (props.module === "costs" ? costSection.value === "classic" && activeSource.value : props.module !== "bookkeeping" && activeSource.value)
   || (props.module === "bookkeeping" && !!company.value && ["mapping", "setup"].includes(section.value)));
 // The classic bookkeeping frame reads the active monitor target. Mount it only
@@ -50,7 +52,7 @@ const switchPath = computed(() => subdir.value?.path ?? company.value?.subdirs.f
 
 <template>
   <section class="workspace-module" :class="{ 'workspace-module--settings': module === 'settings' }" :aria-label="`${label}工作区`">
-    <header v-if="company && module !== 'settings'" class="module-context" :class="{ 'module-context--tools': module === 'bookkeeping' }">
+    <header v-if="company && !isGlobalModule" class="module-context" :class="{ 'module-context--tools': module === 'bookkeeping' }">
       <div>
         <p class="crumb">{{ company.name }} › {{ label }}</p>
         <h2>{{ label }}<template v-if="module === 'bookkeeping' && book?.month"> · {{ book.month.slice(0, 4) }} 年 {{ Number(book.month.slice(5)) }} 月</template></h2>
@@ -72,6 +74,7 @@ const switchPath = computed(() => subdir.value?.path ?? company.value?.subdirs.f
       <header class="module-context"><h2>设置</h2><p>全局设置，不随公司切换</p></header>
       <div class="module-company-content"><InvoiceTagsEditor /></div>
     </template>
+    <header v-else-if="module === 'ocr'" class="module-context"><h2>OCR</h2><p>全局 PaddleOCR 服务配置与单文件识别，不随公司切换</p></header>
     <div v-else-if="!company" class="module-empty">
       <WorkspaceIcon :name="module === 'bookkeeping' ? 'book' : module === 'costs' ? 'costs' : 'folder'" />
       <h2>{{ label }}</h2><p>从左侧选择{{ module === 'bookkeeping' ? '一家公司开始做账' : '公司或目录' }}。每个模块分别记住自己选中的对象和页面位置，去别的模块再回来不会丢。</p>
@@ -105,7 +108,7 @@ const switchPath = computed(() => subdir.value?.path ?? company.value?.subdirs.f
         <CompanyCostsV2 v-if="visitedCompanies.has(item.id)" v-show="item.id === company.id && costSection === 'v2'" :company="item" :active="active && item.id === company.id && costSection === 'v2'" />
       </template>
     </div>
-    <div v-if="company && module !== 'settings' && module !== 'bookkeeping' && !activeSource && (module !== 'costs' || costSection === 'classic')" class="module-empty">
+    <div v-if="company && !isGlobalModule && module !== 'bookkeeping' && !activeSource && (module !== 'costs' || costSection === 'classic')" class="module-empty">
       <WorkspaceIcon name="folder" /><h2>{{ company.name }} · {{ label }}</h2><p>当前模块仍读取监控目录。所选公司或目录尚未接入此模块，不能展示其它目录的结果。</p>
       <button v-if="switchPath" type="button" @click="switching = true">设为监控目录后使用</button>
       <WatchSwitchConfirm v-if="switching" :path="switchPath" @done="switching = false" @cancel="switching = false" />

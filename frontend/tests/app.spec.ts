@@ -86,13 +86,19 @@ afterEach(() => {
 describe("workspace shell", () => {
   it("shows the start page with onboarding guidance and health snapshot when no company is registered", async () => {
     stubBackend({ companies: [] });
-    const { wrapper } = await mountApp();
+    const { wrapper, router } = await mountApp();
     const startText = wrapper.get('[aria-label="起始页"]').text();
     expect(startText).toContain("欢迎使用 InvoiceHub");
     expect(wrapper.find('[aria-label="首次使用引导"]').exists()).toBe(true);
     expect(startText).toContain("0.3.0-alpha.2");
     expect(wrapper.text()).toContain("/tmp/合成目录");
     expect(wrapper.find(".ws-tab").exists()).toBe(false);
+    // Global OCR configuration must stay directly accessible even before registering any company.
+    await router.push("/ocr");
+    await flushPromises();
+    const ocrFrameWrap = wrapper.get('[aria-label="OCR工作区"] .module-view');
+    expect((ocrFrameWrap.element as HTMLElement).style.display).not.toBe("none");
+    expect(wrapper.get('[aria-label="OCR工作区"]').text()).toContain("全局 PaddleOCR 服务配置");
   });
 
   it("sends earlier module paths to the home module", async () => {
