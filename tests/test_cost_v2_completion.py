@@ -223,14 +223,8 @@ def test_item_type_classification_publishes_generation_when_source_not_exported(
         json.dumps({"version": 1, "revision": 1, "invoices": {"31".zfill(20): {"project": "项目丁"}}}),
         encoding="utf-8",
     )
-    # Build workspace-only generations via CompanyDataRefreshService (export_to_source=False).
-    refresh_resp = client.post(f"/api/v1/companies/{cid}/refresh-data", json={"force": True})
-    assert refresh_resp.status_code == 200, refresh_resp.text
-    job = refresh_resp.json()
-    for _ in range(100):
-        if job["status"] in ("completed", "failed", "cancelled"):
-            break
-        job = client.get(f"/api/v1/companies/{cid}/refresh-data").json()
+    # Build workspace-only generations synchronously via CompanyDataRefreshService (export_to_source=False).
+    job = app.state.invoice_hub.company_views.refresh.start(cid, force=True, wait=True)
     assert job["status"] == "completed", job
     assert not (cost_dir / "成本发票明细.csv").exists()
     assert not (cost_dir / "成本发票汇总.xlsx").exists()

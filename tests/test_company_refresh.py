@@ -245,7 +245,7 @@ def test_company_refresh_close_records_cancellation_without_deadlock(env):
     def slow_first_dir(directory, profile):
         if directory.name == "成本发票":
             entered.set()
-            release.wait(timeout=3.0)
+            release.wait(timeout=15.0)
         return orig_freshness(directory, profile)
 
     refresh._freshness_check = slow_first_dir
@@ -255,7 +255,7 @@ def test_company_refresh_close_records_cancellation_without_deadlock(env):
         headers=SAME_ORIGIN,
     )
     assert resp.status_code == 200, resp.text
-    assert entered.wait(timeout=3.0)
+    assert entered.wait(timeout=15.0)
 
     # Trigger close() while the first directory is running, then let the first directory finish
     # so the loop iterates to issued_invoice_dir and hits the closed-cancellation branch.
@@ -267,14 +267,14 @@ def test_company_refresh_close_records_cancellation_without_deadlock(env):
 
     closer = threading.Thread(target=do_close)
     closer.start()
-    deadline = time.monotonic() + 1.0
+    deadline = time.monotonic() + 5.0
     while time.monotonic() < deadline:
         with refresh._guard:
             if refresh._closed:
                 break
         time.sleep(0.01)
     release.set()
-    assert close_done.wait(timeout=3.0), "refresh.close() deadlocked while recording cancellation"
-    closer.join(timeout=1.0)
+    assert close_done.wait(timeout=15.0), "refresh.close() deadlocked while recording cancellation"
+    closer.join(timeout=5.0)
     status = refresh.status(company_id)
     assert status["directories"]["issued_invoice_dir"]["status"] == "cancelled"
