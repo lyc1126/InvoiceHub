@@ -124,6 +124,28 @@ describe("directory invoice list and shared source preview", () => {
     wrapper.unmount();
   });
 
+  it("avoids concurrent OFD thumbnail requests and shows backend 422 detail on page render error", async () => {
+    const ofdFile = { ...pageFile(1), name: "1.ofd", page_count: 2 };
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      if (url === "/preview/1/1") {
+        return new Response(JSON.stringify({ detail: "OFD 票面生成超时，请重试或使用系统打开原文件。" }), {
+          status: 422,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      return response(job([ofdFile]));
+    }));
+    const wrapper = mount(SourcePreview, { props: { label: "OFD 原票", preview: identity } });
+    await flushPromises();
+    expect(wrapper.find('[aria-label="缩略图"]').exists()).toBe(false);
+    expect(wrapper.findAll('[aria-label="页面跳转"] button')).toHaveLength(2);
+    expect(wrapper.findAll("img")).toHaveLength(1);
+    await wrapper.get("img.source-preview__page").trigger("error");
+    await flushPromises();
+    expect(wrapper.get('[role="alert"]').text()).toContain("OFD 票面生成超时");
+    wrapper.unmount();
+  });
+
   it("rejects late sorted responses and drops actions when this folder stops being monitored", async () => {
     let finishAsc!: (response: Response) => void;
     const pending = new Promise<Response>((resolve) => { finishAsc = resolve; });

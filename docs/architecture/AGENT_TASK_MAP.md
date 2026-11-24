@@ -391,7 +391,7 @@ WS-01 六模块与临时识别最低增加 `frontend/tests/modules.spec.ts`、`t
 
 必读功能规则：[页面/单据/预览/皮肤](rules/WEB_UI.md)。
 
-OFD 专用入口为 `services/ofd_rendering.py`、`tools/ofd-preview/` 与 `scripts/dev/build_ofd_preview.py`，必须联动核心源码指纹、依赖/JDK 锁和 [OFD 预览说明](../OFD_PREVIEW.md)。最低检查 `tests/test_ofd_rendering.py`，并以 `INVOICE_HUB_TEST_OFD_COMPONENT` 显式指向本平台构建组件运行真实 Java/PNG 与混选 API 回归；没有组件时的 skip 不能写成引擎通过。相邻 PDF/XML/图片、续租、源变化、打印和前端错误/系统打开契约继续执行。组件校验变化还需覆盖缓存命中无重复哈希与变更失效；预检查变化需覆盖模板图层和补充平面文字失败保护。依赖裁剪比较相同样本的完整与精简 PNG，发布仍需双平台 runtime/成品与许可验收。
+OFD 专用入口为 `services/ofd_rendering.py`（含共享 `verify_ofd_component` 与开发模式 `INVOICE_HUB_DEV_OFD_COMPONENT`）、`tools/ofd-preview/`、`scripts/dev/build_ofd_preview.py` 及双平台 Tauri 组包/验包门禁，必须联动核心源码指纹、依赖/JDK 锁和 [OFD 预览说明](../OFD_PREVIEW.md)。最低检查 `tests/test_ofd_rendering.py`、`tests/test_tauri_dev_app.py`、`tests/test_tauri_windows_portable.py`、`tests/test_macos_release_contract.py` 与 `tests/test_server_sources.py`，并以 `INVOICE_HUB_TEST_OFD_COMPONENT` 显式指向本平台构建组件运行真实 Java/PNG（含本地混选与挂载共享来源）回归；没有组件时的 skip 不能写成引擎通过。相邻 PDF/XML/图片、续租、源变化、打印和前端错误/系统打开契约继续执行。组件校验变化还需覆盖缓存命中无重复哈希与变更失效、发布模式忽略开发变量与缺/篡改组件阻断；预检查变化需覆盖模板图层和补充平面文字失败保护。依赖裁剪比较相同样本的完整与精简 PNG，发布仍需双平台 runtime/成品与许可验收。
 
 | 导航项 | 内容 |
 |---|---|

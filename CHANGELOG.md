@@ -2,6 +2,18 @@
 
 ## 未发布
 
+### 2026-11-24 修复开发版桌面端与 SMB 只读模式 OFD 预览并补齐双平台发布验包门禁
+
+- 需求与起点：基于 `codex/workspace-p3@979c5e7` 专项排查并修复用户实测 SMB 只读模式下 OFD 识别正常但无法预览的问题。根因核实为三层叠加：(1) 本地 macOS Tauri 开发版 `InvoiceHub.app` 内含 `invoice-hub-build.json` 触发打包分支，导致 `OFDRenderer` 只查 `.venv/components/ofd-preview` 而找不到仓库内已构建的 `runtime/components/ofd-preview`；(2) 双平台正式/预览组包与验包脚本尚未对 `components/ofd-preview` 实施 fail-closed 强校验；(3) 服务器只读预览透传了无效的“也可使用系统打开原文件”引导，且多页 OFD 在 `ServerPreviewDrawer` / `SourcePreview` 中并发加载缩略图 `<img>` 会撞上单 worker `_RENDER_SLOT`（`ofd_renderer_busy`），渲染期 `422` 错误也会被泛化为“授权过期”。
+- 采用方案：
+  - **OFD 组件定位与共享校验函数**：`services/ofd_rendering.py` 抽出共享 `verify_ofd_component()`（按目标平台校验 `component.json`、`ofdrw-2.4.0`、Java 21、`COMPONENT_SOURCE_FINGERPRINT`、无符号链接及逐文件 SHA-256）；发布模式（存在 `invoice-hub-package.json` 或 `INVOICE_HUB_RELEASE_MODE=1`）继续严格只信 `sys.prefix/components/ofd-preview` 并忽略开发变量；非发布开发包支持绝对路径 `INVOICE_HUB_DEV_OFD_COMPONENT`（同样走完整加密指纹与哈希校验）。`scripts/dev/tauri_dev_app.py` 在开发启动脚本中导出 `INVOICE_HUB_DEV_OFD_COMPONENT` 指向仓库 `runtime/components/ofd-preview`；正式/预览启动脚本（`tauri_public_preview.py`、`tauri_alpha_release.py`、`tauri_windows_preview_stage.py`）显式清空该开发环境变量。
+  - **双平台发布组包与验包 fail-closed 门禁**：`verify_tauri_windows_portable.py`（同时将 `python/components/` 纳入 `dependency` 扫描范围）、`tauri_windows_portable.py`、`tauri_windows_preview_stage.py`、`tauri_alpha_release.py`、`verify_tauri_public_preview.py` 与 `verify_tauri_alpha.py` 均强制核对对应平台 `components/ofd-preview` 存在且指纹与逐文件哈希匹配，缺失或篡改直接拦截。
+  - **SMB 只读预览文案、多页 OFD 防并发碰撞与错误诊断**：`services/file_preview.py` 新增 `allow_system_open`（默认 `True` 保持本地/经典链路不变），`services/sources.py` 传入 `allow_system_open=False` 去掉只读模式无效的“系统打开原文件”引导；`ServerPreviewDrawer.vue` 与 `SourcePreview.vue` 对多页 `.ofd` 改用页码跳转按钮避免并发缩略图请求触发 `ofd_renderer_busy`，并在 `ServerPreviewDrawer.vue`、`ServerSourcesPanel.vue` 与 `SourcePreview.vue` 图片加载失败时读取后端真实 `422/409` `detail`（`404/410` 保持单次自动重建）；重建 `web/static/app/` 并同步 `docs/OFD_PREVIEW.md`、架构地图与功能规则。
+- 验证范围与未覆盖项：
+  - 已运行并通过：Ruff、Python `compileall`、Vue `vue-tsc --noEmit`、`vitest run`（20 文件 170 项）、`vite build`、`node --test tests/*.test.cjs`（40 项）、`scripts/dev/tauri_dev_app.py stage` 后模拟开发包 `invoice-hub-core` + `INVOICE_HUB_DEV_OFD_COMPONENT` 真实双页 OFD 原生 PNG 渲染（`1063×591` / `591×1063`），以及携带本机 `INVOICE_HUB_TEST_OFD_COMPONENT=runtime/components/ofd-preview` 的相邻 pytest 套件（含本地与挂载共享源原生 Java 21 + OFDRW 多页渲染、发布验包正/负向门禁与文档契约）。
+  - 既有无关基线说明：`tests/test_windows_release_contract.py::test_windows_repackage_config_is_complete_and_matches_release_identity` 仍存在源自 `cddafd2` 的 `WINDOWS_REPACKAGE_CONFIG.json` 版本号（`0.3.0-alpha.2` vs `1.0.0-beta.1`）既有漂移，本轮未修改该无关文件。
+  - 未覆盖项：未覆盖真实局域网 SMB 业务 OFD 票面目视核对、重新安装覆盖 `/Applications/InvoiceHub.app`、真实默认配置、正式 Windows BAT、Windows x64 实机 OFD 组件构建/执行、浏览器前台拉起、系统原生选择器与签名/公证 DMG；本轮仅本地提交，未推送远端或合并 `main`。
+
 ### 2026-11-24 优化 SMB 服务器链接体验并补齐主工作区只读原生汇总、筛选、勾选合计与批量预览（WS-09）
 
 - 需求与起点：基于 `codex/workspace-p3@30f06a6` 响应用户实测反馈：当前 SMB 试验版连接与浏览形态与原型差距较大，大共享盘下全根扫描/汇总易受无关目录和非发票 PDF 影响，且缺少原生发票汇总表、多维筛选、勾选合计拆组与批量原票预览。经用户确认采用「右侧轻量目录浏览 + 主工作区标签页铺开原生发票工作台（方案 A）」的一期设计。

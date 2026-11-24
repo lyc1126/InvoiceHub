@@ -270,6 +270,33 @@ async function saveSettings(): Promise<void> {
   });
 }
 
+async function onPreviewImageError(): Promise<void> {
+  const current = preview.value;
+  const sid = selected.value;
+  const page = previewPage.value;
+  const epoch = previewTurn;
+  if (!current || !sid) return;
+  try {
+    const response = await fetch(`/api/v1/sources/${sid}/previews/${current.job_id}/pages/${page}`, {
+      credentials: "same-origin",
+    });
+    if (epoch !== previewTurn || sid !== selected.value || preview.value?.job_id !== current.job_id || page !== previewPage.value) {
+      return;
+    }
+    if (!response.ok) {
+      const payload = await response.json().catch(() => null);
+      const detail = payload && typeof payload.detail === "string" ? payload.detail.trim() : "";
+      if (detail) {
+        error.value = detail;
+        return;
+      }
+    }
+  } catch {
+    if (epoch !== previewTurn || sid !== selected.value) return;
+  }
+  error.value = "预览授权过期或文件变化，请重新打开。";
+}
+
 async function closePreview(): Promise<void> {
   ++previewTurn;
   const old = preview.value;
@@ -647,15 +674,15 @@ onBeforeUnmount(() => {
             <pre v-if="preview.preview_type === 'text'" class="source-preview-tab__text">{{ text }}</pre>
             <template v-else-if="preview.preview_type === 'pages'">
               <div v-if="preview.page_count > 1" class="actions">
-                <button type="button" :disabled="previewPage <= 1" @click="--previewPage">上一页</button>
+                <button type="button" :disabled="previewPage <= 1" @click="error = ''; --previewPage">上一页</button>
                 <span class="muted">{{ previewPage }} / {{ preview.page_count }}</span>
-                <button type="button" :disabled="previewPage >= preview.page_count" @click="++previewPage">下一页</button>
+                <button type="button" :disabled="previewPage >= preview.page_count" @click="error = ''; ++previewPage">下一页</button>
               </div>
               <img
                 class="source-preview-tab__img"
                 :src="`/api/v1/sources/${selected}/previews/${preview.job_id}/pages/${previewPage}`"
                 alt="服务器文件预览"
-                @error="error = '预览授权过期或文件变化，请重新打开。'"
+                @error="onPreviewImageError"
               >
             </template>
             <p v-else class="muted">{{ preview.reason }}</p>

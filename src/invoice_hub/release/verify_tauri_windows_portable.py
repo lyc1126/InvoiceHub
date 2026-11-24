@@ -23,6 +23,7 @@ from invoice_hub.release.build_manifest import deterministic_build_id, load_buil
 from invoice_hub.release.content_scan import ReleaseContentError, scan_release_text
 from invoice_hub.release.package_manifest import SHA256_PATTERN, load_package_manifest
 from invoice_hub.release.runtime_manifest import validate_runtime_manifest
+from invoice_hub.services.ofd_rendering import verify_ofd_component
 from invoice_hub.version import PRODUCT_VERSION, RELEASE_PYTHON_VERSION, WINDOWS_PACKAGE_ID
 from invoice_hub.website import WEBSITE_BUILD_INPUTS
 
@@ -149,10 +150,11 @@ def _validate_member(path: PurePosixPath, *, is_directory: bool) -> None:
 def _scan_member(name: str, content: bytes) -> None:
     if name.casefold().endswith((".exe", ".dll", ".pyd")):
         return
-    # The staged Python Lib tree is the locked CPython runtime, not project
-    # source. Standard-library examples legitimately contain password-shaped
-    # assignments, but high-confidence tokens and private keys remain fatal.
-    scope = "dependency" if name.casefold().startswith("python/lib/") else "project"
+    # The staged Python Lib and components trees contain locked third-party
+    # runtime/OFD dependencies, not project source. Standard-library and JDK
+    # notices legitimately carry example literals, while high-confidence tokens
+    # and private keys remain fatal.
+    scope = "dependency" if name.casefold().startswith(("python/lib/", "python/components/")) else "project"
     try:
         scan_release_text(name, content, scope=scope)
     except ReleaseContentError as exc:
@@ -359,6 +361,13 @@ def verify_tauri_windows_portable(
                 expected_python_version=RELEASE_PYTHON_VERSION,
                 execute_probe=bool(execute_runtime_probe),
             )
+            try:
+                verify_ofd_component(
+                    root / "python" / "components" / "ofd-preview",
+                    expected_platform="windows-x64",
+                )
+            except (OSError, ValueError) as exc:
+                raise TauriWindowsPortableVerificationError(f"embedded OFD preview component is invalid: {exc}") from exc
             if execute_runtime_probe:
                 _run_runtime_probe(root)
     return {

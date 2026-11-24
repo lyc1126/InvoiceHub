@@ -343,4 +343,66 @@ describe("服务器只读来源面板与工作区视图", () => {
     expect(fetch.mock.calls.some(([url, init]) => url.endsWith("/previews/opaque-job") && init?.method === "DELETE")).toBe(true);
     wrapper.unmount();
   });
+
+  it("avoids concurrent OFD thumbnail requests and surfaces render-time 422 diagnostics in ServerPreviewDrawer", async () => {
+    const { default: ServerPreviewDrawer } = await import("../src/components/ServerPreviewDrawer.vue");
+    const okJson = (body: unknown) =>
+      new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
+    const fetch = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.endsWith("/previews") && init?.method === "POST") {
+        return okJson({
+          ok: true,
+          job_id: "ofd-job",
+          source_id: sid,
+          entry_id: "e_ofd",
+          preview_type: "pages",
+          page_count: 2,
+          reason: "",
+          stale: false,
+          verified_at: "2026-11-24T00:00:00Z",
+          record_count: 1,
+          idle_timeout_seconds: 900,
+          keep_alive_url: `/api/v1/sources/${sid}/previews/ofd-job/keep-alive`,
+          files: [
+            {
+              file_number: 1,
+              entry_id: "e_ofd",
+              name: "invoice.ofd",
+              preview_type: "pages",
+              page_count: 2,
+              reason: "",
+              stale: false,
+              verified_at: "2026-11-24T00:00:00Z",
+              page_url_template: `/api/v1/sources/${sid}/previews/ofd-job/files/1/pages/{page_number}`,
+              text_url: `/api/v1/sources/${sid}/previews/ofd-job/files/1/text`,
+            },
+          ],
+        });
+      }
+      if (url.endsWith("/pages/1")) {
+        return new Response(
+          JSON.stringify({ detail: "OFD 票面所需字体或字形不可用，为避免显示缺字票面，已停止渲染。" }),
+          { status: 422, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      return okJson({ ok: true });
+    });
+    vi.stubGlobal("fetch", fetch);
+
+    const wrapper = mount(ServerPreviewDrawer, {
+      props: { sourceId: sid, entryIds: ["e_ofd"], label: "已勾选发票", allowStale: false },
+    });
+    await flushPromises();
+
+    // Multi-page OFD renders page jump buttons instead of simultaneous thumbnail <img> requests.
+    expect(wrapper.find('[aria-label="缩略图"]').exists()).toBe(false);
+    expect(wrapper.findAll('[aria-label="页面跳转"] button')).toHaveLength(2);
+    expect(wrapper.findAll("img")).toHaveLength(1);
+
+    await wrapper.get("img.source-preview__page").trigger("error");
+    await flushPromises();
+    expect(wrapper.get('[role="alert"]').text()).toContain("字体或字形不可用");
+    expect(wrapper.get('[role="alert"]').text()).not.toContain("授权过期");
+    wrapper.unmount();
+  });
 });

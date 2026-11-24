@@ -266,6 +266,14 @@ def _validate_runtime(runtime_root: Path, dependency_lock: Path) -> tuple[Path, 
         )
     except (OSError, ValueError) as exc:
         raise TauriWindowsPortableError(f"locked Windows runtime manifest is invalid: {exc}") from exc
+    try:
+        ofd_rendering = __import__("invoice_hub.services.ofd_rendering", fromlist=["verify_ofd_component"])
+        ofd_rendering.verify_ofd_component(
+            python_root / "components" / "ofd-preview",
+            expected_platform="windows-x64",
+        )
+    except (OSError, ValueError) as exc:
+        raise TauriWindowsPortableError(f"locked Windows OFD preview component is invalid: {exc}") from exc
     return python_root, str(result["python_version"])
 
 

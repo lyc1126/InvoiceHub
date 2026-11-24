@@ -686,7 +686,7 @@ class SourceService:
                 path = cache_path(self._dir(sid), info)
                 preview_sources.append(FilePreviewSource(path, entry["name"]))
                 lease_entries.append((item_id, copy.deepcopy(info)))
-            job = self.previews.create_job(preview_sources)
+            job = self.previews.create_job(preview_sources, allow_system_open=False)
             self.leases[job.job_id] = (sid, lease_entries, profile["revision"])
             first_file = job.files[0]
             first_id, first_info = lease_entries[0]

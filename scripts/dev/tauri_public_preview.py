@@ -82,6 +82,7 @@ if [ ! -x "$PYTHON_EXECUTABLE" ] || [ ! -f "$CORE_ROOT/src/invoice_hub/api/main.
   exit 78
 fi
 unset PYTHONHOME INVOICE_HUB_DEV_STATE_ROOT
+unset INVOICE_HUB_DEV_OFD_COMPONENT
 export PYTHONPATH="$CORE_ROOT/src"
 export PYTHONDONTWRITEBYTECODE=1
 exec "$PYTHON_EXECUTABLE" -B -m invoice_hub.api.main "$@"

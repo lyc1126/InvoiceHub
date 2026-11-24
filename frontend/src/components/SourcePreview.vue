@@ -40,6 +40,7 @@ let textController: AbortController | undefined;
 let keepAlive: ReturnType<typeof setInterval> | undefined;
 
 const file = computed(() => job.value?.files[fileIndex.value] ?? null);
+const isOfd = computed(() => (file.value?.name || "").toLowerCase().endsWith(".ofd"));
 const visibleFiles = computed(() => (job.value?.files ?? []).slice(fileGroup.value * FILE_WINDOW, (fileGroup.value + 1) * FILE_WINDOW)
   .map((item, index) => ({ item, index: fileGroup.value * FILE_WINDOW + index })));
 const pageUrl = (item: PreviewFile, number: number) => item.page_url_template.replace("{page_number}", String(number));
@@ -141,8 +142,33 @@ function choose(index: number, number = 1): void {
   void loadText();
 }
 
-function onImageError(): void {
-  if (loading.value) return;
+async function onImageError(): Promise<void> {
+  if (loading.value || !file.value) return;
+  const mine = generation;
+  const currentFileIndex = fileIndex.value;
+  const currentPage = page.value;
+  const url = pageUrl(file.value, currentPage);
+  try {
+    const response = await fetch(url, { credentials: "same-origin" });
+    if (mine !== generation || currentFileIndex !== fileIndex.value || currentPage !== page.value) return;
+    if (response.status === 404 || response.status === 410) {
+      if (imageRebuilds < 1) {
+        imageRebuilds += 1;
+        await createJob();
+        return;
+      }
+      error.value = "预览会话已过期，请关闭后重新预览，或到经典首页核对原票。";
+      return;
+    }
+    if (!response.ok) {
+      const payload = await response.json().catch(() => null);
+      const detail = payload && typeof payload.detail === "string" ? payload.detail.trim() : "";
+      error.value = detail || `这一页无法显示（HTTP ${response.status}），请关闭后重试。`;
+      return;
+    }
+  } catch {
+    if (mine !== generation || currentFileIndex !== fileIndex.value || currentPage !== page.value) return;
+  }
   if (imageRebuilds >= 1) {
     error.value = "这一页无法显示，请关闭后重新预览，或到经典首页核对原票。";
     return;
@@ -202,10 +228,14 @@ onBeforeUnmount(() => {
           <button type="submit">跳转</button>
         </form>
       </template>
-      <div v-if="thumbnails.length > 1" class="source-preview__thumbs" aria-label="缩略图">
+      <!-- OFD renders one page per serialized Java worker; avoid concurrent thumbnail <img> requests that collide on _RENDER_SLOT. -->
+      <div v-if="thumbnails.length > 1 && !isOfd" class="source-preview__thumbs" aria-label="缩略图">
         <button v-for="thumb in thumbnails" :key="`${fileIndex}-${thumb.page}`" type="button" :aria-label="`第 ${thumb.page} 页`" :class="{ 'is-active': thumb.page === page }" @click="choose(fileIndex, thumb.page)">
-          <img :src="thumb.url" alt="" loading="lazy" @error="onImageError">
+          <img :src="thumb.url" alt="" loading="lazy">
         </button>
+      </div>
+      <div v-else-if="thumbnails.length > 1 && isOfd" class="actions" aria-label="页面跳转">
+        <button v-for="thumb in thumbnails" :key="`${fileIndex}-${thumb.page}`" type="button" :aria-pressed="thumb.page === page" :class="{ primary: thumb.page === page }" @click="choose(fileIndex, thumb.page)">第 {{ thumb.page }} 页</button>
       </div>
       <template v-if="file.preview_type === 'pages'">
         <img class="source-preview__page" :src="pageUrl(file, page)" :alt="`${file.name} 第 ${page} 页`" @error="onImageError">

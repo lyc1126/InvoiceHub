@@ -138,6 +138,8 @@ def test_stage_creates_a_development_manifest_and_allowlisted_core(tmp_path: Pat
 
     launcher = result.launcher_path.read_text(encoding="utf-8")
     assert str(python) in launcher
+    assert str(root / "runtime" / "components" / "ofd-preview") in launcher
+    assert 'export INVOICE_HUB_DEV_OFD_COMPONENT="$OFD_COMPONENT_DIR"' in launcher
     assert 'export PYTHONPATH="$CORE_ROOT/src"' in launcher
     assert 'exec "$PYTHON_EXECUTABLE" -m invoice_hub.api.main "$@"' in launcher
     assert "command -v python" not in launcher

@@ -6,11 +6,12 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 import shutil
 import subprocess
 import sys
 import tempfile
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 
@@ -19,6 +20,7 @@ PACKAGE_ID = "com.invoicehub.macos.arm64.preview-dmg"
 RECEIPT_SCHEMA_VERSION = 4
 VERIFIER_ID = "verify_tauri_public_preview.py/v2"
 HOST_NAME = "invoicehub-desktop-host.json"
+_FINGERPRINT_PATTERN = re.compile(r'COMPONENT_SOURCE_FINGERPRINT\s*=\s*"([0-9a-f]{64})"')
 
 
 class PublicPreviewVerificationError(RuntimeError):
@@ -145,6 +147,57 @@ def _verify_receipt_verification(
         raise PublicPreviewVerificationError("receipt verification output does not match the DMG")
 
 
+def _expected_ofd_fingerprint(app: Path) -> str:
+    embedded = app / "Contents/Resources/invoice-hub-core/src/invoice_hub/services/ofd_rendering.py"
+    source = embedded if embedded.is_file() else Path(__file__).resolve().parents[2] / "src/invoice_hub/services/ofd_rendering.py"
+    try:
+        matched = _FINGERPRINT_PATTERN.search(source.read_text(encoding="utf-8"))
+    except OSError as exc:
+        raise PublicPreviewVerificationError(f"cannot read OFD source fingerprint: {exc}") from exc
+    if matched is None:
+        raise PublicPreviewVerificationError("OFD source fingerprint constant is missing")
+    return matched.group(1)
+
+
+def _verify_ofd_component(app: Path) -> None:
+    component = app / "Contents/Resources/python/components/ofd-preview"
+    if component.is_symlink() or not component.is_dir():
+        raise PublicPreviewVerificationError("public preview App is missing embedded components/ofd-preview")
+    manifest_path = component / "component.json"
+    if manifest_path.is_symlink() or not manifest_path.is_file():
+        raise PublicPreviewVerificationError("embedded OFD preview component is missing component.json")
+    manifest = _json(manifest_path)
+    expected_fingerprint = _expected_ofd_fingerprint(app)
+    if (
+        manifest.get("schema_version") != 1
+        or manifest.get("engine") != "ofdrw-2.4.0"
+        or manifest.get("java_major") != 21
+        or manifest.get("platform") != "macos-arm64"
+        or manifest.get("source_fingerprint") != expected_fingerprint
+    ):
+        raise PublicPreviewVerificationError("embedded OFD preview component identity or fingerprint is invalid")
+    files = manifest.get("files")
+    if not isinstance(files, dict) or not files:
+        raise PublicPreviewVerificationError("embedded OFD preview component has no declared files")
+    resolved_root = component.resolve()
+    jars = []
+    for raw_name, expected_hash in files.items():
+        if not isinstance(raw_name, str) or not isinstance(expected_hash, str):
+            raise PublicPreviewVerificationError("embedded OFD preview component file entry is invalid")
+        rel = PurePosixPath(raw_name)
+        if not raw_name or "\\" in raw_name or ":" in raw_name or "\x00" in raw_name or rel.is_absolute() or any(p in {"", ".", ".."} for p in raw_name.rstrip("/").split("/")):
+            raise PublicPreviewVerificationError(f"embedded OFD preview component path is unsafe: {raw_name}")
+        target = component / rel.as_posix()
+        if target.is_symlink() or not target.is_file() or not target.resolve().is_relative_to(resolved_root):
+            raise PublicPreviewVerificationError(f"embedded OFD preview component member is missing or unsafe: {raw_name}")
+        if _sha256(target) != expected_hash:
+            raise PublicPreviewVerificationError(f"embedded OFD preview component hash mismatch: {raw_name}")
+        if rel.as_posix().startswith("lib/") and rel.as_posix().endswith(".jar"):
+            jars.append(rel.as_posix())
+    if "java/bin/java" not in files or "lib/ofd-preview.jar" not in files or not jars:
+        raise PublicPreviewVerificationError("embedded OFD preview component is missing java/bin/java or lib/ofd-preview.jar")
+
+
 def _verify_app_layout(app: Path) -> None:
     host = _json(app / "Contents/Resources" / HOST_NAME)
     updater = host.get("updater")
@@ -158,6 +211,7 @@ def _verify_app_layout(app: Path) -> None:
     identity = host.get("expected_identity")
     if not isinstance(identity, dict) or identity.get("package_id") != PACKAGE_ID or identity.get("package_type") != "preview-dmg":
         raise PublicPreviewVerificationError("public preview host identity is invalid")
+    _verify_ofd_component(app)
 
 
 def _verify_dmg_contents(dmg: Path, app: Path) -> None:

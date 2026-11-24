@@ -1,5 +1,13 @@
 # InvoiceHub 注释与设计原因地图
 
+## 2026-11-24 OFD 开发包定位、发布验包门禁与多页预览防并发冲突
+
+| 文件与符号 | 原因与不变量 | 守护 |
+|---|---|---|
+| `services/ofd_rendering.py::OFDRenderer.__init__` / `verify_ofd_component`、`scripts/dev/tauri_dev_app.py` | 本地 macOS 开发包携带 `invoice-hub-build.json`（无 `invoice-hub-package.json`）并运行在仓库 `.venv` 下，无法在 `.venv/components/ofd-preview` 找到组件；由开发启动器导出绝对路径 `INVOICE_HUB_DEV_OFD_COMPONENT` 指向 `runtime/components/ofd-preview` 并继续走完整清单/指纹/SHA-256 校验，而正式发布模式（含 `invoice-hub-package.json` 或 `INVOICE_HUB_RELEASE_MODE=1`）始终忽略该变量并由双平台验包器强制检查内嵌 `components/ofd-preview`。 | `test_ofd_rendering.py`（dev/release 分支与平台/哈希校验）、`test_tauri_dev_app.py`、`test_tauri_windows_portable.py`、`test_macos_release_contract.py` |
+| `services/file_preview.py::create_job(allow_system_open=False)`、`services/sources.py::preview` | 服务器只读预览不暴露本机缓存路径与“系统打开”入口，传 `allow_system_open=False` 去除无效的系统打开提示，同时保持本地监控目录与经典页原提示不变。 | `test_ofd_rendering.py`、`test_server_sources.py` |
+| `ServerPreviewDrawer.vue`、`SourcePreview.vue`、`ServerSourcesPanel.vue` 的多页 OFD 跳转与 `onImageError` | `OFDRenderer` 进程全局只允许单 worker（`_RENDER_SLOT`），多页 OFD 并发渲染缩略图 `<img>` 会立即撞上 `422 ofd_renderer_busy`；改用页码按钮按需单页请求，并在图片加载失败时探测后端 JSON `detail`（仅 `404/410` 触发单次会话重建）。 | `frontend/tests/server-sources.spec.ts`、`frontend/tests/directory-preview.spec.ts` |
+
 ## 2026-11-23 解析器版本重算、成品油归类与工作区重算
 
 | 文件与符号 | 原因与不变量 | 守护 |

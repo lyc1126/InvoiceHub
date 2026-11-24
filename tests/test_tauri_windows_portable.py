@@ -69,6 +69,7 @@ from invoice_hub.release.verify_tauri_windows_portable import (
     validate_tauri_windows_receipt,
     verify_tauri_windows_portable,
 )
+from invoice_hub.services.ofd_rendering import COMPONENT_SOURCE_FINGERPRINT
 from invoice_hub.version import PRODUCT_VERSION, RELEASE_PYTHON_VERSION, WINDOWS_PACKAGE_ID
 from invoice_hub.website import WEBSITE_BUILD_INPUTS, copy_website
 
@@ -144,6 +145,26 @@ def _valid_archive(tmp_path: Path) -> tuple[Path, Path]:
     runtime = root / "python"
     (runtime / "Lib/site-packages").mkdir(parents=True)
     (runtime / "python.exe").write_bytes(b"synthetic-python")
+    ofd_component = runtime / "components/ofd-preview"
+    ofd_files = {
+        "java/bin/java.exe": b"synthetic-windows-java",
+        "lib/ofd-preview.jar": b"synthetic-ofd-jar",
+    }
+    for rel, content in ofd_files.items():
+        target = ofd_component / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(content)
+    _write_json(
+        ofd_component / "component.json",
+        {
+            "schema_version": 1,
+            "engine": "ofdrw-2.4.0",
+            "java_major": 21,
+            "platform": "windows-x64",
+            "source_fingerprint": COMPONENT_SOURCE_FINGERPRINT,
+            "files": {rel: hashlib.sha256(content).hexdigest() for rel, content in ofd_files.items()},
+        },
+    )
     write_runtime_manifest(
         runtime,
         lock,
@@ -271,6 +292,22 @@ def test_tauri_windows_portable_verifier_rejects_console_subsystem(tmp_path: Pat
 
     with pytest.raises(TauriWindowsPortableVerificationError, match="Windows GUI subsystem"):
         verify_tauri_windows_portable(archive, execute_runtime_probe=False)
+
+
+def test_tauri_windows_portable_verifier_rejects_missing_or_tampered_ofd_component(tmp_path: Path) -> None:
+    archive, root = _valid_archive(tmp_path / "tampered")
+    (root / "python/components/ofd-preview/lib/ofd-preview.jar").write_bytes(b"tampered-jar")
+    _refresh_runtime_archive(archive, root)
+    with pytest.raises(TauriWindowsPortableVerificationError, match="OFD preview component"):
+        verify_tauri_windows_portable(archive, execute_runtime_probe=False)
+
+    archive_missing, root_missing = _valid_archive(tmp_path / "missing")
+    import shutil
+
+    shutil.rmtree(root_missing / "python/components/ofd-preview")
+    _refresh_runtime_archive(archive_missing, root_missing)
+    with pytest.raises(TauriWindowsPortableVerificationError, match="OFD preview component"):
+        verify_tauri_windows_portable(archive_missing, execute_runtime_probe=False)
 
 
 def test_tauri_windows_portable_verifier_uses_dependency_scope_for_locked_cpython_lib(tmp_path: Path) -> None:

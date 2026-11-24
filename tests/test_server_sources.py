@@ -353,3 +353,36 @@ def test_batch_download_and_mounted_shares_http_routes(tmp_path):
         assert client.get(f"/api/v1/sources/{sid}/previews/{payload['job_id']}/files/2/text").status_code == 200
         assert client.post(f"/api/v1/sources/{sid}/previews/{payload['job_id']}/keep-alive").status_code == 200
         assert client.delete(f"/api/v1/sources/{sid}/previews/{payload['job_id']}").status_code == 200
+
+
+def test_server_source_ofd_error_omits_system_open_and_preserves_batch_siblings(tmp_path):
+    from invoice_hub.services.ofd_rendering import OFDRenderer
+    from ofd_preview_fixture import write_ofd
+
+    previews = FilePreviewService()
+    previews._ofd_renderer = OFDRenderer(tmp_path / 'missing-ofd-component')
+    service = SourceService(
+        tmp_path / 'private',
+        previews=previews,
+        companies=SimpleNamespace(get_company=lambda _: {'company': {'name': '合成', 'taxpayer_periods': []}}),
+    )
+    try:
+        root = tmp_path / 'share'
+        sid = source(service, root)
+        write_ofd(root / 'a.ofd')
+        (root / 'b.xml').write_text(_sample_xml(), encoding='utf-8')
+        service.start(sid, 'scan')
+        assert wait(service, sid)['connection'] == 'online'
+        entries = {item['name']: item['id'] for item in service.entries(sid)['items']}
+        service.start(sid, 'download', entry_ids=[entries['a.ofd'], entries['b.xml']])
+        assert wait(service, sid)['sync'] == 'idle'
+        preview = service.preview(sid, entry_ids=[entries['a.ofd'], entries['b.xml']])
+        ofd_file, xml_file = preview['files']
+        assert ofd_file['preview_type'] == 'error'
+        assert 'OFD 预览组件' in ofd_file['reason']
+        assert '系统打开' not in ofd_file['reason']
+        assert xml_file['preview_type'] == 'text'
+        assert 'Invoice' in service.preview_content(sid, preview['job_id'], file_number=2)
+        service.release_preview(sid, preview['job_id'])
+    finally:
+        service.close()

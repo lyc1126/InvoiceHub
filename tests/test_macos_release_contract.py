@@ -9,6 +9,8 @@ from pathlib import Path
 
 import pytest
 
+from invoice_hub.services.ofd_rendering import COMPONENT_SOURCE_FINGERPRINT
+
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -47,6 +49,28 @@ def _public_preview_receipt(
                     "package_id": verifier.PACKAGE_ID,
                     "package_type": "preview-dmg",
                 },
+            }
+        ),
+        encoding="utf-8",
+    )
+    ofd_component = resources / "python/components/ofd-preview"
+    ofd_files = {
+        "java/bin/java": b"synthetic-macos-java",
+        "lib/ofd-preview.jar": b"synthetic-ofd-jar",
+    }
+    for rel, content in ofd_files.items():
+        target = ofd_component / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(content)
+    (ofd_component / "component.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "engine": "ofdrw-2.4.0",
+                "java_major": 21,
+                "platform": "macos-arm64",
+                "source_fingerprint": COMPONENT_SOURCE_FINGERPRINT,
+                "files": {rel: hashlib.sha256(content).hexdigest() for rel, content in ofd_files.items()},
             }
         ),
         encoding="utf-8",
@@ -209,6 +233,30 @@ def test_public_preview_host_manifest_requires_a_json_boolean_disabled_updater(
     host_path.write_text(json.dumps(host), encoding="utf-8")
 
     with pytest.raises(verifier.PublicPreviewVerificationError, match="updater contract"):
+        verifier._verify_app_layout(app)
+
+
+def test_public_preview_verifier_rejects_missing_or_tampered_ofd_component(tmp_path: Path) -> None:
+    import shutil
+
+    verifier = _load_module(
+        "scripts/dev/verify_tauri_public_preview.py",
+        "public_preview_verifier_ofd_gate_test",
+    )
+    app, _, _ = _public_preview_receipt(
+        tmp_path,
+        verifier,
+        {"complete": False, "verifier": verifier.VERIFIER_ID},
+    )
+    verifier._verify_app_layout(app)
+
+    jar = app / "Contents/Resources/python/components/ofd-preview/lib/ofd-preview.jar"
+    jar.write_bytes(b"tampered")
+    with pytest.raises(verifier.PublicPreviewVerificationError, match="hash mismatch"):
+        verifier._verify_app_layout(app)
+
+    shutil.rmtree(app / "Contents/Resources/python/components/ofd-preview")
+    with pytest.raises(verifier.PublicPreviewVerificationError, match="components/ofd-preview"):
         verifier._verify_app_layout(app)
 
 

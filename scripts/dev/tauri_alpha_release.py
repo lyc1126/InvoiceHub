@@ -272,6 +272,15 @@ def _validate_runtime(runtime: Path) -> Path:
             continue
         if item.is_file() and item.suffix.casefold() in WINDOWS_SUFFIXES:
             raise AlphaReleaseError(f"embedded runtime contains a Windows file: {item}")
+    src_root = str(DEFAULT_ROOT / "src")
+    if src_root not in sys.path:
+        sys.path.insert(0, src_root)
+    try:
+        from invoice_hub.services.ofd_rendering import verify_ofd_component
+
+        verify_ofd_component(runtime / "components" / "ofd-preview", expected_platform="macos-arm64")
+    except (OSError, ValueError, ImportError) as exc:
+        raise AlphaReleaseError(f"embedded macOS OFD preview component is invalid: {exc}") from exc
     return runtime
 
 
@@ -308,6 +317,7 @@ if [ ! -x \"$PYTHON_EXECUTABLE\" ] || [ ! -f \"$CORE_ROOT/src/invoice_hub/api/ma
   exit 78
 fi
 unset PYTHONHOME INVOICE_HUB_DEV_STATE_ROOT
+unset INVOICE_HUB_DEV_OFD_COMPONENT
 export PYTHONPATH=\"$CORE_ROOT/src\"
 export PYTHONDONTWRITEBYTECODE=1
 exec \"$PYTHON_EXECUTABLE\" -B -m invoice_hub.api.main \"$@\"
