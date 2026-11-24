@@ -1,24 +1,9 @@
 # InvoiceHub 平台架构：共享核心、Windows 与 macOS
 
-## 2026-10-09 双平台近期功能集成
-
-Mac/Windows共用渐进读取、临时识别、明细追溯和按需预览；系统回收分别使用Foundation NSFileManager与Windows IFileOperation，Windows同时核对PreDeleteItem veto及PostDeleteItem回收目标。Tauri原生多选通过固定私有枚举，首页拖入按固定origin/路径校验而兼容查询状态。新增功能API加入OpenAPI启动门禁。图标明确BASIC布局、核心身份剔除不打包的editable元数据；成品只从精确干净提交取源码。Windows实际BAT/回收站与成品不能由Mac结果替代。
-
-## 2026-10-09 临时识别原生入口
-
-Tauri 新增固定私有枚举 `pick_temporary_files`，调用 dialog 多文件选择，取消返回空 paths。Python 仍经125秒直连私有通道处理，凭据不进入页面；非宿主从项目根启动 `native_dialogs pick-temporary-files`。桌面主窗口原生 DragDrop 只向固定 localhost 首页派发文件路径，Web 无新增 IPC。浏览器拖入需要原生选择器确认源路径，不能靠上传副本检查原文件是否移动/删除。Mac Swift 参考壳不新增原生桥；平台原生弹窗和拖入仍需对应真机验收，源码编译不等于成品通过。
-
+> **文档状态**：当前跨平台实现的权威附录（历史日期段落已收拢至 [CHANGELOG.md](../../CHANGELOG.md)）。
+> **公共基线**：单一脱敏根提交；开发版本真值见 [version.py](../../src/invoice_hub/version.py)（当前 `1.0.0-beta.1`），精确分支与提交以实时 Git 与 [分支记录](../BRANCH_STATUS.md) 为准。
 
 功能约束按需读取：[Windows](rules/WINDOWS.md)、[macOS 参考壳](rules/MACOS.md)、[Tauri 宿主](rules/TAURI_HOST.md)、[构建与发行](rules/RELEASE.md)。先按 [任务快速索引](AGENT_TASK_MAP.md#quick-lookup) 定位全部命中项，再读取规则全文及对应实现章节；AGENTS.md 保留全局必读规则。
-
-2026-09-11 拟议能力：[税务工作台设计](../TAX_WORKBENCH_DESIGN.md)增加公司业务资料夹原生单目录选择。Tauri desktop/browser 模式共用现有 owned Host RPC 与 `select_path`，只增加固定 `pick_tax_company_dir` 用途；macOS 使用 `NSOpenPanel`，Windows 使用系统文件夹窗口，Windows 非 Tauri 源码入口复用已有 `pick_directory` 适配。选择结果只是待保存草稿，检测与保存留在后端业务服务；保留 Origin/token/lifecycle 与 120/125 秒预算，不能由浏览器文件上传替代根路径绑定。本轮仅设计与原型演示，真实原生窗口、取消/失败/迟到返回及跨平台验收列入 D2，不属于当前实现。
-
-2026-09-08 本附录与开发架构总入口统一以 `main` 的 PR #20 合并提交为产品实现及后续发行源码基线，精确身份见 [分支记录](../BRANCH_STATUS.md)；下文旧分支名只记录来源，不能再作为并行真值。源码 CI 不替代平台成品验收。
-
-> 文档状态：当前跨平台实现的权威附录
-> 更新日期：2026-08-28
-> 公共基线：单一脱敏根提交。退休的私有提交、Tag、包和验证材料不属于公开发行输入。
-> 当前发行状态：候选树、保留 Git 对象和托管面验证已完成，仓库现为 public；`0.3.0-alpha.2` public-preview 的双平台组装、macOS package identity、LaunchServices/quarantine smoke、SSE 关闭修复与 receipt finalization 门禁均已进入 `main`。远端同名 Tag 仍指向此前基线，最终构建须从干净 `main` 经新的明确授权重建；此前 foundation、internal-alpha 与 recovery-smoke 结果保留为历史上下文；尚无 Release、资产、SignPath 请求或 Feed。
 
 本页只解释平台边界。领域模型、API、投影和 monitor 的详细契约分别见[开发架构总入口](../DEVELOPMENT_ARCHITECTURE.md)、[接口与运行流程](INTERFACES_AND_FLOWS.md)和[数据结构与算法](DATA_AND_ALGORITHMS.md)。
 

@@ -5,13 +5,15 @@ this router at the position the routes originally occupied, so matching order is
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 
 from invoice_hub.api.common import (
     _require_native_picker_origin,
+    _require_same_origin_write,
     _run_native_picker,
     _state,
 )
+from invoice_hub.extraction.ocr_client import OcrError
 
 
 def router() -> APIRouter:
@@ -23,7 +25,14 @@ def router() -> APIRouter:
 
     @routes.put("/api/v1/ocr/settings")
     async def update_ocr_settings(request: Request) -> dict:
-        return _state(request).ocr.ocr_settings()
+        _require_same_origin_write(request)
+        try:
+            payload = await request.json()
+            return _state(request).ocr.update_ocr_settings(payload)
+        except OcrError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.message) from None
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
 
     @routes.get("/api/v1/ocr/service-status")
     def ocr_service_status(request: Request) -> dict:

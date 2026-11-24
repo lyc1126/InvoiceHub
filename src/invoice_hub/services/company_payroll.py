@@ -175,16 +175,9 @@ _PDF_MONTH = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
 _PDF_VALUE = re.compile(r"^(--|-|—|[\d,]+(\.\d+)?%?)$")
 
 
-def read_pdf(path: Path) -> list[dict]:
-    """Text-layer rows: 所属期, 险种, then exactly 11 values (合计 + 5 单位 + 5 个人, "--" = empty).
-
-    Scanned as one token stream: a PDF may put a whole row on one line or each cell on its own,
-    so lines are not trusted. A run that does not have exactly those 11 values is skipped, not guessed.
-    """
-    import fitz
-
-    with fitz.open(path) as document:
-        tokens = " ".join(str(page.get_text("text")) for page in document).split()
+def parse_payroll_text(text: str) -> list[dict]:
+    """Parse 所属期, 险种, then exactly 11 values (合计 + 5 单位 + 5 个人, "--" = empty) from PDF or OCR text."""
+    tokens = str(text or "").split()
     rows, index = [], 0
     while index < len(tokens) - 12:
         month, insurance, values = tokens[index], tokens[index + 1], tokens[index + 2:index + 13]
@@ -195,6 +188,19 @@ def read_pdf(path: Path) -> list[dict]:
         else:
             index += 1
     return rows
+
+
+def read_pdf(path: Path) -> list[dict]:
+    """Text-layer rows: 所属期, 险种, then exactly 11 values (合计 + 5 单位 + 5 个人, "--" = empty).
+
+    Scanned as one token stream: a PDF may put a whole row on one line or each cell on its own,
+    so lines are not trusted. A run that does not have exactly those 11 values is skipped, not guessed.
+    """
+    import fitz
+
+    with fitz.open(path) as document:
+        text = " ".join(str(page.get_text("text")) for page in document)
+    return parse_payroll_text(text)
 
 
 # ---------------------------------------------------------------- checks and payload
@@ -283,7 +289,7 @@ def _valid_saved_month(month: object) -> bool:
     return isinstance(month, str) and re.fullmatch(r"[0-9]{4}-(0[1-9]|1[0-2])", month) is not None and month[:4] != "0000"
 
 
-def read_payroll(root: Path, folder: Path | None, *, reveal: bool = False) -> dict:
+def read_payroll(root: Path, folder: Path | None, *, reveal: bool = False, ocr_reader=None) -> dict:
     files, months = [], {}
     people: list[dict] = []
     if folder is not None and folder.is_dir():
@@ -294,6 +300,7 @@ def read_payroll(root: Path, folder: Path | None, *, reveal: bool = False) -> di
             entry = {"file": name, "kind": "other", "status": "skipped", "message": ""}
             rows: list[dict] = []
             found_people: list[dict] = []
+            source_label = name
             try:
                 if suffix in (".xlsx", ".xlsm"):
                     rows, found_people = read_excel(path)
@@ -303,9 +310,18 @@ def read_payroll(root: Path, folder: Path | None, *, reveal: bool = False) -> di
                     rows = read_pdf(path)
                     entry.update(kind="pdf")
                 elif suffix in IMAGE_SUFFIXES:
-                    entry.update(kind="image", message="图片需要 OCR，本版本暂不识别：请手工录入，或从电子税务局导出 Excel 放进来。")
-                    files.append(entry)
-                    continue
+                    entry.update(kind="image")
+                    if ocr_reader is None:
+                        entry.update(message="图片需要 OCR（请在 OCR 页面开启自建或已授权的 PaddleOCR API），或手工录入/导出 Excel。")
+                        files.append(entry)
+                        continue
+                    ocr_text, ocr_meta = ocr_reader(path)
+                    rows = parse_payroll_text(ocr_text)
+                    provider = str((ocr_meta or {}).get("provider") or "ocr")
+                    entry["ocr_provider"] = provider
+                    if (ocr_meta or {}).get("confidence") is not None:
+                        entry["ocr_confidence"] = ocr_meta["confidence"]
+                    source_label = f"{name}（OCR：{provider}，请核对后确认）"
                 else:
                     files.append(entry)
                     continue
@@ -315,7 +331,7 @@ def read_payroll(root: Path, folder: Path | None, *, reveal: bool = False) -> di
                 continue
             if rows or found_people:
                 entry["status"] = "parsed"
-                for month, data in _months(rows, name).items():
+                for month, data in _months(rows, source_label).items():
                     months.setdefault(month, data)  # the first file found for a month wins; the rest are listed
             else:
                 entry.update(status="error", message="没有找到“险种 / 单位部分 / 个人部分”表格（版式未识别，没有猜测）。")

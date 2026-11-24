@@ -3,8 +3,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import shutil
+import threading
+import time
 import uuid
 from functools import lru_cache
 from contextlib import contextmanager
@@ -18,6 +21,77 @@ SUMMARY = ("发票汇总.csv", "发票汇总.xlsx")
 COST = ("成本发票明细.csv", "成本发票汇总.xlsx", "成本开票状态.json")
 OPTIONAL = ("cost_outbound_summary.json",)
 FILES = SUMMARY + COST + OPTIONAL
+
+# Bounded generation retention defaults (ENG-09). Never delete current manifest,
+# export-receipt referenced generations, or actively pinned reader generations.
+DEFAULT_MAX_GENERATIONS = 5
+DEFAULT_MAX_GENERATION_BYTES = 128 * 1024 * 1024
+STALE_CANDIDATE_SECONDS = 3600
+
+_GEN_RE = re.compile(r"[a-f0-9]{32}")
+_PIN_LOCK = threading.Lock()
+_PINNED: dict[str, dict[str, int]] = {}
+
+
+def _workspace_key(workspace: Path) -> str:
+    return str(Path(workspace).resolve())
+
+
+@contextmanager
+def pin_generation(workspace: Path, generation: str):
+    """Pin an active generation in-process so concurrent pruning cannot remove it while read."""
+    if not generation or not _GEN_RE.fullmatch(generation):
+        yield
+        return
+    wkey = _workspace_key(workspace)
+    with _PIN_LOCK:
+        counts = _PINNED.setdefault(wkey, {})
+        counts[generation] = counts.get(generation, 0) + 1
+    try:
+        yield
+    finally:
+        with _PIN_LOCK:
+            counts = _PINNED.get(wkey)
+            if counts and generation in counts:
+                if counts[generation] <= 1:
+                    counts.pop(generation, None)
+                else:
+                    counts[generation] -= 1
+                if not counts:
+                    _PINNED.pop(wkey, None)
+
+
+def _pinned_generations(workspace: Path) -> set[str]:
+    wkey = _workspace_key(workspace)
+    with _PIN_LOCK:
+        return set(_PINNED.get(wkey, ()))
+
+
+def _dir_bytes(path: Path) -> int:
+    total = 0
+    for root, _dirs, files in os.walk(path, followlinks=False):
+        for name in files:
+            item = Path(root) / name
+            try:
+                if not item.is_symlink():
+                    total += item.lstat().st_size
+            except OSError:
+                continue
+    return total
+
+
+def _safe_remove_dir(path: Path) -> bool:
+    """Rename to a `.pruning-*` tombstone before recursive delete so crashes resume cleanly."""
+    if path.is_symlink() or not path.exists():
+        return False
+    tombstone = path if path.name.startswith(".pruning-") else path.with_name(f".pruning-{path.name}-{uuid.uuid4().hex[:8]}")
+    try:
+        if tombstone != path:
+            path.rename(tombstone)
+        shutil.rmtree(tombstone)
+        return True
+    except OSError:
+        return False
 
 
 def current(workspace: Path, source: Path | None = None) -> dict:
@@ -74,6 +148,11 @@ def resolve(workspace: Path, source: Path, name: str, manifest: dict | None = No
         stamp = path.stat()
         if _digest(str(path), stamp.st_size, stamp.st_mtime_ns, stamp.st_ctime_ns) != data["files"][name]:
             raise ValueError("完整代际内容损坏。")
+        try:
+            # Refresh parent generation directory mtime as a lightweight last-used signal for LRU pruning.
+            os.utime(path.parent, None)
+        except OSError:
+            pass
         return path
     return (Path(workspace) if name in SUMMARY + OPTIONAL else Path(source)) / name
 
@@ -190,7 +269,142 @@ def publish(
             Path(workspace) / "projection-export-receipt.json",
             {"generation": generation, "files": exported_hashes, "source_exported": bool(export_to_source)},
         )
+    # Best-effort bounded retention: never fail a committed publication due to cleanup I/O.
+    try:
+        prune_generations(workspace, pinned=(generation,))
+    except OSError:
+        pass
     return {**data, "export_warnings": warnings}
+
+
+def _protected_generations(workspace: Path, extra_pinned: tuple[str, ...] | set[str] = ()) -> tuple[set[str], str | None]:
+    """Return protected generation IDs or an error tag when manifest state is unreadable."""
+    protected: set[str] = set(_pinned_generations(workspace))
+    protected.update(g for g in extra_pinned if isinstance(g, str) and _GEN_RE.fullmatch(g))
+    manifest_path = Path(workspace) / "projection-manifest.json"
+    if manifest_path.exists() or manifest_path.is_symlink():
+        try:
+            manifest = current(workspace)
+        except ValueError:
+            return protected, "corrupt_manifest"
+        if manifest.get("generation"):
+            protected.add(manifest["generation"])
+    receipt_path = Path(workspace) / "projection-export-receipt.json"
+    if receipt_path.is_file() and not receipt_path.is_symlink():
+        try:
+            receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+        except (ValueError, OSError):
+            return protected, "corrupt_receipt"
+        gen = receipt.get("generation") if isinstance(receipt, dict) else None
+        if isinstance(gen, str) and _GEN_RE.fullmatch(gen):
+            protected.add(gen)
+    return protected, None
+
+
+def prune_generations(
+    workspace: Path,
+    *,
+    keep_generations: int = DEFAULT_MAX_GENERATIONS,
+    max_bytes: int = DEFAULT_MAX_GENERATION_BYTES,
+    pinned: tuple[str, ...] | set[str] = (),
+    stale_candidate_seconds: float = STALE_CANDIDATE_SECONDS,
+) -> dict:
+    """Reclaim obsolete generations and interrupted staging/pruning dirs within capacity bounds.
+
+    Never deletes source invoices, manual JSON state, export receipts, the current manifest
+    generation, the receipt-referenced generation, or in-process pinned reader generations.
+    """
+    root = Path(workspace) / "projection-generations"
+    if root.is_symlink() or not root.is_dir():
+        return {"removed_generations": 0, "removed_staging": 0, "freed_bytes": 0, "kept_generations": 0, "total_bytes": 0}
+    protected, skip_reason = _protected_generations(workspace, pinned)
+    if skip_reason:
+        return {"skipped": skip_reason, "removed_generations": 0, "removed_staging": 0, "freed_bytes": 0}
+
+    now = time.time()
+    removed_staging = 0
+    freed_bytes = 0
+    entries: list[tuple[float, str, Path, int]] = []
+    for child in list(root.iterdir()):
+        if child.is_symlink() or not child.is_dir():
+            continue
+        name = child.name
+        if name.startswith(".pruning-"):
+            size = _dir_bytes(child)
+            if _safe_remove_dir(child):
+                removed_staging += 1
+                freed_bytes += size
+            continue
+        if name.startswith(".candidate-"):
+            try:
+                age = now - child.lstat().st_mtime
+            except OSError:
+                continue
+            if age >= stale_candidate_seconds:
+                size = _dir_bytes(child)
+                if _safe_remove_dir(child):
+                    removed_staging += 1
+                    freed_bytes += size
+            continue
+        if _GEN_RE.fullmatch(name):
+            try:
+                mtime = child.lstat().st_mtime
+            except OSError:
+                continue
+            entries.append((mtime, name, child, _dir_bytes(child)))
+
+    total_bytes = sum(item[3] for item in entries)
+    total_count = len(entries)
+    # Evict least-recently-used unprotected generations first until within both count and byte bounds.
+    entries.sort(key=lambda item: (item[0], item[1]))
+    removed_generations = 0
+    for _mtime, name, child, size in entries:
+        if total_count <= keep_generations and total_bytes <= max_bytes:
+            break
+        if name in protected:
+            continue
+        if _safe_remove_dir(child):
+            removed_generations += 1
+            total_count -= 1
+            total_bytes -= size
+            freed_bytes += size
+    return {
+        "removed_generations": removed_generations,
+        "removed_staging": removed_staging,
+        "freed_bytes": freed_bytes,
+        "kept_generations": total_count,
+        "total_bytes": max(0, total_bytes),
+    }
+
+
+def generation_usage(workspace: Path) -> dict:
+    """Read-only diagnostic summary of complete projection generations in a workspace."""
+    root = Path(workspace) / "projection-generations"
+    manifest_gen = ""
+    try:
+        manifest_gen = current(workspace).get("generation", "")
+    except ValueError:
+        manifest_gen = ""
+    if root.is_symlink() or not root.is_dir():
+        return {"generation_count": 0, "total_bytes": 0, "current_generation": manifest_gen, "staging_count": 0}
+    gen_count = 0
+    staging_count = 0
+    total_bytes = 0
+    for child in root.iterdir():
+        if child.is_symlink() or not child.is_dir():
+            continue
+        if _GEN_RE.fullmatch(child.name):
+            gen_count += 1
+            total_bytes += _dir_bytes(child)
+        elif child.name.startswith((".candidate-", ".pruning-")):
+            staging_count += 1
+            total_bytes += _dir_bytes(child)
+    return {
+        "generation_count": gen_count,
+        "total_bytes": total_bytes,
+        "current_generation": manifest_gen,
+        "staging_count": staging_count,
+    }
 
 
 def publish_exports(workspace: Path, source: Path, changed: tuple = COST + OPTIONAL) -> dict:

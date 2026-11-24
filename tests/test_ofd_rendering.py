@@ -188,15 +188,16 @@ def test_component_integrity_rejects_tampered_jar(tmp_path, monkeypatch):
 
 def test_component_verification_cache_invalidates_on_file_changes(tmp_path, monkeypatch):
     component = tmp_path / "component"
+    platform_id = "windows-x64" if os.name == "nt" else "macos-arm64"
     java_name = "java/bin/java.exe" if os.name == "nt" else "java/bin/java"
     files = {java_name: b"java", "lib/ofd-preview.jar": b"jar"}
     for name, content in files.items():
         path = component / name; path.parent.mkdir(parents=True, exist_ok=True); path.write_bytes(content)
     manifest = {"schema_version": 1, "engine": "ofdrw-2.4.0", "java_major": 21,
-                "platform": "macos-arm64", "source_fingerprint": ofd.COMPONENT_SOURCE_FINGERPRINT,
+                "platform": platform_id, "source_fingerprint": ofd.COMPONENT_SOURCE_FINGERPRINT,
                 "files": {name: hashlib.sha256(content).hexdigest() for name, content in files.items()}}
     (component / "component.json").write_text(json.dumps(manifest), encoding="utf-8")
-    monkeypatch.setattr(ofd, "_platform_id", lambda: "macos-arm64")
+    monkeypatch.setattr(ofd, "_platform_id", lambda: platform_id)
     original_read = Path.read_bytes
     reads = []
     def read_bytes(path):

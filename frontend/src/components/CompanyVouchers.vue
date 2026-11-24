@@ -33,7 +33,7 @@ interface DraftPayload {
 }
 interface Moved { from: { month: string; number: string }; to: { month: string; number: string } }
 interface ExportFormat {
-  key: string; label: string; status: "verified" | "experimental" | "custom"; note: string; file_suffix: string;
+  key: string; label: string; status: "standard" | "verified" | "experimental" | "custom"; note: string; file_suffix: string;
   usable?: boolean; unmatched?: string[]; missing?: string[];
 }
 interface DraftInputs { booked: string[]; ledgers: string[]; tax_file: boolean; current_month: string }
@@ -57,7 +57,7 @@ const inputs = ref<DraftInputs | null>(null);
 // Export formats (BK-01): built-in profiles plus the user's templates in 做账草稿/导出模板/.
 const formats = ref<ExportFormat[]>([]);
 const templateFolder = ref("");
-const exportFormat = ref("jierui");
+const exportFormat = ref("generic");
 const chosenFormat = computed(() => formats.value.find((item) => item.key === exportFormat.value) ?? null);
 const generateOpen = ref(false);
 const generating = ref(false);
@@ -248,7 +248,7 @@ async function loadFiles(): Promise<void> {
     inputs.value = listing.inputs;
     formats.value = listing.formats ?? [];
     templateFolder.value = listing.template_folder ?? "";
-    if (!formats.value.some((item) => item.key === exportFormat.value)) exportFormat.value = "jierui";
+    if (!formats.value.some((item) => item.key === exportFormat.value)) exportFormat.value = formats.value[0]?.key ?? "generic";
     if (!files.value.some((item) => item.name === selectedFile.value)) selectedFile.value = files.value.at(-1)?.name ?? "";
   } catch (cause) {
     if (mine === filesGeneration) error.value = errorText(cause);
@@ -584,13 +584,13 @@ watch(
         <label class="nowrap">导出格式
           <select v-model="exportFormat" aria-label="导出格式">
             <option v-for="item in formats" :key="item.key" :value="item.key" :disabled="item.usable === false">
-              {{ item.label }}{{ item.status === "verified" ? "（已实测）" : item.status === "experimental" ? "（实验，未经实际导入验证）" : "（自定义模板）" }}{{ item.usable === false ? " - 缺列不可用" : "" }}
+              {{ item.label }}{{ item.status === "standard" ? "（默认推荐）" : item.status === "verified" ? "（已实测）" : item.status === "experimental" ? "（实验，未经实际导入验证）" : "（自定义模板）" }}{{ item.usable === false ? " - 缺列不可用" : "" }}
             </option>
           </select>
         </label>
         <span class="muted">其他软件：把自家账套下载的空白导入模板放进 {{ templateFolder }}/，按表头自动对列。</span>
       </div>
-      <p v-if="chosenFormat && chosenFormat.status !== 'verified'" class="banner banner--error" role="note">
+      <p v-if="chosenFormat && chosenFormat.status !== 'verified' && chosenFormat.status !== 'standard'" class="banner banner--error" role="note">
         {{ chosenFormat.status === "experimental" ? "实验格式，未经实际导入验证：" : "自定义模板：" }}{{ chosenFormat.note }}
         <template v-if="chosenFormat.unmatched?.length">对不上、将留空的列：{{ chosenFormat.unmatched.join("、") }}。</template>
         请先只把一张凭证标“通过”导入核对。

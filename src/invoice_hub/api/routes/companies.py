@@ -268,7 +268,9 @@ def router() -> APIRouter:
 
     @routes.get("/api/v1/companies/{company_id}/payroll")
     async def company_payroll(request: Request, company_id: str, reveal: bool = Query(False)):
-        return await _call(lambda: _state(request).company_views.payroll(company_id, reveal=reveal))
+        state = _state(request)
+        reader = state.ocr.payroll_reader_for_company(company_id)
+        return await _call(lambda: state.company_views.payroll(company_id, reveal=reveal, ocr_reader=reader))
 
     @routes.put("/api/v1/companies/{company_id}/payroll")
     async def save_company_payroll(request: Request, company_id: str):

@@ -80,6 +80,18 @@ def rebuild_generation(
         )
         state.save_processed(processed)
         cost._save_tax_dependency()
+        # Only prune raw parse entries after the new complete generation is committed,
+        # so an interrupted/failed rebuild never drops valid cached parses.
+        try:
+            cache.prune(
+                active_paths={str(path.absolute()) for path in files},
+                version_prefixes={
+                    "invoice": str(_summary.PARSER_VERSION),
+                    "cost": str(_cost_analysis.COST_PARSER_VERSION),
+                },
+            )
+        except Exception:
+            pass
         summary.update(summary_csv=str(state.summary_csv), summary_xlsx=str(state.summary_xlsx))
         cost_result.update(detail_csv=str(cost.detail_csv), summary_xlsx=str(cost.summary_xlsx), reference_status_json=str(cost.status_json))
         return summary, cost_result, applied, published

@@ -895,13 +895,13 @@ class CompanyViewService:
         return {"ok": True, **company_vouchers.save_draft(self._company_root(company), name, body, invoice_csv=self._voucher_invoice_csv(company))}
 
     # ---- 工资社保 (WS-05 stage 3): read-only parsing; 申报数据.json is written only on the user's confirm.
-    def payroll(self, company_id: str, *, reveal: bool = False) -> dict:
+    def payroll(self, company_id: str, *, reveal: bool = False, ocr_reader=None) -> dict:
         company = self._registry.get_company(company_id)["company"]
         root = self._company_root(company)
         subdir = next((item for item in company["subdirs"] if item["key"] == "payroll_social_dir"), None)
         folder = Path(subdir["path"]) if subdir and subdir["status"] == "present" else None
         return {"ok": True, "folder": subdir["relative_path"] if subdir else "", "folder_present": folder is not None,
-                **read_payroll(root, folder, reveal=reveal)}
+                **read_payroll(root, folder, reveal=reveal, ocr_reader=ocr_reader)}
 
     def save_payroll(self, company_id: str, body: object) -> dict:
         company = self._registry.get_company(company_id)["company"]

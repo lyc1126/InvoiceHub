@@ -76,15 +76,17 @@
 
 公司完整 `taxpayer_periods` 加入成本依赖键，`purchase_taxpayer_type` 按每行开票月份选身份；小规模购入税金计成本，一般按票种/可抵扣证据。历史未覆盖使成本单价未知，库存该行单列待核对，不能套今天身份。当前销项率仍来自保存设置，不自动推定政策率。monitor 无源变化也检查 `cost-tax-dependency.json`，身份到期更新工作簿不重提取原票。
 
-`parse-cache.sqlite3/raw` 仅存 key(kind+源路径)、五元元数据(dev/inode/size/mtime_ns/ctime_ns)、digest、parser version、原始 JSON、verified 时间。未变复用；变更或每日/显式 verify 重新 hash；full 强制 parse；坏库隔离重建、坏条目重取。同票纠偏和人工覆盖在复制原始结果之后执行，不污染 raw。删除退出新投影，不删除原票或人工 JSON。
+`parse-cache.sqlite3/raw` 仅存 key(kind+源路径)、五元元数据(dev/inode/size/mtime_ns/ctime_ns)、digest、parser version、原始 JSON、verified 时间与 `last_used`（旧表启动时自动 `ALTER TABLE` 兼容升级）。未变复用；变更或每日/显式 verify 重新 hash；full 强制 parse；坏库隔离重建、坏条目重取。同票纠偏和人工覆盖在复制原始结果之后执行，不污染 raw。删除退出新投影，不删除原票或人工 JSON。每次 `publish()` 后执行 `ENG-09` 容量治理：`ParseCache.prune` 清理已不存在文件的孤立键、按 `version_prefixes` 清理旧版本缓存行、按 `last_used` 执行 LRU 上限（默认 `max_rows=50000` / `max_bytes=256 MiB`），`prune_damaged_caches` 仅保留最新 2 份隔离坏库。
 
-`projection-manifest.json` v1 记录 source、root_identity、generation、files SHA256、source_exported（缺省为 true；非监控公司目录只读读取发布时为 false，跳过向源目录复制成本导出副本且 `recover_exports` 不回填源目录）、parser_versions（`summary`/`cost` 分别绑定 `PARSER_VERSION`/`COST_PARSER_VERSION`，供启动/监控与非监控新鲜度检测识别规则升级；旧版无清单或版本过期的目录触发一次增量重算，稳态周期仍不重解析）、last_complete_at、scan_complete、coverage。完整扫描/生成/源与人工版本复核后，仅原子替换 manifest；`projection-generations/<generation>/` 保存完整普通 CSV/XLSX 与成本 CSV/XLSX/状态（可缺首次状态）。source 按解析后的规范路径存储/比较，兼容旧清单的系统别名，不同根仍拒绝；目录设备/inode 保护保持独立。单次读取绑定同一 manifest，缺失/损坏不回退混合副本。固定文件只作导出，`projection-export-receipt.json` 证明已成功的导出版本；中断后未知手改拒绝覆盖。人工保存按变化类别复制未变投影后发布新代际（保留原 `parser_versions`）。原始缓存可丢弃；人工字段、期初与已开快照不可按缓存清理。
+`projection-manifest.json` v1 记录 source、root_identity、generation、files SHA256、source_exported（缺省为 true；非监控公司目录只读读取发布时为 false，跳过向源目录复制成本导出副本且 `recover_exports` 不回填源目录）、parser_versions（`summary`/`cost` 分别绑定 `PARSER_VERSION`/`COST_PARSER_VERSION`，供启动/监控与非监控新鲜度检测识别规则升级；旧版无清单或版本过期的目录触发一次增量重算，稳态周期仍不重解析）、last_complete_at、scan_complete、coverage。完整扫描/生成/源与人工版本复核后，仅原子替换 manifest；`projection-generations/<generation>/` 保存完整普通 CSV/XLSX 与成本 CSV/XLSX/状态（可缺首次状态）。source 按解析后的规范路径存储/比较，兼容旧清单的系统别名，不同根仍拒绝；目录设备/inode 保护保持独立。单次读取绑定同一 manifest，缺失/损坏不回退混合副本。固定文件只作导出，`projection-export-receipt.json` 证明已成功的导出版本；中断后未知手改拒绝覆盖。人工保存按变化类别复制未变投影后发布新代际（保留原 `parser_versions`）。`publish()` 后自动执行 `prune_generations`（默认保留 ≤5 代且 ≤512 MiB，保护当前 manifest、`export-receipt` 与 `pin_generation` 活跃读句柄；manifest 损坏时跳过；先重命名为 `.pruning-*` 再删除以支持崩溃续清并清理超期 `.candidate-*`）。原始缓存可丢弃；人工字段、期初与已开快照不可按缓存清理。
 
 SourceProfile 与 TargetProfile 独立：source_id/entry_id 为不透明 32 位 hex；profile 含协议/主机/根/已确认指纹/预算/显式公司角色绑定/revision/epoch，snapshot 含完整条目清单与已下载副本索引。连接、同步和快照状态分开，重启 running 变 interrupted/unknown。每源单任务、全局 2，30 秒无进展超时，取消/断连 epoch 拒绝迟到提交。磁盘提交先于内存快照/汇总指针。
 
 目录读取按完整子树统计 `scope.files/bytes/readable_files`；可读扩展名与受限 renderer 共用 PDF、OFD、XML 与图片集合，计数不受分页/关键词影响，不代表文件内容一定有效。不支持格式仍有元信息；失败/未完成清单不能视为空子树。
 
-服务器私有目录 `server-sources/<source_id>/objects/<sha256>/<原始文件名>` 只收完整校验副本；单文件 64 MiB，默认 1 GiB 原始副本预算。summary-generations 的 view.json 保存该来源完整只读票面/成本投影，不进入公司模块。标准 SFTP v3 仅 size/mtime 弱版本加客户端 hash，无可靠 cursor/稳定远端 file ID，不承诺远端原子快照。两次完整枚举之间任何可见版本变化拒绝发布；失败不是空目录或删除。历史代际/解析缓存自动容量治理另见 ENG-09。
+服务器私有目录 `server-sources/<source_id>/objects/<sha256>/<原始文件名>` 只收完整校验副本；单文件 64 MiB，默认 1 GiB 原始副本预算。summary-generations 的 view.json 保存该来源完整只读票面/成本投影，不进入公司模块。标准 SFTP v3 仅 size/mtime 弱版本加客户端 hash，无可靠 cursor/稳定远端 file ID，不承诺远端原子快照。两次完整枚举之间任何可见版本变化拒绝发布；失败不是空目录或删除。`ENG-09` 容量治理在 `obtain()` / 预算变更 / 同步提交时自动按 `last_used_at` LRU 淘汰未固定对象（活跃预览 lease 通过 `pinned_objects` 保护，全部被固定无法腾出预算时显式报 `cache_full`）、清理孤立对象、超期 `.part` 与 `.pruning-*`，并修剪过旧 `summary-generations`；`_public()` 暴露 `cache_usage`。
+
+`OCR-01` 运行态存储（`extraction/ocr_client.py`、`services/ocr.py`）：非秘密配置写入 `runtime/ocr-settings.json`（默认 `provider_mode="disabled"`，含 `endpoint_url`/`timeout_seconds`/`cloud_consent_acknowledged`/`enabled_companies`），Access Token 单独隔离保存在 `runtime/.ocr-secrets.json`（`0o600`），不写入仓库内配置或公开导出包；内容哈希缓存写入 `runtime/ocr-cache.sqlite3`（按 `sha256:provider:endpoint_hash` 键与 `last_used` LRU 有界淘汰）。扫描件发票识别经 `extract_validated_invoice_fields` 复用 PDF 规则并校验发票号、合法税率集合与 `不含税 + 税额 == 价税合计`，冲突字段留空；公司社保截图仅在启用自建 OCR 或该企业显式开启云端授权时经 `payroll_reader_for_company` 调用。
 
 ## 2026-11-19 社保确认与手工留抵链
 
@@ -536,7 +538,7 @@ WS-02 新建工作区（`company_setup.py`）沿用 schema v1 公司清单；独
 
 比较明细与并排记录（WS-04，三种关系共用）：`records.a/b` 只含所选期间内的记录（进销存按发票合并明细行，金额为计入的货物行不含税合计；往来含全部期内流水，包括非发票流水与户名不唯一的；抵扣为期内与对上的发票及清单行）；类目的 `record_ids` 与之同一 id 空间，页面只按 id 过滤，不重算。`steps` 用后端实际参与计算的数值生成：进销存逐月为“期初 / 购入 → 可供销售 → 加权单价 → 销售成本（未舍入单价，即 `金额 × 销售数量 ÷ 数量` 后舍入）或卖光 / 卖超 → 期末”；往来单位为“期初 + 本期发票 − 本期收付 = 期末”；抵扣所属期为“清单行数 = 对上 + 目录无 + 未勾选 [+ 重复]”与有效抵扣税额之和。
 
-通用凭证模型（BK-01，`bank/export_profiles.py`）：`Entry` = 凭证头（日期、凭证字、按月重编的三位凭证号、附件数、制单人）+ 分录（行号、摘要、科目编码、科目全名、借、贷、数量、单位）+ 辅助核算列表（类别、编码、名称）；配置 `Profile` 声明列序与每列取值。捷锐：金额 / 数量写文本、供应商写名称；柠檬云：35 列、凭证号“记-N”、借贷本币写数值（无则 0）、数量按借贷方向写入借方数量或贷方数量；用友 T3/U8：首行 `填制凭证,V800`，逗号分隔、GBK，业务号为去掉前导 0 的凭证号，空数值写 0，摘要中的英文逗号换成中文逗号。
+通用凭证模型（BK-01，`bank/export_profiles.py`）：`Entry` = 凭证头（日期、凭证字、按月重编的三位凭证号、附件数、制单人）+ 分录（行号、摘要、科目编码、科目全名、借、贷、数量、单位）+ 辅助核算列表（类别、编码、名称）；配置 `Profile` 声明列序与每列取值。品牌中立的 18 列 `generic`（`通用凭证表（标准）`，状态 `standard`，文件名前缀 `通用凭证导出`）为默认导出格式，并经 `read_generic_entries()` 支持无损往返读取；捷锐：金额 / 数量写文本、供应商写名称（继续作为品牌适配项，金样输出不变）；柠檬云：35 列、凭证号“记-N”、借贷本币写数值（无则 0）、数量按借贷方向写入借方数量或贷方数量；用友 T3/U8：首行 `填制凭证,V800`，逗号分隔、GBK，业务号为去掉前导 0 的凭证号，空数值写 0，摘要中的英文逗号换成中文逗号。
 
 工资社保（WS-05，`services/company_payroll.py`）：`申报数据.json` 的 `社保明细.{YYYY-MM}` = `{单位部分, 个人部分, 来源, 险种明细[{insurance, total, unit{count, wage, base, rate, due}, personal{...}}]}`；单位部分 / 个人部分为确认时各险种应缴费额之和（Decimal 到分），草稿计提只用这两个数。费率以小数存（16% → 0.16），显示时还原百分数；`--` 为空。核对：|单位应缴 + 个人应缴 − 合计| ≤ 0.01；单人时 |基数 × 费率（四舍五入到分）− 应缴| ≤ 0.01，多人时不核对费率。
 

@@ -2,6 +2,26 @@
 
 ## 未发布
 
+### 2026-11-24 推进 v1.0.0 里程碑 2：实现 ENG-09 缓存容量治理、OCR-01 PaddleOCR 接入、BK-01 通用凭证默认导出与 ENG-04 架构入口文档收拢
+
+- 需求与起点：基于已推送至 `origin/codex/workspace-p3@15c2a23` 的里程碑 1 提交，按 `v1.0.0` 收口顺序连续推进 4 项无外部样本阻塞的必做项（`ENG-09`、`OCR-01`、`BK-01`、`ENG-04`），并修复 PR #32 CI 中暴露的 1 处 Rust 回环 mock 测试分包读取偶发失败及 1 处 Windows OFD 缓存测试平台字段失配。
+- 采用方案：
+  - **修复 CI 暴露的跨平台测试稳定性**：`src-tauri/tests/lifecycle_contract.rs` 新增 `read_http_request()` 按 `Content-Length` 完整读取 HTTP 请求体，消除 `headers + body` 分次 `write` 时单次 `read` 遗漏 JSON 正文的竞态；`tests/test_ofd_rendering.py::test_component_verification_cache_invalidates_on_file_changes` 在 Windows 上同步将 `platform` 与 `_platform_id` 对齐为 `windows-x64`（此前写死 `macos-arm64` 却在 Windows 创建 `java.exe`，导致 `Windows Python and release contracts` 1546 过 / 1 败）；`extraction/ocr_client.py::OcrResultCache._connect` 改为 `@contextmanager` 显式关闭 SQLite 连接以避免 Windows 文件句柄占用。
+  - **ENG-09（完整代际与原始解析缓存容量治理）**：
+    - `storage/generations.py` 新增 `pin_generation` 进程内读者固定、`prune_generations`（保护当前 manifest、回执引用代际与固定读者，坏 manifest 跳过不删，先改名 `.pruning-*` 墓碑再删除以支持崩溃续接，并清理超时 `.candidate-*`）与 `generation_usage`，并在 `publish()` 后自动有界回收。
+    - `storage/parse_cache.py` 兼容升级旧 6 列 `raw` 表补充 `last_used` 列，新增 `ParseCache.prune(active_paths, version_prefixes, max_rows, max_bytes)` 与 `prune_damaged_caches`；`projections/incremental.py` 与 `services/source_worker.py` 在完整发布/解析后按前缀清理孤儿与旧解析器版本行。
+    - `storage/source_cache.py` 新增 `evict_objects`（清理超时 `.part`/墓碑/孤儿并按 `last_used_at` LRU 回收未固定副本）、`prune_summary_generations` 与 `cache_usage`；`services/sources.py` 与 `source_worker.py` 在下载/汇总/修改预算/提交后传入活动预览租约 `pinned_objects`，严守绝不删除在读预览副本、源票、人工状态或导出回执。新增 `tests/test_cache_governance.py`。
+  - **OCR-01（PaddleOCR 官方 API / 自建服务接入与社保截图识别）**：
+    - 新增 `extraction/ocr_client.py`：支持 `disabled`（默认）/ `paddle_api`（官方 API）/ `paddle_self_hosted`（用户自建 HTTP 服务）三种模式，使用标准库 HTTP 客户端（零新增依赖），实现 URL/凭据边界校验、按文件内容 SHA-256 缓存的 `OcrResultCache`（防重复计费）、坐标排序、401/429/超时/断网无令牌泄露诊断，以及复用 PDF 提取规则并二次校验发票号码位数、合法税率与 `金额 + 税额 = 价税合计` 的 `extract_validated_invoice_fields`。
+    - `services/ocr.py` 与 `api/routes/ocr.py` 将非敏感设置存 `runtime/ocr-settings.json`、Access Token 独立存 `runtime/.ocr-secrets.json`（`0o600`，不进 `app.local.json` 或 API 返回），云端模式要求显式隐私确认与按公司单独授权；`services/company_payroll.py` 抽出 `parse_payroll_text()` 并接入 `OcrService.payroll_reader_for_company`，支持社保缴费截图按公司授权走同一确定性表格解析与算术校验；升级 `web/templates/ocr.html` 与 `web/static/js/page-ocr.js`（资源版本升至 `20261124-ocr-paddle-1`）。新增 `tests/test_ocr_paddle.py`。
+  - **BK-01（凭证导出默认切换「通用凭证表」与去品牌化）**：
+    - `bank/export_profiles.py` 新增 18 列软件无关标准 `generic`（`通用凭证表（标准）`，状态 `standard`，前缀 `通用凭证导出`）并置于 `PROFILES` 首位，新增 `read_generic_entries()` 实现导出后无损读回验证；保留 `jierui`（`verified`）黄金模板逐单元格不变。
+    - `services/company_vouchers.py` 与 `frontend/src/components/CompanyVouchers.vue` 将默认导出格式切换为 `generic` 并适配 `standard` 状态展示，重建 `web/static/app/` 产物，补充 `tests/test_export_profiles.py` 无损读回与去品牌断言。
+  - **ENG-04（架构入口文档只描述当前状态）**：将 `docs/DEVELOPMENT_ARCHITECTURE.md`、`IMPLEMENTATION_STATUS.md`、`docs/architecture/AGENT_TASK_MAP.md` 与 `docs/architecture/PLATFORM_ARCHITECTURE.md` 顶部堆叠的历史日期流水段落收拢为简洁的当前状态总览（历史记录全部保留在 `CHANGELOG.md`），同步更新 `INTERFACES_AND_FLOWS.md`、`DATA_AND_ALGORITHMS.md`、`FILE_MAP.md`、`PRODUCT_BACKLOG.md` 与 `COMMENT_RATIONALE_MAP.md`。
+- 验证范围与未覆盖项：
+  - 已运行并通过：本机 macOS ARM64 固定 Rust `1.85.0` 的 `cargo fmt --check`、`cargo clippy --offline --locked --all-targets -- -D warnings`、`cargo test --offline --locked`（107/107）；Ruff、Python `compileall`、`git diff --check`；Python 回归涵盖 `test_cache_governance.py`、`test_incremental_projections.py`、`test_server_sources.py`、`test_sftp_source.py`、`test_company_refresh.py`、`test_ocr_paddle.py`、`test_company_payroll.py`、`test_export_profiles.py`、`test_company_vouchers.py`、`test_bank_vouchers.py`、`test_ofd_rendering.py`、`test_workspace_frontend.py`、`test_frontend_contract.py`、`test_api_contract.py`、`test_development_documentation.py`；Vue `vue-tsc --noEmit`、`vitest run`（20 文件 171 项）、`vite build`。
+  - 未覆盖项：未覆盖 PaddleOCR 官方 API 实网调用与真实扫描发票/社保截图实测、真实非捷锐记账软件（如柠檬云/用友/金蝶）真实账套导入、真实默认配置、正式 Windows BAT、浏览器前台拉起、系统原生选择器与双平台打包产物验收；本轮改动先在本地提交至 `codex/workspace-p3`，待确认后再推送 PR #32 触发 Windows 与全平台 CI 复验。
+
 ### 2026-11-24 收口 Windows 发布版本配置漂移与工程项 ENG-01 / ENG-02 / ENG-10
 
 - 需求与起点：基于 `codex/workspace-p3@9f3d485` 按 `v1.0.0` 版本收口路线推进第一批代码与工程收尾：修复 `1.0.0-beta.1` 升级后遗留的 Windows 发布配置版本漂移、清零 PR #32 采集的 3 条 Windows Rust clippy dead-code 警告并开启 `-D warnings` 阻断（`ENG-01`）、判定并修复开票参考保存时工作簿独有状态漏合并问题（`ENG-02`），以及实现固定 8766 端口冲突识别与用户确认后优雅关闭旧 InvoiceHub 的引导恢复（`ENG-10`，保留桌面窗口创建失败转默认浏览器兜底）。

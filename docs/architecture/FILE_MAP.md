@@ -114,12 +114,15 @@
 | 文件 | 职责 |
 | --- | --- |
 | `src/invoice_hub/services/company_opening.py` | 严格只读科目/往来期初及科目发生额，不写账套 |
-| `src/invoice_hub/storage/parse_cache.py` | 原始解析 SQLite、元数据/强 hash/版本失效、损坏重建及完整扫描 |
-| `src/invoice_hub/storage/generations.py` | 普通+成本完整代际、manifest、兼容导出回执与中断恢复 |
-| `src/invoice_hub/projections/incremental.py` | 源/手改前后复核，组合 summary/cost 候选后发布 |
+| `src/invoice_hub/storage/parse_cache.py` | 原始解析 SQLite、元数据/强 hash/版本失效、孤儿/旧版本/LRU 与损坏隔离文件容量治理（ENG-09）及完整扫描 |
+| `src/invoice_hub/storage/generations.py` | 普通+成本完整代际、manifest、兼容导出回执、中断恢复与读锁固定/LRU 代际回收（ENG-09） |
+| `src/invoice_hub/projections/incremental.py` | 源/手改前后复核，组合 summary/cost 候选发布并在发布后清理解析缓存 |
 | `src/invoice_hub/storage/source_adapters/__init__.py` | 只读挂载共享适配、系统已挂载共享卷发现及可移植路径/文件边界 |
 | `src/invoice_hub/storage/source_adapters/sftp.py` | 固定 OpenSSH SFTP v3 wire、指纹及只读操作 |
-| `src/invoice_hub/storage/source_cache.py` | 原始副本预算、hash 校验、完整 part 原子提交 |
+| `src/invoice_hub/storage/source_cache.py` | 原始副本预算、LRU 自动回收与活动预览租约保护、孤儿/中断残留与旧汇总代际回收（ENG-09） |
+| `src/invoice_hub/extraction/ocr_client.py` | PaddleOCR 官方 API / 自建 HTTP 客户端、内容哈希 SQLite 结果缓存与发票算术/税率严格校验（OCR-01） |
+| `tests/test_cache_governance.py` | ENG-09 完整代际、ParseCache 与服务器来源缓存 LRU/租约保护/中断恢复回归 |
+| `tests/test_ocr_paddle.py` | OCR-01 PaddleOCR 官方/自建、密钥隔离、哈希缓存、字段校验、错误诊断与社保截图识别测试 |
 | `src/invoice_hub/services/source_worker.py` | spawn 来源 I/O、单/批量下载与按目录范围的只读票头/成本汇总（混合目录容错、跳过 `._*`） |
 | `src/invoice_hub/services/sources.py` | 独立 SourceProfile、按目录汇总与多维筛选/排序/分页、勾选合计拆组、多文件预览租约与续租 |
 | `src/invoice_hub/api/routes/sources.py` | 来源 API、已挂载共享枚举、同源写入与原生 picker 门禁，不透明条目授权 |

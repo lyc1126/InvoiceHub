@@ -26,6 +26,30 @@
       <div class="page-title"><h2>OCR</h2><p id="ocrStatus">正在读取 OCR 状态...</p></div>
     </section>
     <section id="ocrBanner" class="banner banner--muted"></section>
+    <section class="panel" style="margin-bottom:16px">
+      <div class="panel__head"><h3>OCR 提供方设置（PaddleOCR 官方 API / 自建服务）</h3><div id="ocrTokenBadge" class="panel__meta">默认关闭</div></div>
+      <div class="toolbar" style="flex-wrap:wrap;gap:10px;align-items:center">
+        <label>提供方
+          <select id="ocrProviderMode" class="input" style="width:auto">
+            <option value="disabled">关闭（默认）</option>
+            <option value="paddle_api">PaddleOCR 官方 API（星河社区）</option>
+            <option value="paddle_self_hosted">自建 PaddleOCR 服务（本机/内网）</option>
+          </select>
+        </label>
+        <label style="flex:1;min-width:240px">服务地址
+          <input id="ocrEndpointUrl" class="input" type="url" placeholder="自建填 http://127.0.0.1:8866/ocr；官方 API 留空用默认地址">
+        </label>
+        <label style="min-width:220px">Access Token（仅存本机受保护密钥文件）
+          <input id="ocrAccessToken" class="input" type="password" autocomplete="off" placeholder="留空保持不变">
+        </label>
+        <button id="saveOcrSettingsBtn" class="btn btn--primary" type="button">保存设置</button>
+        <button id="clearOcrTokenBtn" class="btn btn--ghost" type="button">清除令牌</button>
+      </div>
+      <div id="ocrCloudNotice" class="panel__meta" style="margin-top:8px;display:none">
+        <label><input id="ocrCloudConsent" type="checkbox"> 我已知晓：启用 PaddleOCR 官方 API 会将所选图片发送至云端识别（按文件哈希缓存避免重复计费，令牌不进明文配置与诊断包）。</label>
+      </div>
+      <div id="ocrCompanyOptIn" class="panel__meta" style="margin-top:6px;display:none"></div>
+    </section>
     <section class="dashboard-grid">
       <article class="panel">
         <div class="panel__head"><h3>单文件识别</h3><div id="selectedFile" class="panel__meta">未选择文件</div></div>
@@ -35,6 +59,7 @@
           <button id="copyTextBtn" class="btn btn--ghost" type="button">复制结果</button>
         </div>
         <textarea id="ocrText" class="input" spellcheck="false" placeholder="OCR 结果"></textarea>
+        <div id="ocrExtractedSummary" class="panel__meta" style="margin-top:8px"></div>
       </article>
       <article class="panel">
         <div class="panel__head"><h3>候选文件</h3><div id="folderPath" class="panel__meta path-inline">当前发票目录</div></div>
@@ -51,6 +76,6 @@
   {{system_controls}}
   <script src="/static/js/common.js?v=20261114-workspace-skin-isolation-1"></script>
   <script src="/static/js/system-controls.js?v=20260907-desktop-integrated-2"></script>
-  <script src="/static/js/page-ocr.js?v=20260717-settings-macos-sync"></script>
+  <script src="/static/js/page-ocr.js?v=20261124-ocr-paddle-1"></script>
 </body>
 </html>

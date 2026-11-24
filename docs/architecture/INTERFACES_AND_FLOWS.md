@@ -684,16 +684,16 @@ python -m invoice_hub.bank.voucher_cli export --company <公司资料夹> [--dra
 | `POST /api/v1/bridge/stop` | `bridge_stop` | 请求 daemon 停止，超时后可强制终止 | 首页、设置；不停止 WebUI |
 | `POST /api/v1/bridge/open-log` | `open_monitor_log` | 打开业务监控日志 | 设置页 |
 | `POST /api/v1/bridge/open-runtime-dir` | `open_runtime_dir` | 打开当前运行状态目录 | 设置页 |
-| `GET /api/v1/ocr/settings` | `ocr_settings` | OCR 能力与候选目录 | OCR/设置；未启用能力 |
-| `PUT /api/v1/ocr/settings` | `ocr_settings` | 当前不保存专用 OCR 配置，只回传状态 | 兼容占位 |
-| `GET /api/v1/ocr/service-status` | `ocr_service_status` | `enabled=false` 等禁用状态 | OCR/设置 |
-| `POST /api/v1/ocr/service-start` | `ocr_service_status` | 不启动服务，只回传禁用状态 | 兼容占位 |
-| `POST /api/v1/ocr/service-stop` | `ocr_service_status` | 不停止独立 OCR，只回传禁用状态 | 兼容占位 |
+| `GET /api/v1/ocr/settings` | `ocr_settings` | OCR 能力、脱敏后的配置（`provider_mode`/`endpoint_url`/`timeout_seconds`/`cloud_consent_acknowledged`/`enabled_companies`/`token_configured`/`ready`）与候选目录；永不回传明文 token | OCR/设置 |
+| `PUT /api/v1/ocr/settings` | `update_ocr_settings` | 保存非秘密配置到 `runtime/ocr-settings.json`，token 单独写入 `runtime/.ocr-secrets.json`（`0o600`）并支持 `clear_token`；经同源写请求保护与 URL/凭据校验 | OCR/设置；非法参数 `400` |
+| `GET /api/v1/ocr/service-status` | `ocr_service_status` | 返回当前 OCR 提供方模式（`disabled`/`paddle_api`/`paddle_self_hosted`）、`ready` 与运行态摘要 | OCR/设置 |
+| `POST /api/v1/ocr/service-start` | `ocr_service_status` | 不拉起本地 OCR 进程，返回当前配置就绪状态 | 兼容占位 |
+| `POST /api/v1/ocr/service-stop` | `ocr_service_status` | 不停止独立 OCR 进程，返回当前配置状态 | 兼容占位 |
 | `POST /api/v1/ocr/open-log-dir` | `open_ocr_log_dir` | 打开候选诊断目录 | OCR 页 |
 | `POST /api/v1/ocr/pick-file` | `pick_ocr_file` | 原生文件选择器 | OCR 页 |
 | `POST /api/v1/ocr/pick-folder` | `pick_ocr_folder` | 原生目录选择器 | OCR/设置 |
 | `POST /api/v1/ocr/list-files` | `list_ocr_files` | 枚举候选目录支持文件 | OCR 页 |
-| `POST /api/v1/ocr/extract-text` | `ocr_extract_text` | 当前返回未内置提示 | OCR 页 |
+| `POST /api/v1/ocr/extract-text` | `ocr_extract_text` | 按当前配置调用 PaddleOCR 官方 API 或自建 HTTP 服务并命中 `runtime/ocr-cache.sqlite3` 内容哈希缓存，附带经规则校验的发票结构化字段；未启用返回 `ocr_disabled` | OCR 页；鉴权/限流/超时/网络错误返回脱敏 `error_code` |
 | `POST /api/v1/ocr/local-smoke` | 路由常量响应 | 始终 `ok=false`，说明 core 未内置 OCR | 未启用能力 |
 | `GET /api/v1/consistency-report` | `consistency_report` | `only_mismatch` 查询；同票多格式字段对照 | 一致性页 |
 | `GET /api/v1/tasks/{task_id}` | `get_task` | SQLite task 状态与 detail | 不存在 `404` |

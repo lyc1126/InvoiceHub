@@ -36,7 +36,13 @@ from invoice_hub.services.invoice_selection import (
 from invoice_hub.services.source_worker import worker
 from invoice_hub.storage.files import atomic_write_json
 from invoice_hub.storage.source_adapters import SourceError, discover_mounted_shares
-from invoice_hub.storage.source_cache import DEFAULT_BUDGET, cache_path
+from invoice_hub.storage.source_cache import (
+    DEFAULT_BUDGET,
+    cache_path,
+    cache_usage,
+    evict_objects,
+    prune_summary_generations,
+)
 
 RUNNING = {"connecting", "scanning", "downloading", "parsing", "publishing"}
 BLOCKED = {"auth_required", "host_key_changed", "root_changed"}
@@ -207,6 +213,22 @@ class SourceService:
         atomic_write_json(self.registry, {"version": 1, "sources": list((self.profiles if profiles is None else profiles).values())})
         os.chmod(self.registry, 0o600)
 
+    def _active_pinned_objects(self, sid) -> set[str]:
+        """Collect object keys currently held by live preview leases and prune expired leases."""
+        pinned: set[str] = set()
+        for job, lease in list(self.leases.items()):
+            if lease[0] != sid:
+                continue
+            try:
+                self.previews.get_job(job, renew=False)
+            except FilePreviewError:
+                self.leases.pop(job, None)
+                continue
+            for _eid, info in lease[1]:
+                if isinstance(info, dict) and info.get("object"):
+                    pinned.add(str(info["object"]))
+        return pinned
+
     def _public(self, profile):
         result = {key: value for key, value in profile.items() if key not in {"host_key", "candidate_keys"}}
         result["fingerprints"] = list(profile.get("candidate_keys", {}))
@@ -219,6 +241,7 @@ class SourceService:
                       scan_complete=bool(snapshot), coverage=snapshot.get("strength", ""),
                       cached_count=len(snapshot.get("cached", {})), entry_count=len(snapshot.get("entries", [])),
                       summarized_scopes=sorted(summaries),
+                      cache_usage=cache_usage(self._dir(profile["id"])),
                       modules={"source_summary": True, "company_modules": False})
         return result
 
@@ -284,6 +307,20 @@ class SourceService:
             if type(budget) is not int or not 64 * 1024**2 <= budget <= 10 * 1024**3:
                 raise SourceError("缓存预算须在 64 MiB—10 GiB。")
             profile.update(binding=binding, cache_budget=budget, revision=profile["revision"] + 1, summary="", summaries={})
+            # Reclaim superseded summary generations and excess unpinned objects right away
+            # when budget is lowered or settings reset summaries, while protecting live preview leases.
+            snapshot = self.snapshots.get(sid) or {}
+            cached = snapshot.get("cached")
+            if isinstance(cached, dict):
+                eviction = evict_objects(
+                    self._dir(sid),
+                    cached,
+                    budget=budget,
+                    pinned_objects=self._active_pinned_objects(sid),
+                )
+                if eviction["evicted_entries"] and snapshot.get("generation"):
+                    atomic_write_json(self._dir(sid) / "snapshot.json", snapshot)
+            prune_summary_generations(self._dir(sid), set())
             self._save()
             return self._public(profile)
 
@@ -312,6 +349,8 @@ class SourceService:
             if kind != "probe" and profile["protocol"] == "sftp" and not profile.get("host_key"):
                 raise SourceError("请先读取并确认主机密钥指纹。", "auth_required")
             data = {"entries": snapshot.get("entries", []), "cached": snapshot.get("cached", {}),
+                    "all_cached": snapshot.get("cached", {}),
+                    "pinned_objects": sorted(self._active_pinned_objects(sid)),
                     "generation": snapshot.get("generation", ""), "verify": verify, "full": full}
             if kind == "download":
                 batch_ids = list(dict.fromkeys(entry_ids or []))
@@ -450,7 +489,9 @@ class SourceService:
             if data["generation"] != snapshot.get("generation"):
                 raise SourceError("来源代际已变化，迟到任务未发布。", "revision_conflict")
             if kind == "download":
-                if "cached_map" in result:
+                if isinstance(result.get("all_cached"), dict):
+                    snapshot["cached"] = result["all_cached"]
+                elif "cached_map" in result:
                     snapshot.setdefault("cached", {}).update(result["cached_map"])
                 else:
                     snapshot.setdefault("cached", {})[data["entry"]["id"]] = result["cached"]
@@ -471,6 +512,24 @@ class SourceService:
         self._save({**self.profiles, sid: updated})
         profile.update(updated)
         self.snapshots[sid] = snapshot
+        # Best-effort post-commit garbage collection: reclaim orphan objects and superseded
+        # summary generations without blocking or touching active preview leases.
+        try:
+            active_gens = {g for g in (updated.get("summaries") or {}).values() if g}
+            if updated.get("summary"):
+                active_gens.add(updated["summary"])
+            prune_summary_generations(self._dir(sid), active_gens)
+            if isinstance(snapshot.get("cached"), dict):
+                eviction = evict_objects(
+                    self._dir(sid),
+                    snapshot["cached"],
+                    budget=updated.get("cache_budget", DEFAULT_BUDGET),
+                    pinned_objects=self._active_pinned_objects(sid),
+                )
+                if eviction["evicted_entries"] and snapshot.get("generation"):
+                    atomic_write_json(self._dir(sid) / "snapshot.json", snapshot)
+        except OSError:
+            pass
 
     def cancel(self, sid, *, disconnect=False):
         with self.lock:

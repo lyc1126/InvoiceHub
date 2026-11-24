@@ -1,111 +1,6 @@
 # InvoiceHub Agent 工程任务导航
 
-## 2026-11-23 BUG-06 服务品目与凭证库存
-
-先读[做账规则](rules/BOOKKEEPING.md)、[成本规则](rules/COST_ANALYSIS.md)、[页面规则](rules/WEB_UI.md)及本页银行/公司/成本任务行。入口为 `bank/voucher_items.py`、`vouchers.prepare/build_drafts` 和 `company_views._voucher_invoice_inputs → company_vouchers.generate_draft/rebook_invoice`；不从服务毛利文件生成分录，不扩展完整服务科目引擎。
-
-最低运行 `test_voucher_item_types`、`test_bank_vouchers`、`test_company_voucher_generate`、`test_company_vouchers`、`test_company_inventory`、`test_company_views`、成本 V2 与 API/文档相邻回归、Ruff 和 Python 编译；跨模块改动跑全量 pytest。覆盖混合票 200+30、精确映射/习惯和别名、不可用/库存/矛盾科目、整月导出拦截、纯货物兼容、历史及混合销项数量、代际与来源映射切换、改记入期、坏/未来状态和生成期间目录替换。隔离浏览器核对服务行金额、缺编码审核拒绝、确认科目通过及浅深/390/no_skin；现有 P3/成本浏览器做相邻回归。真实默认配置、Windows BAT、正式前台、原生选择器、Tauri/打包与真实账套另验。
-
-<a id="task-browser-e2e"></a>
-
-## 2026-11-22 ENG-05 合成浏览器门禁
-
-先读[页面规则](rules/WEB_UI.md)、[监控规则](rules/MONITORING.md)及[运行说明](../BROWSER_E2E.md)；成本/P3 业务变化再读所属成本/做账/税务规则。入口是 `browser_e2e.mjs`、共享 `browser_e2e_support.mjs`、三组 `*_e2e.mjs`/夹具、CI 的 browser-e2e 作业和独立 Linux x64 哈希锁。首页局部刷新联动 `page-index`、`index.html` 的资源版本与前端契约。
-
-最低运行 `test_browser_e2e`、前端/API/渐进加载/勾选相邻测试、Node 交互、Vue typecheck/test/build、Ruff/编译、文档与差异检查；`pnpm --dir frontend run test:e2e --repeat 3 --verify-refresh-guard` 须三组各自独立通过，重绘注入须失败于指定断言。检查 trace、日志与截图，确认临时根和子进程收束；默认源码 localhost 另核对实际资源与 no_skin。GitHub Linux/配套 Chromium、真实业务/Windows/原生/成品未跑须逐项披露，工作流接线不算远端连续通过。既有历史切片的“CI/旧首页待做”以本节当前进度为准。
-
-## 2026-11-21 成本 V2 开发范围收尾
-
-服务收入/项目毛利、实际统一加价率、同物异名命中 `cost_item_types`、`cost_reports`、`CostItemTypes.vue`、`CostAnalysis.vue`；完整读取[成本规则](rules/COST_ANALYSIS.md)、[页面规则](rules/WEB_UI.md)、[监控规则](rules/MONITORING.md)与下方成本任务行。品目类型属于既有品目表，确认归类会刷新兼容工作簿，须与监控共锁；报价/分析/提示保持只读。
-
-最低新增 `test_cost_v2_completion` 与 `cost-v2-completion.spec.ts`：同月双项目/跨月、缺成本与零、未归属/过期来源、别名组/状态保护、原月成本样本与未知阻断、规格E/单位边界及证据不改价。相邻成本、库存、公司、凭证、API/文档契约，Vue typecheck/test/build、Node脚本语法、全量pytest/Ruff/编译。重建后运行 `scripts/dev/cost_v2_e2e.mjs`（配 `cost_v2_fixture.py`），从真实Vue/FastAPI复验服务归类、毛利、提示、报价→归档响应丢失→原ID查询→下载冻结金额，浅深/390/no_skin及当前资源哈希；支持 `COST_V2_E2E_CDP` 和 `COST_V2_E2E_OUTPUT`，收尾清理输出。真实默认配置、Windows正式BAT、正式前台、原生选择器、Tauri附件/打包继续单独验收。
-
-## 2026-11-21 成本 V2 前端工作台
-
-接手后的恢复回归：`frontend/tests/cost-v2.spec.ts` 覆盖归档未知期间禁止新 ID、重新试算保留查询入口、查询失败保持锁定、规则/迁移同版本成功读回解锁与迟到预览作废。浏览器另用隔离合成服务注入“已落盘但响应丢失 / 未落盘失败”，核对请求次数、显式重新预览确认、下载与浅深/390px/no_skin；不以此替代真实配置或 Tauri 验收。
-
-前端任务定位 `frontend/src/api/costV2.ts`、`CompanyCostsV2.vue` 与八个 `Cost*.vue`，并联动 `WorkspaceModule` 成本模块与后端 `company_costs.migration/_preview` 和 `cost_export.migration_workbook`。完整读取[成本规则](rules/COST_ANALYSIS.md)与[页面规则](rules/WEB_UI.md)。最低验证：`tests/test_company_costs.py`（迁移/清单/导出）、相邻成本 pytest、`frontend` 的 vitest 全量与 `vue-tsc`、`vite build` 后 `test_workspace_frontend`/`test_frontend_contract`；真实验收需浏览器前台跑报价→归档→导出、迁移确认与 Tauri 附件下载。
-
-## 2026-11-21 成本 V2 核对、归档与分析
-
-成本任务扩展到共享 `bank/stock_mapping.py` 及独立 `cost_inventory/cost_records/cost_service_costs/cost_reports/cost_export` 服务，路由仍在成本领域。先读[成本规则](rules/COST_ANALYSIS.md)、[做账规则](rules/BOOKKEEPING.md)、[V2 当前实现](../COST_ANALYSIS_V2_DESIGN.md)和下方成本/公司/做账任务行；接口、数据、文件、注释原因分别查对应地图。下方日期是历史阶段状态。
-
-最低测试在首批清单上增加 `test_cost_v2_extensions`、`test_bank_vouchers`：必须覆盖账面少出库 N/金额差、无基线/缺月/重复读回/单位冲突不冒零、科目变更显式重绑、比较与草稿同源、原请求归档重放及变更拒绝、源移走后查历史、归档版导出/公式文本、服务成本来源与并发修订、跨客户/项目分位守恒、当前月暂计和未来期间拒绝。前端/工作簿迁移及真实/双平台验收仍待单独完成，不将本地后端视为 V2 全量交付。
-
-## 2026-11-20 成本 V2 第二批定价规则
-
-在下方首批入口增加 `cost_pricing._normalize_tiers/normalize_market_reference` 与 `company_costs._quote` 的 tier_amount/market_reference。完整读取[成本规则](rules/COST_ANALYSIS.md)、[V2 当前实现](../COST_ANALYSIS_V2_DESIGN.md)与本页成本任务行。最低测试沿用首批列表，额外覆盖数量/金额阶梯边界、嵌套/非法档位、人工行情有效期、未知成本、取整后最低加价、含税守恒，以及上下文变化拒存/规则读回/只读/v1 保留。无前端改动，不把六类后端完成当 V2 页面或完整分析完成。
-
-## 2026-11-19 成本 V2 首批后端
-
-命中公司定价、结存成本、规则试算/保存时，完整读取[成本规则](rules/COST_ANALYSIS.md)和 [V2 当前实现](../COST_ANALYSIS_V2_DESIGN.md)，并按下方成本/公司/监控任务行联动。入口为 `cost_pricing.py`、`company_costs.py`、`api/routes/costs.py` 与 `CostProjectionService.read_pricing_inputs`；库存仍复用 `company_inventory → bank.vouchers.cost_of_sales`，不在 V2 另写库存算法。
-
-最低验收：`test_cost_pricing`、`test_company_costs`、`test_summary_and_costs`、`test_company_inventory`、`test_company_views`、`test_api_companies`、`test_api_contract`、`test_incremental_projections`、`test_progressive_loading` 与文档契约；覆盖 Decimal 手算/税额守恒、规则期间与优先级、历史身份、同代际/只读、快照保留、来源/目录替换、公司隔离与同进程并发冲突。前端/工作簿未切到 V2，真实默认配置、Windows BAT、正式前台/原生/打包另验。
-
-## 2026-11-19 应用内建议与反馈
-
-命中反馈按钮、Issue、中转或 About 技术详情时，完整读取[页面规则](rules/WEB_UI.md)和[反馈设计](../FEEDBACK_DESIGN.md)。入口为 `services/feedback.py`、`api/routes/feedback.py`、FeedbackDialog、App navigate、设置模板/脚本与 `integrations/feedback-relay/`；不触碰 update/install，也不把反馈服务当业务云部署。
-
-最低验收：`test_feedback.py`、前端反馈组件与 App/modules 回归、关于/工作区/API/文档契约、Node bridge/交互、Vue typecheck/test/build、Ruff/Python 编译；跨模块完整 pytest。隔离浏览器核对按钮位置、技术详情默认折叠与展开、实际提交/未知只查询、草稿、浅深/390/no_skin 与已服务的新资源。公网/真实 GitHub、真实默认配置、Windows BAT、原生/前台及成品另验；未部署不得声称渠道已开通。
-
-## 2026-11-19 WS-01—05 功能补齐
-
-候选目录和工资计提完整读取[做账规则](rules/BOOKKEEPING.md)与[页面规则](rules/WEB_UI.md)，并读下方公司清单/银行任务行。WS-01、03、04 的既定核心范围已实现，皮肤重新启用、非监控原票操作、OCR 与完整税务引擎仍遵守各自边界。
-
-| 问题 | 入口与联动 | 最低验收 |
-| --- | --- | --- |
-| WS-02 同类候选选择 | company_registry.detect_subdir_options → company_detection → CompanyCreateForm；沿用登记与创建计划 | test_api_companies 多候选不猜/标准目录/候选替换/只读；company-setup.spec.ts 部分选择/迟到响应；目录保护和 setup 相邻回归 |
-| WS-05 工资表与应发计提 | bank/salary → company_salary → company_workspace → CompanySalary/CompanyPayroll；bank/vouchers.prepare/build_drafts 与 CLI | test_company_salary 解析/坏值/同月多源/来源与目录失效/CAS/同源/并发/缺科目/已入账跳过/社保不双扣/CLI一致；company-salary.spec.ts 断网查询/冲突/隐私/分页/来源切换；工资社保、草稿、导出、公司/API 相邻回归 |
-
-前端 typecheck/test/build、后端全量 pytest、Ruff/编译、Node、文档契约与链接检查；合成浏览器点击登记→工资确认→生成/读取凭证，浅/深/390/no_skin。真实默认配置、正式 Windows BAT、浏览器前台拉起、原生选择器、Tauri/打包成品均另验。
-
-## 2026-11-19 WS 现有后端收尾入口
-
-社保确认 / 草稿衔接完整读取[做账规则](rules/BOOKKEEPING.md)，留抵链完整读取[税务规则](rules/TAX_WORKBENCH.md)；接口与数据地图同日小节定义当前保护。入口是 `company_payroll.py`、`company_files.DRAFT_WRITE_LOCK`、`company_vouchers.py` 与 `company_tax.py`。
-
-最低回归：`test_company_payroll.py` 的坏状态保留 / 非法数值 / 同源拒绝 / 整批不写 / 并发 CAS / 与生成共锁 / 路径替换；`test_workspace_p2.py` 的连续留抵异常、缩小窗口、修正后恢复与断档；相邻 `test_company_vouchers.py`、`test_company_voucher_generate.py`、`test_bank_vouchers.py`、P3 与公司 / API 契约，文档链接和 Python 编译。完整 pytest 的源码导入若依赖 `PYTHONPATH`，使用 `PYTHONPATH="$PWD/src"`；相对 `src` 在 daemon 改 cwd 后无法定位当前源码。真实 / Windows / 原生 / 成品验收仍独立。
-
-## 2026-11-17 P3 第 1—6 项任务入口
-
-| 问题 | 入口与联动 | 最低验收 |
-|---|---|---|
-| B7.1/2/3 逐文件识别、固定账号、CLI/草稿复用 | bank/layouts、workpaper、vouchers、__main__；company_bank_layouts/company_bank_recognition/company_bank；做账规则 | test_workspace_p3、workspace_p2、bank_workpaper/bank_vouchers、company_bank/company_settlement/company_voucher_generate；账号冲突、页脚、32文件/超时、缓存失效、自定义目录一致 |
-| WS-10 凭证结构与库存/社保 | company_vouchers/company_voucher_rows → CompanyVouchers、CompanyInventoryResult/CompanyCompare、CompanyPayroll、WorkspaceModule；页面与做账规则 | 证据/其它表、非法结构422/原子拒绝、重审与导出相邻、Vue未知保存锁定；库存异常不隐藏、所选社保属期 |
-| B8.1 依据/税率与完整合计 | company_tax/company_tax_rules → CompanyTax；税务规则及政策来源待签署清单 | 独立Decimal例、未签署不自动金额、null不冒零、同源快照与排除所得税 |
-| ENG-05 P3 切片 | scripts/dev/workspace_p3_fixture.py、workspace_p3_e2e.mjs | 前端 typecheck/test/build；PYTHONPATH=src pytest；Node交互；真实Chromium映射/结构保存/税费/浅深390px/no_skin，零控制台错误 |
-
-浏览器运行有两种方式：能自行启动 Chrome 的环境（Codex、普通终端）用 `PLAYWRIGHT_MODULE=<已安装playwright模块> node scripts/dev/workspace_p3_e2e.mjs`；禁止在 Agent 进程树里启动 Chrome 的本机环境，加 `P3_E2E_CDP=<本机CDP辅助命令输出的地址>` 连接已运行的默认 Chrome，脚本只关闭自己创建的 context。就绪探测走浏览器，Agent 沙箱拦截 Node 回环连接时也能运行。夹具用临时独立配置，不读取真实默认资料；输出默认为 `output/playwright/workspace-p3`，收尾清理。无新依赖安装或 CI 声明；ENG-05 其余范围、WS-08/09 和真实/原生/Windows/成品验收另做。
-
-## 2026-11-17 P2 任务补充
-
-命中标签/凭证墙/公司银行版式/税费记录时读公司清单、银行、工作区前端与税务任务行。入口为 `company_views.py`、`company_settlement.py`、`api/routes/company_workspace.py`、`company_bank_layouts.py`、`company_files.py`、`company_tax.py`、`bank/layouts.py` 及 `BankLayouts.vue`/`CompanyTax.vue`。
-
-最低新增 `tests/test_workspace_p2.py`、`frontend/tests/workspace-p2.spec.ts`；相邻覆盖标签、公司视图/项目/往来/银行/抵扣/凭证/API，同跑 Vue typecheck/test/build、Node 交互、文档契约与链接检查。浏览器核对浅色/深色/390px/no_skin、原始行样例、断点禁存、未知保存仅查询和 null/零区别。真实资料/Windows/原生/成品另验。B8 手工记录基础不等于完整税务工作台，BANK-01 的 CLI/凭证生成、OFD/OCR 等仍待实施。
-
-## 2026-11-17 P1 补充任务行
-
-| 问题 | 入口与联动 | 最低验收 |
-|---|---|---|
-| 标签筛选统计、十进制同票合计 B1 | `services/invoice_list.py`、`company_views.py`、DirectoryInvoices；遵守页面规则 | invoice_tags/company_views/progressive_loading/API contract；Vue 标签筛选与旧数字兼容 |
-| 公司资料夹只读检测及选中补建 B2 | `services/company_detection.py` → registry/routes → CompanyCreateForm；遵守页面与目录身份规则 | API detect无写/替换409/只建所选/重复查询；Vue 未知响应与原生取消草稿 |
-| 凭证期间与导出预览 B4 | `company_vouchers.py`、`company_export_jobs.py`、`bank/jierui.py/export_profiles.py`、CompanyVouchers；完整读取做账规则 | 月份/预览无副作用/API回执/整月阻断/格式 golden；Vue月份与未知响应；合成双外观/390px |
-| 公司成本只读口径 B6 | `targets/companies.py`、所有 CostProjectionService/MonitorSynchronizer 构造、company_views/routes、page-costs；完整读取成本与监控规则 | company_views/summary_and_costs/API与monitor相邻回归；来源缓存失效、身份期间/回退、Vue只读显示；合成双外观 |
-
-
-<a id="task-source-cache"></a>
-
-## 服务器链接、增量汇总与期初（2026-11-19）
-
-遇到 SMB/SFTP/SSH、服务器文件右栏、远程预览、断连缓存或增量汇总，先读 [WS-08](../PRODUCT_BACKLOG.md#ws-08)、[WS-09](../PRODUCT_BACKLOG.md#ws-09) 与[设计当前实现 §0](../SERVER_CONNECTION_AND_CACHE_DESIGN.md)，完整读取监控/页面/提取/成本规则及本页目录、监控、预览任务行；平台能力变更再读宿主/Windows 规则。原型不再代表生产连接器的实现状态，真实服务器验收不能由合成协议测试替代。
-
-| 问题 | 入口与联动 | 最低验收 |
-| --- | --- | --- |
-| WS-06 非监控批量标签 | DirectoryInvoices、invoice_tags、公司目录列表；做账/页面规则 | directory-preview.spec.ts、invoice_tags/company_views；跨页/全选/清单刷新，源文件动作仍禁用；真实点击/键盘打开菜单，选择条不得遮挡，窗口边界可达 |
-| WS-07 期初、历史身份和确定性匹配 | company_opening、company_views/settlement/inventory、targets/companies、cost_analysis/costs；做账/成本规则 | test_company_opening、workspace_prototype_ledger、company_ledger/settlement/inventory/views、summary_and_costs；坏文件保留、覆盖期、历史未知、预付款及身份到期 |
-| WS-08 原始解析与完整代际 | parse_cache、generations、incremental → monitor/手动重建 → invoice_list/costs/documents/company_views/company_vouchers | test_incremental_projections、monitoring、progressive_loading、summary_and_costs、documents、selection_workflow、company_voucher_generate/API；10,000 文件、增删改与全量一致、路径别名与异根拒绝、失败/手改/导出恢复/迟到结果 |
-| WS-09 来源与隔离预览 | source_adapters/source_cache、source_worker/SourceService、api/routes/sources → stores/sources、ServerConnectModal、ServerSourcesPanel、ServerDirectoryPanel/SelectionBar/PreviewDrawer | test_server_sources、test_sftp_source、server-sources.spec.ts、file_preview/API；源隔离、按目录范围汇总、混合目录容错、多维筛选排序/勾选拆组/批量预览租约、取消/超时/重启、无号票、坏包/版本/指纹、失败先落盘与只读边界 |
-
-跨模块收尾跑绝对 `PYTHONPATH="$PWD/src"` 的完整 pytest、Ruff、Python 编译、Vue typecheck/test/build、Node 交互、文档契约/本地链接与 diff 检查。隔离合成 localhost 的真实浏览器核对浅/深/390px/no_skin、非监控标签、来源目录/汇总/预览、侧栏拖宽与两种面板边界、控制台及迟到响应；不读取真实默认配置。真实 SMB/SFTP/SSH Agent、Windows BAT、正式前台拉起、原生选择器、Tauri/打包成品分别记录，未执行不得宣称通过。可靠游标、公司模块消费和历史缓存容量治理仍见后续待办。
+> **按当前状态导航**（历史开发日志已统一收拢至 [CHANGELOG.md](../../CHANGELOG.md)，本页按问题直接定位修改入口与最低验收）
 
 <a id="quick-lookup"></a>
 
@@ -142,6 +37,20 @@
 | 跨 Agent 接手、线程链接/ID、摘要 token、写盘、检查点、便携工具 | [交接协议](../AGENT_HANDOFF.md) | [开发工具交接](#task-handoff) |
 | 规则重组、文件地图、文档契约与注释维护 | AGENTS.md 与被修改专题 | [15. 测试与文档治理](#task-governance) |
 | 未来功能、设计稿与原型、待开发优化、待修复缺陷、下个版本做什么、需求登记与排期 | [未来工作总览](../PRODUCT_BACKLOG.md)（先看“设计稿与原型索引”，再按条目编号查找，读条目“影响范围”列出的功能规则） | 条目内“影响范围”与对应任务行 |
+| 服务器链接（SMB/SFTP）、增量缓存与容量治理（WS-08/09、ENG-09） | [监控](rules/MONITORING.md)、[页面](rules/WEB_UI.md) | [服务器链接与增量缓存](#task-source-cache) |
+| 合成浏览器 E2E 门禁（ENG-05） | [页面](rules/WEB_UI.md)、[监控](rules/MONITORING.md) | [合成浏览器 E2E](#task-browser-e2e) |
+
+<a id="task-source-cache"></a>
+
+### 服务器链接、增量汇总与容量治理（WS-08/09、ENG-09）
+
+入口：`storage/parse_cache.py`、`storage/generations.py`、`storage/source_cache.py`、`projections/incremental.py`、`services/source_worker.py`、`services/sources.py`、`api/routes/sources.py` 及 Vue `stores/sources.ts` / `Server*` 组件。最低验收：`test_cache_governance`、`test_incremental_projections`、`test_server_sources`、`test_sftp_source`、`server-sources.spec.ts`、`test_company_refresh`。
+
+<a id="task-browser-e2e"></a>
+
+### 合成浏览器 E2E 门禁（ENG-05）
+
+入口：`scripts/dev/browser_e2e.mjs`、`browser_e2e_support.mjs`、三组 `*_e2e.mjs` 与 CI `browser-e2e` 作业，详见 [浏览器回归说明](../BROWSER_E2E.md)。最低验收：`test_browser_e2e`、`pnpm --dir frontend run test:e2e --repeat 3 --verify-refresh-guard`。
 
 先用本表定位；关键词不明确时运行 `rg -n '<症状或符号>' docs/architecture/`，沿命中规则 → 任务行 → FILE_MAP → 当前源码/测试核实。后端返回字段变更也必须读页面/API 消费规则；涉及宿主、原生能力或成品时，追加对应平台和发行规则。未命中现有行的任务先确认其所属模块，再补导航，不能跳过适用规则。
 

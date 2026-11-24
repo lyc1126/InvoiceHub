@@ -1,130 +1,23 @@
 # InvoiceHub 开发架构与工程导航
 
-## 2026-11-23 版本标注升级为 1.0.0-beta.1
-
-`codex/workspace-p3` 经 PR #32 全量 CI 通过后，单一版本真值 `src/invoice_hub/version.py` 升级为 `PRODUCT_VERSION = "1.0.0-beta.1"`、`PYTHON_PACKAGE_VERSION = "1.0.0b1"`、`UPDATE_CHANNEL = "beta"`，并同步 Tauri 配置、`Cargo.lock`、发布/验包脚本及契约测试；`windows_alpha_metadata.py` 改为跟随 `UPDATE_CHANNEL` 与 `UPDATE_CHANNEL_PRE_RELEASE_KINDS` 校验单平台预发布元数据。稳定 `main` 与正式签名发布基线保持不变，本地重打的 macOS 开发版 `InvoiceHub.app` 仅用于本机实机验收。
-
-## 2026-11-23 凭证草稿按品目隔离服务金额
-
-BUG-06 在既有成本 V2 开发线接入：`bank/voucher_items.py` 严格读取所选来源的品目表并定位已确认非库存科目；`vouchers.prepare/build_drafts` 在品类聚合前解析别名与类型，服务/费用/资产不进入库存数量、历史数量更正或销项成本。工作区生成与改记入期将完整代际 CSV 和来源目录的状态文件成对传入，CLI 保留根 CSV 的相邻状态文件契约。坏状态、冲突和未知科目不回退货物；缺编码由原审核/导出校验阻断。实现、来源保护与测试见五张地图；稳定 main 与发行成品不随本地修复改变。
-
-## 2026-11-22 浏览器门禁与经典首页局部刷新
-
-ENG-05 由 `browser_e2e.mjs` 顺序编排 P3、成本 V2 与经典首页，`browser_e2e_support.mjs` 负责临时资料、真实浏览器、SSE 释放、子进程收束及诊断，Linux 作业只消费合成资料与独立 CI 锁。经典首页的行节点仅为当前页 DOM 缓存，按 target/key/source 隔离，不成为发票真值；勾选不重绘表格，读取保护和后端计算不变。入口、故障检出与未覆盖范围见[浏览器回归说明](BROWSER_E2E.md)，当前本地候选见[分支记录](BRANCH_STATUS.md)；main 与发布基线未改变。
-
-## 2026-11-21 成本 V2 服务与价格提示收尾
-
-新增 `cost_item_types` 通过成本领域路由提供公司级品目类型预览/确认，沿用 `item_catalog` 与 profile 监控写锁，明确服务收入并刷新兼容工作簿；不增加第二份品目主数据。`cost_reports` 增加同月同项目服务毛利及来源、实际加价率一致样本与有界疑似同物异名；Vue `CostItemTypes`/`CostAnalysis` 只消费后端口径。可重复合成浏览器入口为 `scripts/dev/cost_v2_e2e.mjs` 与 `cost_v2_fixture.py`，不扩展 AppState 或 SQLite。开发范围与剩余实机验收见 [V2 当前实现](COST_ANALYSIS_V2_DESIGN.md)及五张地图；稳定 main/发布基线保持不变。
-
-## 2026-11-21 成本 V2 前端工作台
-
-`WorkspaceModule` 的成本模块选中公司时挂载 `CompanyCostsV2`，经 `frontend/src/api/costV2.ts` 调用公司 V2 接口；八个子组件各自持有预览/确认/未知锁，报价/品目/规则共享一次快照，其余标签按 `saved` 计数重读。经典 `/costs` iframe 仍按活动监控目录显示。后端新增只读 `GET …/migration` 与内存 `POST …/migration/export`，规则文件可选 `legacy_migrated`。入口、接口、数据与守护测试见五张地图。
-
-## 2026-11-21 成本 V2 核对、归档与分析
-
-当前开发线增加 `bank/stock_mapping.py` 共享显式库存对照和期初，独立 `cost_inventory/cost_records/cost_service_costs/cost_reports/cost_export` 服务经成本路由接入，不扩展 AppState 或发票主存储。V2、公司进销存与草稿复用科目解析及原月末成本；归档/服务成本写本公司根目录，查询与预览无写入。报价导出消费固定归档，货物毛利按品类月成本分摊到客户/项目且金额守恒，服务成本单列。结构、接口、文件协议和最低测试见五张地图及 [V2 当前实现](COST_ANALYSIS_V2_DESIGN.md)；旧 v1/工作簿/已开快照未切换，稳定 main 与发布基线未改变。下方日期保留当时状态。
-
-## 2026-11-20 成本 V2 第二批规则
-
-`cost_pricing` 增加阶梯与人工市场参照，`company_costs._quote` 传递单行基准金额和带来源/有效期的市场依据；仍使用既有四个 V2 接口、独立规则文件和同一库存算法，不新增行情服务。试算上下文绑定确认，市场底线优先于取整；入口与保护见五张地图和 [V2 设计](COST_ANALYSIS_V2_DESIGN.md)。六类规则后端已实现，前端/工作簿、完整分析及依据归档仍待做；稳定 main 与发布基线未改变。
-
-## 2026-11-19 成本 V2 首批后端
-
-当前获授权的 `codex/workspace-p3` 开发线新增独立 `services/cost_pricing.py` 与 `services/company_costs.py`，通过既有成本路由提供公司级 V2 读取、报价、规则试算及确认保存。共享 `company_inventory → cost_of_sales` 的品类 + 单位月末加权，不按规格重建库存；旧 `/costs`、v1 API、工作簿和已开快照保持原契约。规则另存公司成本目录，不随 monitor 投影重建而改写。当前实现/剩余前端、分析页、科目映射与第二批规则见 [V2 设计](COST_ANALYSIS_V2_DESIGN.md)及 COST-06；详细契约、算法、保护与测试入口同步五张架构地图。未提交、未合并或发布，不改变稳定 main 和成品基线。
-
-## 2026-11-19 可选产品反馈
-
-用户授权沿 `codex/workspace-p3` 既有开发线局部增加 About 反馈入口与默认折叠技术详情。Vue FeedbackDialog 复用 WsModal；本机独立 `services/feedback.py` 与 `api/routes/feedback.py` 由工厂接线。独立 `integrations/feedback-relay/` 只承担用户同意公开的反馈到 GitHub，不消费业务文件，不由桌面启动，不改变 localhost 主产品边界。接口、任务/回执与外部写入保护见对应地图及[反馈设计](FEEDBACK_DESIGN.md)。本轮只做代码与本机合成验收，不部署、不真实写 Issue、不进入稳定 main 或已发布成品。
-
-## 2026-11-19 WS-02/05 补齐
-
-当前 `codex/workspace-p3` 本地开发线新增 `bank/salary.py` 明确工资表核心与独立 `services/company_salary.py`；复用 `company_workspace.py` 线程池/同源路由，未扩 AppState。Vue `CompanySalary` 组合进工资社保页，工资/社保只在明确确认时写同一税文件；页面和 CLI 共用 `vouchers.prepare/build_drafts` 的应发计提，原表 SHA/目录身份失效、坏状态保留和共享 CAS 见接口/数据地图。WS-02 沿原检测/登记链增加候选选择，不增加监控目标、不移动候选目录。稳定 main 与发布基线未变，不把本地功能补齐当作平台或真实业务验收。
-
-## 2026-11-17 工作区 P3 第 1—6 项
-
-开发现场 `codex/workspace-p3`，起点与稳定 main 见 [分支状态](BRANCH_STATUS.md)，尚未集成或发布。银行 `workpaper.discover(profiles=...)` 统一页面、显式公司 CLI 与草稿生成；`company_bank_recognition.py` 提供可终止、有界的请求时识别。`company_voucher_rows.py` 负责审核表结构编辑，仍以导出同一 validator 为准；Vue 库存/社保只消费后端值。税费 `company_tax_rules.py` 只提供未签署候选和审查样例，实时 API 不调用候选算术；完整合计维持 needs_review。合成真后端/Chromium 验收脚本见文件地图与任务导航。WS-08/09 不在本轮范围。
-
-下方 P1/P2 等日期小节为历史阶段记录，当前能力以本节 P3 补充为准。
-
-## 2026-11-17 工作区后端 P2
-
-B3 标签使用计数、B5 凭证墙对流水/项目字段、B7 公司版式映射已在本地接入；B8 已接入独立申报/缴纳记录与明确假设的手工测算，自动政策测算仍待规则复核。开发现场为 `codex/workspace-p2`，稳定 main 基线保持不变（见 BRANCH_STATUS），不冒充已集成。领域路由 `api/routes/company_workspace.py` 组合独立 `company_bank_layouts.py`、`company_tax.py`；`company_files.py` 统一有界无链接读取、revision 与原子替换。银行通用表格算法在 `bank/layouts.py`，仅公司读取器接入，未改变 CLI/凭证生成。前端 `BankLayouts.vue`、`CompanyTax.vue` 只消费后端计算，构建产物由 Vite 生成。完整税务工作台与 BANK-01 剩余范围见待办及规格。
-
-## 2026-11-17 工作区后端 P1
-
-工作分支 `codex/workspace-p1` 接续已存在的工作区开发线，补齐 B1 目录统计、B2 资料夹检测/按勾选补建、B4 期间索引/导出预览与查询回执、B6 公司成本只读口径和销项来源隔离。新增服务与数据契约分别见文件地图、接口与数据地图同日条目。本地开发实现尚未进入稳定 main 或发行成品；P2 与税务实施仍按原待办边界。
-
-
-## 2026-11-16 WS-03 / WS-04
-
-经典项目列经 `CompanyViewService.active_project_fields` 分页后只读附加；比较解释在 `company_compare_details.py` 从算法结果生成。`company_receipts.py` 独立签发公司 / 目录 / 文件版本绑定凭据，复用受限 PNG renderer；Vue 凭证墙每组六项并随标签可见性启停续租。接口、数据与新增文件见对应地图。当前开发范围完成，37 项真实 / 平台验收仍待执行。
-
-## 连接与缓存架构入口（2026-11-19 已有首版实现）
-
-[服务器链接与目录增量缓存](SERVER_CONNECTION_AND_CACHE_DESIGN.md)对应 WS-08/09：现已实现原始解析缓存、完整投影代际、本机独立 SourceProfile、挂载共享/SFTP 只读浏览汇总及隔离预览。monitor 与手动重建共用 `projections/incremental.py`，普通/成本消费者绑定 manifest；固定路径仅兼容导出。服务器连接由可终止 worker 执行，API 锁不覆盖网络 I/O；Vue 右栏边界固定在主内容区。可靠游标、公司模块消费与系统密码凭据引用仍为未来范围。WS-07 的显式期初及历史购入身份与该链同步，入口和最低测试见[任务导航](architecture/AGENT_TASK_MAP.md#task-source-cache)。当前为未发布开发实现，不改变稳定 main 基线。
-
-## 2026-11-14 WS 当前开发范围
-
-WS-02 后端继续补齐补建目录前缀身份、逐层创建与新建登记前复核；嵌套清单 / 任务结构损坏时保留并拒写。WS-01 的 Ink Pulse / Animal Island 经用户确认在工作区隔离，默认浅色 / 深色与独立经典页面保留；集中策略见 `api/workspace.py`，重新启用视觉评估登记在 WS-01。当前分支与 main 不变，验证范围见最新 CHANGELOG。
-
-WS-01 第五阶段已补齐 Vue 临时识别与六个经典模块的独立缓存视图，按用户选择复用现有控制器；首页标签只在首页显示，局部刷新只替换当前视图。隐藏模块暂停 SSE，恢复后复核，来源 / token 与迟到请求保护见接口、数据、文件及设计原因地图。当前开发范围已实现，真实 / 原生 / 双平台成品仍按三轮清单验收。
-
-WS-01 第四阶段在已整合的本地成本开发线接续：`/workspace/*` 与经典页面共用服务端皮肤首屏注入，Vue 采用同一皮肤变量并提供先加载后保存的明暗切换；恢复入口贯穿重定向与经典导航，切换不重建业务视图。前端新入口与保护原因分别见 FILE_MAP 15.1、任务导航 9.2 及 COMMENT_RATIONALE_MAP；真实 / 平台验收仍按三轮清单执行。
-
-多公司工作区、比较、项目、标签与凭证草稿的本地实现已整合到成本开发线，仍未进入稳定 `main` 或已发布成品；精确引用见[分支记录](BRANCH_STATUS.md)。当前实现与开发余项统一见 [WS 状态汇总](../IMPLEMENTATION_STATUS.md)，真实资料与平台验收见[三轮清单](MIGRATION_GAP_CHECKLIST.md#ws-real-acceptance)。下方按日期保留的阶段说明不替代当前汇总，旧阶段的分支名或“未完成”不表示本次引用状态。
-
-## 2026-10-09 双平台集成
-
-渐进读取、临时识别与勾选工作流统一在 `codex/selection-workflow`；稳定main和公开Release保持原状态。Windows回收同时检查操作前保护和实际回收目标；Tauri首页拖入允许导航状态查询但仍固定origin/路径。桌面握手覆盖新增临时识别、分页成本和删除API，图标布局及构建指纹在两端一致。仅对应提交的干净源码进入Mac/Windows包，既有未提交的银行、税务和开发工具不属于本轮产品集成。
-
-## 2026-10-09 勾选操作增强
-
-开发分支 `codex/selection-workflow` 基于 本轮开工时核验的稳定 `main`（起点提交记录在 CHANGELOG 与私有检查点），保留此前未提交工作。本轮实现确认移入原生废纸篓、按项目搜索/税率筛选、汇总来源链接与详情返回恢复、超过100份选择的逐文件预览与序号跳转。删除使用当前目标/源签名及monitor互斥锁，日志仅作操作状态，不是发票主存储；自动删除同步不改变原票。
-
-相关实现/接口/算法/最低验收见[勾选工作流任务导航](architecture/AGENT_TASK_MAP.md#task-selection-workflow)。原有临时识别及渐进读取继续保留；后续双平台集成已修正图标像素及egg-info身份差异，提交、构建与最终验收范围统一见本页双平台集成记录及CHANGELOG。正式Windows BAT、默认业务配置、前台拉起和系统选择器仍需独立验收。
-
-
-## 2026-10-09 临时识别工作区
-
-当前新增工作分支 `codex/temporary-recognition`，起点与保留的既有修改见本轮 CHANGELOG；尚未合并或发布。首页增加独立临时识别弹窗：原生选择或桌面拖入 → 有序短期选择 → 独立 worker → runtime 会话缓存 → 来源复核后展示。历史可重命名，日期右对齐；源失效禁止查看。设置可调整批次上限与自动打开。该链不切换目录、不进入普通汇总/成本/monitor，文件及接口详见架构专题同日条目。
-
-
-## 2026-10-09 渐进读取工作分支
-
-本轮起点为 已核验的本地 `main`（精确起点见本轮 CHANGELOG），实现在 `codex/progressive-data-loading`，尚未合并或发布。首页改为服务端分页；成本页按标签分页读取上次完整快照；首次无正式投影时，普通汇总和成本各自在解析阶段发布只读临时批次。`storage/read_views.py` 管理每个 TargetProfile workspace 中的可重建 SQLite 读取缓存，CSV/XLSX/JSON 与源发票的权威关系不变。单据入库候选提前发布，首页批量入库只准备所选票，出库候选增量更新。接口、缓存代际和保护语义见架构专题同日条目。
+> **当前状态总览**（按日期的历史阶段演进已统一收拢至 [CHANGELOG.md](../CHANGELOG.md)，本页只描述当前架构与有效边界）
+>
+> - **版本与基线**：当前开发线版本真值 [version.py](../src/invoice_hub/version.py) 为 `1.0.0-beta.1`（`UPDATE_CHANNEL = "beta"`）；公开图以经过审计的单一脱敏根提交建立 `main`，精确分支与提交以实时 Git 与 [分支记录](BRANCH_STATUS.md) 为准。
+> - **共享业务核心**：Python/FastAPI `/api/v1` + 独立 monitor daemon + Vue 3 工作区（`frontend/` → `web/static/app/`，桌面默认进入 `/workspace/`，与经典 `/` 互切）+ 经典页面（单据、成本 v1、做账、OCR、一致性、设置）+ 独立产品官网（`/website/`）。
+> - **已落地核心能力**：
+>   - **发票与提取底座**：PDF/OFD/XML 提取与成品油/电费等特定业务分类、同票家族纠偏、解析器版本感知自动重算、OFD 专用 Java 21 / OFDRW 渲染预览（[OFD 预览说明](OFD_PREVIEW.md)）、渐进分页读取（`storage/read_views.py`）、临时识别弹窗与勾选批量操作/原生回收站（[勾选工作流](architecture/AGENT_TASK_MAP.md#task-selection-workflow)）。
+>   - **增量缓存、服务器只读来源与容量治理（WS-08/09、ENG-09）**：逐文件 SQLite 原始解析缓存（`storage/parse_cache.py`）、完整投影代际与兼容导出回执（`storage/generations.py`）、已挂载 SMB 共享与 SSH-Agent SFTP 只读来源（`services/sources.py` + `source_worker.py`）、以及代际/解析缓存/来源副本的 LRU 与活动租约安全回收（[设计文档](SERVER_CONNECTION_AND_CACHE_DESIGN.md) · [任务入口](architecture/AGENT_TASK_MAP.md#task-source-cache)）。
+>   - **多公司工作区与做账（WS-01—07/10、BK-01、BUG-06）**：公司登记与六类标准子目录补建、项目全量人工归属与重命名、监控/非监控批量标签、进销存/往来/抵扣/同号勾稽与原始凭证缩略图墙、银行通用版式引擎（`bank/layouts.py`）、工资/社保确认计提与可编辑凭证草稿（服务品目与库存隔离）、默认软件无关的「通用凭证表」标准导出（`bank/export_profiles.py`）。
+>   - **成本分析 V2（COST-01—06）**：公司级品目台账、6 类定价规则（加价率/目标毛利/固定加价/固定价/阶梯/人工市场参照）、新旧对照迁移、报价归档与内存 XLSX 导出、账面库存月末核对、货物/服务项目毛利与价格监控（[V2 设计](COST_ANALYSIS_V2_DESIGN.md)）。
+>   - **OCR（OCR-01）与产品反馈（FEEDBACK-01）**：默认关闭本地重型 OCR，支持用户按需配置 PaddleOCR 官方 API（独立密钥文件 + 云端隐私确认 + 按公司授权）或自建 PaddleOCR 服务，覆盖单文件识别与社保截图解析；应用内建议与反馈代码已接入，中转服务待部署决策（[反馈设计](FEEDBACK_DESIGN.md)）。
+>   - **桌面宿主与自动化门禁（Tauri 2、ENG-05/10）**：固定 `127.0.0.1:8766` 宿主所有权握手、旧 InvoiceHub 端口冲突引导恢复、桌面窗口创建失败转默认浏览器兜底、Linux Playwright 合成浏览器回归（[浏览器回归说明](BROWSER_E2E.md) · [启动排障](STARTUP_TROUBLESHOOTING.md)）。
+> - **明确未包含边界**：完整税务政策引擎 D0–D5 仍为设计阶段（[税务工作台设计](TAX_WORKBENCH_DESIGN.md)，当前 B8 仅含手工记录与显式假设测算）；外置 Agent MCP 网关（`AGENT-01—04`）与服务器来源接入公司业务模块排期在 `v1.1+`。
 
 ## 开发工具接力入口
 
-[通用交接协议](AGENT_HANDOFF.md) 与任务导航的交接行定义独立开发小工具。它以仓库外 JSONL 为任务事实、Markdown/JSON 为可重建交接视图，复用现有文档导航，不接入 InvoiceHub 产品 API、数据库或源发票目录。 用户级可选接入采用 `~/.agents/tools/agent-handoff` 存工具、`~/.agents/skills/agent-handoff` 存简短技能、`~/.local/bin/agent-handoff` 提供全局命令，Claude 的个人技能入口引用同一规则；这是本机个人配置，不要求其它 clone 已安装。
+[通用交接协议](AGENT_HANDOFF.md) 与任务导航的交接行定义独立开发小工具。它以仓库外 JSONL 为任务事实、Markdown/JSON 为可重建交接视图，复用现有文档导航，不接入 InvoiceHub 产品 API、数据库或源发票目录。
 
 功能约束按需读取：[提取与分类](architecture/rules/INVOICE_EXTRACTION.md)、[成本](architecture/rules/COST_ANALYSIS.md)、[监控与关闭](architecture/rules/MONITORING.md)、[页面/单据/预览/皮肤](architecture/rules/WEB_UI.md)、[做账](architecture/rules/BOOKKEEPING.md)、[税务设计](architecture/rules/TAX_WORKBENCH.md)、[Windows](architecture/rules/WINDOWS.md)、[macOS 参考壳](architecture/rules/MACOS.md)、[Tauri 宿主](architecture/rules/TAURI_HOST.md)、[构建与发行](architecture/rules/RELEASE.md)。先按 [任务快速索引](architecture/AGENT_TASK_MAP.md#quick-lookup) 定位全部命中项，再读取规则全文及对应实现章节；AGENTS.md 保留全局必读规则。
-
-2026-09-12 设计入口：[税务计算器与公司财税工作台](TAX_WORKBENCH_DESIGN.md)、[算法与政策规格](TAX_ALGORITHMS_AND_POLICY.md)、[政策来源与核验](TAX_POLICY_SOURCES_AND_REVIEW.md)、[价值评估与就绪度](TAX_WORKBENCH_VALUE_AND_READINESS.md)（决策页，记录就绪度与是否投入的判断）。当前仅有文档和独立合成原型；其新增目录、接口、数据模型、公司绑定、申报表映射、征期与政策中心均为拟议内容，不属于下文 main 当前实现。开发按任务导航中的税务设计行进入。
-
-2026-09-10：alpha.2 优化版 1 已完成同源 Mac 构建并发布，内置平台 Python/Java/OFD 组件；离线、包内两页 OFD 和实际正常配置的 ready/页面/monitor 验收通过。隔离 HOME 自动样本未通过，其他平台原生与签名限制仍保留。精确身份、发布状态与来源见[分支记录](BRANCH_STATUS.md)；后续开发以 main 为准，制品身份由优化批次 Tag 固定。
-
-2026-09-09 本地 main 已同步 PR #24，Windows 加固在 `codex/windows-alpha2-startup-hardening`：保留 HTTP framing 与浏览器兜底，增加内置 Python 的 PYTHONHOME 隔离、spawn 阶段诊断与真实 Winsock 回归。稳定源码仍为 main；alpha.2 新候选的身份和验证范围见本轮 CHANGELOG，公开资产不变。
-
-2026-09-09 启动修复的功能来源为 `codex/fix-backend-startup-probe`，开发实现与稳定源码统一随 main 维护：`backend.rs → local_http.rs` 以有界 HTTP framing 读取后端响应；诊断与启动共享读取规则。`main.rs` 在已验证后端上处理单次启动方式覆盖和 Windows 窗口失败后的浏览器确认，不能绕过 ownership。已发布 alpha.2 尚未包含这些改动；主线精确集成身份见[分支记录](BRANCH_STATUS.md)及实时 Git，细节见[启动排障](STARTUP_TROUBLESHOOTING.md)。
-
-2026-09-08 OFD 专用预览纳入 main 统一源码基线，功能来源为 `codex/ofd-preview-renderer`，精确集成身份见 [分支记录](BRANCH_STATUS.md) 与实时 Git。`file_preview.py → ofd_rendering.py → Java 21/OFDRW → PNG` 独立于发票提取；短期 PNG 继续留在原预览 job 内存，组件构建、边界与验收见 [OFD 预览说明](OFD_PREVIEW.md)。稳定源码随 main 维护，已发布的 alpha.2 制品身份与未覆盖项保持原记录，本次源码集成不代表发布新包。
-
-2026-09-08：[`v0.3.0-alpha.2` 双平台预览](https://github.com/lyc1126/InvoiceHub/releases/tag/v0.3.0-alpha.2) 已按所有者确认的验收范围发布。Windows x64 portable ZIP 与 macOS arm64 preview DMG 同源，包含校验和、收据和平台 Python SBOM；Mac 离线核验与实际默认配置验收通过，隔离 HOME 自动烟测仍未通过，未启用安装 updater 或更新 Feed。精确发布身份和限制见[分支与发布记录](BRANCH_STATUS.md)。
-
-
-
-2026-09-07 大列表实现在 `codex/fix-large-list-responsiveness`：`services/document_index.py` 用单个 spawn 进程建立单据索引，runtime 保存逐文件缓存、入库选项及进度，API 安排/读取/停止。出库预览经索引定位仍实时校验文件；首页和单据候选每页 100 条，既有提取/投影业务规则保持。
-
-2026-09-07 首页搜索跟进位于 `codex/fix-invoice-search-scope`：沿用列表筛选与 generation 刷新链，增加 `search_scope` 显式字段枚举。首页默认销售方/发票号，文件名与全部范围可选，旧 API 缺省 all 保持兼容；不改变发票提取、投影或监控架构。接口、算法与最低验收详见对应专题的同日补充。
-
-2026-09-07 当前实现整合公开 main 上的最新前端与既有 Windows Desktop 分支：图标选择经 `app_icons.py → app_state → host_rpc → app_icon.rs` 后保存运行态；默认 `website` 为白底 hi.，另外三款兼容既有状态。保留打印弹窗偏好、WebView 独立目录、picker 插件调度、monitor 状态串行化和同步进度。当前公共资源 `20260907-desktop-integrated-2`；源码工作区不以单独旧分支作为打包输入，必须形成含两边功能的干净快照。
-
-> 文档状态：当前开发实现的权威架构入口
-> 更新日期：2026-09-08
-> 公共权威基线：经过审计的单一脱敏根提交；旧私有提交、Tag、二进制和验证材料不在公开图中
-> 公开状态：候选树、保留 Git 对象和托管面已完成一次内容与凭据审计；公开图从脱敏根提交开始，详见 `docs/release/HISTORY_SANITIZATION_EXECUTION.md`
-> 发行边界：alpha.2 已按公开 Release 所列范围发布，源码实现基线继续跟随 main；源自同一提交的 Windows portable 与 macOS preview 具有相同核心构建身份。自动隔离烟测与签名/原生功能的未覆盖项不因发布而改记为通过。
-> 校验规则：精确的本地与 GitHub HEAD 以实时 `git rev-parse`、`git ls-remote` 和双向差异为准；发行源码候选不等于双平台成品 RC 或 GitHub 已发布版本
 
 ## 1. 这套文档解决什么问题
 

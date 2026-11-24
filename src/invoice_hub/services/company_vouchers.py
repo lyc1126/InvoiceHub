@@ -547,9 +547,9 @@ def export_formats(root: Path) -> dict:
 def _export_profile(root: Path, key: object):
     from invoice_hub.bank import export_profiles
 
-    key = _text(key) or "jierui"
+    key = _text(key) or "generic"
     if key == "jierui":
-        return None  # the default path keeps 凭证/导入/模板原件.xlsx's column order
+        return None  # explicit jierui profile keeps 凭证/导入/模板原件.xlsx's exact golden column order
     if key in export_profiles.PROFILES:
         return export_profiles.PROFILES[key]
     if key.startswith("template:"):

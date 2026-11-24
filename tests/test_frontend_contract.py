@@ -701,7 +701,7 @@ def test_main_pages_keep_user_visible_controls() -> None:
     assert "选择文件" in ocr
     assert 'href="/backend"' not in ocr
     assert "复制结果" in ocr
-    assert "page-ocr.js?v=20260717-settings-macos-sync" in ocr
+    assert "page-ocr.js?v=20261124-ocr-paddle-1" in ocr
     assert "loadOcrPreferences" in page_ocr
     assert "saveOcrFolderPreference" in page_ocr
     assert "/api/v1/preferences" in page_ocr

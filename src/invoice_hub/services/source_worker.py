@@ -44,6 +44,8 @@ def worker(pipe, profile, private_root, kind, data):
                 result = {"entries": connection.entries(report), "root_identity": connection.root_identity,
                           "strength": connection.strength}
             elif kind == "download":
+                all_cached = dict(data.get("all_cached") or {})
+                pinned = set(data.get("pinned_objects") or ())
                 batch = data.get("download_entries")
                 if batch:
                     cached_map = {}
@@ -53,16 +55,24 @@ def worker(pipe, profile, private_root, kind, data):
                         _path, info, fresh = obtain(
                             connection, root, entry, existing.get(entry["id"]), report,
                             budget=profile["cache_budget"], verify=True,
+                            cached_map=all_cached, pinned_objects=pinned,
                         )
                         cached_map[entry["id"]] = info
+                        all_cached[entry["id"]] = info
+                        if info.get("object"):
+                            pinned.add(info["object"])
                         downloaded += int(fresh)
                         report({"phase": "downloading", "completed": index + 1, "total": len(batch),
                                 "downloaded": downloaded, "cache_entry": entry["id"], "cache_info": info})
-                    result = {"cached_map": cached_map, "downloaded": downloaded}
+                    result = {"cached_map": cached_map, "all_cached": all_cached, "downloaded": downloaded}
                 else:
-                    path, info, downloaded = obtain(connection, root, data["entry"], data.get("cached"), report,
-                                                    budget=profile["cache_budget"], verify=True)
-                    result = {"cached": info, "downloaded": int(downloaded)}
+                    path, info, downloaded = obtain(
+                        connection, root, data["entry"], data.get("cached"), report,
+                        budget=profile["cache_budget"], verify=True,
+                        cached_map=all_cached, pinned_objects=pinned,
+                    )
+                    all_cached[data["entry"]["id"]] = info
+                    result = {"cached": info, "all_cached": all_cached, "downloaded": int(downloaded)}
             else:
                 result = summarize(connection, root, profile, data, report)
         pipe.send({"result": result})
@@ -95,13 +105,20 @@ def summarize(connection, root, profile, data, report):
         and Path(entry["name"]).suffix.lower() in _INVOICE_SUFFIXES
     ]
     cached, files, mapping, downloaded = dict(data["cached"]), [], {}, 0
+    pinned = set(data.get("pinned_objects") or ())
     for index, entry in enumerate(rows):
         # Standard SFTP has no stable file ID. Daily/explicit content verification is
         # honest about weak metadata; reconnection alone cannot prove an unchanged body.
         old = cached.get(entry["id"])
         verify = data.get("verify", False) or not old or old.get("verified_at", "")[:10] != utc_now_text()[:10]
-        path, info, fresh = obtain(connection, root, entry, old, report, budget=profile["cache_budget"], verify=verify)
+        path, info, fresh = obtain(
+            connection, root, entry, old, report,
+            budget=profile["cache_budget"], verify=verify,
+            cached_map=cached, pinned_objects=pinned,
+        )
         cached[entry["id"]] = info
+        if info.get("object"):
+            pinned.add(info["object"])
         downloaded += int(fresh)
         if str(path) not in mapping:
             files.append(path)
@@ -115,6 +132,9 @@ def summarize(connection, root, profile, data, report):
         cost_failed_count = 0
         cost_error = ""
         with ParseCache(root, verify=data.get("verify", False), rebuild=data.get("full", False)) as cache:
+            from invoice_hub.projections import cost_analysis as _cost_analysis
+            from invoice_hub.projections import summary as _summary
+
             summary = build_summary(root / "objects", stage, cache=cache, files=files,
                                     progress=lambda done, total: report({"phase": "parsing", "completed": done, "total": total}))
             metadata = [{"源文件": r["source_path"], "销售方": r["seller"], "购买方": r["buyer"], "发票号码": r["invoice_number"],
@@ -133,6 +153,21 @@ def summarize(connection, root, profile, data, report):
                 cost_failed_count = len(files)
                 cost_error = "部分文件成本明细解析失败，已保留票头汇总供核对。"
             stats = cache.stats()
+            try:
+                active_obj_paths = {
+                    str((root / "objects" / info["object"]).absolute())
+                    for info in cached.values()
+                    if isinstance(info, dict) and info.get("object")
+                }
+                cache.prune(
+                    active_paths=active_obj_paths,
+                    version_prefixes={
+                        "invoice": str(_summary.PARSER_VERSION),
+                        "cost": str(_cost_analysis.COST_PARSER_VERSION),
+                    },
+                )
+            except Exception:
+                pass
         # A second complete enumeration closes the scan/download window for this scope.
         # Scoped comparison avoids unrelated changes in sibling folders aborting this folder.
         fresh = connection.entries(report)

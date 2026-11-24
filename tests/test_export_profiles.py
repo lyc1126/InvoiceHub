@@ -128,7 +128,8 @@ def test_the_page_export_picks_a_format_and_lists_uploaded_templates(tmp_path: P
     wb.active.append(["日期", "摘要"])
     wb.save(folder / "缺列.xlsx")
     formats = {item["key"]: item for item in export_formats(root)["formats"]}
-    assert [formats[key]["status"] for key in ("jierui", "ningmeng", "yonyou_t3")] == ["verified", "experimental", "experimental"]
+    assert list(formats)[0] == "generic"
+    assert [formats[key]["status"] for key in ("generic", "jierui", "ningmeng", "yonyou_t3")] == ["standard", "verified", "experimental", "experimental"]
     assert formats["template:某软件.xlsx"]["usable"] and not formats["template:缺列.xlsx"]["usable"]
     body = {"revision": read_draft(root, NAME)["revision"], "preparer": "张三", "confirm": True}
     result = export_draft(root, NAME, {**body, "format": "template:某软件.xlsx"})
@@ -136,3 +137,33 @@ def test_the_page_export_picks_a_format_and_lists_uploaded_templates(tmp_path: P
     for bad in ("template:缺列.xlsx", "template:../科目表.json", "kingdee"):
         with pytest.raises(VoucherDraftError):
             export_draft(root, NAME, {**body, "format": bad})
+
+
+def test_generic_profile_is_brand_neutral_default_and_round_trips_losslessly(tmp_path: Path):
+    from invoice_hub.services.company_vouchers import export_draft, read_draft
+
+    root, _ledger, _aux = _setup(tmp_path)
+    body = {"revision": read_draft(root, NAME)["revision"], "preparer": "张三", "confirm": True}
+    # Omitting `format` defaults to the brand-neutral generic voucher workbook.
+    result = export_draft(root, NAME, body)
+    assert len(result["files"]) == 1
+    filename = result["files"][0]
+    assert filename.startswith("通用凭证导出_2026-06_")
+    assert "捷锐" not in filename
+
+    exported_path = root / "做账草稿" / filename
+    rows = _cells(exported_path)
+    assert list(rows[0]) == export_profiles.GENERIC_COLUMNS
+    assert "捷锐" not in "".join(str(cell or "") for row in rows for cell in row)
+
+    # Lossless round-trip back to internal Entry objects.
+    round_tripped = export_profiles.read_generic_entries(exported_path)
+    assert len(round_tripped) == len(rows) - 1
+    assert round_tripped[0].voucher_date.isoformat() == "2026-06-30"
+    assert round_tripped[0].number == "001"
+    assert round_tripped[0].account_code == "140501"
+    assert str(round_tripped[0].debit) == "1000.00"
+    assert round_tripped[0].preparer == "张三"
+    # Total debits equal total credits across round-tripped entries.
+    from decimal import Decimal
+    assert sum((e.debit or Decimal(0) for e in round_tripped), Decimal(0)) == sum((e.credit or Decimal(0) for e in round_tripped), Decimal(0))

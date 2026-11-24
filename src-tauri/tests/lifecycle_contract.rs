@@ -412,6 +412,39 @@ fn port_conflict_state_machine_guards_unknown_decline_and_toctou_changes() {
     );
 }
 
+fn read_http_request(stream: &mut std::net::TcpStream) -> String {
+    let mut data = Vec::new();
+    let mut chunk = [0_u8; 1024];
+    let mut expected_total: Option<usize> = None;
+    loop {
+        let n = stream.read(&mut chunk).unwrap_or(0);
+        if n == 0 {
+            break;
+        }
+        data.extend_from_slice(&chunk[..n]);
+        if expected_total.is_none() {
+            if let Some(pos) = data.windows(4).position(|w| w == b"\r\n\r\n") {
+                let header_end = pos + 4;
+                let headers = String::from_utf8_lossy(&data[..header_end]);
+                let content_length = headers
+                    .lines()
+                    .find_map(|line| {
+                        let (k, v) = line.split_once(':')?;
+                        k.eq_ignore_ascii_case("content-length")
+                            .then(|| v.trim().parse::<usize>().ok())
+                            .flatten()
+                    })
+                    .unwrap_or(0);
+                expected_total = Some(header_end + content_length);
+            }
+        }
+        if expected_total.is_some_and(|total| data.len() >= total) {
+            break;
+        }
+    }
+    String::from_utf8_lossy(&data).into_owned()
+}
+
 #[test]
 fn loopback_port_conflict_recovery_shuts_down_confirmed_invoicehub_and_rejects_unknown() {
     // 1. Non-InvoiceHub listener: must fail closed without prompting or receiving shutdown.
@@ -421,9 +454,7 @@ fn loopback_port_conflict_recovery_shuts_down_confirmed_invoicehub_and_rejects_u
     let unknown_flag = Arc::clone(&unknown_shutdown_called);
     let unknown_server = thread::spawn(move || {
         if let Ok((mut stream, _)) = unknown_listener.accept() {
-            let mut buf = [0_u8; 2048];
-            let n = stream.read(&mut buf).unwrap_or(0);
-            let req = String::from_utf8_lossy(&buf[..n]);
+            let req = read_http_request(&mut stream);
             if req.contains("/api/v1/server/shutdown") {
                 unknown_flag.store(true, Ordering::SeqCst);
             }
@@ -464,9 +495,7 @@ fn loopback_port_conflict_recovery_shuts_down_confirmed_invoicehub_and_rejects_u
         let mut health_hits = 0usize;
         for incoming in old_listener.incoming() {
             let Ok(mut stream) = incoming else { break };
-            let mut buf = [0_u8; 4096];
-            let n = stream.read(&mut buf).unwrap_or(0);
-            let req = String::from_utf8_lossy(&buf[..n]);
+            let req = read_http_request(&mut stream);
             if req.starts_with("GET /api/v1/health ") {
                 health_hits += 1;
                 let resp = format!(
@@ -526,9 +555,7 @@ fn loopback_port_conflict_recovery_shuts_down_confirmed_invoicehub_and_rejects_u
             let Ok((mut stream, _)) = stuck_listener.accept() else {
                 break;
             };
-            let mut buf = [0_u8; 4096];
-            let n = stream.read(&mut buf).unwrap_or(0);
-            let req = String::from_utf8_lossy(&buf[..n]);
+            let req = read_http_request(&mut stream);
             let body = if req.starts_with("POST /api/v1/server/shutdown ") {
                 r#"{"ok":true,"shutdown_behavior":"keep_monitor","scheduled":true}"#
             } else {

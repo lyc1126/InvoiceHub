@@ -76,6 +76,101 @@ class Profile:
     sources: list[str] = field(default_factory=list)
 
 
+GENERIC_COLUMNS = [
+    "凭证日期", "会计年度", "会计期间", "凭证字", "凭证号", "附单据数", "分录号",
+    "摘要", "科目编码", "科目名称", "辅助核算类型", "辅助核算项目", "币种",
+    "借方金额", "贷方金额", "数量", "计量单位", "制单人",
+]
+
+
+def _generic_cell(entry: Entry, column: str) -> Any:
+    aux_kinds = " / ".join(item.kind for item in entry.aux if item.kind) or None
+    aux_items = " / ".join(
+        f"{item.code}:{item.name}" if item.code else item.name
+        for item in entry.aux
+        if item.name or item.code
+    ) or None
+    return {
+        "凭证日期": entry.voucher_date.isoformat(),
+        "会计年度": str(entry.voucher_date.year),
+        "会计期间": f"{entry.voucher_date.month:02d}",
+        "凭证字": entry.voucher_type,
+        "凭证号": entry.number,
+        "附单据数": str(entry.attachments),
+        "分录号": str(entry.line_no),
+        "摘要": entry.summary,
+        "科目编码": entry.account_code,
+        "科目名称": entry.account_name,
+        "辅助核算类型": aux_kinds,
+        "辅助核算项目": aux_items,
+        "币种": "CNY",
+        "借方金额": _money(entry.debit),
+        "贷方金额": _money(entry.credit),
+        "数量": _qty(entry.qty),
+        "计量单位": entry.unit or None,
+        "制单人": entry.preparer or None,
+    }.get(column)
+
+
+def read_generic_entries(path: Path) -> list[Entry]:
+    """Losslessly read back a exported 通用凭证表 (.xlsx) into internal Entry records."""
+    from openpyxl import load_workbook
+
+    wb = load_workbook(path, read_only=True, data_only=True)
+    try:
+        ws = wb.worksheets[0]
+        rows = list(ws.iter_rows(values_only=True))
+    finally:
+        wb.close()
+    if not rows:
+        return []
+    headers = [str(cell or "").strip() for cell in rows[0]]
+    index = {name: pos for pos, name in enumerate(headers)}
+    entries: list[Entry] = []
+
+    def cell(row: tuple[Any, ...], name: str) -> str:
+        pos = index.get(name)
+        if pos is None or pos >= len(row) or row[pos] is None:
+            return ""
+        return str(row[pos]).strip()
+
+    for row in rows[1:]:
+        raw_date = cell(row, "凭证日期")
+        if not raw_date:
+            continue
+        aux_list: list[Aux] = []
+        raw_kinds = [part.strip() for part in cell(row, "辅助核算类型").split("/") if part.strip()]
+        raw_items = [part.strip() for part in cell(row, "辅助核算项目").split("/") if part.strip()]
+        for kind, item_text in zip(raw_kinds, raw_items, strict=False):
+            if ":" in item_text:
+                code, name = item_text.split(":", 1)
+                aux_list.append(Aux(kind=kind, code=code.strip(), name=name.strip()))
+            else:
+                aux_list.append(Aux(kind=kind, code="", name=item_text))
+        debit_text = cell(row, "借方金额")
+        credit_text = cell(row, "贷方金额")
+        qty_text = cell(row, "数量")
+        entries.append(
+            Entry(
+                voucher_date=date.fromisoformat(raw_date),
+                voucher_type=cell(row, "凭证字") or "记",
+                number=cell(row, "凭证号"),
+                attachments=int(cell(row, "附单据数") or "0"),
+                preparer=cell(row, "制单人"),
+                line_no=int(cell(row, "分录号") or "1"),
+                summary=cell(row, "摘要"),
+                account_code=cell(row, "科目编码"),
+                account_name=cell(row, "科目名称"),
+                debit=Decimal(debit_text) if debit_text else None,
+                credit=Decimal(credit_text) if credit_text else None,
+                qty=Decimal(qty_text) if qty_text else None,
+                unit=cell(row, "计量单位"),
+                aux=aux_list,
+            )
+        )
+    return entries
+
+
 def _jierui_cell(entry: Entry, column: str) -> Any:
     # 与 2026-10-21 实测通过的导出逐单元格一致：金额与数量写文本，供应商取辅助核算名称。
     supplier = entry.aux_of("供应商")
@@ -143,6 +238,11 @@ def _yonyou_cell(entry: Entry, column: str) -> Any:
 
 
 PROFILES: dict[str, Profile] = {
+    "generic": Profile(
+        "generic", "通用凭证表（标准）", "standard",
+        "软件无关的标准分录表，含完整凭证头/分录/辅助核算字段且支持无损读回；如需特定记账软件格式可在下拉框切换或上传空白模板。",
+        ".xlsx", "通用凭证表", GENERIC_COLUMNS, _generic_cell, file_prefix="通用凭证导出",
+    ),
     "jierui": Profile(
         "jierui", "捷锐云记账", "verified", "2026-10-21 实际导入核对过（制单人必填）。", ".xlsx", "导入模版-凭证",
         JIERUI_COLUMNS, _jierui_cell, file_prefix="捷锐导入",
