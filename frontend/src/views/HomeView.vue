@@ -106,6 +106,7 @@ watch(
 );
 
 const monitoredCompany = computed(() => companies.companies.find((item) => item.monitored) ?? null);
+const isFirstLaunch = computed(() => companies.list !== null && companies.companies.length === 0);
 
 onMounted(() => {
   if (!companies.list) void companies.load();
@@ -177,15 +178,49 @@ onMounted(() => {
 
         <section v-if="!workspace.tabs.length" class="ws-start" aria-label="起始页">
           <span class="brand start-brand" aria-hidden="true">hi.</span>
-          <h1>今天处理哪家公司？</h1>
-          <p class="muted">从左侧选择公司、项目或目录，会在上方打开标签；关掉所有标签就回到这里。</p>
-          <div class="actions">
-            <button v-if="monitoredCompany" type="button" class="primary" @click="workspace.open({ kind: 'company', companyId: monitoredCompany.id })">
-              打开 {{ monitoredCompany.name }}
-            </button>
-            <button type="button" aria-haspopup="dialog" @click="workspace.createOpen = true">添加公司资料夹</button>
-            <button type="button" @click="$router.push({ name: 'temporary', query: $route.query })"><WorkspaceIcon name="temp" />临时识别</button>
-          </div>
+          <template v-if="isFirstLaunch">
+            <h1>欢迎使用 InvoiceHub</h1>
+            <p class="muted">将本机发票、银行流水与公司资料夹集中整理核对；默认全本地运行，不自动上传任何业务资料。</p>
+            <ol class="ws-onboarding" aria-label="首次使用引导">
+              <li>
+                <span class="ws-onboarding__num" aria-hidden="true">1</span>
+                <div>
+                  <strong>添加公司资料夹</strong>
+                  <p class="muted">登记已有目录或新建标准六类资料夹，放入 PDF / OFD / XML 发票即可开始。</p>
+                </div>
+              </li>
+              <li>
+                <span class="ws-onboarding__num" aria-hidden="true">2</span>
+                <div>
+                  <strong>设为监控目录</strong>
+                  <p class="muted">自动生成发票汇总、成本分析与进销存台账，源票变动后台增量同步。</p>
+                </div>
+              </li>
+              <li>
+                <span class="ws-onboarding__num" aria-hidden="true">3</span>
+                <div>
+                  <strong>核对、做账与按需扩展</strong>
+                  <p class="muted">在工作区核对四维勾稽、导出通用凭证表；扫描件与社保截图可在「OCR」页按需接入 PaddleOCR。</p>
+                </div>
+              </li>
+            </ol>
+            <div class="actions">
+              <button type="button" class="primary" aria-haspopup="dialog" @click="workspace.createOpen = true">添加公司资料夹</button>
+              <button type="button" @click="$router.push({ name: 'temporary', query: $route.query })"><WorkspaceIcon name="temp" />先试临时识别</button>
+              <button type="button" @click="emit('openServerPanel', '')"><WorkspaceIcon name="server" />连接服务器目录</button>
+            </div>
+          </template>
+          <template v-else>
+            <h1>今天处理哪家公司？</h1>
+            <p class="muted">从左侧选择公司、项目或目录，会在上方打开标签；关掉所有标签就回到这里。</p>
+            <div class="actions">
+              <button v-if="monitoredCompany" type="button" class="primary" @click="workspace.open({ kind: 'company', companyId: monitoredCompany.id })">
+                打开 {{ monitoredCompany.name }}
+              </button>
+              <button type="button" aria-haspopup="dialog" @click="workspace.createOpen = true">添加公司资料夹</button>
+              <button type="button" @click="$router.push({ name: 'temporary', query: $route.query })"><WorkspaceIcon name="temp" />临时识别</button>
+            </div>
+          </template>
           <table v-if="system.health" class="facts">
             <tbody>
               <tr><th scope="row">版本</th><td>{{ system.health.product_version || "—" }}</td></tr>

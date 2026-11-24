@@ -4,42 +4,42 @@
 
 # InvoiceHub
 
-### 发票、成本、单据，一处整理。
+### 多公司发票、成本、勾稽与凭证，一处整理。
 
-把散落的 PDF、OFD、XML，变成看得清、找得到、用得上的账前资料。
+把散落的 PDF、OFD、XML、银行流水与公司资料夹，变成看得清、找得到、对得上的账前与做账资料。
 
-[![版本](https://img.shields.io/badge/preview-v0.3.0--alpha.2--opt.1-d5ff5f?style=flat-square&labelColor=252820)](https://github.com/lyc1126/InvoiceHub/releases/tag/v0.3.0-alpha.2-opt.1)
-[![平台](https://img.shields.io/badge/platform-Windows_x64_%7C_macOS_ARM64-f8f9f5?style=flat-square&labelColor=252820)](https://github.com/lyc1126/InvoiceHub/releases/tag/v0.3.0-alpha.2-opt.1)
+[![当前开发基线](https://img.shields.io/badge/version-v1.0.0--beta.1-d5ff5f?style=flat-square&labelColor=252820)](https://github.com/lyc1126/InvoiceHub/releases)
+[![平台](https://img.shields.io/badge/platform-Windows_x64_%7C_macOS_ARM64-f8f9f5?style=flat-square&labelColor=252820)](https://github.com/lyc1126/InvoiceHub/releases)
 [![Tauri](https://img.shields.io/badge/built_with-Tauri_2-ff8b70?style=flat-square&labelColor=252820)](src-tauri/README.md)
 [![许可](https://img.shields.io/badge/license-AGPL--3.0--or--later-d5ff5f?style=flat-square&labelColor=252820)](LICENSE)
 
-**[下载预览版](https://github.com/lyc1126/InvoiceHub/releases/tag/v0.3.0-alpha.2-opt.1) · [使用指南](docs/USER_GUIDE.md) · [产品介绍](website/README.md) · [更新记录](CHANGELOG.md)**
+**[查看 Releases 下载](https://github.com/lyc1126/InvoiceHub/releases) · [使用指南](docs/USER_GUIDE.md) · [产品介绍](website/README.md) · [更新记录](CHANGELOG.md)**
 
 </div>
 
 ---
 
-月底对票，不该从一张张打开文件、抄金额开始。
+月底对票、算成本、理流水、做凭证，不该从一张张打开文件、来回抄数字开始。
 
-InvoiceHub 是一个开源的本地发票工作台。选好发票文件夹，识别、汇总、查重、预览和成本整理就能在同一个地方完成。需要交表时导出 Excel，需要核对时回到原票；开启监控后，新放进来的发票也会继续同步。
+InvoiceHub 是一个开源的本地优先多公司发票与账前工作台。登记公司资料夹或选定监控目录后，发票识别、同票去重汇总、四维勾稽核对、成本分析 V2、自适应出入库单、通用凭证草稿导出以及按需 PaddleOCR 识别都可以在同一个工作台内完成；开启独立监控后，新放进来的发票会持续后台增量同步。
 
-**文件留在自己的电脑里，整理出来的结果随时拿得走。**
+**源文件始终留在自己的电脑里，整理出来的结果随时拿得走。**
 
 <p align="center">
   <img src="docs/screenshots/invoicehub-home.png" alt="InvoiceHub 当前运行版本的发票汇总首页" width="100%" />
   <br />
-  <sub>当前运行版本实拍：默认空目录；本机路径仅在截图会话中脱敏，未添加演示发票。</sub>
+  <sub>运行版本实拍：默认空目录；本机路径仅在截图会话中脱敏，未添加演示发票。</sub>
 </p>
 
-## 从收票，到交表
+## 从收票，到核对与出表
 
 | 这一步 | InvoiceHub 能帮你做什么 |
 |---|---|
-| **把票收齐** | 读取 PDF、OFD、XML，整理号码、日期、购销方和金额。同票多格式按发票号码家族核对，勾选合计避免重复累计。 |
-| **把票找准** | 按销售方、发票号搜索，也能单独查文件名；筛选票种、格式和识别状态，打开原文件核对。 |
-| **把细项理清** | 查看项目、规格、单位、数量与税额，汇总成本；按行管理开票参考和加价率，保留已开部分的金额快照。 |
-| **把资料交出去** | 导出汇总表、入库单与出库单；批量打印使用原始 PDF 票面，多页发票完整保留。 |
-| **把重复活交给监控** | 新增、修改、删除后的记录按规则同步。大目录单据索引可停止、继续，已完成的解析进度会保留。 |
+| **把多公司资料理顺** | Vue 3 多公司工作区支持登记已有资料夹或新建标准六类文件夹；按公司独立保存档案、发票标签与项目归属，并支持只读挂载服务器目录（SMB / SFTP 试验版，不写入远端）。 |
+| **把票收齐、找准** | 读取 PDF、OFD、XML，同票多格式按 20 位发票号码家族核对与去重合计；内置 Java 21 / OFD 原票预览与 PDF 批量打印；扫描件与社保截图可在「OCR」页按需接入 PaddleOCR 官方 API 或自建服务。 |
+| **把成本与勾稽算清** | 成本工作台 V2 区分货物与服务双路径、支持公司纳税人身份时间线、开票参考与已开快照；提供进销存、往来、抵扣与跨目录同号检查四维勾稽。 |
+| **把单据与凭证交出去** | 导出汇总表、自适应扩行出入库单；基于发票、银行流水与工资社保生成凭证草稿，人工审核后默认导出软件无关的「通用凭证表（标准）」（支持无损读回，同时兼容品牌与自定义模板）。 |
+| **把重复活交给后台** | 独立监控 daemon 增量同步新增/修改/删除记录，不删除源发票并保护手改字段；完整代际与缓存自动容量治理，固定端口冲突提供引导式优雅恢复。 |
 
 <details>
 <summary><b>再看看成本分析和外观设置</b></summary>
@@ -65,27 +65,27 @@ InvoiceHub 是一个开源的本地发票工作台。选好发票文件夹，识
 | Windows 10/11 x64 | **[便携工具包 ZIP](https://github.com/lyc1126/InvoiceHub/releases/download/v0.3.0-alpha.2-opt.1/InvoiceHub-v0.3.0-alpha.2-windows-x64-portable.zip)** | 解压到新目录，运行其中的 InvoiceHub 程序。 |
 | macOS 13+ · Apple Silicon | **[预览版 DMG](https://github.com/lyc1126/InvoiceHub/releases/download/v0.3.0-alpha.2-opt.1/InvoiceHub-v0.3.0-alpha.2-macos-arm64-preview.dmg)** | 打开 DMG，将 App 拖到 Applications 后启动。 |
 
-1. **选目录。** 首页选择你的发票文件夹，确认“待保存目录”后点击保存。
-2. **等汇总。** 启动会自动检查当前目录；需要手动重建时点击“重新汇总”。
-3. **开始用。** 搜索、勾选、核对原票，或进入成本分析与单据页面。
-4. **按需开监控。** 后续把新发票放进同一目录，独立监控会继续整理。
+1. **添加公司或选目录。** 首次打开工作区按三步引导登记已有公司资料夹（或新建标准六类文件夹），也可直接为经典首页选定监控目录。
+2. **自动同步与汇总。** 设为监控目录后后台自动增量解析与汇总；需要立即刷新时点击“重新汇总”。
+3. **核对、分析与导出。** 在工作区完成筛选、原票预览、成本分析 V2、四维勾稽、出入库单与通用凭证草稿导出。
+4. **按需扩展。** 如需扫描发票或社保截图识别，可在「OCR」页配置 PaddleOCR 官方 API（需显式同意与按公司授权）或自建服务；如需只读查看共享目录，可连接 SMB / SFTP 服务器来源。
 
 桌面窗口和系统浏览器都能使用，在设置中选择启动方式，完整退出后下次生效。关掉桌面窗口只是隐藏；关闭系统时，可以选择是否保留监控。[完整操作说明 →](docs/USER_GUIDE.md)
 
-> 优化版已包含启动响应完整性检查、分阶段诊断和 Windows 浏览器兜底。遇到启动问题时，可查看[启动排障说明](docs/STARTUP_TROUBLESHOOTING.md)。
+> 已包含启动响应完整性检查、固定端口冲突引导恢复、分阶段诊断和 Windows 浏览器兜底。遇到启动问题时，可查看[启动排障说明](docs/STARTUP_TROUBLESHOOTING.md)。
 
-> 当前下载为 **alpha.2 优化版 1（opt.1）**，程序内版本仍为 `0.3.0-alpha.2`。Windows 包未签名；Mac 使用 ad-hoc 签名，未经 Apple 公证，首次打开可能需要系统确认。校验和、构建收据及具体已测/未测范围均在[发布页](https://github.com/lyc1126/InvoiceHub/releases/tag/v0.3.0-alpha.2-opt.1)。
+> 当前公开最新预览包为 **alpha.2 优化版 1（opt.1）**，仓库开发基线已推进至 **`1.0.0-beta.1`（`v1.0.0` 收口候选）**。Windows 包未签名；Mac 使用 ad-hoc 签名，未经 Apple 公证，首次打开可能需要系统确认。校验和、构建收据及具体已测/未测范围均以 [Releases](https://github.com/lyc1126/InvoiceHub/releases) 为准。
 
 ## 表格可以重建，原票始终保留
 
-- **本地处理。** 发票识别、汇总和成本分析在本机完成；更新检查、另行配置的 OCR 服务是独立的联网行为。
+- **本地优先。** 核心发票识别、汇总、勾稽、成本与凭证生成均在本机完成；更新检查、另行配置的 PaddleOCR API 是显式授权的独立联网行为。
 - **不猜金额。** 缺少可靠证据就留空，发现冲突就提示核对。手工修订的字段会受到保护。
-- **结果可带走。** 普通汇总与成本资料使用 CSV、XLSX、JSON；SQLite 只保存任务、事件、设置和缓存，不作为发票主存储。
-- **删除有边界。** 删除同步只调整汇总记录，不删除源发票。换版本请解压到新目录，旧目录可以保留作回退。
+- **结果可带走。** 普通汇总、成本资料与通用凭证导出使用标准 CSV、XLSX、JSON；SQLite 只保存任务、事件、设置和缓存，不作为发票主存储。
+- **删除与缓存有边界。** 自动同步只调整投影与状态，不删除源发票；勾选删除走系统回收站；历史代际、解析缓存与服务器只读副本均有界自动回收。
 
 ## 一起把它做得更顺手
 
-遇到某种票面识别不对，或一条操作总要多点几次，都欢迎[提一个 Issue](https://github.com/lyc1126/InvoiceHub/issues)。描述复现步骤即可；请不要公开真实发票、公司资料或凭据。
+遇到某种票面识别不对，或一条操作总要多点几次，可在软件内「设置 › 关于 › 建议与反馈」一键复制脱敏版本环境后[前往 GitHub 提交 Issue](https://github.com/lyc1126/InvoiceHub/issues/new)。描述复现步骤即可；请不要公开真实发票、公司资料或凭据。
 
 项目采用 **[AGPL-3.0-or-later](LICENSE)** 许可证。[贡献指南](CONTRIBUTING.md) · [行为准则](CODE_OF_CONDUCT.md) · [安全问题](SECURITY.md)
 
@@ -122,10 +122,10 @@ py -3 -m venv .venv
 
 </details>
 
-## 接下来
+## 接下来（`v1.1+` 路线）
 
-官网里还有三件正在继续做的事：
+当前核心工作区、成本 V2、通用凭证导出与按需 PaddleOCR 接入已就绪，下一阶段重点推进：
 
-- **OCR 识别更好配。** 已有引擎配置和探测入口，继续完善扫描件识别体验；当前工具包不内置正式 OCR 运行环境。
-- **做账流程走得通。** 从凭证预览、人工复核到批次导出，继续完善本地流程。正式账套操作仍需单独核对与授权。
-- **税额换算随手用。** 将含税、未税、税额换算做成独立小工具；目前官网展示的是概念预览。
+- **税务政策引擎（D0—D5）。** 当前工作区已支持公司税费记录与显式假设的手工测算；完整法规与多税种申报口径将在后续版本逐步复核接入。
+- **只读服务器来源深化。** 当前支持 SMB 与 SFTP（SSH Agent 试验版）独立只读浏览与汇总；后续按需评估密码/钥匙串凭据及跨模块接入。
+- **外部 Agent / MCP 扩展与更多账套模板。** 在严格脱敏与人工确认边界下，按真实样本补充更多记账软件官方导入模板，并规划 `v1.2+` 的只读外部协议接口。

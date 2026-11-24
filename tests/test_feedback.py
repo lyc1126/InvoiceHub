@@ -197,3 +197,13 @@ def test_local_routes_same_origin_limits_and_no_network_on_configuration(tmp_pat
         assert client.post("/api/v1/feedback", content=b"x" * 32769).status_code == 413
         assert client.post("/api/v1/feedback", json=payload()).json()["issue_number"] == 9
         assert calls == ["POST"]
+
+
+def test_unconfigured_feedback_exposes_github_issue_fallback(tmp_path):
+    service = FeedbackService(tmp_path / "state.sqlite3", "", about, lambda *args: pytest.fail("must not send"))
+    cfg = service.configuration()
+    assert cfg["enabled"] is False
+    assert cfg["issue_tracker_url"] == "https://github.com/lyc1126/InvoiceHub/issues/new"
+    assert "GitHub Issue" in cfg["message"]
+    assert set(cfg["environment"]) == {"version", "platform", "architecture", "package_type"}
+    assert "must-not-upload" not in json.dumps(cfg)

@@ -2,6 +2,19 @@
 
 ## 未发布
 
+### 2026-11-24 推进 v1.0.0 里程碑 3：完成 FEEDBACK-01 方案 A 降级、首次使用引导、跨页面文案体检与门面文档刷新
+
+- 需求与起点：基于已推送至 `origin/codex/workspace-p3@dfdc778` 的里程碑 2 提交，按用户确认推进 `FEEDBACK-01` 方案 A（暂不部署公网中转，降级为一键复制脱敏信息并跳转 GitHub Issue）、补齐工作区首次启动三步引导与跨页面文案体检，并刷新 `README.md`、`docs/USER_GUIDE.md` 与 `website/index.html` 对齐 `1.0.0-beta.1` 实际能力。
+- 采用方案：
+  - **FEEDBACK-01（方案 A 优雅降级）**：`services/feedback.py::configuration()` 补充只读 `issue_tracker_url` 并更新未配置中转提示；`frontend/src/components/FeedbackDialog.vue` 在 `!config.enabled` 时展示「复制脱敏信息并打开 GitHub Issue」操作与硬编码公开链接 `https://github.com/lyc1126/InvoiceHub/issues/new`，仅复制白名单环境字段或用户已填内容（绝不读取路径/发票/日志），同时保留 `INVOICE_HUB_FEEDBACK_URL` 中转模式及原禁用/回执契约；补充 `tests/test_feedback.py` 与 `frontend/tests/feedback.spec.ts` 用例。
+  - **首次启动三步引导与跨页面文案体检**：
+    - `frontend/src/views/HomeView.vue`、`frontend/src/prototype.css` 与 `frontend/src/App.vue` 在无任何已登记公司时于起始页展示三步引导卡（添加公司资料夹 → 设为监控目录 → 核对/做账与按需接入 OCR），提供「添加公司资料夹」「先试临时识别」「连接服务器目录」直达入口；已登记公司后保持原「今天处理哪家公司？」起始页。补充 `frontend/tests/app.spec.ts` 用例。
+    - `web/static/js/page-settings.js` 更新 `renderOcr()` 展示 `OCR-01` 识别模式（未启用 / PaddleOCR 官方 API / 自建服务）与中文就绪态，刷新 `web/templates/settings.html` 资源版本至 `page-settings.js?v=20261124-ocr-settings-1` 并同步 `tests/test_api_contract.py`、`tests/test_frontend_contract.py`；同步修订 `frontend/src/views/TemporaryRecognitionView.vue` 扫描件引导提示至「OCR」页；重建 `web/static/app/`。
+  - **门面与用户文档刷新**：按用户明确确认刷新 `README.md`、`docs/USER_GUIDE.md` 与 `website/index.html`，准确呈现多公司工作区、成本 V2、四维勾稽、通用凭证默认导出、按需 PaddleOCR、SMB/SFTP 只读服务器来源（试验版）、缓存治理与端口冲突引导恢复；顺带补齐 `website/tests/demo.test.cjs` 的 `app.skinBypassRequested` mock 使 15 项官网测试全过，并同步 `docs/PRODUCT_BACKLOG.md`、`docs/architecture/rules/WEB_UI.md` 与 `docs/architecture/INTERFACES_AND_FLOWS.md`。
+- 验证范围与未覆盖项：
+  - 已运行并通过：`node --check web/static/js/page-settings.js`、`node --test website/tests/demo.test.cjs`、Vue `vue-tsc --noEmit`、`vitest run`（20 文件 171 项）、`vite build`；Ruff、Python `compileall`、`git diff --check`；Python 回归涵盖 `test_feedback.py`、`test_website.py`、`test_workspace_frontend.py`、`test_frontend_contract.py`、`test_api_contract.py`、`test_tauri_foundation.py`、`test_windows_release_contract.py`、`test_development_documentation.py`。
+  - 未覆盖项：未覆盖真实浏览器实机视觉核对（含 390px 窄屏与深/浅色、当前启用皮肤与 `?no_skin=1` 恢复入口）、真实默认配置、正式 Windows BAT、浏览器前台拉起、系统原生选择器与双平台打包产物验收；本轮改动在本地提交至 `codex/workspace-p3`，待确认后推送刷新 PR #32。
+
 ### 2026-11-24 推进 v1.0.0 里程碑 2：实现 ENG-09 缓存容量治理、OCR-01 PaddleOCR 接入、BK-01 通用凭证默认导出与 ENG-04 架构入口文档收拢
 
 - 需求与起点：基于已推送至 `origin/codex/workspace-p3@15c2a23` 的里程碑 1 提交，按 `v1.0.0` 收口顺序连续推进 4 项无外部样本阻塞的必做项（`ENG-09`、`OCR-01`、`BK-01`、`ENG-04`），并修复 PR #32 CI 中暴露的 1 处 Rust 回环 mock 测试分包读取偶发失败及 1 处 Windows OFD 缓存测试平台字段失配。

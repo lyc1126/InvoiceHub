@@ -5,7 +5,9 @@ import { toast } from "../toast";
 import WsModal from "./WsModal.vue";
 
 interface Result { request_id: string; state: "submitted" | "unknown" | "rejected"; issue_number: number | null; issue_url: string; message: string }
-interface Configuration { enabled: boolean; message: string; environment: Record<string, string>; pending: Result | null }
+interface Configuration { enabled: boolean; message: string; issue_tracker_url?: string; environment: Record<string, string>; pending: Result | null }
+// Hardcoded public issue creation page so unconfigured relay mode degrades cleanly without trusting external URLs.
+const GITHUB_NEW_ISSUE_URL = "https://github.com/lyc1126/InvoiceHub/issues/new";
 const props = defineProps<{ open: boolean }>();
 const emit = defineEmits<{ close: [] }>();
 const config = ref<Configuration>();
@@ -18,7 +20,11 @@ const locked = computed(() => busy.value || result.value?.state === "unknown" ||
 const valid = computed(() => title.value.trim().length > 0 && title.value.trim().length <= 120 && description.value.trim().length > 0 && description.value.trim().length <= 6000 && consent.value);
 const labels: Record<string, string> = { bug: "问题报告", feature: "功能建议", other: "其他反馈" };
 const environmentLabels: Record<string, string> = { version: "软件版本", platform: "系统平台", architecture: "系统架构", package_type: "包类型" };
-const preview = computed(() => `类型：${labels[kind.value]}\n标题：${title.value.trim()}\n\n${description.value.trim()}${includeEnvironment.value && config.value ? "\n\n环境信息：\n" + Object.entries(config.value.environment).map(([key, value]) => `${environmentLabels[key] || key}：${value}`).join("\n") : ""}`);
+const environmentText = computed(() => {
+  if (!config.value) return "";
+  return "环境信息：\n" + Object.entries(config.value.environment).map(([key, value]) => `${environmentLabels[key] || key}：${value}`).join("\n");
+});
+const preview = computed(() => `类型：${labels[kind.value]}\n标题：${title.value.trim()}\n\n${description.value.trim()}${includeEnvironment.value && environmentText.value ? "\n\n" + environmentText.value : ""}`);
 const issueUrl = computed(() => {
   const number = result.value?.issue_number;
   // Never navigate to a URL supplied by an upstream response or user description.
@@ -67,6 +73,21 @@ async function copy(): Promise<void> {
   try { await navigator.clipboard.writeText(preview.value); toast("反馈内容已复制。"); }
   catch { error.value = "无法访问剪贴板，请选中下方预览内容手动复制。"; }
 }
+async function copyEnvironmentAndOpenIssue(): Promise<void> {
+  const hasDraft = title.value.trim().length > 0 || description.value.trim().length > 0;
+  const text = hasDraft
+    ? (includeEnvironment.value ? preview.value : `${preview.value}${environmentText.value ? "\n\n" + environmentText.value : ""}`)
+    : environmentText.value;
+  if (text) {
+    try {
+      await navigator.clipboard.writeText(text);
+      toast("脱敏信息已复制，正在打开 GitHub Issue 页面。");
+    } catch {
+      error.value = "无法访问剪贴板，请手动复制下方预览内容后再提交 GitHub Issue。";
+    }
+  }
+  window.open(GITHUB_NEW_ISSUE_URL, "_blank", "noopener,noreferrer");
+}
 function another(): void {
   if (result.value?.state !== "submitted") return;
   result.value = null; title.value = ""; description.value = ""; consent.value = false; error.value = "";
@@ -79,7 +100,13 @@ function another(): void {
       <p class="overview-notice">反馈将公开发布到 GitHub。请勿填写真实发票、公司税号、银行账号、联系方式或本机路径。本页不读取或上传发票、配置、日志和附件。</p>
       <p v-if="error" class="banner banner--error" role="alert">{{ error }} <button v-if="!config && !busy" type="button" @click="load">重新读取</button></p>
       <p v-if="loading" class="muted" role="status">正在读取反馈服务…</p>
-      <p v-if="config && !config.enabled" class="overview-notice overview-notice--warn" role="status">{{ config.message }}</p>
+      <div v-if="config && !config.enabled" class="overview-notice overview-notice--warn feedback-fallback" role="status">
+        <p>{{ config.message }}</p>
+        <div class="feedback-fallback__actions">
+          <button type="button" class="primary" :disabled="busy" @click="copyEnvironmentAndOpenIssue">复制脱敏信息并打开 GitHub Issue</button>
+          <a class="feedback-fallback__link" :href="GITHUB_NEW_ISSUE_URL" target="_blank" rel="noopener noreferrer">直接打开 GitHub Issue ↗</a>
+        </div>
+      </div>
       <form @submit.prevent="submit">
         <fieldset :disabled="locked || loading">
           <label class="field">反馈类型<select v-model="kind"><option value="feature">功能建议</option><option value="bug">问题报告</option><option value="other">其他反馈</option></select></label>
@@ -117,4 +144,8 @@ function another(): void {
 .feedback-preview summary { cursor: pointer; color: var(--muted); }
 .feedback-id { font-size: 12px; overflow-wrap: anywhere; }
 .feedback-actions { justify-content: flex-end; flex-wrap: wrap; }
+.feedback-fallback { display: grid; gap: 10px; }
+.feedback-fallback p { margin: 0; }
+.feedback-fallback__actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.feedback-fallback__link { font-size: 13px; text-decoration: underline; }
 </style>

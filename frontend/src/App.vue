@@ -82,6 +82,10 @@ function openServerWorkspaceTab(payload: { sourceId: string; parentId: string; s
 }
 
 function openServerPanelFor(sourceId: string): void {
+  if (!sourceId) {
+    void openServerEntry();
+    return;
+  }
   sourcesStore.selectedId = sourceId;
   serverOpen.value = true;
 }

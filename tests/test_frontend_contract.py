@@ -1324,7 +1324,7 @@ def test_settings_page_contract() -> None:
     assert "app.css?v=20261116-project-column" in html
     assert "settings-actions.css?v=20260907-desktop-integrated-2" in html
     assert "common.js?v=20261114-workspace-skin-isolation-1" in html
-    assert "page-settings.js?v=20261119-feedback-1" in html
+    assert "page-settings.js?v=20261124-ocr-settings-1" in html
     assert 'id="settingsAboutFeedbackLink"' in html
     assert '<details class="settings-edit-card" id="settingsAboutTechnicalDetails">' in html
     assert 'id="settingsAboutTechnicalList"' in html

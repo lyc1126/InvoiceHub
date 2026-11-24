@@ -283,9 +283,18 @@ function renderOcr(data, errors) {
   const settings = data.ocrSettings;
   const status = data.ocrStatus;
   const diagnostics = data.settings?.diagnostics || {};
+  const modeLabels = {
+    disabled: "未启用（可在 OCR 页按需配置）",
+    paddle_api: "PaddleOCR 官方 API",
+    paddle_self_hosted: "PaddleOCR 自建服务",
+  };
+  const mode = settings?.provider_mode || "disabled";
+  const ready = Boolean(status?.running || settings?.ready);
+  const statusLabel = ready ? "已就绪" : (mode === "disabled" ? "未启用" : "待完善配置");
   renderRows(settingsRefs.ocrList, [
-    { label: "本地 OCR", html: settings?.local_ocr_supported ? statusValue("可用", "success") : statusValue("未内置", "muted") },
-    { label: "服务状态", html: statusValue(status?.status || "disabled", status?.running ? "success" : "muted") },
+    { label: "识别模式", html: statusValue(modeLabels[mode] || mode, ready ? "success" : "muted") },
+    { label: "服务状态", html: statusValue(statusLabel, ready ? "success" : "muted") },
+    { label: "内置本地引擎", html: settings?.local_ocr_supported ? statusValue("可用", "success") : statusValue("未内置（核心包零重依赖）", "muted") },
     { label: "服务消息", value: status?.message || settings?.message || "--" },
     { label: "日志位置", html: pathText(diagnostics.runtime_dir) },
   ], errors.ocrSettings || errors.ocrStatus);

@@ -84,10 +84,13 @@ afterEach(() => {
 });
 
 describe("workspace shell", () => {
-  it("shows the start page with the health snapshot when no company is registered", async () => {
+  it("shows the start page with onboarding guidance and health snapshot when no company is registered", async () => {
     stubBackend({ companies: [] });
     const { wrapper } = await mountApp();
-    expect(wrapper.get('[aria-label="起始页"]').text()).toContain("0.3.0-alpha.2");
+    const startText = wrapper.get('[aria-label="起始页"]').text();
+    expect(startText).toContain("欢迎使用 InvoiceHub");
+    expect(wrapper.find('[aria-label="首次使用引导"]').exists()).toBe(true);
+    expect(startText).toContain("0.3.0-alpha.2");
     expect(wrapper.text()).toContain("/tmp/合成目录");
     expect(wrapper.find(".ws-tab").exists()).toBe(false);
   });

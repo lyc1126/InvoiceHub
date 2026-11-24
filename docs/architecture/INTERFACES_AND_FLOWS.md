@@ -99,7 +99,7 @@ POST/PUT 同源、流式请求最多 2 MiB，顶层对象和字段严格校验�
 
 ## 2026-11-19 应用内反馈（未部署）
 
-`GET /api/v1/feedback` 只读本地配置/环境白名单/未确认任务；`POST /api/v1/feedback` 接收 UUID、类型、标题、描述、环境选择与公开确认，同源与 32 KiB 限制后交独立 FeedbackService；`GET /api/v1/feedback/{request_id}` 只查询原中转回执，不重发。服务在 app 工厂独立接线，不新增 AppState 编排方法。GET About/打开表单不联网。
+`GET /api/v1/feedback` 只读本地配置、`issue_tracker_url`、环境白名单与未确认任务；`POST /api/v1/feedback` 接收 UUID、类型、标题、描述、环境选择与公开确认，同源与 32 KiB 限制后交独立 FeedbackService；`GET /api/v1/feedback/{request_id}` 只查询原中转回执，不重发。服务在 app 工厂独立接线，不新增 AppState 编排方法。GET About/打开表单不联网；未配置中转时由前端提供复制白名单脱敏信息并打开硬编码公开 GitHub Issue 页面的降级路径。
 
 设置关于新增“建议与反馈” → 已校验 frame/token 的 navigate → App/WsModal，设置草稿保留；独立经典页进入 Vue 深链接，no_skin 保留。蓝框四项身份收进默认关闭的技术详情；平台架构不隐藏，更新流程/API 不变。
 

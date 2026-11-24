@@ -57,13 +57,21 @@ describe("opt-in public feedback", () => {
     expect(dialog().textContent).toContain("old-job");
   });
 
-  it("shows missing configuration and safely renders arbitrary markup as text", async () => {
-    api.mockResolvedValueOnce({ ...configuration, enabled: false, message: "在线反馈尚未开通" });
+  it("shows missing configuration with GitHub Issue fallback and safely renders arbitrary markup as text", async () => {
+    api.mockResolvedValueOnce({ ...configuration, enabled: false, message: "当前版本未部署在线直连反馈中转，可一键复制脱敏内容后前往 GitHub Issue 提交。" });
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+    const openSpy = vi.spyOn(window, "open").mockImplementation(() => null);
     const view = await setup(); await fill(view);
     await view.get("textarea").setValue('<img src=x onerror="alert(1)">');
     expect(button("确认公开并提交").disabled).toBe(true);
-    expect(dialog().textContent).toContain("在线反馈尚未开通");
+    expect(dialog().textContent).toContain("GitHub Issue");
     expect(dialog().querySelector("img")).toBeNull();
+    const issueLink = dialog().querySelector<HTMLAnchorElement>('a[href="https://github.com/lyc1126/InvoiceHub/issues/new"]');
+    expect(issueLink).not.toBeNull();
+    button("复制脱敏信息并打开 GitHub Issue").click(); await flushPromises();
+    expect(writeText).toHaveBeenCalledWith(expect.stringContaining("系统架构：arm64"));
+    expect(openSpy).toHaveBeenCalledWith("https://github.com/lyc1126/InvoiceHub/issues/new", "_blank", "noopener,noreferrer");
     await view.findAll('input[type="checkbox"]')[0]!.setValue(true);
     expect(dialog().textContent).toContain("系统架构");
     expect(dialog().querySelector("pre")?.textContent).toContain("arm64");

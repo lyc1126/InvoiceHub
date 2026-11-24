@@ -652,7 +652,7 @@ def test_bundled_website_serves_only_packaged_assets_and_keeps_settings_navigati
         response = client.get(route)
         assert response.status_code == 200
         assert 'id="settingsAboutWebsiteLink" class="btn btn--ghost" href="/website/"' in response.text
-        assert "page-settings.js?v=20261119-feedback-1" in response.text
+        assert "page-settings.js?v=20261124-ocr-settings-1" in response.text
     assert "activeSkinStylesheet" not in client.get("/website/").text
 
 

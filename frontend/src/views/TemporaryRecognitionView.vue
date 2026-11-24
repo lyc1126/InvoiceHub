@@ -87,7 +87,7 @@ onBeforeUnmount(() => { dragEnd(true); window.removeEventListener("invoicehub:te
     <p v-if="message" class="banner banner--note" role="status">{{ message }}</p>
     <TemporaryPreview v-if="preview" :file="preview.file" :session-id="preview.sessionId" :active="active" @back="preview = null" />
     <section v-else-if="view === 'draft'" class="panel" aria-label="临时识别队列" @dragover.prevent @drop.prevent="browserDrop">
-      <button class="temporary-dropzone" type="button" :disabled="busy || !!running" :aria-busy="busy" @click="state.pick()"><WorkspaceIcon name="upload" /><strong>拖入发票 PDF / OFD / XML</strong><span>或点击选择文件 · 单个文件 ≤ 32 MB · 图片及纯扫描件暂不支持</span></button>
+      <button class="temporary-dropzone" type="button" :disabled="busy || !!running" :aria-busy="busy" @click="state.pick()"><WorkspaceIcon name="upload" /><strong>拖入发票 PDF / OFD / XML</strong><span>或点击选择文件 · 单个文件 ≤ 32 MB · 图片及扫描件请前往「OCR」页按需识别</span></button>
       <p class="muted">{{ files.length }} 个文件 · 上限 {{ settings.batch_limit }} 个。拖动手柄或用上移、下移按钮排序。</p>
       <ol ref="queue" class="temporary-queue" aria-label="文件识别顺序">
         <li v-for="(file, index) in files" :key="file.id" :data-file-index="index" class="temporary-queue__row">

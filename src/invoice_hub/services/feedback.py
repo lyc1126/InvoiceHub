@@ -128,8 +128,13 @@ class FeedbackService:
             with self._db() as db:
                 row = db.execute("SELECT * FROM feedback_jobs WHERE state IN ('sending','unknown') ORDER BY created DESC LIMIT 1").fetchone()
                 pending = self._view(row) if row else None
-        return {"enabled": bool(self.url), "message": self.config_error or ("" if self.url else "在线反馈尚未开通，可先复制反馈内容保存。"),
-                "environment": environment, "pending": pending}
+        return {
+            "enabled": bool(self.url),
+            "message": self.config_error or ("" if self.url else "当前版本未部署在线直连反馈中转，可一键复制脱敏内容后前往 GitHub Issue 提交。"),
+            "issue_tracker_url": f"{PUBLIC_SOURCE_URL}/issues/new",
+            "environment": environment,
+            "pending": pending,
+        }
 
     def _network(self, method: str, url: str, receipt: str, payload: dict | None):
         if not self._gate.acquire(blocking=False):

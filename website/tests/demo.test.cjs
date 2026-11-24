@@ -208,7 +208,7 @@ test('settings opens bundled site in-place without allowing relative update down
     const payload = { links: { website }, package: { platform: 'windows' }, update: { status: 'available', artifact: { url: '/untrusted.zip' } } };
     vm.runInNewContext(aboutScript, {
       document: { getElementById(id) { if (!refs.has(id)) refs.set(id, { addEventListener() {} }); return refs.get(id); } },
-      app: { api: async url => { requests.push(url); return payload; }, escapeHtml: String },
+      app: { api: async url => { requests.push(url); return payload; }, escapeHtml: String, skinBypassRequested: () => false },
       renderRows() {}, loadSettings: async () => {},
     });
     await new Promise(resolve => setImmediate(resolve));
