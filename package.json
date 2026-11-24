@@ -1,6 +1,6 @@
 {
   "name": "invoicehub-desktop",
-  "version": "1.0.0-beta.1",
+  "version": "1.0.0",
   "private": true,
   "packageManager": "pnpm@11.19.0",
   "scripts": {

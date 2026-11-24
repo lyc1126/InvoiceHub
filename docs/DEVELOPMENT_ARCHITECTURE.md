@@ -2,7 +2,7 @@
 
 > **当前状态总览**（按日期的历史阶段演进已统一收拢至 [CHANGELOG.md](../CHANGELOG.md)，本页只描述当前架构与有效边界）
 >
-> - **版本与基线**：当前开发线版本真值 [version.py](../src/invoice_hub/version.py) 为 `1.0.0-beta.1`（`UPDATE_CHANNEL = "beta"`）；公开图以经过审计的单一脱敏根提交建立 `main`，精确分支与提交以实时 Git 与 [分支记录](BRANCH_STATUS.md) 为准。
+> - **版本与基线**：当前版本真值 [version.py](../src/invoice_hub/version.py) 为 `1.0.0`（`UPDATE_CHANNEL = "stable"`）；公开图以经过审计的单一脱敏根提交建立 `main`，PR #32 整合后统一开发实现与稳定源码基线切换至 `main`，`v1.0.0` 发布准备位于 `codex/release-v1.0.0`，精确分支与提交以实时 Git 与 [分支记录](BRANCH_STATUS.md) 为准。
 > - **共享业务核心**：Python/FastAPI `/api/v1` + 独立 monitor daemon + Vue 3 工作区（`frontend/` → `web/static/app/`，桌面默认进入 `/workspace/`，与经典 `/` 互切）+ 经典页面（单据、成本 v1、做账、OCR、一致性、设置）+ 独立产品官网（`/website/`）。
 > - **已落地核心能力**：
 >   - **发票与提取底座**：PDF/OFD/XML 提取与成品油/电费等特定业务分类、同票家族纠偏、解析器版本感知自动重算、OFD 专用 Java 21 / OFDRW 渲染预览（[OFD 预览说明](OFD_PREVIEW.md)）、渐进分页读取（`storage/read_views.py`）、临时识别弹窗与勾选批量操作/原生回收站（[勾选工作流](architecture/AGENT_TASK_MAP.md#task-selection-workflow)）。

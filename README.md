@@ -8,7 +8,7 @@
 
 把散落的 PDF、OFD、XML、银行流水与公司资料夹，变成看得清、找得到、对得上的账前与做账资料。
 
-[![当前开发基线](https://img.shields.io/badge/version-v1.0.0--beta.1-d5ff5f?style=flat-square&labelColor=252820)](https://github.com/lyc1126/InvoiceHub/releases)
+[![当前版本](https://img.shields.io/badge/version-v1.0.0-d5ff5f?style=flat-square&labelColor=252820)](https://github.com/lyc1126/InvoiceHub/releases)
 [![平台](https://img.shields.io/badge/platform-Windows_x64_%7C_macOS_ARM64-f8f9f5?style=flat-square&labelColor=252820)](https://github.com/lyc1126/InvoiceHub/releases)
 [![Tauri](https://img.shields.io/badge/built_with-Tauri_2-ff8b70?style=flat-square&labelColor=252820)](src-tauri/README.md)
 [![许可](https://img.shields.io/badge/license-AGPL--3.0--or--later-d5ff5f?style=flat-square&labelColor=252820)](LICENSE)
@@ -74,7 +74,7 @@ InvoiceHub 是一个开源的本地优先多公司发票与账前工作台。登
 
 > 已包含启动响应完整性检查、固定端口冲突引导恢复、分阶段诊断和 Windows 浏览器兜底。遇到启动问题时，可查看[启动排障说明](docs/STARTUP_TROUBLESHOOTING.md)。
 
-> 当前公开最新预览包为 **alpha.2 优化版 1（opt.1）**，仓库开发基线已推进至 **`1.0.0-beta.1`（`v1.0.0` 收口候选）**。Windows 包未签名；Mac 使用 ad-hoc 签名，未经 Apple 公证，首次打开可能需要系统确认。校验和、构建收据及具体已测/未测范围均以 [Releases](https://github.com/lyc1126/InvoiceHub/releases) 为准。
+> 当前源码主线与发布候选版本为 **`1.0.0`（`UPDATE_CHANNEL = "stable"`）**，历史公开预览包 `v0.3.0-alpha.2-opt.1` 保留在 Releases。Windows 包未签名；Mac 预览包使用 ad-hoc 签名，未经 Apple 公证，首次打开可能需要系统确认。校验和、构建收据及具体已测/未测范围均以 [Releases](https://github.com/lyc1126/InvoiceHub/releases) 为准。
 
 ## 表格可以重建，原票始终保留
 

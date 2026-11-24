@@ -2,7 +2,7 @@
 
 > **当前实现状态总览**（按日期的历史开发与验证流水统一保存在 [CHANGELOG.md](CHANGELOG.md)，本页只维护当前有效能力与剩余验收口径）
 
-- **版本与公开基线**：当前开发线版本真值 [version.py](src/invoice_hub/version.py) 为 `1.0.0-beta.1`（`UPDATE_CHANNEL = "beta"`）；公开主线 `main` 以脱敏根提交建立，精确分支/提交见实时 Git 与 [分支记录](docs/BRANCH_STATUS.md)。
+- **版本与公开基线**：当前版本真值 [version.py](src/invoice_hub/version.py) 为 `1.0.0`（`UPDATE_CHANNEL = "stable"`）；PR #32 已合入公开主线 `main`（脱敏根提交后代），`v1.0.0` 发布准备位于 `codex/release-v1.0.0`，精确分支/提交见实时 Git 与 [分支记录](docs/BRANCH_STATUS.md)。
 - **核心底座与工作区**：多公司工作区（WS-01—07/10）、成本分析 V2（COST-01—06，含服务项目毛利与 BUG-06 服务/库存隔离）、逐文件原始解析缓存与完整代际（WS-08）、SMB/SFTP 只读试验版（WS-09）、代际/缓存/来源副本容量治理（ENG-09）、PaddleOCR 官方 API / 自建服务与社保截图识别（OCR-01）、默认软件无关的「通用凭证表」标准导出（BK-01）、固定 8766 端口冲突引导恢复（ENG-10）、Windows Rust clippy `-D warnings`（ENG-01）与 Linux 合成浏览器 E2E 门禁（ENG-05）均已接入当前开发线。
 - **应用内反馈与明确未包含项**：应用内产品反馈代码已接入，中转服务待部署决策（[FEEDBACK-01](docs/PRODUCT_BACKLOG.md#feedback-01)）；完整税务政策引擎 D0–D5、外置 Agent MCP 网关（`AGENT-01—04`）与服务器跨公司业务消费均不在 `v1.0.0` 范围内。
 - **验收口径提醒**：自动化测试与合成浏览器回归不替代最终用户验收；真实业务副本金额对账、正式 Windows BAT、双平台原生弹窗、Windows 克隆补验与双平台正式成品验收进度以 [迁移缺口与三轮清单](docs/MIGRATION_GAP_CHECKLIST.md) 为准。

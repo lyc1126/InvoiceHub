@@ -2,6 +2,16 @@
 
 ## 未发布
 
+### 2026-11-24 合入 PR #32 至 main 并执行 v1.0.0 正式升版与 macOS ARM64 候选包构建验收
+
+- 需求与起点：基于已合入 PR #32 的干净主线 `main@50996436ae52e081f9f12d91b3e729609b50a4e3` 新建 `codex/release-v1.0.0`，将统一架构基线切换至新 `main`，把产品版本由 `1.0.0-beta.1`（`beta`）升至 `1.0.0`（`stable`），完善 `stable` 通道的更新元数据校验并构建验证 macOS ARM64 `v1.0.0` 候选 DMG。
+- 采用方案：
+  - **版本与稳定通道升级**：在 `src/invoice_hub/version.py` 将 `PRODUCT_VERSION`、`PYTHON_PACKAGE_VERSION` 升至 `1.0.0`、`UPDATE_CHANNEL` 切为 `stable`；在 `release/update_metadata.py` 与 `release/windows_alpha_metadata.py` 补齐 `stable` 通道校验（拒绝 prerelease/devrelease 版本）；运行 `scripts/dev/tauri_version_sync.py --write` 同步 `package.json`、`src-tauri/Cargo.toml`、`src-tauri/tauri*.conf.json`、`docs/release/WINDOWS_REPACKAGE_CONFIG.json` 与 `docs/release/WINDOWS_PUBLIC_PREVIEW_CONFIG.json`，同步更新 `src-tauri/tauri.windows.conf.json`、`src-tauri/Cargo.lock`、`.github/workflows/windows-public-preview.yml`、`scripts/dev/*.ps1`、`scripts/dev/verify_tauri_*.py`、`scripts/dev/tauri_public_preview_smoke.py`、`macos/InvoiceHubMac/script/*.sh` 及对应契约测试与主线基线文档。
+  - **macOS ARM64 候选构建与验包**：在提交干净的 `codex/release-v1.0.0` commit 上运行 `scripts/dev/tauri_public_preview.py`（输入锁定 runtime `dist/runtime-inputs/20260909-optimized-macos/python`），产出并经 `verify_tauri_public_preview.py` 复验 `InvoiceHub-v1.0.0-macos-arm64-preview.dmg` 与 schema-4 收据（保留在 ignored `dist/candidates/` 下，不提交入仓）。
+- 验证范围与未覆盖项：
+  - 已运行并通过：`tauri_version_sync.py --check`、Rust `1.85.0` `cargo clippy --offline --locked --all-targets -- -D warnings` 与 `cargo test --offline --locked`、Ruff、Python `compileall`、`bash -n macos/InvoiceHubMac/script/*.sh`、版本/更新/发布/文档契约全套 pytest（含 `test_release_identity.py`、`test_update_metadata.py`、`test_update_service.py`、`test_windows_alpha_metadata.py`、`test_tauri_foundation.py`、`test_tauri_public_preview.py`、`test_macos_release_contract.py`、`test_windows_release_contract.py`、`test_api_contract.py`、`test_website.py`、`test_development_documentation.py`），以及 macOS ARM64 `v1.0.0` 候选 DMG 打包与独立验包。
+  - 未覆盖项：未覆盖 Apple Developer ID 正式签名/公证、Sparkle 线上升级、Windows x64 实机同源打包与 BAT 验收、真实默认配置与系统原生选择器弹窗；待 `codex/release-v1.0.0` 经你确认推送并合入 `main` 后，基于最终 `main` clean commit 执行双平台正式打标发布。
+
 ### 2026-11-24 推进 v1.0.0 里程碑 3：完成 FEEDBACK-01 方案 A 降级、首次使用引导、跨页面文案体检与门面文档刷新
 
 - 需求与起点：基于已推送至 `origin/codex/workspace-p3@dfdc778` 的里程碑 2 提交，按用户确认推进 `FEEDBACK-01` 方案 A（暂不部署公网中转，降级为一键复制脱敏信息并跳转 GitHub Issue）、补齐工作区首次启动三步引导与跨页面文案体检，并刷新 `README.md`、`docs/USER_GUIDE.md` 与 `website/index.html` 对齐 `1.0.0-beta.1` 实际能力。

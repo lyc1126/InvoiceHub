@@ -1,5 +1,11 @@
 # 分支整理、main 同步与双平台候选准备
 
+## 2026-11-24 PR #32 合入 main 与 v1.0.0 发布候选准备
+
+- PR #32（`codex/workspace-p3@603afe1`，合并提交 `50996436ae52e081f9f12d91b3e729609b50a4e3`）在全部 7 项必过检查（`Developer Certificate of Origin`、`macOS ARM64 Python and release static checks`、`Swift package tests from the resolved Sparkle pin`、`Windows Python and release contracts`、`Workspace frontend (Vue)`、`Tauri host Rust (macos-15)`、`Tauri host Rust (windows-latest)`）及 Linux 浏览器 E2E 全部通过、且 2 条评审意见修复并解决后，以普通 merge 合入 `main`。
+- 同步修复了 GitHub `Protect main` 规则集（`id: 20838256`）中过期的旧 macOS 检查名，并将开发实现与稳定源码基线统一切换至 `main@5099643`。
+- 基于 `main@5099643` 新建 `codex/release-v1.0.0` 将版本由 `1.0.0-beta.1`（`beta`）升至 `1.0.0`（`stable`），同步全部派生配置/脚本/测试并构建验证 macOS ARM64 `v1.0.0` 候选 DMG（Windows x64 便携包由 Windows 机基于同一 clean commit 执行同源构建与复现验包）。
+
 ## 2026-11-23 v1.0.0 路线确认与 Draft PR 推送
 
 经用户确认采用“先合入 `main` / Beta 消化当前开发线 → 再逐项补齐 `v1.0.0` 必做项”两步走；双平台验收先以 macOS ARM64 为主，Windows x64 从 GitHub 克隆/拉取 `codex/workspace-p3` 后补验。本轮先在 `8b7d4a1` 固定 `BUG-06` 与既有规划文档，再补充 `v1.0.0` 目标版本排期并推送 `codex/workspace-p3` 至远端、创建 Draft PR，触发 GitHub Actions（Linux 浏览器 E2E、Windows/macOS 套件、Vue 逐字节构建、Windows Rust clippy 摸底）。精确分支引用与 CI 结果以实时 Git 及 PR 页面为准；合入 `main` 仍待验收满意后由用户明确授权。[v1.0.0 排期](PRODUCT_BACKLOG.md#next-delivery)
