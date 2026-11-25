@@ -6,6 +6,7 @@ import App from "../src/App.vue";
 import CompanyFolderCreateModal from "../src/components/CompanyFolderCreateModal.vue";
 import CompanyFolderDeleteModal from "../src/components/CompanyFolderDeleteModal.vue";
 import CompanyFolderEditModal from "../src/components/CompanyFolderEditModal.vue";
+import CompanySettings from "../src/components/CompanySettings.vue";
 import DirectoryPanel from "../src/components/DirectoryPanel.vue";
 import { createAppRouter } from "../src/router";
 import { useWorkspaceStore } from "../src/stores/workspace";
@@ -371,5 +372,53 @@ describe("company custom folders & role dispatch", () => {
     expect(workspace.pins).toEqual([]);
     expect(workspace.compareBase).toBeNull();
     panel.unmount();
+  });
+
+  it("syncs untouched CompanySettings mappings after a folder rename and blocks stale edited mapping overwrites", async () => {
+    stubBackend((url, init) => {
+      if (url === "/api/v1/companies/co_1" && init.method === "PATCH") {
+        return [200, { ok: true, revision: 6, company: { ...COMPANY, name: "甲公司改名" } }];
+      }
+      return undefined;
+    });
+    setActivePinia(createPinia());
+    const wrapper = mount(CompanySettings, { props: { company: COMPANY } });
+    await flushPromises();
+
+    // User only edits company name (leaves cost_invoice_dir untouched), while elsewhere
+    // cost_invoice_dir was renamed on disk to "成本新名".
+    await wrapper.get('input[maxlength="80"]').setValue("甲公司改名");
+    const renamedCompany: Company = {
+      ...COMPANY,
+      subdirs: SUBDIRS.map((s) => (s.key === "cost_invoice_dir" ? { ...s, relative_path: "成本新名", path: "/合成/甲/成本新名" } : s)),
+    };
+    await wrapper.setProps({ company: renamedCompany });
+    await flushPromises();
+
+    // Untouched mapping auto-refreshes to "成本新名" while unsaved name draft stays intact!
+    expect((wrapper.get('input[aria-label="成本发票 映射"]').element as HTMLInputElement).value).toBe("成本新名");
+    expect((wrapper.get('input[maxlength="80"]').element as HTMLInputElement).value).toBe("甲公司改名");
+
+    // Saving submits ONLY the name change and does NOT undo "成本新名" back to "成本发票".
+    await wrapper.get('form[aria-label="公司设置"]').trigger("submit");
+    await flushPromises();
+    const patch = calls.find((c) => c.method === "PATCH" && c.url === "/api/v1/companies/co_1")!;
+    expect(patch.body).toEqual({ name: "甲公司改名", taxpayer_periods: [], revision: 5 });
+
+    // If the user DID edit cost_invoice_dir AND it then changes externally, preserve draft & block silent overwrite.
+    calls = [];
+    await wrapper.get('input[aria-label="成本发票 映射"]').setValue("手输路径");
+    const promotedCompany: Company = {
+      ...renamedCompany,
+      subdirs: renamedCompany.subdirs.map((s) => (s.key === "cost_invoice_dir" ? { ...s, relative_path: "晋升成本", path: "/合成/甲/晋升成本" } : s)),
+    };
+    await wrapper.setProps({ company: promotedCompany });
+    await flushPromises();
+    expect((wrapper.get('input[aria-label="成本发票 映射"]').element as HTMLInputElement).value).toBe("手输路径");
+    await wrapper.get('form[aria-label="公司设置"]').trigger("submit");
+    await flushPromises();
+    expect(calls.some((c) => c.method === "PATCH")).toBe(false);
+    expect(wrapper.get('[role="alert"]').text()).toContain("已在别处重命名或切换");
+    wrapper.unmount();
   });
 });
