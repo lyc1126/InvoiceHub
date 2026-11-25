@@ -46,7 +46,8 @@ const classicVisible = computed(() => isGlobalModule.value
 const classicOpened = ref(false);
 watch(classicVisible, visible => { if (visible) classicOpened.value = true; }, { immediate: true });
 const book = computed(() => company.value ? modules.book[company.value.id] : undefined);
-const presentDirs = computed(() => company.value?.subdirs.filter(item => item.status === "present").length ?? 0);
+const visibleDirs = computed(() => company.value?.subdirs.filter(item => !item.hidden) ?? []);
+const presentDirs = computed(() => visibleDirs.value.filter(item => item.status === "present").length);
 const switchPath = computed(() => subdir.value?.path ?? company.value?.subdirs.find(item => item.key === "cost_invoice_dir")?.path ?? "");
 </script>
 
@@ -83,7 +84,7 @@ const switchPath = computed(() => subdir.value?.path ?? company.value?.subdirs.f
       <!-- Only step 1 has a company-level fact here (subdir presence); later steps stay neutral
            rather than guessing draft state that CompanyVouchers owns. -->
       <div class="bookkeeping-flow" aria-label="做账流程">
-        <div :class="presentDirs === company.subdirs.length ? 'done' : 'warn'"><b><i>{{ presentDirs === company.subdirs.length ? "✓" : "!" }}</i>资料齐全</b><small>{{ presentDirs }}/{{ company.subdirs.length }} 个文件夹有资料</small></div>
+        <div :class="presentDirs === visibleDirs.length ? 'done' : 'warn'"><b><i>{{ presentDirs === visibleDirs.length ? "✓" : "!" }}</i>资料齐全</b><small>{{ presentDirs }}/{{ visibleDirs.length }} 个文件夹有资料</small></div>
         <div v-for="(step, index) in ['生成草稿', '人工审核', '导出凭证', '导入记账软件 / 读回']" :key="step"><b><i>{{ index + 2 }}</i>{{ step }}</b><small>{{ ['生成后逐张核对', '由你确认', '只导出审核通过的', '在记账软件导入后读回核对'][index] }}</small></div>
       </div>
       <div class="tabs" role="tablist" aria-label="做账内容"><button v-for="item in bookTabs" :key="item.id" type="button" role="tab" :aria-selected="section === item.id" @click="selectSection(item.id)">{{ item.label }}</button></div>

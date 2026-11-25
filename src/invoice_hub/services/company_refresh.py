@@ -34,6 +34,7 @@ from invoice_hub.targets import AppConfig, target_profile_for
 from invoice_hub.targets.companies import company_outbound_for, company_taxpayer_for
 
 INVOICE_REFRESH_KEYS = ("cost_invoice_dir", "issued_invoice_dir", "expense_reimbursement_dir")
+EXPLICIT_REFRESH_ROLES = frozenset((*INVOICE_REFRESH_KEYS, "general"))
 
 
 class _RefreshProgress:
@@ -115,14 +116,26 @@ class CompanyDataRefreshService:
         company = self._registry.get_company(company_id)["company"]
         by_key = {item["key"]: item for item in company["subdirs"]}
         if keys is None:
-            target_keys = [key for key in INVOICE_REFRESH_KEYS if key in by_key]
+            # Default company refresh covers visible standard invoice folders plus present custom
+            # folders pointing to an invoice benchmark role.
+            target_keys = [
+                item["key"]
+                for item in company["subdirs"]
+                if not item.get("hidden")
+                and (
+                    item["key"] in INVOICE_REFRESH_KEYS
+                    or (item.get("kind") == "custom" and item.get("role") in INVOICE_REFRESH_KEYS)
+                )
+            ]
         else:
             if not isinstance(keys, list) or not keys:
                 raise CompanyRegistryError("COMPANY_REFRESH_INVALID", "请指定要读取的发票目录。", status_code=422, field="keys")
             target_keys = []
             for raw in keys:
                 key = str(raw or "").strip()
-                if key not in INVOICE_REFRESH_KEYS or key not in by_key:
+                entry = by_key.get(key)
+                role = str(entry.get("role") or key) if entry else ""
+                if entry is None or role not in EXPLICIT_REFRESH_ROLES:
                     raise CompanyRegistryError("COMPANY_REFRESH_INVALID", f"不支持读取目录类型：{key}", status_code=422, field="keys")
                 if key not in target_keys:
                     target_keys.append(key)

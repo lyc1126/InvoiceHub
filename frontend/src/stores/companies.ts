@@ -4,11 +4,15 @@ import { ApiError, request } from "../api/client";
 import type {
   Company,
   CompanyDeletePayload,
+  CompanyFolderCreatePlan,
+  CompanyFolderDiscoverPayload,
+  CompanyFolderTrashPlan,
   CompanyListPayload,
   CompanyPayload,
   CompanyRefreshState,
   CompanySetupInput,
   CompanySetupJob,
+  FolderRole,
   SubdirCreateResult,
   SubdirPlan,
   TaxpayerPeriod,
@@ -31,10 +35,10 @@ export interface CompanyPatch {
 }
 
 // A source identity, not an object identity: a metadata/status refresh keeps cached views,
-// while changing a directory mapping must invalidate the old results and selection.
+// while changing a directory path, role or mapping must invalidate the old results and selection.
 export function companySourceKey(company: Company, keys?: string[]): string {
   return JSON.stringify([company.id, company.root_path, keys ?? null, (company.subdirs ?? []).filter((item) => !keys || keys.includes(item.key))
-    .map((item) => [item.key, item.relative_path]).sort((a, b) => a[0]!.localeCompare(b[0]!))]);
+    .map((item) => [item.key, item.relative_path, item.path, item.role ?? item.key]).sort((a, b) => a[0]!.localeCompare(b[0]!))]);
 }
 
 // Company registry (WS-07). Every write sends the registry revision this page last read; a
@@ -149,6 +153,134 @@ export const useCompaniesStore = defineStore("companies", () => {
     await load();
   }
 
+  function discoverFolders(companyId: string): Promise<CompanyFolderDiscoverPayload> {
+    return request<CompanyFolderDiscoverPayload>(`/api/v1/companies/${encodeURIComponent(companyId)}/folders/discover`);
+  }
+
+  function previewCreateFolder(
+    companyId: string,
+    input: { label: string; relative_path?: string; role: FolderRole },
+  ): Promise<CompanyFolderCreatePlan> {
+    return write((revision) =>
+      request<CompanyFolderCreatePlan>(`/api/v1/companies/${encodeURIComponent(companyId)}/folders/create/preview`, {
+        method: "POST",
+        body: { ...input, revision },
+      }),
+    );
+  }
+
+  async function createFolder(
+    companyId: string,
+    input: { label: string; relative_path?: string; role: FolderRole; plan_hash: string },
+  ): Promise<CompanyPayload & { folder_id: string }> {
+    const result = await write((revision) =>
+      request<CompanyPayload & { folder_id: string }>(`/api/v1/companies/${encodeURIComponent(companyId)}/folders/create`, {
+        method: "POST",
+        body: { ...input, confirm: true, revision },
+      }),
+    );
+    await load();
+    return result;
+  }
+
+  async function importFolder(
+    companyId: string,
+    input: { path?: string; relative_path?: string; label?: string; role: FolderRole },
+  ): Promise<CompanyPayload & { folder_id: string }> {
+    const result = await write((revision) =>
+      request<CompanyPayload & { folder_id: string }>(`/api/v1/companies/${encodeURIComponent(companyId)}/folders/import`, {
+        method: "POST",
+        body: { ...input, revision },
+      }),
+    );
+    await load();
+    return result;
+  }
+
+  async function updateFolder(
+    companyId: string,
+    key: string,
+    input: { label?: string; role?: FolderRole; rename_disk?: boolean; new_relative_path?: string; new_name?: string },
+  ): Promise<CompanyPayload & { disk_renamed?: boolean }> {
+    const result = await write((revision) =>
+      request<CompanyPayload & { disk_renamed?: boolean }>(
+        `/api/v1/companies/${encodeURIComponent(companyId)}/folders/${encodeURIComponent(key)}/update`,
+        { method: "POST", body: { ...input, revision } },
+      ),
+    );
+    await load();
+    return result;
+  }
+
+  async function removeFolder(companyId: string, key: string): Promise<CompanyPayload & { removed_key: string; files_touched: number }> {
+    const result = await write((revision) =>
+      request<CompanyPayload & { removed_key: string; files_touched: number }>(
+        `/api/v1/companies/${encodeURIComponent(companyId)}/folders/${encodeURIComponent(key)}/remove`,
+        { method: "POST", body: { revision } },
+      ),
+    );
+    await load();
+    return result;
+  }
+
+  async function restoreFolder(companyId: string, key: string): Promise<CompanyPayload> {
+    const result = await write((revision) =>
+      request<CompanyPayload>(
+        `/api/v1/companies/${encodeURIComponent(companyId)}/folders/${encodeURIComponent(key)}/restore`,
+        { method: "POST", body: { revision } },
+      ),
+    );
+    await load();
+    return result;
+  }
+
+  function previewTrashFolder(companyId: string, key: string): Promise<CompanyFolderTrashPlan> {
+    return write((revision) =>
+      request<CompanyFolderTrashPlan>(
+        `/api/v1/companies/${encodeURIComponent(companyId)}/folders/${encodeURIComponent(key)}/trash/preview`,
+        { method: "POST", body: { revision } },
+      ),
+    );
+  }
+
+  async function trashFolder(
+    companyId: string,
+    key: string,
+    input: { plan_hash: string; also_unregister?: boolean },
+  ): Promise<CompanyPayload & { trashed_key: string; unregistered: boolean }> {
+    const result = await write((revision) =>
+      request<CompanyPayload & { trashed_key: string; unregistered: boolean }>(
+        `/api/v1/companies/${encodeURIComponent(companyId)}/folders/${encodeURIComponent(key)}/trash`,
+        { method: "POST", body: { ...input, confirm: true, revision }, timeoutMs: 60_000 },
+      ),
+    );
+    await load();
+    return result;
+  }
+
+  async function promoteFolder(
+    companyId: string,
+    key: string,
+    input: { target_role?: FolderRole; keep_previous_as_custom?: boolean } = {},
+  ): Promise<CompanyPayload & { promoted_to: string; preserved_folder_id: string }> {
+    const result = await write((revision) =>
+      request<CompanyPayload & { promoted_to: string; preserved_folder_id: string }>(
+        `/api/v1/companies/${encodeURIComponent(companyId)}/folders/${encodeURIComponent(key)}/promote`,
+        { method: "POST", body: { ...input, revision } },
+      ),
+    );
+    await load();
+    return result;
+  }
+
+  function pickFolderDirectory(): Promise<{ ok: boolean; selected: boolean; path: string }> {
+    return request<{ ok: boolean; selected: boolean; path: string }>("/api/v1/companies/pick-directory", {
+      method: "POST",
+      body: {},
+      timeoutMs: 130_000,
+    });
+  }
+
   function stopRefreshPoll(companyId: string): void {
     const timer = refreshTimers.get(companyId);
     if (timer !== undefined) {
@@ -204,5 +336,8 @@ export const useCompaniesStore = defineStore("companies", () => {
     planSetup, getSetup, confirmSetup, acceptSetup,
     list, companies, selected, selectedId, loading, error, refreshStates,
     load, create, update, remove, subdirPlan, createSubdirs, refreshData,
+    discoverFolders, previewCreateFolder, createFolder, importFolder,
+    updateFolder, removeFolder, restoreFolder, previewTrashFolder, trashFolder,
+    promoteFolder, pickFolderDirectory,
   };
 });

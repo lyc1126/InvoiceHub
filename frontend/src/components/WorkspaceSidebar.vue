@@ -4,13 +4,16 @@ import { useRoute, useRouter } from "vue-router";
 import WorkspaceIcon from "./WorkspaceIcon.vue";
 import WsModal from "./WsModal.vue";
 import ProjectRenameModal from "./ProjectRenameModal.vue";
+import CompanyFolderCreateModal from "./CompanyFolderCreateModal.vue";
+import CompanyFolderEditModal from "./CompanyFolderEditModal.vue";
+import CompanyFolderDeleteModal from "./CompanyFolderDeleteModal.vue";
 import { MODULES, type ModuleId } from "../modules";
 import { useModulesStore } from "../stores/modules";
 import { skinBypassRequested } from "../appearance";
 import { ApiError, request } from "../api/client";
 import type { Company, CompanySubdir, ProjectRenameResult, ProjectSummary, SubdirPlan } from "../api/types";
 import { errorText } from "../format";
-import { INVOICE_DIRS, SAME_NUMBER, relationFor } from "../relations";
+import { INVOICE_DIRS, SAME_NUMBER, effectiveFolderRole, relationFor } from "../relations";
 import { companySourceKey, useCompaniesStore } from "../stores/companies";
 import { useSystemStore } from "../stores/system";
 import { SIDEBAR_DEFAULT, clampSidebar, useWorkspaceStore } from "../stores/workspace";
@@ -28,12 +31,15 @@ const router = useRouter();
 const modules = useModulesStore();
 const searchOpen = ref(false);
 const search = ref("");
+function visibleSubdirs(company: Company): CompanySubdir[] {
+  return company.subdirs.filter((item) => !item.hidden);
+}
 const visibleCompanies = computed(() => companies.companies.filter(company => {
   const term = search.value.trim().toLocaleLowerCase();
-  return !term || [company.name, company.root_path, ...company.subdirs.map(dir => dir.label), ...(projects.value[company.id]?.names ?? [])].some(value => value.toLocaleLowerCase().includes(term));
+  return !term || [company.name, company.root_path, ...visibleSubdirs(company).map(dir => dir.label), ...(projects.value[company.id]?.names ?? [])].some(value => value.toLocaleLowerCase().includes(term));
 }));
 function nodeIcon(node: SidebarNode): string {
-  return node.kind === "company" ? "building" : node.kind === "project" ? "project" : node.dirKey === "bank_flow_dir" ? "bank" : "folder";
+  return node.kind === "company" ? "building" : node.kind === "project" ? "project" : effectiveFolderRole(node.subdir, node.dirKey) === "bank_flow_dir" ? "bank" : "folder";
 }
 function isCurrent(companyId: string, kind: SidebarNode["kind"], dirKey?: string): boolean {
   const current = route.name !== "settings" && MODULES.some(item => item.id === route.name)
@@ -54,6 +60,7 @@ const KIND_TAGS: Record<string, string> = {
   input_deduction_dir: "抵扣",
   payroll_social_dir: "工资",
   expense_reimbursement_dir: "报销",
+  general: "资料",
 };
 
 interface SidebarNode {
@@ -73,17 +80,19 @@ interface SidebarNode {
 const projects = ref<Record<string, { names: string[]; error: string; loading: boolean; sourceKey: string }>>({});
 
 function companyNode(company: Company): SidebarNode {
-  const present = company.subdirs.filter((item) => item.status === "present").length;
+  const visible = visibleSubdirs(company);
+  const present = visible.filter((item) => item.status === "present").length;
   return {
     id: `company:${company.id}`, kind: "company", company, label: company.name,
-    sub: `${company.current_taxpayer_label} · 资料 ${present}/${company.subdirs.length}`, path: company.root_path,
+    sub: `${company.current_taxpayer_label} · 资料 ${present}/${visible.length}`, path: company.root_path,
   };
 }
 
 function directoryNode(company: Company, subdir: CompanySubdir): SidebarNode {
+  const roleTag = subdir.kind === "custom" ? ` · ${subdir.location === "external" ? "外部导入" : "自定义"} · ${subdir.role_label ?? ""}` : "";
   return {
     id: `dir:${company.id}:${subdir.key}`, kind: "directory", company, dirKey: subdir.key, subdir,
-    label: subdir.label, sub: company.name, path: subdir.path,
+    label: subdir.label, sub: `${company.name}${roleTag}`, path: subdir.path,
   };
 }
 
@@ -96,7 +105,7 @@ const nodesById = computed(() => {
   for (const company of companies.companies) {
     const node = companyNode(company);
     map.set(node.id, node);
-    for (const subdir of company.subdirs) {
+    for (const subdir of visibleSubdirs(company)) {
       const child = directoryNode(company, subdir);
       map.set(child.id, child);
     }
@@ -178,7 +187,11 @@ function compareState(node: SidebarNode): { ok: boolean; reason: string; relatio
   if (sameCompany && base.dirKey === node.dirKey) return { ok: false, reason: "这是已选的目录" };
   const relation = sameCompany ? relationFor(base.dirKey, node.dirKey ?? "") : null;
   if (relation) return { ok: true, reason: relation.label, relation: relation.id };
-  if (INVOICE_DIRS.includes(base.dirKey) && INVOICE_DIRS.includes(node.dirKey ?? "")) {
+  const baseCompany = companies.companies.find((item) => item.id === base.companyId);
+  const baseSubdir = baseCompany?.subdirs.find((item) => item.key === base.dirKey);
+  const baseRole = effectiveFolderRole(baseSubdir, base.dirKey);
+  const nodeRole = effectiveFolderRole(node.subdir, node.dirKey ?? "");
+  if (INVOICE_DIRS.includes(baseRole) && INVOICE_DIRS.includes(nodeRole)) {
     return { ok: true, reason: "检查两个目录是否有相同发票号", relation: SAME_NUMBER };
   }
   return { ok: false, reason: sameCompany ? "这两类资料不能直接配对核对" : "不同公司之间只能核对发票目录的相同票号" };
@@ -211,6 +224,50 @@ function isBase(node: SidebarNode): boolean {
 // ---- context menu
 const menu = ref<{ node: SidebarNode; x: number; y: number; origin: HTMLElement | null } | null>(null);
 const menuEl = ref<HTMLElement | null>(null);
+
+// ---- custom & standard folder modals (create/import, edit/rename/role/promote, remove/trash)
+const folderCreateModal = ref<{ company: Company; mode: "create" | "import" | "restore" } | null>(null);
+const folderEditModal = ref<{ company: Company; subdir: CompanySubdir } | null>(null);
+const folderDeleteModal = ref<{ company: Company; subdir: CompanySubdir } | null>(null);
+
+function openFolderCreate(company: Company, mode: "create" | "import" | "restore" = "create"): void {
+  closeMenu(false);
+  folderCreateModal.value = { company, mode };
+}
+
+function openFolderEdit(node: SidebarNode): void {
+  if (node.kind !== "directory" || !node.subdir) return;
+  closeMenu(false);
+  folderEditModal.value = { company: node.company, subdir: node.subdir };
+}
+
+function openFolderDelete(node: SidebarNode): void {
+  if (node.kind !== "directory" || !node.subdir) return;
+  closeMenu(false);
+  folderDeleteModal.value = { company: node.company, subdir: node.subdir };
+}
+
+function onFolderCreateDone(folderId?: string): void {
+  const companyId = folderCreateModal.value?.company.id;
+  folderCreateModal.value = null;
+  if (companyId && !workspace.expanded.includes(companyId)) workspace.toggleExpanded(companyId);
+  if (companyId && folderId) openHome({ kind: "directory", companyId, dirKey: folderId });
+}
+
+function onFolderEditDone(nextKey?: string): void {
+  const current = folderEditModal.value;
+  folderEditModal.value = null;
+  if (current && nextKey && nextKey !== current.subdir.key) {
+    workspace.closeDirectory(current.company.id, current.subdir.key);
+    openHome({ kind: "directory", companyId: current.company.id, dirKey: nextKey });
+  }
+}
+
+function onFolderDeleteDone(result: { key: string; removedFromList: boolean; trashed: boolean }): void {
+  const current = folderDeleteModal.value;
+  folderDeleteModal.value = null;
+  if (current && result.removedFromList) workspace.closeDirectory(current.company.id, result.key);
+}
 
 // ---- single missing subfolder creation (preview -> confirm -> mkdir only)
 const createModal = ref<{ companyId: string; companyName: string; dirKey: string; label: string; plan: SubdirPlan | null; loading: boolean; busy: boolean; error: string } | null>(null);
@@ -511,7 +568,7 @@ onBeforeUnmount(() => {
               <button type="button" class="ws-more" :aria-label="`项目 ${name} 的操作`" @click="openMenu(projectNode(company, name), $event)">⋯</button>
             </li>
             <li
-              v-for="subdir in company.subdirs"
+              v-for="subdir in visibleSubdirs(company)"
               :key="subdir.key"
               class="ws-row"
               :class="{ 'ws-row--missing': subdir.status !== 'present', 'ws-row--base': isBase(directoryNode(company, subdir)) }"
@@ -528,10 +585,10 @@ onBeforeUnmount(() => {
                 @mouseleave="hideCard"
                 @focus="hideCard"
               >
-                <WorkspaceIcon :name="subdir.key === 'bank_flow_dir' ? 'bank' : 'folder'" />
+                <WorkspaceIcon :name="effectiveFolderRole(subdir) === 'bank_flow_dir' ? 'bank' : 'folder'" />
                 <span class="ws-text"><span class="ws-label">{{ subdir.label }}</span></span>
                 <span v-if="company.monitored_subdir_key === subdir.key" class="ws-live" title="当前监控目录" />
-                <span class="ws-kind">{{ subdir.status === "present" ? KIND_TAGS[subdir.key] ?? "" : "缺失" }}</span>
+                <span class="ws-kind">{{ subdir.status === "present" ? KIND_TAGS[effectiveFolderRole(subdir)] ?? "" : "缺失" }}</span>
               </button>
               <button
                 v-if="compareState(directoryNode(company, subdir)).ok"
@@ -588,6 +645,12 @@ onBeforeUnmount(() => {
         {{ workspace.pins.includes(menu.node.id) ? "取消置顶" : "置顶" }}
       </button>
       <button
+        v-if="menu.node.kind === 'company'"
+        type="button"
+        role="menuitem"
+        @click="openFolderCreate(menu.node.company, 'create')"
+      >新建 / 导入文件夹…</button>
+      <button
         v-if="menu.node.kind === 'project'"
         type="button"
         role="menuitem"
@@ -595,11 +658,21 @@ onBeforeUnmount(() => {
       >重命名项目…</button>
       <template v-if="menu.node.kind === 'directory'">
         <button
-          v-if="menu.node.subdir?.status === 'missing'"
+          v-if="menu.node.subdir?.status === 'missing' && menu.node.subdir?.kind !== 'custom'"
           type="button"
           role="menuitem"
           @click="startCreateSubdir(menu.node)"
         >创建此文件夹…</button>
+        <button
+          type="button"
+          role="menuitem"
+          @click="openFolderEdit(menu.node)"
+        >重命名 / 功能指向…</button>
+        <button
+          type="button"
+          role="menuitem"
+          @click="openFolderDelete(menu.node)"
+        >移除或移入回收站…</button>
         <button
           v-if="!isBase(menu.node)"
           type="button"
@@ -655,6 +728,30 @@ onBeforeUnmount(() => {
       :project-names="renameModal.projectNames"
       @close="renameModal = null"
       @done="onSidebarProjectRenamed"
+    />
+
+    <CompanyFolderCreateModal
+      v-if="folderCreateModal"
+      :company="folderCreateModal.company"
+      :initial-mode="folderCreateModal.mode"
+      @close="folderCreateModal = null"
+      @done="onFolderCreateDone"
+    />
+
+    <CompanyFolderEditModal
+      v-if="folderEditModal"
+      :company="folderEditModal.company"
+      :subdir="folderEditModal.subdir"
+      @close="folderEditModal = null"
+      @done="onFolderEditDone"
+    />
+
+    <CompanyFolderDeleteModal
+      v-if="folderDeleteModal"
+      :company="folderDeleteModal.company"
+      :subdir="folderDeleteModal.subdir"
+      @close="folderDeleteModal = null"
+      @done="onFolderDeleteDone"
     />
   </aside>
 </template>

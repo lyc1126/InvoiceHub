@@ -1,5 +1,25 @@
 # InvoiceHub 接口与运行流程
 
+## 2026-11-25 公司自定义与默认文件夹全生命周期管理及基准功能指向
+
+公司清单路由新增 `api/routes/company_folders.py`（共享 `CompanyRegistryService` 的 RLock、revision CAS、同源校验与线程池执行），在保持单一活动 `watch_dir` 与公司主账簿/成本/凭证草稿口径隔离的前提下，开放自定义与默认文件夹的全生命周期管理及以默认 6 类目录为基准的功能指向（`cost_invoice_dir`、`issued_invoice_dir`、`expense_reimbursement_dir`、`bank_flow_dir`、`input_deduction_dir`、`payroll_social_dir`、`general`）：
+
+| 方法与路径 | 契约 |
+|---|---|
+| `GET /api/v1/companies/{company_id}/folders/discover` | 只读扫描公司资料夹内直接子目录中尚未登记的文件夹候选（给出建议功能角色）、返回已隐藏默认目录列表与全部 `roles` 元数据；不建目录、不写清单。 |
+| `POST /api/v1/companies/{company_id}/folders/create/preview` | 带 `revision`、`label`、`relative_path`、`role` 预览在公司资料夹内新建空文件夹的解析路径与 `plan_hash`；重名、嵌套、链接或系统保留名返回 `action: "blocked"`。 |
+| `POST /api/v1/companies/{company_id}/folders/create` | 带 `revision`、`plan_hash`、`confirm: true` 与创建参数；在锁内重算计划并经 `company_directory_guard.create_empty_subdir` 只新建空文件夹并登记自定义条目，状态变化返回 409 `COMPANY_PLAN_STALE`。 |
+| `POST /api/v1/companies/{company_id}/folders/import` | 导入公司内（`location: "inside_root"`）或公司外本机任意目录（`location: "external"`）；拒绝符号链接/junction、系统根/项目根/公司根以及公司内或跨公司重叠路径，按 `serialize_config_path` 记录路径并赋予基准功能指向，绝不移动或修改原文件。 |
+| `POST /api/v1/companies/{company_id}/folders/{key}/update` | 带 `revision` 修改自定义或默认目录显示名、自定义目录功能指向（`role`），以及可选 `rename_disk: true` 同步原子重命名硬盘目录（当前监控中或存在写锁冲突时拒绝，清单写失败自动回滚硬盘名）。 |
+| `POST /api/v1/companies/{company_id}/folders/{key}/remove` | 带 `revision` 非破坏性移除自定义条目或隐藏默认目录（`files_touched: 0`，硬盘文件零改动）。 |
+| `POST /api/v1/companies/{company_id}/folders/{key}/restore` | 带 `revision` 恢复已隐藏的默认标准目录。 |
+| `POST /api/v1/companies/{company_id}/folders/{key}/trash/preview` | 带 `revision` 对目录执行有界内容统计（文件数/子目录数/字节数、`truncated`、`is_external`）与可删除性检查（监控中、锁占用、链接或保护根阻断），返回绑定目录身份的 `plan_hash`。 |
+| `POST /api/v1/companies/{company_id}/folders/{key}/trash` | 带 `revision`、`plan_hash`、`confirm: true` 与可选 `also_unregister` 调用原生 `move_to_trash`（macOS `NSFileManager` / Windows `IFileOperation`）移入系统回收站/废纸篓，严禁降级为永久删除；计划变化返回 409 `COMPANY_PLAN_STALE`。 |
+| `POST /api/v1/companies/{company_id}/folders/{key}/promote` | 带 `revision` 与 `target_role` 将公司内（`inside_root`）自定义文件夹切换为该公司对应基准主标准槽位，默认把原主槽位目录保留为自定义文件夹，绝不移动或删除文件。 |
+
+- **按功能指向分发**：`GET /api/v1/companies` 附带 `folder_roles` 并在每家公司 `subdirs[]` 中返回默认 6 类（含 `hidden` 标记）与全部自定义目录（`kind: "custom"`、`role`、`role_label`、`location`、`can_promote_to_role`）；`POST /api/v1/companies/{company_id}/refresh-data`、目录发票、同号检查（`same-number`）、属期核对（`period-folders*`）、`GET /api/v1/companies/{company_id}/bank-layouts?dir_key=...` 与 `GET /api/v1/companies/{company_id}/payroll?dir_key=...` 均按目标目录的基准 `role` 分发单目录能力，而公司级发票账簿、成本分析 V2 与凭证草稿仍严格只消费默认标准槽位。
+- **跨路径导入选择器复用**：前端导入外部目录直接复用既有 `POST /api/v1/companies/pick-directory`（空对象 body），不新增桌面宿主 RPC 命令。
+
 ## 2026-11-23 解析器版本感知自动重算、成品油业务样式与工作区活动目录重算
 
 - `storage/generations.py::publish` 在 `projection-manifest.json` 记录 `parser_versions`（`summary` / `cost`）；`MonitorSynchronizer._run_sync_locked` 在源文件未变化时额外检查 `parser_versions_stale`，缺失清单的旧工作区或识别规则升级后自动触发一次增量重建并回报 `parser_refreshed: true`（保留手改字段；重建后周期检查恢复零重解析）。

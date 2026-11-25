@@ -1,5 +1,13 @@
 # InvoiceHub 注释与设计原因地图
 
+## 2026-11-25 公司自定义与默认文件夹全生命周期及基准功能指向
+
+| 文件与符号 | 原因与不变量 | 守护 |
+|---|---|---|
+| `services/company_folders.py::_try_profile_lock`、`services/company_registry.py::_public` | `MonitorState.__init__` 会自动调用 `ensure_dirs()`；对从未同步过的文件夹执行预览/改名/移入回收站时，必须先判断 `Path(profile.state_dir).is_dir()` 再取锁，禁止为未同步目录凭空创建 `runtime/targets/<id>`。同时，隐藏默认槽位时仍在 `company["subdirs"]` 保留 6 类标准键并加 `hidden: true`，确保下游总账/成本/凭证草稿查询不会因缺键 `StopIteration`，由前端侧栏与目录表统一过滤隐藏项。 | `test_company_folders.py` |
+| `services/company_views.py::same_number` | 必须先校验两侧目录的基准 `role` 是否均属于发票类（`INVOICE_DIR_KEYS`），再判断同公司 `COMPARE_RELATIONS` 勾稽组合，否则「成本发票 vs 银行流水」这类非发票目录组合会被误判为 `COMPANY_COMPARE_UNSUPPORTED` 而非 `COMPANY_COMPARE_INVALID`。 | `test_company_same_number.py`、`test_company_folders.py` |
+| `frontend/src/components/DirectoryPanel.vue`（`editTarget`/`deleteTarget` 快照与 `watch`）与 `frontend/src/stores/workspace.ts::closeDirectory` | 编辑/删除弹窗提交后 `companies.load()` 刷新公司对象会立刻触发 `DirectoryPanel` 的 `companySourceKey` 监听并置空 `directory.value`；若弹窗用 `v-if="editOpen && directory"` 绑定，会在 `emit("done")` 前提前卸载弹窗并吃掉关闭/关页回调。弹窗独立快照目标且由 `closeDirectory` 按 `tabId({ kind: "directory", ... })` 同步关闭目录页、比较页、侧栏 `dir:` 置顶与比较基点。 | `frontend/tests/company-folders.spec.ts`、`frontend/tests/company-setup.spec.ts` |
+
 ## 2026-11-24 OFD 开发包定位、发布验包门禁与多页预览防并发冲突
 
 | 文件与符号 | 原因与不变量 | 守护 |

@@ -30,9 +30,12 @@ class BankLayoutService:
         self.plans: OrderedDict[str, dict] = OrderedDict()
         self.recognitions: OrderedDict[str, dict] = OrderedDict()
 
-    def _context(self, company_id: str) -> tuple[dict, Path, Path]:
+    def _context(self, company_id: str, dir_key: str = "bank_flow_dir") -> tuple[dict, Path, Path]:
         company = self.registry.get_company(company_id)["company"]
-        subdir = next(item for item in company["subdirs"] if item["key"] == "bank_flow_dir")
+        target_key = dir_key or "bank_flow_dir"
+        subdir = next((item for item in company["subdirs"] if item["key"] == target_key), None)
+        if subdir is None or (subdir.get("role") or target_key) != "bank_flow_dir":
+            raise CompanyRegistryError("BANK_LAYOUT_UNAVAILABLE", "所选目录的功能指向不是银行流水。", status_code=422)
         if company["root_status"] != "present" or subdir["status"] != "present":
             raise CompanyRegistryError("BANK_LAYOUT_UNAVAILABLE", "公司或银行流水目录不可用。", status_code=409)
         return company, Path(company["root_path"]), Path(subdir["path"])
@@ -60,13 +63,14 @@ class BankLayoutService:
             while len(cache) > 4096:
                 cache.popitem(last=False)
 
-    def index(self, company_id: str, *, files: bool = False) -> dict:
-        company, root, folder = self._context(company_id)
+    def index(self, company_id: str, *, files: bool = False, dir_key: str = "bank_flow_dir") -> dict:
+        target_key = dir_key or "bank_flow_dir"
+        company, root, folder = self._context(company_id, target_key)
         revision = self.cache_revision(folder) if files else ""
         state = self._state(root)
         if files and self.cache_revision(folder) != revision:
             raise CompanyRegistryError("BANK_LAYOUT_STALE", "版式档案已变化，请重新列出文件。", status_code=409)
-        result = {"ok": True, **state, "files": [], "fields": list(FIELDS)}
+        result = {"ok": True, **state, "dir_key": target_key, "files": [], "fields": list(FIELDS)}
         if files:
             signatures, complete = list_files(folder, SUFFIXES)
             if not complete:
@@ -87,7 +91,7 @@ class BankLayoutService:
             for path, signature in sorted(signatures.items()):
                 token = secrets.token_urlsafe(24)
                 relative = Path(path).relative_to(folder).as_posix()
-                self._put(self.refs, token, {"company_id": company_id, "root": str(root), "folder": str(folder),
+                self._put(self.refs, token, {"company_id": company_id, "dir_key": target_key, "root": str(root), "folder": str(folder),
                                            "identity": directory_entry(folder), "root_identity": directory_entry(root), "relative": relative,
                                            "signature": signature, "expires": time.monotonic() + 600})
                 result["files"].append({"file_ref": token, "name": relative,
@@ -97,7 +101,8 @@ class BankLayoutService:
 
     def _table(self, company_id: str, token: str):
         ref = self.refs.get(token)
-        _, root, folder = self._context(company_id)
+        target_key = str((ref or {}).get("dir_key") or "bank_flow_dir")
+        _, root, folder = self._context(company_id, target_key)
         if (not ref or ref["company_id"] != company_id or ref["expires"] < time.monotonic()
                 or (str(root), str(folder), directory_entry(folder), directory_entry(root)) != (ref["root"], ref["folder"], ref["identity"], ref["root_identity"])):
             raise CompanyRegistryError("BANK_LAYOUT_STALE", "文件身份已失效，请重新列出文件。", status_code=409)
@@ -173,7 +178,7 @@ class BankLayoutService:
         for company in self.registry.list_companies()["companies"]:
             if company["root_status"] != "present":
                 continue
-            if any(item["key"] == "bank_flow_dir" and Path(item["path"]) == directory for item in company["subdirs"]):
+            if any((item.get("role") or item["key"]) == "bank_flow_dir" and Path(item["path"]) == directory for item in company["subdirs"]):
                 raw = read_relative(Path(company["root_path"]), LAYOUT_FILE) if (Path(company["root_path"]) / LAYOUT_FILE).exists() else b""
                 return hashlib.sha256(raw).hexdigest()
         return ""
@@ -183,7 +188,7 @@ class BankLayoutService:
             return discover([], parse_receipts=parse_receipts)
         company = next((company for company in self.registry.list_companies()["companies"]
                         if company["root_status"] == "present" and any(
-                            sub["key"] == "bank_flow_dir" and all(path.is_relative_to(Path(sub["path"])) for path in paths)
+                            (sub.get("role") or sub["key"]) == "bank_flow_dir" and all(path.is_relative_to(Path(sub["path"])) for path in paths)
                             for sub in company["subdirs"])), None)
         profiles = self._state(Path(company["root_path"]))["layouts"] if company else {}
         return discover(paths, profiles=profiles, parse_receipts=parse_receipts)

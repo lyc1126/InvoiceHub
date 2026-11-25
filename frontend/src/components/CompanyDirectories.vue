@@ -1,14 +1,17 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { ApiError, request } from "../api/client";
-import type { BridgeRebuildPayload, Company, CompanyDirectory, DirectoriesPayload, SubdirCreateResult, SubdirPlan } from "../api/types";
+import type { BridgeRebuildPayload, Company, CompanyDirectory, CompanySubdir, DirectoriesPayload, SubdirCreateResult, SubdirPlan } from "../api/types";
 import { FRESHNESS_LABELS, SUBDIR_STATUS_LABELS, errorText } from "../format";
+import { REFRESHABLE_ROLES, effectiveFolderRole } from "../relations";
 import { toast } from "../toast";
 import { companySourceKey, useCompaniesStore } from "../stores/companies";
 import { useWorkspaceStore } from "../stores/workspace";
+import CompanyFolderCreateModal from "./CompanyFolderCreateModal.vue";
+import CompanyFolderDeleteModal from "./CompanyFolderDeleteModal.vue";
+import CompanyFolderEditModal from "./CompanyFolderEditModal.vue";
 import WatchSwitchConfirm from "./WatchSwitchConfirm.vue";
 
-const INVOICE_KEYS = new Set(["cost_invoice_dir", "issued_invoice_dir", "expense_reimbursement_dir"]);
 const props = defineProps<{ company: Company }>();
 const companies = useCompaniesStore();
 const workspace = useWorkspaceStore();
@@ -16,6 +19,8 @@ const refreshState = computed(() => companies.refreshStates[props.company.id]);
 const refreshing = computed(() => refreshState.value?.status === "running");
 
 const directories = ref<CompanyDirectory[]>([]);
+const visibleDirectories = computed(() => directories.value.filter((item) => !item.hidden));
+const hiddenDirectories = computed(() => directories.value.filter((item) => item.hidden));
 const loading = ref(false);
 const error = ref("");
 const plan = ref<SubdirPlan | null>(null);
@@ -24,6 +29,40 @@ const planBusy = ref(false);
 const planResult = ref<SubdirCreateResult | null>(null);
 const switchTarget = ref<CompanyDirectory | null>(null);
 const rebuildingActive = ref(false);
+const createModalMode = ref<"create" | "import" | "restore" | null>(null);
+const editTarget = ref<CompanySubdir | null>(null);
+const deleteTarget = ref<CompanySubdir | null>(null);
+
+function isRefreshable(item: CompanyDirectory): boolean {
+  return REFRESHABLE_ROLES.includes(effectiveFolderRole(item));
+}
+
+function openActionLabel(item: CompanyDirectory): string {
+  const role = effectiveFolderRole(item);
+  return role === "bank_flow_dir" || role === "payroll_social_dir" || role === "general" ? "打开" : "查看发票";
+}
+
+function sourceBadge(item: CompanyDirectory): string {
+  if (item.kind !== "custom") return "默认槽位";
+  return item.location === "external" ? "外部导入" : "自定义";
+}
+
+function onFolderDeleted(result: { key: string; removedFromList: boolean }): void {
+  deleteTarget.value = null;
+  if (result.removedFromList) workspace.closeDirectory(props.company.id, result.key);
+  void loadDirectories();
+}
+
+function onFolderEdited(): void {
+  editTarget.value = null;
+  void loadDirectories();
+}
+
+function onFolderCreated(folderId?: string): void {
+  createModalMode.value = null;
+  void loadDirectories();
+  if (folderId) workspace.open({ kind: "directory", companyId: props.company.id, dirKey: folderId });
+}
 
 const base = () => `/api/v1/companies/${encodeURIComponent(props.company.id)}`;
 
@@ -161,6 +200,10 @@ watch(
         补建缺失子目录（{{ company.missing_subdir_count }}）
       </button>
       <button type="button" :disabled="refreshing" :aria-busy="refreshing" @click="readDirectory()">{{ refreshing ? "读取中…" : "读取全部发票" }}</button>
+      <button type="button" class="primary" @click="createModalMode = 'create'">+ 新建 / 导入文件夹</button>
+      <button v-if="hiddenDirectories.length" type="button" @click="createModalMode = 'restore'">
+        已隐藏默认目录（{{ hiddenDirectories.length }}）
+      </button>
     </div>
     <p v-if="refreshing" class="banner banner--note" role="status" aria-busy="true">{{ refreshState?.message || "正在后台读取发票数据…" }}</p>
     <p v-if="error" class="banner banner--error" role="alert">{{ error }}</p>
@@ -189,13 +232,20 @@ watch(
 
     <WatchSwitchConfirm v-if="switchTarget" :path="switchTarget.path" @done="switched" @cancel="switchTarget = null" />
 
+    <div class="overview-table-wrap">
     <table class="grid">
       <thead>
-        <tr><th>类型</th><th>子目录</th><th>状态</th><th>上次汇总</th><th>是否最新</th><th>操作</th></tr>
+        <tr><th>名称与功能指向</th><th>子目录路径</th><th>状态</th><th>上次汇总</th><th>是否最新</th><th>操作</th></tr>
       </thead>
       <tbody>
-        <tr v-for="item in directories" :key="item.key" :class="{ 'row--active': item.active }">
-          <td>{{ item.label }}</td>
+        <tr v-for="item in visibleDirectories" :key="item.key" :class="{ 'row--active': item.active }">
+          <td>
+            <strong>{{ item.label }}</strong>
+            <div class="dir-meta-tags">
+              <span class="tag">{{ sourceBadge(item) }}</span>
+              <span v-if="item.kind === 'custom'" class="tag">{{ item.role_label || "普通资料" }}</span>
+            </div>
+          </td>
           <td class="path" :title="item.path">{{ item.relative_path }}</td>
           <td>{{ SUBDIR_STATUS_LABELS[item.status] }}</td>
           <td class="nowrap">{{ item.projection.summary_updated_at || "—" }}</td>
@@ -204,15 +254,45 @@ watch(
             <span v-if="item.freshness.state === 'stale'" class="muted">{{ item.freshness.parser_stale && !(item.freshness.added || item.freshness.updated || item.freshness.deleted) ? "（识别规则已更新）" : `（新增 ${item.freshness.added}、改动 ${item.freshness.updated}、删除 ${item.freshness.deleted}）` }}</span>
           </td>
           <td class="row-actions">
-            <button v-if="item.status === 'present'" type="button" @click="openDirectory(item)">查看发票</button>
-            <button v-if="item.status === 'present' && item.active && INVOICE_KEYS.has(item.key)" type="button" :disabled="rebuildingActive" :aria-busy="rebuildingActive" @click="rebuildActive">{{ rebuildingActive ? "汇总中…" : "重新汇总" }}</button>
-            <button v-if="item.status === 'present' && !item.active && INVOICE_KEYS.has(item.key)" type="button" :disabled="refreshing" @click="readDirectory(item)">{{ item.freshness.state === "never_built" ? "读取数据" : "更新数据" }}</button>
+            <button v-if="item.status === 'present'" type="button" @click="openDirectory(item)">{{ openActionLabel(item) }}</button>
+            <button v-if="item.status === 'present' && item.active && isRefreshable(item)" type="button" :disabled="rebuildingActive" :aria-busy="rebuildingActive" @click="rebuildActive">{{ rebuildingActive ? "汇总中…" : "重新汇总" }}</button>
+            <button v-if="item.status === 'present' && !item.active && isRefreshable(item)" type="button" :disabled="refreshing" @click="readDirectory(item)">{{ item.freshness.state === "never_built" ? "读取数据" : "更新数据" }}</button>
             <button v-if="item.status === 'present' && !item.active" type="button" @click="switchTarget = item">设为监控目录</button>
-            <button v-if="item.status === 'missing'" type="button" :disabled="planBusy" @click="previewSubdirs([item.key])">创建文件夹</button>
+            <button v-if="item.status === 'missing' && item.kind !== 'custom'" type="button" :disabled="planBusy" @click="previewSubdirs([item.key])">创建文件夹</button>
+            <button type="button" class="ghost" @click="editTarget = item">重命名 / 指向</button>
+            <button type="button" class="ghost" @click="deleteTarget = item">移除 / 删除</button>
           </td>
         </tr>
       </tbody>
     </table>
+    </div>
 
+    <CompanyFolderCreateModal
+      v-if="createModalMode"
+      :company="company"
+      :initial-mode="createModalMode"
+      @close="createModalMode = null"
+      @done="onFolderCreated"
+    />
+    <CompanyFolderEditModal
+      v-if="editTarget"
+      :company="company"
+      :subdir="editTarget"
+      @close="editTarget = null"
+      @done="onFolderEdited"
+    />
+    <CompanyFolderDeleteModal
+      v-if="deleteTarget"
+      :company="company"
+      :subdir="deleteTarget"
+      @close="deleteTarget = null"
+      @done="onFolderDeleted"
+    />
   </section>
 </template>
+
+<style scoped>
+.dir-meta-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.row-actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.row-actions button { padding: 0 10px; }
+</style>

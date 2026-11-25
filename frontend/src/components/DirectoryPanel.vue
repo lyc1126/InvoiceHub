@@ -1,41 +1,94 @@
 <script setup lang="ts">
 import { companySourceKey, useCompaniesStore } from "../stores/companies";
+import { useWorkspaceStore } from "../stores/workspace";
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { request } from "../api/client";
-import type { BridgeRebuildPayload, Company, CompanyDirectory, DirectoriesPayload } from "../api/types";
+import type { BridgeRebuildPayload, Company, CompanyDirectory, CompanySubdir, DirectoriesPayload } from "../api/types";
 import { FRESHNESS_LABELS, SUBDIR_STATUS_LABELS, errorText } from "../format";
+import { REFRESHABLE_ROLES, effectiveFolderRole } from "../relations";
 import { toast } from "../toast";
 import BankLayouts from "./BankLayouts.vue";
+import CompanyFolderDeleteModal from "./CompanyFolderDeleteModal.vue";
+import CompanyFolderEditModal from "./CompanyFolderEditModal.vue";
 import DirectoryInvoices from "./DirectoryInvoices.vue";
 import PeriodFolderCheck from "./PeriodFolderCheck.vue";
 import WatchSwitchConfirm from "./WatchSwitchConfirm.vue";
 
-// A directory tab: one company folder with its freshness and invoice list. Only the folder
-// the monitor watches has live notifications/file actions; non-monitored invoice folders can
-// read/update their local cache without switching watch_dir or writing into the source folder.
-const INVOICE_KEYS = new Set(["cost_invoice_dir", "issued_invoice_dir", "expense_reimbursement_dir"]);
+// A directory tab: one company folder with its freshness and role-dispatched capabilities. Only
+// the active monitored folder has live notifications/file actions; non-monitored folders can
+// read/update their local cache or run role-specific checks without switching watch_dir.
 const props = defineProps<{ company: Company; dirKey: string }>();
 const companies = useCompaniesStore();
+const workspace = useWorkspaceStore();
 const directory = ref<CompanyDirectory | null>(null);
 const error = ref("");
 const switching = ref(false);
 const rebuilding = ref(false);
-const isInvoiceDir = computed(() => INVOICE_KEYS.has(props.dirKey));
+// Snapshot the target folder when opening edit/delete modals so an in-flight company reload
+// triggered by updateFolder/removeFolder cannot unmount the modal before its `done` event fires.
+const editTarget = ref<CompanySubdir | null>(null);
+const deleteTarget = ref<CompanySubdir | null>(null);
+const payrollPreview = ref<{ loading: boolean; error: string; months: { month: string; total: string; source: string }[]; unrecognized: { file: string; reason: string }[] } | null>(null);
+const effectiveRole = computed(() => effectiveFolderRole(directory.value, props.dirKey));
+const isInvoiceDir = computed(() => REFRESHABLE_ROLES.includes(effectiveRole.value));
+const isCustomPayroll = computed(() => directory.value?.kind === "custom" && effectiveRole.value === "payroll_social_dir" && directory.value.status === "present");
 const refreshState = computed(() => companies.refreshStates[props.company.id]);
 const refreshing = computed(() => refreshState.value?.status === "running");
 
 let loadGeneration = 0;
 let rebuildGeneration = 0;
+async function loadCustomPayroll(mine: number): Promise<void> {
+  payrollPreview.value = { loading: true, error: "", months: [], unrecognized: [] };
+  try {
+    const res = await request<{ months?: { month: string; total?: string; source?: string }[]; unrecognized?: { file: string; reason: string }[] }>(
+      `/api/v1/companies/${encodeURIComponent(props.company.id)}/payroll?dir_key=${encodeURIComponent(props.dirKey)}`,
+    );
+    if (mine !== loadGeneration) return;
+    payrollPreview.value = {
+      loading: false,
+      error: "",
+      months: (res.months ?? []).map((m) => ({ month: m.month, total: m.total ?? "—", source: m.source ?? "" })),
+      unrecognized: res.unrecognized ?? [],
+    };
+  } catch (cause) {
+    if (mine === loadGeneration) payrollPreview.value = { loading: false, error: errorText(cause), months: [], unrecognized: [] };
+  }
+}
+
 async function load(): Promise<void> {
   const mine = ++loadGeneration;
   error.value = "";
+  payrollPreview.value = null;
   try {
     const payload = await request<DirectoriesPayload>(`/api/v1/companies/${encodeURIComponent(props.company.id)}/directories`);
     if (mine !== loadGeneration) return;
     directory.value = payload.directories.find((item) => item.key === props.dirKey) ?? null;
-    if (!directory.value) error.value = "公司清单里没有这个子目录。";
+    if (!directory.value) {
+      error.value = "公司清单里没有这个子目录。";
+    } else if (directory.value.kind === "custom" && effectiveFolderRole(directory.value, props.dirKey) === "payroll_social_dir" && directory.value.status === "present") {
+      void loadCustomPayroll(mine);
+    }
   } catch (cause) {
     if (mine === loadGeneration) error.value = errorText(cause);
+  }
+}
+
+function onEdited(nextKey?: string): void {
+  editTarget.value = null;
+  if (nextKey && nextKey !== props.dirKey) {
+    workspace.closeDirectory(props.company.id, props.dirKey);
+    workspace.open({ kind: "directory", companyId: props.company.id, dirKey: nextKey });
+    return;
+  }
+  void load();
+}
+
+function onDeleted(result: { key: string; removedFromList: boolean }): void {
+  deleteTarget.value = null;
+  if (result.removedFromList) {
+    workspace.closeDirectory(props.company.id, result.key);
+  } else {
+    void load();
   }
 }
 
@@ -89,8 +142,26 @@ onBeforeUnmount(() => {
   window.removeEventListener("workspace:company-refreshed", onCompanyRefreshed);
 });
 
-// Source/monitor identity changes invalidate the directory; a metadata-only object refresh does not.
-watch(() => `${companySourceKey(props.company, [props.dirKey])}/${props.company.monitored}/${props.company.monitored_subdir_key ?? ""}`, () => { ++rebuildGeneration; rebuilding.value = false; directory.value = null; switching.value = false; void load(); }, { immediate: true });
+// Source/monitor identity changes invalidate the displayed directory so stale paths never linger
+// while loading; edit/delete modals hold their own target snapshot and only close when switching tabs.
+let lastIdentity = "";
+watch(
+  () => `${companySourceKey(props.company, [props.dirKey])}/${props.company.monitored}/${props.company.monitored_subdir_key ?? ""}`,
+  () => {
+    const nextIdentity = `${props.company.id}:${props.dirKey}`;
+    ++rebuildGeneration;
+    rebuilding.value = false;
+    directory.value = null;
+    switching.value = false;
+    if (nextIdentity !== lastIdentity) {
+      editTarget.value = null;
+      deleteTarget.value = null;
+      lastIdentity = nextIdentity;
+    }
+    void load();
+  },
+  { immediate: true },
+);
 </script>
 
 <template>
@@ -100,11 +171,23 @@ watch(() => `${companySourceKey(props.company, [props.dirKey])}/${props.company.
     <header class="detail-header detail-header--split">
       <div>
         <p class="crumb">{{ company.name }} › {{ directory?.label ?? dirKey }}</p>
-        <h2>{{ directory?.label ?? dirKey }}</h2>
+        <h2>
+          {{ directory?.label ?? dirKey }}
+          <span v-if="directory?.kind === 'custom'" class="tag">{{ directory.location === "external" ? "外部导入" : "自定义" }} · {{ directory.role_label || "普通资料" }}</span>
+        </h2>
         <p class="muted path">{{ directory?.path ?? "" }}</p>
       </div>
-      <span v-if="directory" class="status-chip" :class="{ 'status-chip--live': directory.active }"><i v-if="directory.active" class="ws-live" />{{ directory.active ? "当前监控目录" : "未监控 · 只读 · 上次汇总" }}</span>
+      <div class="dir-head-actions">
+        <span v-if="directory" class="status-chip" :class="{ 'status-chip--live': directory.active }"><i v-if="directory.active" class="ws-live" />{{ directory.active ? "当前监控目录" : "未监控 · 只读 · 上次汇总" }}</span>
+        <button v-if="directory" type="button" class="ghost" @click="editTarget = directory">重命名 / 指向</button>
+        <button v-if="directory" type="button" class="ghost" @click="deleteTarget = directory">移除 / 删除</button>
+      </div>
     </header>
+    <p v-if="directory?.kind === 'custom'" class="overview-notice">
+      <span>
+        该文件夹当前按「<strong>{{ directory.role_label || "普通资料" }}</strong>」基准独立提供功能，默认不自动计入公司总账、成本 V2 与凭证草稿{{ directory.location === "external" ? "（位于公司资料夹外）" : "；如需并入主流程可在「重命名 / 指向」中切换为主标准目录" }}。
+      </span>
+    </p>
     <p v-if="error" class="banner banner--error" role="alert">{{ error }}</p>
     <p v-if="refreshing" class="banner banner--note" role="status" aria-busy="true">{{ refreshState?.message || "正在后台读取发票数据…" }}</p>
     <p v-if="rebuilding" class="banner banner--note" role="status" aria-busy="true">正在重新汇总当前监控目录，完成后列表将自动更新…</p>
@@ -121,10 +204,32 @@ watch(() => `${companySourceKey(props.company, [props.dirKey])}/${props.company.
       <button type="button" :disabled="rebuilding" @click="load">检查变动</button>
     </div>
     <WatchSwitchConfirm v-if="switching && directory" :path="directory.path" @done="switched" @cancel="switching = false" />
-    <!-- Folders kept by period (进项抵扣 / 银行流水): content period vs. folder, confirmed moves (WS-05). -->
-    <PeriodFolderCheck v-if="directory?.status === 'present' && (dirKey === 'input_deduction_dir' || dirKey === 'bank_flow_dir')" :company="company" :dir-key="dirKey" />
-    <BankLayouts v-if="directory?.status === 'present' && dirKey === 'bank_flow_dir'" :company="company" />
+    <!-- Folders kept by period (进项抵扣 / 银行流水 benchmark roles): content period vs. folder, confirmed moves (WS-05). -->
+    <PeriodFolderCheck v-if="directory?.status === 'present' && (effectiveRole === 'input_deduction_dir' || effectiveRole === 'bank_flow_dir')" :company="company" :dir-key="dirKey" />
+    <BankLayouts v-if="directory?.status === 'present' && effectiveRole === 'bank_flow_dir'" :company="company" :dir-key="dirKey" />
+    <section v-if="isCustomPayroll && payrollPreview" class="overview-section" aria-label="自定义工资社保目录预览">
+      <header class="overview-section__head"><div><h3>工资社保文件（只读）</h3><p>仅展示本自定义文件夹中识别到的社保应缴明细，不自动改写公司主申报数据。</p></div></header>
+      <p v-if="payrollPreview.loading" class="muted" role="status" aria-busy="true">正在读取社保文件…</p>
+      <p v-else-if="payrollPreview.error" class="banner banner--error" role="alert">{{ payrollPreview.error }}</p>
+      <div v-else class="overview-table-wrap">
+        <table class="grid">
+          <thead><tr><th>费款所属期</th><th class="num">应缴费额合计</th><th>来源文件</th></tr></thead>
+          <tbody>
+            <tr v-for="m in payrollPreview.months" :key="m.month"><td>{{ m.month }}</td><td class="num">{{ m.total }}</td><td class="path mono">{{ m.source }}</td></tr>
+            <tr v-if="!payrollPreview.months.length"><td colspan="3" class="muted">本目录中暂未识别到社保应缴明细表。</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p v-if="payrollPreview.unrecognized.length" class="muted">另有 {{ payrollPreview.unrecognized.length }} 个未识别文件。</p>
+    </section>
     <DirectoryInvoices v-if="directory?.status === 'present'" :company="company" :dir-key="dirKey" />
     <p v-else-if="directory" class="muted">这个子目录{{ SUBDIR_STATUS_LABELS[directory.status] }}，没有可显示的发票。</p>
+
+    <CompanyFolderEditModal v-if="editTarget" :company="company" :subdir="editTarget" @close="editTarget = null" @done="onEdited" />
+    <CompanyFolderDeleteModal v-if="deleteTarget" :company="company" :subdir="deleteTarget" @close="deleteTarget = null" @done="onDeleted" />
   </section>
 </template>
+
+<style scoped>
+.dir-head-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+</style>

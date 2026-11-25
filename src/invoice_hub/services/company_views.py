@@ -304,7 +304,7 @@ class CompanyViewService:
         payload = dict(payload)
         items = [dict(item) for item in payload["items"]]
         payload["items"] = items
-        if read_only and key in INVOICE_DIR_KEYS and company.get("root_status") == "present":
+        if read_only and (subdir.get("role") or key) in INVOICE_DIR_KEYS and company.get("root_status") == "present":
             self._attach_company_project_fields(payload, Path(company["root_path"]), profile)
         # Tags are display data only: attached after the list is built, never fed back into it.
         tags_error = ""
@@ -440,7 +440,9 @@ class CompanyViewService:
         watch_dir list, so identities of any other folder would be stale positions of another projection.
         A provisional list has no stable identity yet and gets none.
         """
-        if not records or key not in INVOICE_DIR_KEYS or not view or not view.get("active"):
+        subdir = next((item for item in company["subdirs"] if item["key"] == key), None)
+        role = (subdir.get("role") or key) if subdir else key
+        if not records or role not in INVOICE_DIR_KEYS or not view or not view.get("active"):
             return
         payload = self._list_payload(self._directory(company, key)[1], {})[0]
         if (payload.get("snapshot") or {}).get("provisional"):
@@ -461,30 +463,38 @@ class CompanyViewService:
         related pair is never reduced to a bare number match.
         """
         b_company_id = b_company_id or company_id
-        for field, key in (("a", a), ("b", b)):
-            if key not in INVOICE_DIR_KEYS:
-                raise CompanyRegistryError("COMPANY_COMPARE_INVALID", "同号检查只用于发票目录（成本发票、开具发票、费用报销）。",
-                                           status_code=422, field=field)
         same_company = b_company_id == company_id
         if same_company and a == b:
             raise CompanyRegistryError("COMPANY_COMPARE_INVALID", "请选择两个不同的目录。", status_code=422, field="b")
-        if same_company and frozenset((a, b)) in COMPARE_RELATIONS:
-            raise CompanyRegistryError("COMPANY_COMPARE_UNSUPPORTED", "这两类资料有勾稽关系，请用“勾稽”核对。", status_code=422, field="b")
         companies = {"a": self._registry.get_company(company_id)["company"], "b": self._registry.get_company(b_company_id)["company"]}
         keys = {"a": a, "b": b}
         active_id = self.active_profile.id
-        sides, rows, labels = {}, {}, {}
+        sides, rows, labels, roles = {}, {}, {}, {}
         for side in ("a", "b"):
-            subdir, view, profile = self._cost_source(companies[side], keys[side], active_id)
+            subdir, profile = self._directory(companies[side], keys[side])
+            role = str(subdir.get("role") or keys[side])
+            if role not in INVOICE_DIR_KEYS:
+                raise CompanyRegistryError(
+                    "COMPANY_COMPARE_INVALID",
+                    "同号检查只用于发票目录（功能指向为成本发票、开具发票或费用报销的目录）。",
+                    status_code=422,
+                    field=side,
+                )
+            roles[side] = role
+        if same_company and frozenset((a, b)) in COMPARE_RELATIONS:
+            raise CompanyRegistryError("COMPANY_COMPARE_UNSUPPORTED", "这两类资料有勾稽关系，请用“勾稽”核对。", status_code=422, field="b")
+        for side in ("a", "b"):
+            subdir, profile = self._directory(companies[side], keys[side])
+            view = self._directory_view(subdir, profile, active_id, check_freshness=True)
             labels[side] = f"{companies[side]['name']} · {subdir['label']}"
             sides[side] = {"company_id": companies[side]["id"], "company_name": companies[side]["name"], "key": keys[side],
-                           "label": labels[side], "source": view}
+                           "role": roles[side], "label": labels[side], "source": view}
             rows[side] = self._list_payload(profile, {})[0]["items"] if subdir["status"] == "present" else []
         base = {"ok": True, "relation": "same_number", "sides": sides}
         missing = [labels[side] for side in ("a", "b") if sides[side]["source"]["status"] != "present"]
         if missing:
             return {**base, "state": "missing_dir", "message": f"{'、'.join(missing)} 目录不存在。"}
-        result = build_same_number_check(rows["a"], rows["b"], a_key=a, b_key=b, same_company=same_company, labels=labels)
+        result = build_same_number_check(rows["a"], rows["b"], a_key=roles["a"], b_key=roles["b"], same_company=same_company, labels=labels)
         for side in ("a", "b"):
             self._attach_previews(result["records"][side], companies[side], keys[side], sides[side]["source"])
         self._freshness_warnings(result, {side: sides[side]["source"] for side in ("a", "b")}, labels)
@@ -655,8 +665,15 @@ class CompanyViewService:
         if payload.get("target_id") != profile.id:
             return result
         try:
+            def _monitored_invoice_company(item: dict) -> bool:
+                if not item.get("monitored"):
+                    return False
+                mkey = item.get("monitored_subdir_key")
+                sub = next((s for s in item.get("subdirs") or [] if s["key"] == mkey), None)
+                return bool(sub and (sub.get("role") or mkey) in INVOICE_DIR_KEYS)
+
             company = next((company for company in self._registry.list_companies()["companies"]
-                            if company.get("monitored_subdir_key") in INVOICE_DIR_KEYS and company.get("monitored")), None)
+                            if _monitored_invoice_company(company)), None)
             remarks = remark_projects(self._cost_service(profile).read_only_inputs()["detail_rows"])
             loaded = self._projects.load(self._company_root(company)) if company else {"invoices": {}, "aliases": {}}
             manual, aliases = loaded["invoices"], loaded["aliases"]
@@ -895,12 +912,17 @@ class CompanyViewService:
         return {"ok": True, **company_vouchers.save_draft(self._company_root(company), name, body, invoice_csv=self._voucher_invoice_csv(company))}
 
     # ---- 工资社保 (WS-05 stage 3): read-only parsing; 申报数据.json is written only on the user's confirm.
-    def payroll(self, company_id: str, *, reveal: bool = False, ocr_reader=None) -> dict:
+    def payroll(self, company_id: str, *, reveal: bool = False, ocr_reader=None, dir_key: str = "") -> dict:
         company = self._registry.get_company(company_id)["company"]
         root = self._company_root(company)
-        subdir = next((item for item in company["subdirs"] if item["key"] == "payroll_social_dir"), None)
-        folder = Path(subdir["path"]) if subdir and subdir["status"] == "present" else None
-        return {"ok": True, "folder": subdir["relative_path"] if subdir else "", "folder_present": folder is not None,
+        target_key = dir_key or "payroll_social_dir"
+        subdir = next((item for item in company["subdirs"] if item["key"] == target_key), None)
+        if subdir is None:
+            raise CompanyRegistryError("COMPANY_DIRECTORY_NOT_FOUND", "未知的子目录类型。", status_code=404, field="dir_key")
+        if (subdir.get("role") or target_key) != "payroll_social_dir":
+            raise CompanyRegistryError("COMPANY_INVALID", "该文件夹的功能指向不是工资社保。", status_code=422, field="dir_key")
+        folder = Path(subdir["path"]) if subdir["status"] == "present" else None
+        return {"ok": True, "dir_key": target_key, "folder": subdir["relative_path"], "folder_present": folder is not None,
                 **read_payroll(root, folder, reveal=reveal, ocr_reader=ocr_reader)}
 
     def save_payroll(self, company_id: str, body: object) -> dict:
@@ -910,23 +932,26 @@ class CompanyViewService:
         return {"ok": True, **save_payroll_months(self._company_root(company), body)}
 
     # ---- period folders (WS-05 stage 2): content period vs. folder name, and confirmed moves.
-    def _present_subdir(self, company_id: str, key: str) -> tuple[dict, Path]:
+    def _present_subdir(self, company_id: str, key: str) -> tuple[dict, dict, Path]:
         company = self._registry.get_company(company_id)["company"]
         subdir, _profile = self._directory(company, key)
         if subdir["status"] != "present":
             raise CompanyRegistryError("COMPANY_DIRECTORY_MISSING", "这个子目录不存在或不可用。", status_code=409)
-        return company, Path(subdir["path"])
+        return company, subdir, Path(subdir["path"])
 
     def period_folders(self, company_id: str, key: str) -> dict:
-        _company, root = self._present_subdir(company_id, key)
-        return {"ok": True, **period_folder_check(root, key)}
+        _company, subdir, root = self._present_subdir(company_id, key)
+        role = str(subdir.get("role") or key)
+        checked = period_folder_check(root, role)
+        return {"ok": True, **checked, "key": key, "role": role}
 
     def prepare_source_move(self, company_id: str, body: object) -> dict:
         if not isinstance(body, dict):
             raise CompanyRegistryError("SOURCE_MOVE_INVALID", "请求格式不对。")
         key = str(body.get("key") or "")
-        _company, root = self._present_subdir(company_id, key)
-        job = self._moves.prepare(company_id=company_id, key=key, root=root, items=body.get("items"),
+        _company, subdir, root = self._present_subdir(company_id, key)
+        role = str(subdir.get("role") or key)
+        job = self._moves.prepare(company_id=company_id, key=key, role=role, root=root, items=body.get("items"),
                                   guard=Path(self.active_profile.watch_dir))
         return {"ok": True, **self._moves.public(job)}
 

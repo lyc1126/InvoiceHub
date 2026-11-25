@@ -5,7 +5,7 @@ import { errorText } from "../format";
 import { companySourceKey } from "../stores/companies";
 import type { Company } from "../api/types";
 import WsModal from "./WsModal.vue";
-const props = defineProps<{ company: Company }>();
+const props = withDefaults(defineProps<{ company: Company; dirKey?: string }>(), { dirKey: "bank_flow_dir" });
 interface Layout { layout_hash: string }
 interface Recognition { kind: string; rows: number | null; chain_ok: boolean | null; breaks: { row: string | number | null; message: string }[]; footer: { ok: boolean | null; message: string }; message: string }
 interface BankFile { file_ref: string; name: string; recognition?: Recognition }
@@ -24,8 +24,11 @@ const base = () => `/api/v1/companies/${encodeURIComponent(props.company.id)}/ba
 async function load(): Promise<void> {
   const mine = ++generation;
   busy.value = true;
-  try { const value = await request<Index>(`${base()}?files=1`); if (mine === generation) index.value = value; }
-  catch (cause) { if (mine === generation) error.value = errorText(cause); }
+  try {
+    const query = props.dirKey && props.dirKey !== "bank_flow_dir" ? `?files=1&dir_key=${encodeURIComponent(props.dirKey)}` : "?files=1";
+    const value = await request<Index>(`${base()}${query}`);
+    if (mine === generation) index.value = value;
+  } catch (cause) { if (mine === generation) error.value = errorText(cause); }
   finally { if (mine === generation) busy.value = false; }
 }
 async function inspect(file: { file_ref: string; name: string }, changed = false): Promise<void> {
@@ -82,7 +85,7 @@ async function query(): Promise<void> {
     } else error.value = "尚未查询到该次保存结果，请继续核对；不会重复提交。";
   } catch (cause) { if (mine === generation) error.value = errorText(cause); }
 }
-watch(() => companySourceKey(props.company, ["bank_flow_dir"]), () => { selected.value = null; preview.value = null; unknown.value = false; busy.value = false; void load(); }, { immediate: true });
+watch(() => companySourceKey(props.company, [props.dirKey]), () => { selected.value = null; preview.value = null; unknown.value = false; busy.value = false; void load(); }, { immediate: true });
 onBeforeUnmount(() => { ++generation; });
 </script>
 <template>

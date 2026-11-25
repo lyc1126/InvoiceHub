@@ -44,6 +44,31 @@ def resolve_company_root(project_root: Path, stored: str) -> Path:
     return Path(canonical_path(candidate))
 
 
+def resolve_external_folder(project_root: Path, stored: str) -> Path:
+    """Resolve a company's externally imported folder without following relative escapes unexpectedly."""
+    candidate = Path(stored).expanduser()
+    if not candidate.is_absolute():
+        candidate = Path(project_root) / candidate
+    return Path(canonical_path(candidate))
+
+
+def _external_folder_paths(company: dict, project_root: Path) -> list[Path]:
+    paths: list[Path] = []
+    for entry in company.get("custom_folders") or []:
+        if not isinstance(entry, dict) or entry.get("location") != "external":
+            continue
+        raw = str(entry.get("external_path") or "").strip()
+        if not raw or "\0" in raw:
+            continue
+        candidate = Path(raw).expanduser()
+        if not candidate.is_absolute():
+            candidate = Path(project_root) / candidate
+        if candidate.is_symlink() or (hasattr(candidate, "is_junction") and candidate.is_junction()):
+            continue
+        paths.append(Path(canonical_path(candidate)))
+    return paths
+
+
 def taxpayer_type_for(periods: list[dict[str, str]], month: str) -> str | None:
     """The type in force in ``month`` (YYYY-MM), or None before the first known period."""
     current = None
@@ -72,10 +97,16 @@ def read_registry_companies(path: Path) -> list[dict]:
 
 
 def company_for_dir(companies: list[dict], project_root: Path, directory: Path) -> dict | None:
-    # Roots never nest (the registry rejects it), so at most one company contains a directory.
+    # Roots and external mounts never nest across companies (the registry rejects overlap),
+    # so at most one company contains a directory.
+    target = Path(directory)
     for company in companies:
-        if is_within(Path(directory), resolve_company_root(project_root, company["root_dir"])):
+        if is_within(target, resolve_company_root(project_root, company["root_dir"])):
             return company
+    for company in companies:
+        for external in _external_folder_paths(company, project_root):
+            if is_within(target, external):
+                return company
     return None
 
 

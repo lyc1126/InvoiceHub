@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { nextTick, ref, watch } from "vue";
+import { computed, nextTick, ref, watch } from "vue";
 import type { Company, CostWorkbookRefresh, TaxpayerPeriod } from "../api/types";
 import { errorText } from "../format";
 import { useCompaniesStore } from "../stores/companies";
@@ -7,6 +7,7 @@ import MonthPicker from "./MonthPicker.vue";
 
 const props = defineProps<{ company: Company }>();
 const companies = useCompaniesStore();
+const standardSubdirs = computed(() => props.company.subdirs.filter((item) => item.kind !== "custom"));
 const name = ref("");
 const periods = ref<TaxpayerPeriod[]>([]);
 const subdirs = ref<Record<string, string>>({});
@@ -17,7 +18,7 @@ const confirmRemove = ref(false);
 
 function reset(): void {
   name.value = props.company.name;
-  subdirs.value = Object.fromEntries(props.company.subdirs.map((item) => [item.key, item.relative_path]));
+  subdirs.value = Object.fromEntries(standardSubdirs.value.map((item) => [item.key, item.relative_path]));
   periods.value = props.company.taxpayer_periods.map((item) => ({ ...item }));
   error.value = "";
   confirmRemove.value = false;
@@ -39,7 +40,7 @@ async function save(): Promise<void> {
   error.value = "";
   notice.value = "";
   try {
-    const changed = Object.fromEntries(props.company.subdirs.filter((item) => subdirs.value[item.key] !== item.relative_path)
+    const changed = Object.fromEntries(standardSubdirs.value.filter((item) => subdirs.value[item.key] !== item.relative_path)
       .map((item) => [item.key, subdirs.value[item.key]!]));
     const result = await companies.update(props.company.id, { name: name.value, taxpayer_periods: periods.value,
       ...(Object.keys(changed).length ? { subdirs: changed } : {}) });
@@ -81,8 +82,8 @@ watch(() => props.company.id, () => {
     <fieldset class="field">
       <legend>资料目录映射</legend>
       <p class="muted">填写公司资料夹内的相对路径。保存只改变资料类型指向，不移动或重命名文件；缺少的目录可在“目录”里另行预览补建。</p>
-      <label v-for="item in company.subdirs" :key="item.key" class="field-row company-subdir-field">
-        <span>{{ item.label }}</span><input v-model="subdirs[item.key]" :aria-label="`${item.label} 映射`" required autocomplete="off" :disabled="busy">
+      <label v-for="item in standardSubdirs" :key="item.key" class="field-row company-subdir-field">
+        <span>{{ item.default_label || item.label }}</span><input v-model="subdirs[item.key]" :aria-label="`${item.default_label || item.label} 映射`" required autocomplete="off" :disabled="busy">
       </label>
     </fieldset>
     <fieldset class="field">

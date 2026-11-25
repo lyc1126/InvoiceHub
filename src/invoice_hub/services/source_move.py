@@ -179,8 +179,9 @@ class SourceMoveService:
             stream.flush()
             os.fsync(stream.fileno())
 
-    def prepare(self, *, company_id: str, key: str, root: Path, items: list, guard: Path | None) -> dict:
-        if key not in MOVE_KEYS:
+    def prepare(self, *, company_id: str, key: str, root: Path, items: list, guard: Path | None, role: str | None = None) -> dict:
+        effective_role = role or key
+        if effective_role not in MOVE_KEYS:
             raise SourceMoveError("只能整理进项抵扣与银行流水目录的文件。")
         if not isinstance(items, list) or not items or not all(isinstance(item, dict) for item in items):
             raise SourceMoveError("没有要移动的文件。")
@@ -198,7 +199,7 @@ class SourceMoveService:
                 raise SourceMoveError("新建的属期文件夹须命名为 YYYY-MM。")
             if not is_new and (not existing.is_dir() or existing.is_symlink() or existing.parent != root or not folder_period(target_name)):
                 raise SourceMoveError(f"目标“{target_name}”不是该目录下的属期文件夹。")
-            signature = _signature(source, root, MOVE_KEYS[key])
+            signature = _signature(source, root, MOVE_KEYS[effective_role])
             destination = existing / source.name
             if source.parent == existing:
                 raise SourceMoveError(f"{source.name} 已在 {target_name} 里。")
@@ -207,7 +208,7 @@ class SourceMoveService:
             seen.add(str(destination))
             files.append({"path": str(source), "file": source.relative_to(root).as_posix(), "target": target_name,
                           "new_folder": is_new, "destination": str(destination), "signature": signature, "status": "pending"})
-        job = {"job_id": uuid.uuid4().hex, "company_id": company_id, "key": key, "root": str(root),
+        job = {"job_id": uuid.uuid4().hex, "company_id": company_id, "key": key, "role": effective_role, "root": str(root),
                "created_at": time.time(), "state": "prepared", "files": files}
         self._save(job)
         return self.get(job["job_id"])
@@ -222,7 +223,7 @@ class SourceMoveService:
         if job["company_id"] != company_id or time.time() - job["created_at"] > EXPIRY_SECONDS:
             raise SourceMoveError("确认已过期，请重新核对。", code="SOURCE_MOVE_EXPIRED", status_code=409)
         root = Path(job["root"])
-        suffixes = MOVE_KEYS[job["key"]]
+        suffixes = MOVE_KEYS[job.get("role") or job["key"]]
         for file in job["files"]:
             if _signature(Path(file["path"]), root, suffixes) != file["signature"] or Path(file["destination"]).exists():
                 raise SourceMoveError("确认期间文件或目标已变化，未移动任何文件，请刷新核对结果。", code="SOURCE_MOVE_STALE", status_code=409)
