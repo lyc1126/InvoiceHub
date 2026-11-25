@@ -40,15 +40,21 @@ let rebuildGeneration = 0;
 async function loadCustomPayroll(mine: number): Promise<void> {
   payrollPreview.value = { loading: true, error: "", months: [], unrecognized: [] };
   try {
-    const res = await request<{ months?: { month: string; total?: string; source?: string }[]; unrecognized?: { file: string; reason: string }[] }>(
+    const res = await request<{
+      months?: { month: string; total?: string; source?: string }[];
+      files?: { file: string; status: string; message?: string }[];
+      unrecognized?: { file: string; reason: string }[];
+    }>(
       `/api/v1/companies/${encodeURIComponent(props.company.id)}/payroll?dir_key=${encodeURIComponent(props.dirKey)}`,
     );
     if (mine !== loadGeneration) return;
+    const unrec = res.unrecognized
+      ?? (res.files ?? []).filter((f) => f.status !== "parsed").map((f) => ({ file: f.file, reason: f.message ?? "" }));
     payrollPreview.value = {
       loading: false,
       error: "",
       months: (res.months ?? []).map((m) => ({ month: m.month, total: m.total ?? "—", source: m.source ?? "" })),
-      unrecognized: res.unrecognized ?? [],
+      unrecognized: unrec,
     };
   } catch (cause) {
     if (mine === loadGeneration) payrollPreview.value = { loading: false, error: errorText(cause), months: [], unrecognized: [] };

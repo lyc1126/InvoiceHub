@@ -29,7 +29,7 @@ from invoice_hub.platform import HostRpcCommand, host_rpc, pick_directory
 from invoice_hub.projections.cost_analysis import TAXPAYER_LABELS
 from invoice_hub.services.dossier import BUSINESS_DOSSIER_DIR_HINTS
 from invoice_hub.services.company_directory_guard import (
-    CompanyDirectoryChanged, create_empty_subdir, directory_entry, subdir_snapshot,
+    CompanyDirectoryChanged, create_empty_subdir, directory_entry, external_path_snapshot, subdir_snapshot,
 )
 from invoice_hub.storage import SQLiteRepository, atomic_write_json
 from invoice_hub.targets import AppConfig
@@ -354,7 +354,15 @@ class CompanyRegistryService:
                 if ext.get("location") != "external":
                     continue
                 ext_path = resolve_external_folder(self.config.root_dir, ext["external_path"])
-                if _is_within(root, ext_path) or _is_within(ext_path, root):
+                ext_status = external_path_snapshot(ext_path)[1][0]
+                if ext_status == "present":
+                    overlaps = _is_within(root, ext_path) or _is_within(ext_path, root)
+                else:
+                    # Never follow a post-import symlink when checking overlap; compare lexically.
+                    r_key = str(root).casefold()
+                    e_key = str(ext_path).casefold()
+                    overlaps = r_key == e_key or r_key.startswith(e_key + "/") or e_key.startswith(r_key + "/") or r_key.startswith(e_key + "\\") or e_key.startswith(r_key + "\\")
+                if overlaps:
                     raise _invalid(f"该文件夹与已登记的公司“{other['name']}”的外部文件夹“{ext['label']}”重叠。", "root_dir")
         # Project-internal folders are stored relative, user folders absolute (AGENTS.md path rule).
         return serialize_config_path(self.config.root_dir, root)
@@ -416,7 +424,7 @@ class CompanyRegistryService:
             relative = company["subdirs"].get(key) or default_label
             label = subdir_labels.get(key) or default_label
             path, status = self._subdir_status(root, relative) if root_status == "present" else (root / relative, "root_unavailable")
-            if _is_within(watch_dir, path):
+            if status == "present" and _is_within(watch_dir, path):
                 monitored = True
                 depth = len(Path(path).parts)
                 if depth >= monitored_match_depth:
@@ -445,9 +453,10 @@ class CompanyRegistryService:
                 path, status = self._subdir_status(root, relative) if root_status == "present" else (root / relative, "root_unavailable")
             else:
                 path = resolve_external_folder(self.config.root_dir, entry["external_path"])
-                status = directory_entry(path)[0]
+                _snap, leaf = external_path_snapshot(path)
+                status = leaf[0]
                 relative = str(path)
-            if _is_within(watch_dir, path):
+            if status == "present" and _is_within(watch_dir, path):
                 monitored = True
                 depth = len(Path(path).parts)
                 if depth >= monitored_match_depth:

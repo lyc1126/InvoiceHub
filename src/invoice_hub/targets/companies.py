@@ -10,6 +10,8 @@ cost pages and syncs keep working; the registry API itself reports the corruptio
 from __future__ import annotations
 
 import json
+import os
+import stat
 from datetime import datetime
 from pathlib import Path
 
@@ -45,11 +47,36 @@ def resolve_company_root(project_root: Path, stored: str) -> Path:
 
 
 def resolve_external_folder(project_root: Path, stored: str) -> Path:
-    """Resolve a company's externally imported folder without following relative escapes unexpectedly."""
+    """Return a company's stored external folder lexically without following symlinks/junctions.
+
+    External paths are canonicalized when imported; resolving again with ``canonical_path``
+    would silently follow a post-import symlink/junction swap to an unrelated directory.
+    """
     candidate = Path(stored).expanduser()
     if not candidate.is_absolute():
-        candidate = Path(project_root) / candidate
-    return Path(canonical_path(candidate))
+        candidate = Path(canonical_path(project_root)) / candidate
+    return Path(os.path.normpath(os.path.abspath(str(candidate))))
+
+
+def external_path_is_real_dir(path: Path) -> bool:
+    """True only when ``path`` and every ancestor prefix are real non-link directories."""
+    normalized = Path(os.path.normpath(os.path.abspath(str(path))))
+    parts = normalized.parts
+    if not parts:
+        return False
+    cur = Path(parts[0])
+    for idx in range(len(parts)):
+        if idx > 0:
+            cur = cur / parts[idx]
+        try:
+            info = cur.lstat()
+        except OSError:
+            return False
+        if stat.S_ISLNK(info.st_mode) or (hasattr(cur, "is_junction") and cur.is_junction()):
+            return False
+        if not stat.S_ISDIR(info.st_mode):
+            return False
+    return True
 
 
 def _external_folder_paths(company: dict, project_root: Path) -> list[Path]:
@@ -60,10 +87,8 @@ def _external_folder_paths(company: dict, project_root: Path) -> list[Path]:
         raw = str(entry.get("external_path") or "").strip()
         if not raw or "\0" in raw:
             continue
-        candidate = Path(raw).expanduser()
-        if not candidate.is_absolute():
-            candidate = Path(project_root) / candidate
-        if candidate.is_symlink() or (hasattr(candidate, "is_junction") and candidate.is_junction()):
+        candidate = resolve_external_folder(project_root, raw)
+        if not external_path_is_real_dir(candidate):
             continue
         paths.append(Path(canonical_path(candidate)))
     return paths

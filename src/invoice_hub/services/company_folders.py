@@ -31,6 +31,7 @@ from invoice_hub.services.company_directory_guard import (
     CompanyDirectoryChanged,
     create_empty_subdir,
     directory_entry,
+    external_path_snapshot,
     subdir_snapshot,
 )
 from invoice_hub.targets import target_profile_for
@@ -163,7 +164,25 @@ def _is_forbidden_system_root(path: Path, project_root: Path) -> bool:
     return False
 
 
+def _lexical_paths_overlap(a: Path, b: Path) -> bool:
+    ka = Path(os.path.normpath(os.path.abspath(str(a))).casefold())
+    kb = Path(os.path.normpath(os.path.abspath(str(b))).casefold())
+    try:
+        ka.relative_to(kb)
+        return True
+    except ValueError:
+        pass
+    try:
+        kb.relative_to(ka)
+        return True
+    except ValueError:
+        return False
+
+
 def _paths_overlap(a: Path, b: Path) -> bool:
+    # Never follow a post-import symlink/junction when testing registered path overlap.
+    if external_path_snapshot(a)[1][0] == "outside_root" or external_path_snapshot(b)[1][0] == "outside_root":
+        return _lexical_paths_overlap(a, b)
     return _is_within(a, b) or _is_within(b, a)
 
 
@@ -540,11 +559,11 @@ class CompanyFolderService:
                 candidate = Path(raw_path).expanduser()
                 if not candidate.is_absolute():
                     candidate = root / candidate
-                entry_status = directory_entry(candidate)[0]
-                if entry_status != "present":
+                _cand_snap, cand_leaf = external_path_snapshot(candidate, allow_macos_root_aliases=True)
+                if cand_leaf[0] != "present":
                     raise CompanyRegistryError(
                         "COMPANY_INVALID",
-                        "所选路径不存在、是链接或不是普通文件夹，不能导入。",
+                        "所选路径不存在、包含链接或不是普通文件夹，不能导入。",
                         status_code=422,
                         field="path",
                     )
@@ -684,8 +703,14 @@ class CompanyFolderService:
                 new_path = old_path
 
                 if rename_disk:
-                    if directory_entry(old_path)[0] != "present":
-                        raise CompanyRegistryError("COMPANY_DIRECTORY_MISSING", "原文件夹不存在或不可用，无法在硬盘上重命名。", status_code=409)
+                    if entry["location"] == "inside_root":
+                        old_snap = subdir_snapshot(root, entry["relative_path"]) if directory_entry(root)[0] == "present" else {".": directory_entry(root)}
+                        old_status = next(reversed(old_snap.values()))[0]
+                    else:
+                        _, old_leaf = external_path_snapshot(old_path)
+                        old_status = old_leaf[0]
+                    if old_status != "present":
+                        raise CompanyRegistryError("COMPANY_DIRECTORY_MISSING", "原文件夹不存在、是链接或不可用，无法在硬盘上重命名。", status_code=409)
                     if _is_forbidden_system_root(old_path, project_root):
                         raise CompanyRegistryError("COMPANY_INVALID", "不能重命名系统或根目录。", status_code=422)
                     self._check_not_monitored(old_path, "重命名文件夹")
@@ -829,8 +854,7 @@ class CompanyFolderService:
                 snap = subdir_snapshot(root, entry["relative_path"]) if directory_entry(root)[0] == "present" else {".": directory_entry(root)}
                 entry_info = next(reversed(snap.values()))
             else:
-                entry_info = directory_entry(target)
-                snap = {"target": entry_info}
+                snap, entry_info = external_path_snapshot(target)
 
         blocked_reason = ""
         if entry_info[0] != "present":

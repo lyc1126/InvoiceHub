@@ -438,3 +438,145 @@ def test_corrupt_custom_folders_in_registry_fails_closed(env):
     res = client.get("/api/v1/companies")
     assert res.status_code == 409
     assert res.json()["error"]["code"] == "COMPANY_REGISTRY_CORRUPT"
+
+
+def test_post_import_linked_external_folder_and_parent_are_rejected_without_following(env):
+    """P1 guard: replacing an imported external folder (or its parent) with a symlink must never follow the link."""
+    import os
+    import shutil
+
+    app, client, tmp_path = env
+    root = tmp_path / "客户" / "戊公司"
+    (root / "成本发票").mkdir(parents=True)
+    cid, rev = _register(client, root, name="戊公司")
+
+    ext_parent = tmp_path / "外部挂载容器"
+    ext_dir = ext_parent / "外部原目录"
+    ext_dir.mkdir(parents=True)
+    unregistered = tmp_path / "未登记机密目录"
+    unregistered.mkdir()
+    (unregistered / "secret.txt").write_text("keep-me", encoding="utf-8")
+
+    # 0. Importing through a linked parent directory must be rejected at import time.
+    link_parent = tmp_path / "软链父目录"
+    try:
+        os.symlink(unregistered, link_parent, target_is_directory=True)
+    except OSError:
+        pytest.skip("symlinks unavailable in this environment")
+    (unregistered / "child").mkdir()
+    blocked_import = client.post(
+        f"/api/v1/companies/{cid}/folders/import",
+        json={"path": str(link_parent / "child"), "role": "general", "revision": rev},
+        headers=SAME_ORIGIN,
+    )
+    assert blocked_import.status_code == 422
+
+    # 1. Import genuine external folder, then replace leaf with symlink to unregistered target.
+    imp = client.post(
+        f"/api/v1/companies/{cid}/folders/import",
+        json={"path": str(ext_dir), "label": "外部目录", "role": "cost_invoice_dir", "revision": rev},
+        headers=SAME_ORIGIN,
+    )
+    assert imp.status_code == 200, imp.text
+    fid, rev = imp.json()["folder_id"], imp.json()["revision"]
+
+    ext_dir.rmdir()
+    os.symlink(unregistered, ext_dir, target_is_directory=True)
+
+    # Public view reports outside_root (never present) and preserves the registered path (not target).
+    comp = client.get(f"/api/v1/companies/{cid}").json()["company"]
+    sub = next(s for s in comp["subdirs"] if s["key"] == fid)
+    assert sub["status"] == "outside_root"
+    assert str(unregistered) not in sub["path"]
+
+    # Trash preview MUST block (can_trash=False) and never inspect or target the unregistered directory.
+    tp = client.post(f"/api/v1/companies/{cid}/folders/{fid}/trash/preview", json={"revision": rev}, headers=SAME_ORIGIN)
+    assert tp.status_code == 200, tp.text
+    assert tp.json()["can_trash"] is False
+    assert tp.json()["file_count"] == 0
+    assert str(unregistered) not in tp.json()["path"]
+
+    # Disk rename MUST reject with 409 without touching the unregistered directory.
+    ren = client.post(
+        f"/api/v1/companies/{cid}/folders/{fid}/update",
+        json={"label": "试图改名", "rename_disk": True, "new_name": "改名后", "revision": rev},
+        headers=SAME_ORIGIN,
+    )
+    assert ren.status_code == 409
+    assert unregistered.is_dir() and (unregistered / "secret.txt").exists()
+
+    # Cross-process lookup company_for_dir MUST NOT adopt the unregistered symlink target.
+    companies = read_registry_companies(app.state.invoice_hub.companies.registry_path)
+    assert company_for_dir(companies, app.state.invoice_hub.config.root_dir, unregistered) is None
+
+    # 2. Restore leaf as real dir, then replace its parent directory with a symlink to a fake parent.
+    ext_dir.unlink()
+    fake_parent = tmp_path / "假容器"
+    (fake_parent / "外部原目录").mkdir(parents=True)
+    shutil.rmtree(ext_parent)
+    os.symlink(fake_parent, ext_parent, target_is_directory=True)
+
+    comp2 = client.get(f"/api/v1/companies/{cid}").json()["company"]
+    sub2 = next(s for s in comp2["subdirs"] if s["key"] == fid)
+    assert sub2["status"] == "outside_root"
+    tp2 = client.post(f"/api/v1/companies/{cid}/folders/{fid}/trash/preview", json={"revision": rev}, headers=SAME_ORIGIN)
+    assert tp2.status_code == 200 and tp2.json()["can_trash"] is False
+    companies2 = read_registry_companies(app.state.invoice_hub.companies.registry_path)
+    assert company_for_dir(companies2, app.state.invoice_hub.config.root_dir, fake_parent / "外部原目录") is None
+
+
+def test_custom_payroll_preview_excludes_company_saved_months(env):
+    """P2 guard: custom payroll_social_dir previews must not mix in company-wide 申报数据.json months."""
+    _app, client, tmp_path = env
+    root = tmp_path / "客户" / "己公司"
+    (root / "成本发票").mkdir(parents=True)
+    (root / "工资社保").mkdir(parents=True)
+    (root / "做账草稿").mkdir(parents=True)
+    (root / "做账草稿" / "申报数据.json").write_text(
+        json.dumps(
+            {
+                "社保明细": {
+                    "2026-09": {
+                        "单位部分": "1000.00",
+                        "个人部分": "500.00",
+                        "来源": "手工录入",
+                        "险种明细": [
+                            {
+                                "insurance": "养老保险",
+                                "total": "1500.00",
+                                "unit": {"due": "1000.00"},
+                                "personal": {"due": "500.00"},
+                            }
+                        ],
+                    }
+                }
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    cid, rev = _register(client, root, name="己公司")
+
+    # Create an EMPTY custom folder with payroll_social_dir benchmark role.
+    custom_dir = root / "外包社保空目录"
+    custom_dir.mkdir()
+    imp = client.post(
+        f"/api/v1/companies/{cid}/folders/import",
+        json={"relative_path": "外包社保空目录", "role": "payroll_social_dir", "revision": rev},
+        headers=SAME_ORIGIN,
+    )
+    assert imp.status_code == 200, imp.text
+    pay_id = imp.json()["folder_id"]
+
+    # Standard payroll view MUST still include the company-wide saved 2026-09 month.
+    std_res = client.get(f"/api/v1/companies/{cid}/payroll")
+    assert std_res.status_code == 200, std_res.text
+    assert [m["month"] for m in std_res.json()["months"]] == ["2026-09"]
+    assert "2026-09" in std_res.json()["confirmed"]
+
+    # Custom payroll folder preview MUST stay strictly folder-only (empty -> no leaked 2026-09!).
+    custom_res = client.get(f"/api/v1/companies/{cid}/payroll", params={"dir_key": pay_id})
+    assert custom_res.status_code == 200, custom_res.text
+    assert custom_res.json()["months"] == []
+    assert custom_res.json()["confirmed"] == {}
+    assert custom_res.json()["tax_file"] is False

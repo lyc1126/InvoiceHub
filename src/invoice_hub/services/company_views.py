@@ -922,8 +922,9 @@ class CompanyViewService:
         if (subdir.get("role") or target_key) != "payroll_social_dir":
             raise CompanyRegistryError("COMPANY_INVALID", "该文件夹的功能指向不是工资社保。", status_code=422, field="dir_key")
         folder = Path(subdir["path"]) if subdir["status"] == "present" else None
+        is_custom = subdir.get("kind") == "custom"
         return {"ok": True, "dir_key": target_key, "folder": subdir["relative_path"], "folder_present": folder is not None,
-                **read_payroll(root, folder, reveal=reveal, ocr_reader=ocr_reader)}
+                **read_payroll(root, folder, reveal=reveal, ocr_reader=ocr_reader, include_saved=not is_custom)}
 
     def save_payroll(self, company_id: str, body: object) -> dict:
         company = self._registry.get_company(company_id)["company"]
