@@ -580,3 +580,103 @@ def test_custom_payroll_preview_excludes_company_saved_months(env):
     assert custom_res.json()["months"] == []
     assert custom_res.json()["confirmed"] == {}
     assert custom_res.json()["tax_file"] is False
+
+
+def test_disk_rename_migrates_manual_overrides_and_rolls_back_on_registry_failure(env, monkeypatch):
+    """P1 guard: renaming a standard or custom folder migrates manual_overrides.json and rolls back on failure."""
+    from invoice_hub.monitoring.state import MANUAL_OVERRIDES_FILE_NAME, MonitorState
+    from invoice_hub.targets import target_profile_for
+    from invoice_hub.targets.paths import canonical_path
+
+    app, client, tmp_path = env
+    root = tmp_path / "客户" / "庚公司"
+    std_dir = root / "成本发票"
+    custom_dir = root / "补充进项"
+    std_dir.mkdir(parents=True)
+    custom_dir.mkdir(parents=True)
+    std_xml = std_dir / "s1.xml"
+    custom_xml = custom_dir / "c1.xml"
+    std_xml.write_text(_xml_invoice("50000000000000000001", "原始销售方S", "庚公司", [("12E", "1", "100.00", "13.00", "钢筋")]), encoding="utf-8")
+    custom_xml.write_text(_xml_invoice("50000000000000000002", "原始销售方C", "庚公司", [("12E", "2", "200.00", "26.00", "水泥")]), encoding="utf-8")
+
+    cid, rev = _register(client, root, name="庚公司")
+    imp = client.post(
+        f"/api/v1/companies/{cid}/folders/import",
+        json={"relative_path": "补充进项", "role": "cost_invoice_dir", "revision": rev},
+        headers=SAME_ORIGIN,
+    )
+    assert imp.status_code == 200, imp.text
+    custom_id, rev = imp.json()["folder_id"], imp.json()["revision"]
+
+    cfg = app.state.invoice_hub.config
+    std_old_profile = target_profile_for(cfg, std_dir)
+    custom_old_profile = target_profile_for(cfg, custom_dir)
+    std_old_key = canonical_path(std_xml)
+    custom_old_key = canonical_path(custom_xml)
+    MonitorState(std_old_profile).save_manual_overrides({
+        std_old_key: {"source_path": std_old_key, "fields": {"销售方": "手改销售方S"}, "updated_at": "2026-11-25 10:00:00"},
+    })
+    MonitorState(custom_old_profile).save_manual_overrides({
+        custom_old_key: {"source_path": custom_old_key, "fields": {"销售方": "手改销售方C"}, "updated_at": "2026-11-25 10:00:00"},
+    })
+
+    # 1. Simulate registry _save failure during custom folder disk rename -> full rollback!
+    orig_save = app.state.invoice_hub.companies._save
+
+    def boom(_registry):
+        raise RuntimeError("disk full")
+
+    monkeypatch.setattr(app.state.invoice_hub.companies, "_save", boom)
+    with pytest.raises(RuntimeError, match="disk full"):
+        app.state.invoice_hub.companies.folders.update_folder(
+            cid,
+            custom_id,
+            {"label": "回滚测试", "rename_disk": True, "new_relative_path": "回滚测试", "revision": rev},
+        )
+    monkeypatch.setattr(app.state.invoice_hub.companies, "_save", orig_save)
+
+    assert custom_dir.is_dir() and not (root / "回滚测试").exists()
+    rolled_new_profile = target_profile_for(cfg, root / "回滚测试")
+    assert not (Path(rolled_new_profile.state_dir) / MANUAL_OVERRIDES_FILE_NAME).exists()
+    assert custom_old_key in MonitorState(custom_old_profile).load_manual_overrides()
+
+    # 2. Successful disk rename of BOTH standard and custom folders preserves & rebases overrides.
+    r_std = client.post(
+        f"/api/v1/companies/{cid}/folders/cost_invoice_dir/update",
+        json={"label": "成本新名", "rename_disk": True, "new_relative_path": "成本新名", "revision": rev},
+        headers=SAME_ORIGIN,
+    )
+    assert r_std.status_code == 200, r_std.text
+    rev = r_std.json()["revision"]
+
+    r_custom = client.post(
+        f"/api/v1/companies/{cid}/folders/{custom_id}/update",
+        json={"label": "补充新名", "rename_disk": True, "new_relative_path": "补充新名", "revision": rev},
+        headers=SAME_ORIGIN,
+    )
+    assert r_custom.status_code == 200, r_custom.text
+
+    std_new_dir = root / "成本新名"
+    custom_new_dir = root / "补充新名"
+    assert std_new_dir.is_dir() and custom_new_dir.is_dir()
+
+    # Old override files cleaned up, new profile override files carry rebased paths.
+    assert not (Path(std_old_profile.state_dir) / MANUAL_OVERRIDES_FILE_NAME).exists()
+    assert not (Path(custom_old_profile.state_dir) / MANUAL_OVERRIDES_FILE_NAME).exists()
+    std_new_overrides = MonitorState(target_profile_for(cfg, std_new_dir)).load_manual_overrides()
+    custom_new_overrides = MonitorState(target_profile_for(cfg, custom_new_dir)).load_manual_overrides()
+    assert std_new_overrides[canonical_path(std_new_dir / "s1.xml")]["fields"]["销售方"] == "手改销售方S"
+    assert custom_new_overrides[canonical_path(custom_new_dir / "c1.xml")]["fields"]["销售方"] == "手改销售方C"
+
+    # Rebuilding via refresh-data applies the migrated overrides to the renamed directories' lists!
+    ref = app.state.invoice_hub.company_views.refresh.start(
+        cid,
+        keys=["cost_invoice_dir", custom_id],
+        force=True,
+        wait=True,
+    )
+    assert ref["status"] == "completed", ref
+    std_list = client.get(f"/api/v1/companies/{cid}/directories/cost_invoice_dir/invoices").json()
+    custom_list = client.get(f"/api/v1/companies/{cid}/directories/{custom_id}/invoices").json()
+    assert std_list["items"][0]["seller"] == "手改销售方S"
+    assert custom_list["items"][0]["seller"] == "手改销售方C"

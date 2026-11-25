@@ -87,7 +87,16 @@ function stubBackend(handler: Handler = () => undefined) {
       if (url.includes("/invoices?")) return new Response(JSON.stringify({ ok: true, count: 0, page: 1, page_size: 50, read_only: true, directory: DIRECTORIES[0], items: [] }), { status: 200 });
       if (url.includes("/period-folders")) return new Response(JSON.stringify({ ok: true, folders: [], items: [], mismatched: 0 }), { status: 200 });
       if (url.includes("/bank-layouts")) return new Response(JSON.stringify({ ok: true, revision: 1, layouts: [], files: [], fields: [] }), { status: 200 });
-      if (url.includes("/payroll")) return new Response(JSON.stringify({ ok: true, months: [{ month: "2026-10", total: "3200.50", source: "社保2026-10.xlsx" }], unrecognized: [] }), { status: 200 });
+      if (url.includes("/payroll")) {
+        return new Response(JSON.stringify({
+          ok: true,
+          months: [
+            { month: "2026-10", total: "3200.50", source: "社保2026-10.xlsx", checks_ok: true, rows: [{ checks: [{ code: "total", ok: true, message: "ok" }] }] },
+            { month: "2026-11", total: "150.00", source: "社保2026-11.xlsx", checks_ok: false, rows: [{ checks: [{ code: "total", ok: false, message: "养老保险：单位 100.00 + 个人 50.00 = 合计 200.00" }] }] },
+          ],
+          files: [{ file: "社保2026-10.xlsx", status: "parsed" }, { file: "杂项.png", status: "skipped", message: "图片需要 OCR" }],
+        }), { status: 200 });
+      }
       return new Response(JSON.stringify({ detail: `unexpected ${method} ${url}` }), { status: 404 });
     }),
   );
@@ -298,11 +307,16 @@ describe("company custom folders & role dispatch", () => {
     bankPanel.unmount();
 
     // DirectoryPanel with custom payroll_social_dir loads read-only payroll preview with dir_key
+    // and surfaces backend check failures prominently (never hiding checks_ok: false).
     calls = [];
     const payrollPanel = mount(DirectoryPanel, { props: { company: COMPANY, dirKey: "cf_pay_01" } });
     await flushPromises();
     expect(calls.some((c) => c.url.includes("/payroll?dir_key=cf_pay_01"))).toBe(true);
-    expect(payrollPanel.get('[aria-label="自定义工资社保目录预览"]').text()).toContain("3200.50");
+    const preview = payrollPanel.get('[aria-label="自定义工资社保目录预览"]');
+    expect(preview.text()).toContain("3200.50");
+    expect(preview.find('[role="alert"]').text()).toContain("核对未通过");
+    expect(preview.get("tr.row--danger").text()).toContain("养老保险：单位 100.00 + 个人 50.00 = 合计 200.00");
+    expect(preview.text()).toContain("另有 1 个未识别文件");
     payrollPanel.unmount();
   });
 

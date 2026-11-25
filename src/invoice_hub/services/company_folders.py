@@ -15,17 +15,17 @@ preserving single-active watch_dir isolation:
 
 from __future__ import annotations
 
-from contextlib import nullcontext
+from contextlib import ExitStack, nullcontext
 import hashlib
 import json
 import os
 import re
 import uuid
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 
 from invoice_hub.domain.models import utc_now_text
-from invoice_hub.monitoring.state import MonitorState
+from invoice_hub.monitoring.state import MANUAL_OVERRIDES_FILE_NAME, MonitorState
 from invoice_hub.platform.trash import move_to_trash
 from invoice_hub.services.company_directory_guard import (
     CompanyDirectoryChanged,
@@ -34,12 +34,13 @@ from invoice_hub.services.company_directory_guard import (
     external_path_snapshot,
     subdir_snapshot,
 )
+from invoice_hub.storage import atomic_write_json, read_json_object
 from invoice_hub.targets import target_profile_for
 from invoice_hub.targets.companies import (
     is_within as _is_within,
     resolve_external_folder,
 )
-from invoice_hub.targets.paths import serialize_config_path
+from invoice_hub.targets.paths import canonical_path, serialize_config_path
 
 if TYPE_CHECKING:
     from invoice_hub.services.company_registry import CompanyRegistryService
@@ -223,12 +224,186 @@ class CompanyFolderService:
     def __init__(self, registry: "CompanyRegistryService") -> None:
         self.registry = registry
 
-    def _try_profile_lock(self, target: Path):
-        profile = target_profile_for(self.registry.config, target)
+    def _try_profile_lock_for_profile(self, profile):
         # Never materialize runtime/targets/<id> for a folder that has never been synced.
         if not Path(profile.state_dir).is_dir():
             return nullcontext(True)
         return MonitorState(profile).try_sync_write_lock()
+
+    def _try_profile_lock(self, target: Path):
+        return self._try_profile_lock_for_profile(target_profile_for(self.registry.config, target))
+
+    @staticmethod
+    def _restore_overrides_file(
+        target_file: Path,
+        existed: bool,
+        prior_bytes: bytes | None,
+        target_dir: Path,
+        created_target_dir: bool,
+    ) -> None:
+        try:
+            if existed and prior_bytes is not None:
+                target_file.parent.mkdir(parents=True, exist_ok=True)
+                target_file.write_bytes(prior_bytes)
+            else:
+                target_file.unlink(missing_ok=True)
+                if created_target_dir:
+                    for folder in (target_file.parent, target_dir):
+                        try:
+                            folder.rmdir()
+                        except OSError:
+                            break
+        except OSError:
+            pass
+
+    def _rename_disk_with_overrides(
+        self,
+        old_path: Path,
+        new_path: Path,
+    ) -> tuple[Callable[[], None], Callable[[], None]]:
+        """Atomically rename ``old_path`` -> ``new_path`` and migrate ``manual_overrides.json``.
+
+        Because ``target_profile_for`` derives profile IDs from the directory path and
+        ``manual_overrides.json`` keys entries by absolute source paths, renaming a folder
+        must migrate and rebase saved user edits under the new profile and roll back both
+        the rename and override file if saving ``companies.json`` fails.
+        """
+        from invoice_hub.services.company_registry import CompanyRegistryError
+
+        cfg = self.registry.config
+        old_profile = target_profile_for(cfg, old_path)
+        new_profile = target_profile_for(cfg, new_path)
+        old_overrides_file = Path(old_profile.state_dir) / MANUAL_OVERRIDES_FILE_NAME
+        new_overrides_file = Path(new_profile.state_dir) / MANUAL_OVERRIDES_FILE_NAME
+        same_profile = old_profile.id == new_profile.id
+
+        lock_profiles = [old_profile] if same_profile else sorted((old_profile, new_profile), key=lambda p: p.id)
+        with ExitStack() as stack:
+            for prof in lock_profiles:
+                acquired = stack.enter_context(self._try_profile_lock_for_profile(prof))
+                if not acquired:
+                    raise CompanyRegistryError("COMPANY_FOLDER_BUSY", "该文件夹正在同步或读取，请稍后重试。", status_code=409)
+
+            old_canon = Path(canonical_path(old_path))
+            old_canon_folded = Path(str(old_canon).casefold())
+            old_raw_items: dict | None = None
+            pending_migrations: list[tuple[str, dict, tuple[str, ...]]] = []
+            if old_overrides_file.is_file():
+                try:
+                    parsed = json.loads(old_overrides_file.read_text(encoding="utf-8"))
+                except (OSError, ValueError) as exc:
+                    raise CompanyRegistryError(
+                        "COMPANY_FOLDER_IO_ERROR",
+                        "原目录的手改记录文件损坏或不可读，已中止硬盘重命名以免丢失手改字段。",
+                        status_code=409,
+                    ) from exc
+                if not isinstance(parsed, dict):
+                    raise CompanyRegistryError(
+                        "COMPANY_FOLDER_IO_ERROR",
+                        "原目录的手改记录格式无效，已中止硬盘重命名以免丢失手改字段。",
+                        status_code=409,
+                    )
+                raw_items = parsed.get("items") if isinstance(parsed.get("items"), dict) else (
+                    parsed if "version" not in parsed and "items" not in parsed else {}
+                )
+                if isinstance(raw_items, dict) and raw_items:
+                    old_raw_items = raw_items
+                    # Resolve and compute relative tails BEFORE os.rename while old_path still exists.
+                    for raw_key, raw_entry in raw_items.items():
+                        if not isinstance(raw_entry, dict):
+                            continue
+                        src_value = raw_entry.get("source_path") or raw_key
+                        src_canon_str = canonical_path(src_value)
+                        src_canon = Path(src_canon_str)
+                        try:
+                            rel_folded = Path(src_canon_str.casefold()).relative_to(old_canon_folded)
+                        except ValueError:
+                            continue
+                        tail_parts = src_canon.parts[len(old_canon.parts):] if len(rel_folded.parts) > 0 else ()
+                        pending_migrations.append((str(raw_key), dict(raw_entry), tail_parts))
+
+            new_existed = new_overrides_file.exists()
+            new_prior_bytes: bytes | None = None
+            new_target_dir = Path(new_profile.state_dir).parent
+            created_target_dir = not new_target_dir.exists()
+            migrated_keys_in_old: set[str] = set()
+            wrote_new_overrides = False
+
+            try:
+                os.rename(old_path, new_path)
+            except OSError as exc:
+                raise CompanyRegistryError("COMPANY_FOLDER_IO_ERROR", f"重命名文件夹失败：{exc.strerror or exc}", status_code=409) from exc
+
+            try:
+                if pending_migrations:
+                    new_canon = Path(canonical_path(new_path))
+                    rebased: dict[str, dict] = {}
+                    for raw_key, copied, tail_parts in pending_migrations:
+                        rebased_path = canonical_path(new_canon.joinpath(*tail_parts))
+                        copied["source_path"] = rebased_path
+                        copied["invoice_key"] = ""
+                        copied["renamed_at"] = utc_now_text()
+                        rebased[rebased_path] = copied
+                        migrated_keys_in_old.add(raw_key)
+                    if rebased:
+                        if new_existed:
+                            new_prior_bytes = new_overrides_file.read_bytes()
+                        if same_profile:
+                            remaining = {
+                                str(k): v
+                                for k, v in (old_raw_items or {}).items()
+                                if str(k) not in migrated_keys_in_old
+                            }
+                            merged_items = {**remaining, **rebased}
+                        else:
+                            existing_new = read_json_object(new_overrides_file, {}) if new_existed else {}
+                            existing_items = existing_new.get("items") if isinstance(existing_new.get("items"), dict) else {}
+                            merged_items = {**existing_items, **rebased}
+                        new_overrides_file.parent.mkdir(parents=True, exist_ok=True)
+                        atomic_write_json(
+                            new_overrides_file,
+                            {"version": 1, "items": merged_items, "updated_at": utc_now_text()},
+                        )
+                        wrote_new_overrides = True
+            except Exception as exc:
+                if wrote_new_overrides:
+                    self._restore_overrides_file(new_overrides_file, new_existed, new_prior_bytes, new_target_dir, created_target_dir)
+                try:
+                    os.rename(new_path, old_path)
+                except OSError:
+                    pass
+                if isinstance(exc, CompanyRegistryError):
+                    raise
+                raise CompanyRegistryError("COMPANY_FOLDER_IO_ERROR", f"迁移手改记录失败，已回滚文件夹名称：{exc}", status_code=409) from exc
+
+        def rollback() -> None:
+            if wrote_new_overrides:
+                self._restore_overrides_file(new_overrides_file, new_existed, new_prior_bytes, new_target_dir, created_target_dir)
+            try:
+                os.rename(new_path, old_path)
+            except OSError:
+                pass
+
+        def commit_cleanup() -> None:
+            if not wrote_new_overrides or same_profile or not migrated_keys_in_old or not old_overrides_file.is_file():
+                return
+            try:
+                remaining = {
+                    str(k): v
+                    for k, v in (old_raw_items or {}).items()
+                    if str(k) not in migrated_keys_in_old
+                }
+                if remaining:
+                    atomic_write_json(
+                        old_overrides_file,
+                        {"version": 1, "items": remaining, "updated_at": utc_now_text()},
+                    )
+                else:
+                    old_overrides_file.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+        return commit_cleanup, rollback
 
     def _entry_path(self, company: dict, entry: dict) -> Path:
         root = self.registry._registered_root(company["root_dir"])
@@ -639,6 +814,8 @@ class CompanyFolderService:
             project_root = self.registry.config.root_dir
             rename_disk = bool(body.get("rename_disk", False))
             disk_renamed = False
+            commit_rename_cleanup: Callable[[], None] = lambda: None
+            rollback_rename: Callable[[], None] = lambda: None
 
             if kind == "standard":
                 default_label = STANDARD_SUBDIRS[key][0]
@@ -664,13 +841,7 @@ class CompanyFolderService:
                         parent_rel = Path(new_relative).parent.as_posix()
                         if parent_rel not in {"", "."} and target_snap.get(parent_rel, [None])[0] != "present":
                             raise CompanyRegistryError("COMPANY_INVALID", "目标上级目录不存在，请只在同一目录内改名。", status_code=422, field="new_relative_path")
-                        with self._try_profile_lock(old_path) as acquired:
-                            if not acquired:
-                                raise CompanyRegistryError("COMPANY_FOLDER_BUSY", "该文件夹正在同步或读取，请稍后重试。", status_code=409)
-                            try:
-                                os.rename(old_path, new_path)
-                            except OSError as exc:
-                                raise CompanyRegistryError("COMPANY_FOLDER_IO_ERROR", f"重命名文件夹失败：{exc.strerror or exc}", status_code=409) from exc
+                        commit_rename_cleanup, rollback_rename = self._rename_disk_with_overrides(old_path, new_path)
                         disk_renamed = True
                         company["subdirs"][key] = new_relative
 
@@ -688,11 +859,10 @@ class CompanyFolderService:
                     self.registry._save(registry)
                 except Exception:
                     if disk_renamed:
-                        try:
-                            os.rename(root / new_relative, old_path)
-                        except OSError:
-                            pass
+                        rollback_rename()
                     raise
+                if disk_renamed:
+                    commit_rename_cleanup()
             else:
                 assert entry is not None
                 old_path = self._entry_path(company, entry)
@@ -741,13 +911,7 @@ class CompanyFolderService:
                             new_external = serialize_config_path(project_root, new_path)
 
                     if new_path != old_path:
-                        with self._try_profile_lock(old_path) as acquired:
-                            if not acquired:
-                                raise CompanyRegistryError("COMPANY_FOLDER_BUSY", "该文件夹正在同步或读取，请稍后重试。", status_code=409)
-                            try:
-                                os.rename(old_path, new_path)
-                            except OSError as exc:
-                                raise CompanyRegistryError("COMPANY_FOLDER_IO_ERROR", f"重命名文件夹失败：{exc.strerror or exc}", status_code=409) from exc
+                        commit_rename_cleanup, rollback_rename = self._rename_disk_with_overrides(old_path, new_path)
                         disk_renamed = True
 
                 now = utc_now_text()
@@ -761,11 +925,10 @@ class CompanyFolderService:
                     self.registry._save(registry)
                 except Exception:
                     if disk_renamed:
-                        try:
-                            os.rename(new_path, old_path)
-                        except OSError:
-                            pass
+                        rollback_rename()
                     raise
+                if disk_renamed:
+                    commit_rename_cleanup()
 
             self.registry.repo.append_event(
                 "companies.folder_updated",

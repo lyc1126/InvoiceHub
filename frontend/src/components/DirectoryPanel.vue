@@ -28,7 +28,16 @@ const rebuilding = ref(false);
 // triggered by updateFolder/removeFolder cannot unmount the modal before its `done` event fires.
 const editTarget = ref<CompanySubdir | null>(null);
 const deleteTarget = ref<CompanySubdir | null>(null);
-const payrollPreview = ref<{ loading: boolean; error: string; months: { month: string; total: string; source: string }[]; unrecognized: { file: string; reason: string }[] } | null>(null);
+interface CustomPayrollMonth {
+  month: string;
+  total: string;
+  unit_total: string;
+  personal_total: string;
+  source: string;
+  checks_ok: boolean;
+  failed_checks: string[];
+}
+const payrollPreview = ref<{ loading: boolean; error: string; months: CustomPayrollMonth[]; unrecognized: { file: string; reason: string }[] } | null>(null);
 const effectiveRole = computed(() => effectiveFolderRole(directory.value, props.dirKey));
 const isInvoiceDir = computed(() => REFRESHABLE_ROLES.includes(effectiveRole.value));
 const isCustomPayroll = computed(() => directory.value?.kind === "custom" && effectiveRole.value === "payroll_social_dir" && directory.value.status === "present");
@@ -41,7 +50,15 @@ async function loadCustomPayroll(mine: number): Promise<void> {
   payrollPreview.value = { loading: true, error: "", months: [], unrecognized: [] };
   try {
     const res = await request<{
-      months?: { month: string; total?: string; source?: string }[];
+      months?: {
+        month: string;
+        total?: string;
+        unit_total?: string;
+        personal_total?: string;
+        source?: string;
+        checks_ok?: boolean;
+        rows?: { checks?: { code?: string; ok: boolean; message?: string }[] }[];
+      }[];
       files?: { file: string; status: string; message?: string }[];
       unrecognized?: { file: string; reason: string }[];
     }>(
@@ -53,7 +70,21 @@ async function loadCustomPayroll(mine: number): Promise<void> {
     payrollPreview.value = {
       loading: false,
       error: "",
-      months: (res.months ?? []).map((m) => ({ month: m.month, total: m.total ?? "—", source: m.source ?? "" })),
+      months: (res.months ?? []).map((m) => {
+        const failedChecks = (m.rows ?? [])
+          .flatMap((row) => (row.checks ?? []).filter((check) => !check.ok).map((check) => check.message || "核对未通过"))
+          .filter(Boolean);
+        const checksOk = m.checks_ok === undefined ? failedChecks.length === 0 : Boolean(m.checks_ok) && failedChecks.length === 0;
+        return {
+          month: m.month,
+          total: m.total ?? "—",
+          unit_total: m.unit_total ?? "—",
+          personal_total: m.personal_total ?? "—",
+          source: m.source ?? "",
+          checks_ok: checksOk,
+          failed_checks: failedChecks,
+        };
+      }),
       unrecognized: unrec,
     };
   } catch (cause) {
@@ -218,11 +249,27 @@ watch(
       <p v-if="payrollPreview.loading" class="muted" role="status" aria-busy="true">正在读取社保文件…</p>
       <p v-else-if="payrollPreview.error" class="banner banner--error" role="alert">{{ payrollPreview.error }}</p>
       <div v-else class="overview-table-wrap">
+        <p v-if="payrollPreview.months.some((m) => !m.checks_ok)" class="banner banner--error" role="alert">
+          部分月份的社保金额核对未通过（单位 + 个人 ≠ 合计或基数 × 费率 ≠ 应缴），请核对原始报表，勿直接按显示合计入账。
+        </p>
         <table class="grid">
-          <thead><tr><th>费款所属期</th><th class="num">应缴费额合计</th><th>来源文件</th></tr></thead>
+          <thead><tr><th>费款所属期</th><th class="num">应缴费额合计</th><th>核对状态</th><th>来源文件</th></tr></thead>
           <tbody>
-            <tr v-for="m in payrollPreview.months" :key="m.month"><td>{{ m.month }}</td><td class="num">{{ m.total }}</td><td class="path mono">{{ m.source }}</td></tr>
-            <tr v-if="!payrollPreview.months.length"><td colspan="3" class="muted">本目录中暂未识别到社保应缴明细表。</td></tr>
+            <tr v-for="m in payrollPreview.months" :key="m.month" :class="{ 'row--danger': !m.checks_ok }">
+              <td>{{ m.month }}</td>
+              <td class="num">{{ m.total }}</td>
+              <td>
+                <span v-if="m.checks_ok">✓ 通过</span>
+                <div v-else class="check--failed">
+                  <strong>✗ 核对未通过</strong>
+                  <ul v-if="m.failed_checks.length" class="payroll-check-errors">
+                    <li v-for="(msg, idx) in m.failed_checks" :key="idx">{{ msg }}</li>
+                  </ul>
+                </div>
+              </td>
+              <td class="path mono">{{ m.source }}</td>
+            </tr>
+            <tr v-if="!payrollPreview.months.length"><td colspan="4" class="muted">本目录中暂未识别到社保应缴明细表。</td></tr>
           </tbody>
         </table>
       </div>
@@ -238,4 +285,5 @@ watch(
 
 <style scoped>
 .dir-head-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.payroll-check-errors { margin: 4px 0 0; padding-left: 16px; font-size: 12px; }
 </style>
