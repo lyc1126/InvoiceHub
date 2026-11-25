@@ -68,7 +68,7 @@ class WebsiteTests(unittest.TestCase):
 
     def test_local_navigation_does_not_move_the_update_feed(self):
         self.assertEqual(LOCAL_WEBSITE_PATH, "/website/")
-        self.assertEqual(UPDATE_FEED_URL, WEBSITE_URL + "updates/beta/latest.json")
+        self.assertEqual(UPDATE_FEED_URL, WEBSITE_URL + "updates/stable/latest.json")
         self.assertTrue(UPDATE_FEED_URL.startswith("https://"))
 
 

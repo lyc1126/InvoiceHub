@@ -136,7 +136,7 @@ def test_update_feed_rejects_wrong_prerelease_kind_for_current_channel(tmp_path:
     feed["latest_version"] = "1.0.0a1"
     feed["source"]["tag"] = "v1.0.0a1"
 
-    with pytest.raises(UpdateMetadataError, match="beta 更新通道") as caught:
+    with pytest.raises(UpdateMetadataError, match="stable 更新通道") as caught:
         validate_update_feed(feed)
 
     assert caught.value.code == "UPDATE_VERSION_INVALID"

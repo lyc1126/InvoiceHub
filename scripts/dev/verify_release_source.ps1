@@ -1,5 +1,5 @@
 param(
-    [string]$Version = "1.0.0-beta.1",
+    [string]$Version = "1.0.0",
     [ValidatePattern('^3\.14\.6$')][string]$PythonVersion = "3.14.6",
     [ValidateSet("x64")][string]$Architecture = "x64",
     [string]$PythonPath = "",

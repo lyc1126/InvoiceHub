@@ -98,18 +98,28 @@ finally {
     }
 }
 $env:PYTHONPATH = Join-Path $root "src"
-& $python -m invoice_hub.release.runtime_manifest normalize-windows --runtime-dir $runtimeDir
+# `-I` ignores PYTHONDONTWRITEBYTECODE=1; pass `-B` to every prepared-runtime
+# Python call from normalization onward so verification and manifest writing
+# never recreate __pycache__ or .pyc/.pyo files rejected by portable packaging.
+& $python -B -m invoice_hub.release.runtime_manifest normalize-windows --runtime-dir $runtimeDir
 if ($LASTEXITCODE -ne 0 -or [System.IO.Directory]::Exists($runtimeScriptsDir)) {
     throw "Windows runtime console script normalization failed."
 }
-& $python -I -m pip check
+& $python -I -B -m pip check
 if ($LASTEXITCODE -ne 0) { throw "pip check failed in the prepared runtime." }
-& $python -I -c "import tkinter, ssl, sqlite3, fitz, PIL, watchdog; print('windows-runtime-smoke-ok')"
+& $python -I -B -c "import tkinter, ssl, sqlite3, fitz, PIL, watchdog; print('windows-runtime-smoke-ok')"
 if ($LASTEXITCODE -ne 0) { throw "Windows runtime import smoke failed." }
 
 $source = "Python Install Manager $PythonVersion-64"
-& $python -m invoice_hub.release.runtime_manifest write --runtime-dir $runtimeDir --dependency-lock $lock --platform windows --architecture x86_64 --python-version $PythonVersion --python-executable python.exe --source $source
+& $python -B -m invoice_hub.release.runtime_manifest write --runtime-dir $runtimeDir --dependency-lock $lock --platform windows --architecture x86_64 --python-version $PythonVersion --python-executable python.exe --source $source
 if ($LASTEXITCODE -ne 0 -or -not [System.IO.File]::Exists($manifest)) {
     throw "Runtime manifest generation failed."
+}
+$runtimeCaches = @(Get-ChildItem -LiteralPath $runtimeDir -Recurse -Force -ErrorAction Stop | Where-Object {
+    ($_.PSIsContainer -and $_.Name -ieq "__pycache__") -or (-not $_.PSIsContainer -and ($_.Extension -ieq ".pyc" -or $_.Extension -ieq ".pyo"))
+})
+if ($runtimeCaches.Count -gt 0) {
+    $sample = $runtimeCaches[0].FullName.Substring($runtimeDir.Length).TrimStart('\', '/')
+    throw "Prepared Windows runtime still contains Python bytecode cache: $sample"
 }
 Write-Host $runtimeDir

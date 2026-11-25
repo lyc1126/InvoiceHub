@@ -20,7 +20,7 @@ jobs:
       - name: Require the exact release tag
         shell: pwsh
         run: |
-          if ('${{ inputs.tag }}' -ne 'v1.0.0-beta.1') { throw 'Only v1.0.0-beta.1 is accepted.' }
+          if ('${{ inputs.tag }}' -ne 'v1.0.0') { throw 'Only v1.0.0 is accepted.' }
       - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.tag }}
@@ -93,8 +93,8 @@ jobs:
           project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
           signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
           artifact-configuration-slug: ${{ vars.SIGNPATH_INSTALLER_ARTIFACT_CONFIGURATION_SLUG }}
-          input-artifact-path: src-tauri/target/release/bundle/nsis/InvoiceHub_1.0.0-beta.1_x64-setup.exe
-          output-artifact-path: dist/InvoiceHub-v1.0.0-beta.1-windows-x64-setup.exe
+          input-artifact-path: src-tauri/target/release/bundle/nsis/InvoiceHub_1.0.0_x64-setup.exe
+          output-artifact-path: dist/InvoiceHub-v1.0.0-windows-x64-setup.exe
       - name: Verify SignPath outputs and write immutable release evidence
         shell: pwsh
         run: |
@@ -125,9 +125,9 @@ jobs:
           $receipt | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $PWD "dist/$($config.receipt_name)") -Encoding UTF8
       - uses: actions/upload-artifact@v4
         with:
-          name: InvoiceHub-v1.0.0-beta.1-windows-x64-setup
+          name: InvoiceHub-v1.0.0-windows-x64-setup
           path: |
-            dist/InvoiceHub-v1.0.0-beta.1-windows-x64-setup.exe
-            dist/InvoiceHub-v1.0.0-beta.1-windows-x64-setup.exe.sha256
-            dist/InvoiceHub-v1.0.0-beta.1-windows-x64-setup.build-receipt.json
+            dist/InvoiceHub-v1.0.0-windows-x64-setup.exe
+            dist/InvoiceHub-v1.0.0-windows-x64-setup.exe.sha256
+            dist/InvoiceHub-v1.0.0-windows-x64-setup.build-receipt.json
           if-no-files-found: error

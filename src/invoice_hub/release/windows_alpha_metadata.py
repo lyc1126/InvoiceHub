@@ -160,9 +160,13 @@ def validate_windows_alpha_feed(
         parsed_version = Version(latest_version)
     except InvalidVersion as exc:
         raise UpdateMetadataError("UPDATE_VERSION_INVALID", f"Windows {UPDATE_CHANNEL} 版本号无效") from exc
-    expected_pre_kind = UPDATE_CHANNEL_PRE_RELEASE_KINDS.get(UPDATE_CHANNEL)
-    if expected_pre_kind is not None and (parsed_version.pre is None or parsed_version.pre[0] != expected_pre_kind):
-        raise UpdateMetadataError("UPDATE_VERSION_INVALID", f"Windows {UPDATE_CHANNEL} 必须使用 {UPDATE_CHANNEL} 预发布版本")
+    if UPDATE_CHANNEL == "stable":
+        if parsed_version.is_prerelease or parsed_version.is_devrelease:
+            raise UpdateMetadataError("UPDATE_VERSION_INVALID", "Windows stable 更新通道只能发布正式版本")
+    else:
+        expected_pre_kind = UPDATE_CHANNEL_PRE_RELEASE_KINDS.get(UPDATE_CHANNEL)
+        if expected_pre_kind is not None and (parsed_version.pre is None or parsed_version.pre[0] != expected_pre_kind):
+            raise UpdateMetadataError("UPDATE_VERSION_INVALID", f"Windows {UPDATE_CHANNEL} 必须使用 {UPDATE_CHANNEL} 预发布版本")
     published_at = _published_at(payload.get("published_at"))
     minimum_contract = _required_text(payload, "minimum_api_contract")
     api_contract_date(minimum_contract)

@@ -1,5 +1,5 @@
 param(
-    [string]$Version = "1.0.0-beta.1",
+    [string]$Version = "1.0.0",
     [ValidatePattern('^3\.14\.6$')][string]$PythonVersion = "3.14.6",
     [ValidateSet("x64")][string]$Architecture = "x64",
     [string]$PythonManager = "pymanager",
@@ -77,6 +77,9 @@ if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($sourceTimestamp)) {
 $runtimePython = Join-Path $runtimeDir "python.exe"
 $env:PYTHONPATH = Join-Path $sourceRoot "src"
 $buildArgs = @(
+    # Suppress bytecode writes when invoking the prepared runtime itself so
+    # repeated portable builds never recreate __pycache__/.pyc in $runtimeDir.
+    "-B",
     "-m", "invoice_hub.release.build_core",
     "--root", $sourceRoot,
     "--output-dir", $dist,

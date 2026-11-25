@@ -2,6 +2,28 @@
 
 ## 未发布
 
+### 2026-11-25 修复 Windows 锁定运行时准备脚本 `-I` 忽略 `PYTHONDONTWRITEBYTECODE` 导致的 `__pycache__` 打包阻断
+
+- 需求与起点：Windows x64 实机按 `codex/release-v1.0.0@d5bbe65` 构建 `v1.0.0` Tauri portable 候选包时，在锁定 runtime 校验阶段触发真实门禁阻断：`locked Windows runtime contains cache content: Lib\__pycache__`。核查确认为 `scripts/dev/prepare_windows_runtime.ps1` 在 `normalize-windows` 清理字节码缓存后，后续对产品 `python.exe` 的 `pip check`、`import` smoke（使用 `-I`，会忽略 `PYTHONDONTWRITEBYTECODE=1`）与 `runtime_manifest write` 以及 `scripts/dev/build_windows_portable.ps1` 调用 `build_core` 均未显式传 `-B`，重新生成了字节码缓存。
+- 采用方案：
+  - `scripts/dev/prepare_windows_runtime.ps1`：对 `normalize-windows`、`pip check`（`-I -B`）、import smoke（`-I -B`）和 `runtime_manifest write`（`-B`）四处产品 `python.exe` 调用显式加 `-B`，并在 `write` 之后增加对 `$runtimeDir` 残留 `__pycache__`/`.pyc`/`.pyo` 的 fail-closed 检查。
+  - `scripts/dev/build_windows_portable.ps1`：给 `$buildArgs` 补充 `"-B"`，避免构建核心包时通过 `$runtimePython` 重新写入字节码缓存。
+  - `tests/test_windows_release_contract.py`：补充 `-B`/`-I -B` 与末尾无缓存检查的脚本契约断言，并新增 `test_windows_runtime_isolated_checks_with_B_leave_no_bytecode_cache` 动态回归验证 `-I -B` 不产生字节码且 `-I` 会忽略 `PYTHONDONTWRITEBYTECODE=1`。
+  - 同步更新 `docs/architecture/rules/RELEASE.md` 与 `docs/architecture/COMMENT_RATIONALE_MAP.md`。
+- 验证范围与未覆盖项：
+  - 已运行并通过：macOS ARM64 本机 `.venv` 运行 `tests/test_windows_release_contract.py`、`tests/test_tauri_windows_portable.py`、`tests/test_release.py`、`tests/test_release_identity.py`、`tests/test_development_documentation.py`、`ruff check`、`git diff --check` 与 CRLF 换行核验；不涉及 `BUILD_INPUTS` 业务核心改动，`core_build_id` 保持不变。
+  - 未覆盖项：未在 macOS 本机执行 Windows PowerShell 真机打包与 6 项真机冒烟、正式 Windows BAT、真实默认配置、浏览器前台拉起与原生目录选择器弹窗；待 PR #33 远端双平台 CI 全绿并合入 `main` 后，由 Windows x64 实机从最终 `main` clean commit 执行打包与真机冒烟验证。
+
+### 2026-11-24 合入 PR #32 至 main 并执行 v1.0.0 正式升版与 macOS ARM64 候选包构建验收
+
+- 需求与起点：基于已合入 PR #32 的干净主线 `main@50996436ae52e081f9f12d91b3e729609b50a4e3` 新建 `codex/release-v1.0.0`，将统一架构基线切换至新 `main`，把产品版本由 `1.0.0-beta.1`（`beta`）升至 `1.0.0`（`stable`），完善 `stable` 通道的更新元数据校验并构建验证 macOS ARM64 `v1.0.0` 候选 DMG。
+- 采用方案：
+  - **版本与稳定通道升级**：在 `src/invoice_hub/version.py` 将 `PRODUCT_VERSION`、`PYTHON_PACKAGE_VERSION` 升至 `1.0.0`、`UPDATE_CHANNEL` 切为 `stable`；在 `release/update_metadata.py` 与 `release/windows_alpha_metadata.py` 补齐 `stable` 通道校验（拒绝 prerelease/devrelease 版本）；运行 `scripts/dev/tauri_version_sync.py --write` 同步 `package.json`、`src-tauri/Cargo.toml`、`src-tauri/tauri*.conf.json`、`docs/release/WINDOWS_REPACKAGE_CONFIG.json` 与 `docs/release/WINDOWS_PUBLIC_PREVIEW_CONFIG.json`，同步更新 `src-tauri/tauri.windows.conf.json`、`src-tauri/Cargo.lock`、`.github/workflows/windows-public-preview.yml`、`scripts/dev/*.ps1`、`scripts/dev/verify_tauri_*.py`、`scripts/dev/tauri_public_preview_smoke.py`、`macos/InvoiceHubMac/script/*.sh` 及对应契约测试与主线基线文档。
+  - **macOS ARM64 候选构建与验包**：在提交干净的 `codex/release-v1.0.0` commit 上运行 `scripts/dev/tauri_public_preview.py`（输入锁定 runtime `dist/runtime-inputs/20260909-optimized-macos/python`），产出并经 `verify_tauri_public_preview.py` 复验 `InvoiceHub-v1.0.0-macos-arm64-preview.dmg` 与 schema-4 收据（保留在 ignored `dist/candidates/` 下，不提交入仓）。
+- 验证范围与未覆盖项：
+  - 已运行并通过：`tauri_version_sync.py --check`、Rust `1.85.0` `cargo clippy --offline --locked --all-targets -- -D warnings` 与 `cargo test --offline --locked`、Ruff、Python `compileall`、`bash -n macos/InvoiceHubMac/script/*.sh`、版本/更新/发布/文档契约全套 pytest（含 `test_release_identity.py`、`test_update_metadata.py`、`test_update_service.py`、`test_windows_alpha_metadata.py`、`test_tauri_foundation.py`、`test_tauri_public_preview.py`、`test_macos_release_contract.py`、`test_windows_release_contract.py`、`test_api_contract.py`、`test_website.py`、`test_development_documentation.py`），以及 macOS ARM64 `v1.0.0` 候选 DMG 打包与独立验包。
+  - 未覆盖项：未覆盖 Apple Developer ID 正式签名/公证、Sparkle 线上升级、Windows x64 实机同源打包与 BAT 验收、真实默认配置与系统原生选择器弹窗；待 `codex/release-v1.0.0` 经你确认推送并合入 `main` 后，基于最终 `main` clean commit 执行双平台正式打标发布。
+
 ### 2026-11-24 推进 v1.0.0 里程碑 3：完成 FEEDBACK-01 方案 A 降级、首次使用引导、跨页面文案体检与门面文档刷新
 
 - 需求与起点：基于已推送至 `origin/codex/workspace-p3@dfdc778` 的里程碑 2 提交，按用户确认推进 `FEEDBACK-01` 方案 A（暂不部署公网中转，降级为一键复制脱敏信息并跳转 GitHub Issue）、补齐工作区首次启动三步引导与跨页面文案体检，并刷新 `README.md`、`docs/USER_GUIDE.md` 与 `website/index.html` 对齐 `1.0.0-beta.1` 实际能力。

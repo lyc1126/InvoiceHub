@@ -159,14 +159,18 @@ def validate_update_feed(
         latest = Version(latest_text)
     except InvalidVersion as exc:
         raise UpdateMetadataError("UPDATE_VERSION_INVALID", "更新源版本号无效") from exc
-    expected_pre_kind = UPDATE_CHANNEL_PRE_RELEASE_KINDS.get(UPDATE_CHANNEL)
-    if expected_pre_kind is None:
-        raise UpdateMetadataError("UPDATE_FEED_INVALID", "当前更新通道不支持预发布版本校验")
-    if latest.pre is None or latest.pre[0] != expected_pre_kind:
-        raise UpdateMetadataError(
-            "UPDATE_VERSION_INVALID",
-            f"{UPDATE_CHANNEL} 更新通道必须发布对应的预发布版本",
-        )
+    if UPDATE_CHANNEL == "stable":
+        if latest.is_prerelease or latest.is_devrelease:
+            raise UpdateMetadataError("UPDATE_VERSION_INVALID", "stable 更新通道只能发布正式版本")
+    else:
+        expected_pre_kind = UPDATE_CHANNEL_PRE_RELEASE_KINDS.get(UPDATE_CHANNEL)
+        if expected_pre_kind is None:
+            raise UpdateMetadataError("UPDATE_FEED_INVALID", "当前更新通道不支持预发布版本校验")
+        if latest.pre is None or latest.pre[0] != expected_pre_kind:
+            raise UpdateMetadataError(
+                "UPDATE_VERSION_INVALID",
+                f"{UPDATE_CHANNEL} 更新通道必须发布对应的预发布版本",
+            )
     if isinstance(payload.get("source"), str):
         raise UpdateMetadataError("UPDATE_FEED_INVALID", "source 必须是对象")
 

@@ -1,7 +1,7 @@
 # InvoiceHub 平台架构：共享核心、Windows 与 macOS
 
 > **文档状态**：当前跨平台实现的权威附录（历史日期段落已收拢至 [CHANGELOG.md](../../CHANGELOG.md)）。
-> **公共基线**：单一脱敏根提交；开发版本真值见 [version.py](../../src/invoice_hub/version.py)（当前 `1.0.0-beta.1`），精确分支与提交以实时 Git 与 [分支记录](../BRANCH_STATUS.md) 为准。
+> **公共基线**：单一脱敏根提交；PR #32 已合入 `main`，版本真值见 [version.py](../../src/invoice_hub/version.py)（当前 `1.0.0` / `stable`），精确分支与提交以实时 Git 与 [分支记录](../BRANCH_STATUS.md) 为准。
 
 功能约束按需读取：[Windows](rules/WINDOWS.md)、[macOS 参考壳](rules/MACOS.md)、[Tauri 宿主](rules/TAURI_HOST.md)、[构建与发行](rules/RELEASE.md)。先按 [任务快速索引](AGENT_TASK_MAP.md#quick-lookup) 定位全部命中项，再读取规则全文及对应实现章节；AGENTS.md 保留全局必读规则。
 

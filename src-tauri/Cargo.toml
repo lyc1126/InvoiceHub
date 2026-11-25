@@ -1,6 +1,6 @@
 [package]
 name = "invoicehub-desktop"
-version = "1.0.0-beta.1"
+version = "1.0.0"
 description = "InvoiceHub Tauri desktop host"
 license = "AGPL-3.0-or-later"
 repository = "https://github.com/lyc1126/InvoiceHub"

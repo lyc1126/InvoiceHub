@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VERSION="1.0.0-beta.1"
+VERSION="1.0.0"
 BUILD_NUMBER="1"
 PYTHON_VERSION="3.14.6"
 BUNDLE_ID="com.invoicehub.mac"
 PACKAGE_ID="com.invoicehub.macos.arm64.dmg"
 SPARKLE_PACKAGE_ID="com.invoicehub.macos.arm64.sparkle"
 SPARKLE_KEYCHAIN_ACCOUNT="com.invoicehub.release"
-FEED_URL="https://lyc1126.github.io/InvoiceHub/updates/beta/appcast.xml"
+FEED_URL="https://lyc1126.github.io/InvoiceHub/updates/stable/appcast.xml"
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REPO_ROOT="$(cd "$ROOT_DIR/../.." && pwd)"

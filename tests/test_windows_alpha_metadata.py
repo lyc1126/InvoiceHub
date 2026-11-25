@@ -99,7 +99,7 @@ def test_windows_alpha_feed_is_available_on_windows_and_unsupported_on_macos(tmp
     encoded = json.dumps(feed).encode("utf-8")
 
     def transport(*_args):
-        return UpdateFetchResult(status_code=200, body=encoded, etag="", final_url="https://lyc1126.github.io/InvoiceHub/updates/beta/latest.json")
+        return UpdateFetchResult(status_code=200, body=encoded, etag="", final_url="https://lyc1126.github.io/InvoiceHub/updates/stable/latest.json")
 
     windows = UpdateService(
         cache_path=tmp_path / "windows-cache.json",
