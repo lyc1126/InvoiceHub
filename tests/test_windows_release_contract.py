@@ -613,6 +613,14 @@ def test_windows_release_build_uses_git_snapshot_hash_lock_and_reproducibility_c
     assert 'Copy-Item -LiteralPath $baseRuntimeDir -Destination $runtimeDir -Recurse' in prepare
     assert 'Remove-Item -LiteralPath $runtimeDocDir -Recurse -Force' in prepare
     assert "invoice_hub.release.runtime_manifest normalize-windows" in prepare
+    assert "& $python -B -m invoice_hub.release.runtime_manifest normalize-windows" in prepare
+    assert "& $python -I -B -m pip check" in prepare
+    assert (
+        "& $python -I -B -c \"import tkinter, ssl, sqlite3, fitz, PIL, watchdog; print('windows-runtime-smoke-ok')\""
+        in prepare
+    )
+    assert "& $python -B -m invoice_hub.release.runtime_manifest write" in prepare
+    assert "Prepared Windows runtime still contains Python bytecode cache:" in prepare
     assert '$env:SOURCE_DATE_EPOCH = "315532800"' in prepare
     assert '$previousSourceDateEpoch = [Environment]::GetEnvironmentVariable' in prepare
     assert 'Remove-Item -LiteralPath "Env:SOURCE_DATE_EPOCH"' in prepare
@@ -623,11 +631,15 @@ def test_windows_release_build_uses_git_snapshot_hash_lock_and_reproducibility_c
         "-m pip install"
     ) < prepare.index("invoice_hub.release.runtime_manifest normalize-windows") < prepare.index(
         "-m pip check"
-    ) < prepare.index("invoice_hub.release.runtime_manifest write")
+    ) < prepare.index("invoice_hub.release.runtime_manifest write") < prepare.index(
+        "Prepared Windows runtime still contains Python bytecode cache:"
+    )
     assert prepare.index("-m pip install") < prepare.index("finally {") < prepare.index(
         "invoice_hub.release.runtime_manifest normalize-windows"
     )
     assert "git -C $root -c core.autocrlf=false archive" in build
+    assert '"-B",' in build
+    assert build.index('"-B",') < build.index('"-m", "invoice_hub.release.build_core"')
     assert "--source-timestamp" in build
     assert "reproducibility" in build.casefold()
     assert "reproducibility_checked" in build
@@ -919,3 +931,36 @@ def test_windows_settings_import_is_whitelist_only() -> None:
     assert "CONFIG_KEYS" in migration and "PREFERENCE_KEYS" in migration
     assert '"logs"' in migration and '"sqlite"' in migration and '"source invoices"' in migration
     assert "shutil.copytree" not in migration
+
+
+def test_windows_runtime_isolated_checks_with_B_leave_no_bytecode_cache(tmp_path: Path) -> None:
+    """Isolated mode (-I) ignores PYTHONDONTWRITEBYTECODE=1, so post-normalization checks must pass -B."""
+    pkg = tmp_path / "isolated_probe_pkg"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("VALUE = 1\n", encoding="utf-8")
+    (pkg / "mod.py").write_text("LABEL = 'ok'\n", encoding="utf-8")
+    code = f"import sys; sys.path.insert(0, {str(tmp_path)!r}); import isolated_probe_pkg.mod as m; print(m.LABEL)"
+    env = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}
+
+    clean = subprocess.run(
+        [sys.executable, "-I", "-B", "-c", code],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    assert clean.stdout.strip() == "ok"
+    assert not list(tmp_path.rglob("__pycache__"))
+    assert not list(tmp_path.rglob("*.pyc"))
+    assert not list(tmp_path.rglob("*.pyo"))
+
+    # Confirm the exact failure mechanism guarded against: -I alone ignores PYTHONDONTWRITEBYTECODE=1.
+    polluted = subprocess.run(
+        [sys.executable, "-I", "-c", code],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    assert polluted.stdout.strip() == "ok"
+    assert list(tmp_path.rglob("*.pyc"))

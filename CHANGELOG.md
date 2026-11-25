@@ -2,6 +2,18 @@
 
 ## 未发布
 
+### 2026-11-25 修复 Windows 锁定运行时准备脚本 `-I` 忽略 `PYTHONDONTWRITEBYTECODE` 导致的 `__pycache__` 打包阻断
+
+- 需求与起点：Windows x64 实机按 `codex/release-v1.0.0@d5bbe65` 构建 `v1.0.0` Tauri portable 候选包时，在锁定 runtime 校验阶段触发真实门禁阻断：`locked Windows runtime contains cache content: Lib\__pycache__`。核查确认为 `scripts/dev/prepare_windows_runtime.ps1` 在 `normalize-windows` 清理字节码缓存后，后续对产品 `python.exe` 的 `pip check`、`import` smoke（使用 `-I`，会忽略 `PYTHONDONTWRITEBYTECODE=1`）与 `runtime_manifest write` 以及 `scripts/dev/build_windows_portable.ps1` 调用 `build_core` 均未显式传 `-B`，重新生成了字节码缓存。
+- 采用方案：
+  - `scripts/dev/prepare_windows_runtime.ps1`：对 `normalize-windows`、`pip check`（`-I -B`）、import smoke（`-I -B`）和 `runtime_manifest write`（`-B`）四处产品 `python.exe` 调用显式加 `-B`，并在 `write` 之后增加对 `$runtimeDir` 残留 `__pycache__`/`.pyc`/`.pyo` 的 fail-closed 检查。
+  - `scripts/dev/build_windows_portable.ps1`：给 `$buildArgs` 补充 `"-B"`，避免构建核心包时通过 `$runtimePython` 重新写入字节码缓存。
+  - `tests/test_windows_release_contract.py`：补充 `-B`/`-I -B` 与末尾无缓存检查的脚本契约断言，并新增 `test_windows_runtime_isolated_checks_with_B_leave_no_bytecode_cache` 动态回归验证 `-I -B` 不产生字节码且 `-I` 会忽略 `PYTHONDONTWRITEBYTECODE=1`。
+  - 同步更新 `docs/architecture/rules/RELEASE.md` 与 `docs/architecture/COMMENT_RATIONALE_MAP.md`。
+- 验证范围与未覆盖项：
+  - 已运行并通过：macOS ARM64 本机 `.venv` 运行 `tests/test_windows_release_contract.py`、`tests/test_tauri_windows_portable.py`、`tests/test_release.py`、`tests/test_release_identity.py`、`tests/test_development_documentation.py`、`ruff check`、`git diff --check` 与 CRLF 换行核验；不涉及 `BUILD_INPUTS` 业务核心改动，`core_build_id` 保持不变。
+  - 未覆盖项：未在 macOS 本机执行 Windows PowerShell 真机打包与 6 项真机冒烟、正式 Windows BAT、真实默认配置、浏览器前台拉起与原生目录选择器弹窗；待 PR #33 远端双平台 CI 全绿并合入 `main` 后，由 Windows x64 实机从最终 `main` clean commit 执行打包与真机冒烟验证。
+
 ### 2026-11-24 合入 PR #32 至 main 并执行 v1.0.0 正式升版与 macOS ARM64 候选包构建验收
 
 - 需求与起点：基于已合入 PR #32 的干净主线 `main@50996436ae52e081f9f12d91b3e729609b50a4e3` 新建 `codex/release-v1.0.0`，将统一架构基线切换至新 `main`，把产品版本由 `1.0.0-beta.1`（`beta`）升至 `1.0.0`（`stable`），完善 `stable` 通道的更新元数据校验并构建验证 macOS ARM64 `v1.0.0` 候选 DMG。

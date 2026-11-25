@@ -77,6 +77,9 @@ if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($sourceTimestamp)) {
 $runtimePython = Join-Path $runtimeDir "python.exe"
 $env:PYTHONPATH = Join-Path $sourceRoot "src"
 $buildArgs = @(
+    # Suppress bytecode writes when invoking the prepared runtime itself so
+    # repeated portable builds never recreate __pycache__/.pyc in $runtimeDir.
+    "-B",
     "-m", "invoice_hub.release.build_core",
     "--root", $sourceRoot,
     "--output-dir", $dist,
