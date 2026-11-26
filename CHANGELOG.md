@@ -2,6 +2,28 @@
 
 ## 未发布
 
+### 2026-11-25 支持公司自定义与默认文件夹全生命周期管理及基准功能指向
+
+- 需求与起点：基于已合入 PR #33 的干净主线 `origin/main@da6491cec736203b494e5ebd7aeb6e4fa9debdb2`，新建隔离工作树与分支 `codex/company-custom-folders`，解决 `v1.0.0` 发布前用户提出的紧急必要需求：（1）公司资料夹下除默认 6 类目录外，支持用户自定义文件夹的新建、删除、重命名与导入已存在文件夹（涵盖默认目录的创建、隐藏恢复与回收站删除）；（2）自定义与导入的文件夹支持以默认 6 类目录为基准的功能指向，并开放完整单目录操作同时默认隔离公司总账/成本 V2/凭证草稿口径。
+- 采用方案：
+  - **后端文件夹生命周期与数据契约**：
+    - `src/invoice_hub/services/company_folders.py`（新增）与 `src/invoice_hub/api/routes/company_folders.py`（新增，挂载至 `api/app.py`）：在 `CompanyRegistryService` 同一把 RLock 与 revision CAS 下新增 10 条 `/api/v1/companies/{company_id}/folders/*` 路由，支持未登记目录发现（`discover`）、新建空文件夹预览/确认（`create/preview`、`create`，复用 `company_directory_guard.create_empty_subdir` 防链接/TOCTOU）、公司内（`inside_root`）与公司外任意本地目录（`external`）导入（拒绝符号链接/junction、系统根/项目根/公司根及公司内/跨公司重叠路径，按 `serialize_config_path` 规范化保存）、显示名/角色编辑及可选硬盘原子改名（监控或写锁占用阻断，清单写入失败自动回滚）、非破坏性移除/隐藏（`files_touched: 0`）、恢复隐藏默认目录、原生回收站预览/确认（有界文件数/字节数统计 + 外部路径警示 + `plan_hash` + `confirm: true` → 调用 `platform/trash.py::move_to_trash`，严禁永久删除降级），以及公司内自定义目录二次确认晋升为主标准槽位（原主槽位保留为自定义目录）。对未同步目录改用 `_try_profile_lock` 先查状态目录再取锁，避免凭空生成 `runtime/targets/<id>`。
+    - `src/invoice_hub/services/company_registry.py` 与 `src/invoice_hub/targets/companies.py`：在保持 `companies.json` `schema_version: 1` 兼容前提下新增严格校验的可选字段 `custom_folders`、`hidden_subdirs`、`subdir_labels`（畸形/嵌套/越界均返回 `COMPANY_REGISTRY_CORRUPT` 并拒写），保留默认 6 键并附带 `hidden` 标记，扩展 `company_for_dir` 支持外部导入目录最深路径归属查找（跳过链接）及 `folder_roles` 元数据输出。
+  - **按基准功能指向分发**：
+    - `services/company_refresh.py`、`services/company_views.py`、`services/source_move.py`、`services/company_bank_layouts.py`、`api/routes/companies.py` 与 `api/routes/company_workspace.py`：默认后台刷新覆盖可见发票类默认与自定义目录；目录发票、同号检查（先校验发票角色再判勾稽关系）、属期核对与确认移动、`GET .../bank-layouts?dir_key=...` 与 `GET .../payroll?dir_key=...` 均按目录 `role` 分发单目录能力，公司总账/成本 V2/凭证草稿仍严格只消费默认标准槽位。
+  - **Vue 3 工作区前端与实机验收修复**：
+    - 新增 `CompanyFolderCreateModal.vue`、`CompanyFolderEditModal.vue`、`CompanyFolderDeleteModal.vue` 三套 `WsModal` 组件，接入 `WorkspaceSidebar.vue`、`CompanyDirectories.vue`、`DirectoryPanel.vue`、`BankLayouts.vue`、`CompanyOverview.vue`、`CompanySettings.vue`、`WorkspaceModule.vue`、`stores/companies.ts`、`stores/workspace.ts`（新增 `closeDirectory` 同步关闭目录页/比较页/侧栏置顶与比较基点）及 `relations.ts`，重建并提交 `web/static/app/`。
+    - 在隔离合成后端实机浏览器验收中发现并当场修复 3 项问题：（1）`DirectoryPanel` 改用独立 `editTarget`/`deleteTarget` 快照，修复保存改名或移除后 `companySourceKey` 刷新置空 `directory.value` 导致弹窗提前卸载、吃掉关闭与关页回调的竞态；（2）统一通过 `workspace.closeDirectory` 按 `tabId({ kind: "directory", ... })` 关闭目录标签页，消除移除后残留 `dir_...` 错误标签页；（3）`CompanyDirectories` 表格包裹 `.overview-table-wrap` 并为 `.row-actions` 启用换行，修复 1280px 与 390px 窄屏下操作列裁切。
+  - **PR #34 自动评审修复（P1 / P2）**：
+    - `targets/companies.py`、`services/company_directory_guard.py`、`services/company_folders.py` 与 `services/company_registry.py`：`resolve_external_folder` 改为词法拼装不跟随链接，新增 `external_path_snapshot` 与 `external_path_is_real_dir` 逐级前缀 `lstat` 校验；外部目录或任一上级事后被替换为软链/junction 时，`_public` 报 `outside_root`、`_trash_plan` 阻断（`can_trash=False`）、硬盘改名返回 409、`company_for_dir` 与重叠检查均不跟随链接目标，且导入阶段同时拒绝链接父目录。
+    - `services/company_payroll.py`、`services/company_views.py` 与 `frontend/src/components/DirectoryPanel.vue`：`read_payroll` 新增 `include_saved: bool = True`，自定义工资社保目录预览传 `include_saved=False` 仅解析本目录文件、不再混入公司 `做账草稿/申报数据.json` 已确认月份；前端同步保留并标红展示后端 `checks_ok=false` 及失败核对项、消费 `files` 非 `parsed` 项统计未识别文件数并完整提交重建的 `web/static/app/`（含 `app.css`/`app.js`/`index.html`）。
+    - `services/company_folders.py::_rename_disk_with_overrides`：标准与自定义文件夹硬盘重命名时按目标 ID 序持锁、将原 profile 的 `manual_overrides.json` 按新目录路径重写键并原子迁移至新 profile（清单保存失败时同时回滚目录名与手改文件，成功后清理旧 profile 迁移项），保护用户手改字段不因改名丢失。
+    - `frontend/src/components/CompanySettings.vue`：引入 `baseSubdirs` 基线快照追踪标准目录映射；外部改名或晋升后自动刷新未编辑项（保留公司名等未保存草稿），并对存在冲突的过期映射草稿阻断保存并提示先刷新，避免常驻设置页静默把改名/晋升后的标准槽位写回旧路径。
+  - **文档同步**：同步更新 `docs/architecture/FILE_MAP.md`、`INTERFACES_AND_FLOWS.md`、`DATA_AND_ALGORITHMS.md`、`AGENT_TASK_MAP.md`、`COMMENT_RATIONALE_MAP.md`、`docs/architecture/rules/BOOKKEEPING.md`、`docs/architecture/rules/WEB_UI.md` 与 `IMPLEMENTATION_STATUS.md`。
+- 验证范围与未覆盖项：
+  - 已运行并通过：后端新增 `tests/test_company_folders.py` 与既有公司/视图/移动/成本 V2/契约/文档全套 pytest（473 项）、`ruff check src tests`、`python -m compileall -q src tests`、`git diff --check`；前端 `vue-tsc --noEmit`、`vitest run`（21 份测试文件 176 项，含新增 `frontend/tests/company-folders.spec.ts`）与 `vite build`；独立临时合成后端（`127.0.0.1:18767`，数据全位于 `/tmp/ih-cf-verify` 并已收尾清理）实机内置浏览器完成桌面 1280×860 浅/深色、`?no_skin=1`、390×844 窄屏及创建预览确认、跨路径外部导入并读出合成发票、硬盘改名并切换银行流水角色渲染属期/版式、回收站预览检查、非破坏移除关页与默认目录隐藏恢复全流程验证（修复复验后 0 控制台/页面报错）。
+  - 未覆盖项：未覆盖真实业务资料夹与真实默认配置、系统原生目录选择器弹窗（浏览器验收直接输入合成外部路径）、真实操作系统回收站实移（后端单测已覆盖 `move_to_trash` 调用契约，实机浏览器仅验到预览与勾选门禁）、正式 Windows BAT、浏览器前台拉起与双平台最新打包产物验收；待本分支经用户确认推送合入 `main` 后再统一对齐双平台 `v1.0.0` 正式打包验收。
+
 ### 2026-11-25 修复 Windows 锁定运行时准备脚本 `-I` 忽略 `PYTHONDONTWRITEBYTECODE` 导致的 `__pycache__` 打包阻断
 
 - 需求与起点：Windows x64 实机按 `codex/release-v1.0.0@d5bbe65` 构建 `v1.0.0` Tauri portable 候选包时，在锁定 runtime 校验阶段触发真实门禁阻断：`locked Windows runtime contains cache content: Lib\__pycache__`。核查确认为 `scripts/dev/prepare_windows_runtime.ps1` 在 `normalize-windows` 清理字节码缓存后，后续对产品 `python.exe` 的 `pip check`、`import` smoke（使用 `-I`，会忽略 `PYTHONDONTWRITEBYTECODE=1`）与 `runtime_manifest write` 以及 `scripts/dev/build_windows_portable.ps1` 调用 `build_core` 均未显式传 `-B`，重新生成了字节码缓存。

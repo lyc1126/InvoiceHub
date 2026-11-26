@@ -29,7 +29,7 @@ from invoice_hub.platform import HostRpcCommand, host_rpc, pick_directory
 from invoice_hub.projections.cost_analysis import TAXPAYER_LABELS
 from invoice_hub.services.dossier import BUSINESS_DOSSIER_DIR_HINTS
 from invoice_hub.services.company_directory_guard import (
-    CompanyDirectoryChanged, create_empty_subdir, directory_entry, subdir_snapshot,
+    CompanyDirectoryChanged, create_empty_subdir, directory_entry, external_path_snapshot, subdir_snapshot,
 )
 from invoice_hub.storage import SQLiteRepository, atomic_write_json
 from invoice_hub.targets import AppConfig
@@ -39,7 +39,16 @@ from invoice_hub.targets.companies import (
     company_taxpayer_for,
     current_month,
     resolve_company_root,
+    resolve_external_folder,
     taxpayer_type_for,
+)
+from invoice_hub.services.company_folders import (
+    CUSTOM_FOLDER_ID_RE,
+    FOLDER_ROLES,
+    MAX_CUSTOM_FOLDERS,
+    CompanyFolderService,
+    clean_folder_label,
+    folder_roles_payload,
 )
 from invoice_hub.targets.paths import serialize_config_path
 
@@ -177,6 +186,8 @@ class CompanyRegistryService:
         self.setup = CompanySetupService(self)
         from invoice_hub.services.company_detection import CompanyDetectionService
         self.detection = CompanyDetectionService(self)
+        # Custom & standard subfolder lifecycle (create/import/rename/hide/trash/promote) shares this RLock and CAS.
+        self.folders = CompanyFolderService(self)
 
     @property
     def config(self) -> AppConfig:
@@ -216,6 +227,7 @@ class CompanyRegistryService:
                         or self._clean_subdirs(company["subdirs"], {}) != company["subdirs"]
                         or clean_taxpayer_periods(company["taxpayer_periods"]) != company["taxpayer_periods"]):
                     raise ValueError()
+                self._validate_optional_folder_fields(company)
             except (ValueError, CompanyRegistryError) as exc:
                 # Readers feed directory plans and later writes. A syntactically valid
                 # but malformed mapping must never become a default path or be overwritten.
@@ -223,6 +235,54 @@ class CompanyRegistryService:
             ids.add(company["id"])
             names.add(company["name"].casefold())
         return payload
+
+    @staticmethod
+    def _validate_optional_folder_fields(company: dict) -> None:
+        hidden = company.get("hidden_subdirs")
+        if hidden is not None:
+            if not isinstance(hidden, list) or any(not isinstance(item, str) or item not in STANDARD_SUBDIRS for item in hidden) or len(set(hidden)) != len(hidden):
+                raise ValueError("invalid hidden_subdirs")
+        labels = company.get("subdir_labels")
+        if labels is not None:
+            if not isinstance(labels, dict):
+                raise ValueError("invalid subdir_labels")
+            for key, value in labels.items():
+                if key not in STANDARD_SUBDIRS or not isinstance(value, str) or clean_folder_label(value) != value:
+                    raise ValueError("invalid subdir_labels entry")
+        custom = company.get("custom_folders")
+        if custom is not None:
+            if not isinstance(custom, list) or len(custom) > MAX_CUSTOM_FOLDERS:
+                raise ValueError("invalid custom_folders")
+            seen_ids: set[str] = set()
+            seen_rel = {value.casefold() for value in company["subdirs"].values()}
+            for entry in custom:
+                if not isinstance(entry, dict):
+                    raise ValueError("invalid custom_folder")
+                fid = entry.get("id")
+                label = entry.get("label")
+                role = entry.get("role")
+                location = entry.get("location")
+                rel = entry.get("relative_path")
+                ext = entry.get("external_path")
+                if (
+                    not isinstance(fid, str) or not CUSTOM_FOLDER_ID_RE.fullmatch(fid) or fid in seen_ids
+                    or not isinstance(label, str) or clean_folder_label(label) != label
+                    or not isinstance(role, str) or role not in FOLDER_ROLES
+                    or location not in {"inside_root", "external"}
+                    or not isinstance(rel, str) or not isinstance(ext, str)
+                ):
+                    raise ValueError("invalid custom_folder fields")
+                if location == "inside_root":
+                    if ext != "" or clean_relative_subdir(rel, "relative_path") != rel:
+                        raise ValueError("invalid inside_root custom_folder")
+                    folded = rel.casefold()
+                    if any(folded == other or folded.startswith(other + "/") or other.startswith(folded + "/") for other in seen_rel):
+                        raise ValueError("overlapping custom_folder")
+                    seen_rel.add(folded)
+                else:
+                    if rel != "" or not ext.strip() or "\0" in ext:
+                        raise ValueError("invalid external custom_folder")
+                seen_ids.add(fid)
 
     def _corrupt(self, message: str) -> CompanyRegistryError:
         # Never fall back to an empty list here: the next save would erase every company.
@@ -283,13 +343,27 @@ class CompanyRegistryService:
             raise _invalid(f"公司资料夹不存在：{root}", "root_dir")
         if root.exists() and not root.is_dir():
             raise _invalid(f"公司资料夹不是文件夹：{root}", "root_dir")
-        # Roots may not repeat or nest: later aggregation would count the same files twice.
+        # Roots may not repeat or nest (including against other companies' external folders).
         for other in registry["companies"]:
             if other["id"] == company_id:
                 continue
             other_root = self._resolve_root(other["root_dir"])
             if _is_within(root, other_root) or _is_within(other_root, root):
                 raise _invalid(f"该文件夹与已登记的公司“{other['name']}”的资料夹重叠。", "root_dir")
+            for ext in other.get("custom_folders") or []:
+                if ext.get("location") != "external":
+                    continue
+                ext_path = resolve_external_folder(self.config.root_dir, ext["external_path"])
+                ext_status = external_path_snapshot(ext_path)[1][0]
+                if ext_status == "present":
+                    overlaps = _is_within(root, ext_path) or _is_within(ext_path, root)
+                else:
+                    # Never follow a post-import symlink when checking overlap; compare lexically.
+                    r_key = str(root).casefold()
+                    e_key = str(ext_path).casefold()
+                    overlaps = r_key == e_key or r_key.startswith(e_key + "/") or e_key.startswith(r_key + "/") or r_key.startswith(e_key + "\\") or e_key.startswith(r_key + "\\")
+                if overlaps:
+                    raise _invalid(f"该文件夹与已登记的公司“{other['name']}”的外部文件夹“{ext['label']}”重叠。", "root_dir")
         # Project-internal folders are stored relative, user folders absolute (AGENTS.md path rule).
         return serialize_config_path(self.config.root_dir, root)
 
@@ -341,14 +415,67 @@ class CompanyRegistryService:
         root_status = directory_entry(root)[0]
         watch_dir = Path(self.active_profile.watch_dir)
         monitored = _is_within(watch_dir, root)
+        hidden_set = set(company.get("hidden_subdirs") or [])
+        subdir_labels = company.get("subdir_labels") or {}
         subdirs = []
         monitored_subdir_key = None
-        for key, (label, _hints) in STANDARD_SUBDIRS.items():
-            relative = company["subdirs"].get(key) or label
+        monitored_match_depth = -1
+        for key, (default_label, _hints) in STANDARD_SUBDIRS.items():
+            relative = company["subdirs"].get(key) or default_label
+            label = subdir_labels.get(key) or default_label
             path, status = self._subdir_status(root, relative) if root_status == "present" else (root / relative, "root_unavailable")
-            if monitored and _is_within(watch_dir, path):
-                monitored_subdir_key = key
-            subdirs.append({"key": key, "label": label, "relative_path": relative, "path": str(path), "status": status})
+            if status == "present" and _is_within(watch_dir, path):
+                monitored = True
+                depth = len(Path(path).parts)
+                if depth >= monitored_match_depth:
+                    monitored_subdir_key = key
+                    monitored_match_depth = depth
+            subdirs.append({
+                "key": key,
+                "label": label,
+                "default_label": default_label,
+                "relative_path": relative,
+                "path": str(path),
+                "status": status,
+                "kind": "standard",
+                "role": key,
+                "role_label": default_label,
+                "location": "inside_root",
+                "hidden": key in hidden_set,
+                "can_promote_to_role": False,
+            })
+        for entry in company.get("custom_folders") or []:
+            fid = entry["id"]
+            role = entry["role"]
+            location = entry["location"]
+            if location == "inside_root":
+                relative = entry["relative_path"]
+                path, status = self._subdir_status(root, relative) if root_status == "present" else (root / relative, "root_unavailable")
+            else:
+                path = resolve_external_folder(self.config.root_dir, entry["external_path"])
+                _snap, leaf = external_path_snapshot(path)
+                status = leaf[0]
+                relative = str(path)
+            if status == "present" and _is_within(watch_dir, path):
+                monitored = True
+                depth = len(Path(path).parts)
+                if depth >= monitored_match_depth:
+                    monitored_subdir_key = fid
+                    monitored_match_depth = depth
+            subdirs.append({
+                "key": fid,
+                "label": entry["label"],
+                "default_label": "",
+                "relative_path": relative,
+                "path": str(path),
+                "status": status,
+                "kind": "custom",
+                "role": role,
+                "role_label": FOLDER_ROLES[role]["label"],
+                "location": location,
+                "hidden": False,
+                "can_promote_to_role": location == "inside_root" and role in STANDARD_SUBDIRS,
+            })
         current_type = taxpayer_type_for(company["taxpayer_periods"], today_month)
         return {
             "id": company["id"],
@@ -357,7 +484,10 @@ class CompanyRegistryService:
             "root_path": str(root),
             "root_status": root_status,
             "subdirs": subdirs,
-            "missing_subdir_count": sum(1 for item in subdirs if item["status"] == "missing"),
+            "missing_subdir_count": sum(
+                1 for item in subdirs if item["kind"] == "standard" and not item["hidden"] and item["status"] == "missing"
+            ),
+            "hidden_subdir_count": len(hidden_set),
             "taxpayer_periods": [dict(item) for item in company["taxpayer_periods"]],
             "current_taxpayer_type": current_type,
             "current_taxpayer_label": TAXPAYER_LABELS.get(current_type or "", "未设置"),
@@ -386,6 +516,7 @@ class CompanyRegistryService:
             "target_id": profile.id,
             "watch_dir": profile.watch_dir,
             "standard_subdirs": [{"key": key, "label": label} for key, (label, _hints) in STANDARD_SUBDIRS.items()],
+            "folder_roles": folder_roles_payload(),
         }
 
     def pick_directory(self) -> dict:
@@ -460,7 +591,19 @@ class CompanyRegistryService:
             if "root_dir" in payload:
                 updated["root_dir"] = self._clean_root(payload.get("root_dir"), registry, company_id)
             if "subdirs" in payload:
-                updated["subdirs"] = self._clean_subdirs(payload.get("subdirs"), company["subdirs"])
+                next_subdirs = self._clean_subdirs(payload.get("subdirs"), company["subdirs"])
+                for key, rel in next_subdirs.items():
+                    folded = rel.casefold()
+                    for custom in company.get("custom_folders") or []:
+                        if custom.get("location") != "inside_root":
+                            continue
+                        other = custom["relative_path"].casefold()
+                        if folded == other or folded.startswith(other + "/") or other.startswith(folded + "/"):
+                            raise _invalid(
+                                f"“{STANDARD_SUBDIRS[key][0]}”与自定义文件夹“{custom['label']}”不能使用同一或嵌套路径。",
+                                f"subdirs.{key}",
+                            )
+                updated["subdirs"] = next_subdirs
             if "taxpayer_periods" in payload:
                 updated["taxpayer_periods"] = clean_taxpayer_periods(payload.get("taxpayer_periods"))
             if updated != company:
@@ -508,16 +651,39 @@ class CompanyRegistryService:
         snapshots: dict | None = None,
         keys: list[str] | None = None,
     ) -> dict:
-        target_keys = self._normalize_plan_keys(keys)
+        if keys is None:
+            hidden_set = set(company.get("hidden_subdirs") or [])
+            target_keys = [key for key in STANDARD_SUBDIRS if key not in hidden_set]
+        else:
+            target_keys = self._normalize_plan_keys(keys)
         root = self._registered_root(company["root_dir"])
+        subdir_labels = company.get("subdir_labels") or {}
         items = []
+        if not target_keys:
+            binding = {
+                "company_id": company["id"],
+                "registry_revision": registry["revision"],
+                "root": str(root).casefold(),
+                "items": [],
+                "directory_identities": {},
+            }
+            plan_hash = hashlib.sha256(json.dumps(binding, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
+            return {
+                "ok": True,
+                "company_id": company["id"],
+                "revision": registry["revision"],
+                "items": [],
+                "create_count": 0,
+                "blocked_count": 0,
+                "plan_hash": plan_hash,
+            }
         if snapshots is None:
             snapshots = {key: subdir_snapshot(root, company["subdirs"][key]) for key in target_keys}
         if next(iter(snapshots.values()))["."][0] != "present":
             blocked_reason = "公司资料夹不存在或不是文件夹。"
             for key in target_keys:
-                label = STANDARD_SUBDIRS[key][0]
-                relative = company["subdirs"].get(key) or label
+                label = subdir_labels.get(key) or STANDARD_SUBDIRS[key][0]
+                relative = company["subdirs"].get(key) or STANDARD_SUBDIRS[key][0]
                 items.append({"key": key, "label": label, "relative_path": relative, "path": str(root / relative),
                               "action": "blocked", "reason": blocked_reason})
         else:
@@ -527,8 +693,8 @@ class CompanyRegistryService:
                 "unreadable": "无法读取该路径。",
             }
             for key in target_keys:
-                label = STANDARD_SUBDIRS[key][0]
-                relative = company["subdirs"].get(key) or label
+                label = subdir_labels.get(key) or STANDARD_SUBDIRS[key][0]
+                relative = company["subdirs"].get(key) or STANDARD_SUBDIRS[key][0]
                 path = root / relative
                 status = next(reversed(snapshots[key].values()))[0]
                 action = {"present": "exists", "missing": "create"}.get(status, "blocked")
@@ -562,10 +728,14 @@ class CompanyRegistryService:
         if payload.get("confirm") is not True:
             raise CompanyRegistryError("COMPANY_CONFIRM_REQUIRED", "请先确认要创建的子目录。", field="confirm")
         raw_keys = payload.get("keys")
-        target_keys = self._normalize_plan_keys(raw_keys)
         with self._lock:
             registry = self._load()
             company = self._find(registry, company_id)
+            if raw_keys is None:
+                hidden_set = set(company.get("hidden_subdirs") or [])
+                target_keys = [key for key in STANDARD_SUBDIRS if key not in hidden_set]
+            else:
+                target_keys = self._normalize_plan_keys(raw_keys)
             root = self._registered_root(company["root_dir"])
             snapshots = {key: subdir_snapshot(root, company["subdirs"][key]) for key in target_keys}
             plan = self._plan(registry, company, snapshots=snapshots, keys=raw_keys)

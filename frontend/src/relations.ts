@@ -17,4 +17,9 @@ export function relationFor(a: string, b: string) {
 // Any two invoice folders without a relation, of one company or of two, get the same-number
 // check instead (WS-04): invoice numbers on both sides, no amount or counterparty linking.
 export const INVOICE_DIRS: readonly string[] = ["cost_invoice_dir", "issued_invoice_dir", "expense_reimbursement_dir"];
+export const REFRESHABLE_ROLES: readonly string[] = [...INVOICE_DIRS, "general"];
 export const SAME_NUMBER = "same_number";
+
+export function effectiveFolderRole(subdir?: { key: string; role?: string } | null, fallbackKey = ""): string {
+  return subdir?.role || subdir?.key || fallbackKey;
+}

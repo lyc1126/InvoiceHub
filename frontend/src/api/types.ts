@@ -20,6 +20,22 @@ export interface SettingsPayload {
 
 export type TaxpayerType = "general" | "small_scale";
 export type SubdirStatus = "present" | "missing" | "not_directory" | "outside_root" | "unreadable" | "root_unavailable";
+export type FolderRole =
+  | "cost_invoice_dir"
+  | "issued_invoice_dir"
+  | "expense_reimbursement_dir"
+  | "bank_flow_dir"
+  | "input_deduction_dir"
+  | "payroll_social_dir"
+  | "general";
+export type FolderLocation = "inside_root" | "external";
+
+export interface FolderRoleMeta {
+  key: FolderRole;
+  label: string;
+  short_tag: string;
+  description: string;
+}
 
 export interface TaxpayerPeriod {
   effective_from: string;
@@ -29,9 +45,16 @@ export interface TaxpayerPeriod {
 export interface CompanySubdir {
   key: string;
   label: string;
+  default_label?: string;
   relative_path: string;
   path: string;
   status: SubdirStatus;
+  kind?: "standard" | "custom";
+  role?: FolderRole;
+  role_label?: string;
+  location?: FolderLocation;
+  hidden?: boolean;
+  can_promote_to_role?: boolean;
 }
 
 export interface Company {
@@ -42,6 +65,7 @@ export interface Company {
   root_status: "present" | "missing" | "not_directory" | "outside_root" | "unreadable";
   subdirs: CompanySubdir[];
   missing_subdir_count: number;
+  hidden_subdir_count?: number;
   taxpayer_periods: TaxpayerPeriod[];
   current_taxpayer_type: TaxpayerType | null;
   current_taxpayer_label: string;
@@ -52,11 +76,72 @@ export interface Company {
 export interface CompanyListPayload {
   ok: boolean;
   standard_subdirs?: { key: string; label: string }[];
+  folder_roles?: FolderRoleMeta[];
   revision: number;
   companies: Company[];
   monitored_company_id: string | null;
   target_id: string;
   watch_dir: string;
+}
+
+export interface DiscoveredFolderCandidate {
+  relative_path: string;
+  label: string;
+  path: string;
+  suggested_role: FolderRole;
+  suggested_role_label: string;
+}
+
+export interface HiddenStandardSubdir {
+  key: string;
+  label: string;
+  default_label: string;
+  relative_path: string;
+  path: string;
+  status: SubdirStatus;
+}
+
+export interface CompanyFolderDiscoverPayload {
+  ok: boolean;
+  company_id: string;
+  revision: number;
+  root_status: Company["root_status"];
+  candidates: DiscoveredFolderCandidate[];
+  hidden_standard_subdirs: HiddenStandardSubdir[];
+  roles: FolderRoleMeta[];
+}
+
+export interface CompanyFolderCreatePlan {
+  ok: boolean;
+  company_id: string;
+  revision: number;
+  label: string;
+  relative_path: string;
+  path: string;
+  role: FolderRole;
+  role_label: string;
+  action: "create" | "blocked";
+  reason: string;
+  plan_hash: string;
+}
+
+export interface CompanyFolderTrashPlan {
+  ok: boolean;
+  company_id: string;
+  revision: number;
+  key: string;
+  kind: "standard" | "custom";
+  label: string;
+  location: FolderLocation;
+  is_external: boolean;
+  path: string;
+  can_trash: boolean;
+  blocked_reason: string;
+  file_count: number;
+  dir_count: number;
+  total_bytes: number;
+  truncated: boolean;
+  plan_hash: string;
 }
 
 export interface CompanySetupInput {

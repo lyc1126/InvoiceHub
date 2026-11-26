@@ -289,7 +289,14 @@ def _valid_saved_month(month: object) -> bool:
     return isinstance(month, str) and re.fullmatch(r"[0-9]{4}-(0[1-9]|1[0-2])", month) is not None and month[:4] != "0000"
 
 
-def read_payroll(root: Path, folder: Path | None, *, reveal: bool = False, ocr_reader=None) -> dict:
+def read_payroll(
+    root: Path,
+    folder: Path | None,
+    *,
+    reveal: bool = False,
+    ocr_reader=None,
+    include_saved: bool = True,
+) -> dict:
     files, months = [], {}
     people: list[dict] = []
     if folder is not None and folder.is_dir():
@@ -336,15 +343,20 @@ def read_payroll(root: Path, folder: Path | None, *, reveal: bool = False, ocr_r
             else:
                 entry.update(status="error", message="没有找到“险种 / 单位部分 / 个人部分”表格（版式未识别，没有猜测）。")
             files.append(entry)
-    tax, revision = _tax_state(root)
-    confirmed = _confirmed_details(tax or {})
-    for month, entry in confirmed.items():
-        if month not in months and isinstance(entry, dict) and isinstance(entry.get("险种明细"), list):
-            # Confirmed by hand (no file for that month): shown from what was saved.
-            saved = [_row(month, _text(item.get("insurance")), item.get("total"), item.get("unit") or {}, item.get("personal") or {})
-                     for item in entry["险种明细"] if isinstance(item, dict)]
-            if saved:
-                months[month] = _months(saved, str(entry.get("来源") or "手工录入"))[month]
+    if include_saved:
+        tax, revision = _tax_state(root)
+        confirmed = _confirmed_details(tax or {})
+        for month, entry in confirmed.items():
+            if month not in months and isinstance(entry, dict) and isinstance(entry.get("险种明细"), list):
+                # Confirmed by hand (no file for that month): shown from what was saved.
+                saved = [_row(month, _text(item.get("insurance")), item.get("total"), item.get("unit") or {}, item.get("personal") or {})
+                         for item in entry["险种明细"] if isinstance(item, dict)]
+                if saved:
+                    months[month] = _months(saved, str(entry.get("来源") or "手工录入"))[month]
+    else:
+        # Custom payroll directory previews stay strictly folder-only and never merge
+        # company-wide confirmed months from 申报数据.json.
+        tax, revision, confirmed = None, None, {}
     shown_people = [{**person, "name": person["name"] if reveal else mask_name(person["name"]),
                      "id_number": person["id_number"] if reveal else mask_id(person["id_number"])} for person in people]
     return {

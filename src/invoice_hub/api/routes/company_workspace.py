@@ -41,8 +41,8 @@ def router() -> APIRouter:
         return await _call(lambda: CompanySalaryService(_state(request).companies).save(company_id, body))
 
     @routes.get("/api/v1/companies/{company_id}/bank-layouts")
-    async def layouts(request: Request, company_id: str, files: bool = Query(False)):
-        return await _call(lambda: _state(request).company_views.bank_layouts.index(company_id, files=files))
+    async def layouts(request: Request, company_id: str, files: bool = Query(False), dir_key: str = Query("")):
+        return await _call(lambda: _state(request).company_views.bank_layouts.index(company_id, files=files, dir_key=dir_key or "bank_flow_dir"))
 
     @routes.post("/api/v1/companies/{company_id}/bank-layouts/preview")
     async def preview_layout(request: Request, company_id: str):

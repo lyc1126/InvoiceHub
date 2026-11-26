@@ -178,6 +178,22 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     if (compareBase.value?.companyId === companyId) compareBase.value = null;
   }
 
+  function closeDirectory(companyId: string, dirKey: string): void {
+    // Close the directory tab itself plus any same-number comparison tab referencing it;
+    // sidebar pins use the `dir:` prefix while workspace tabs use `tabId({ kind: "directory", ... })`.
+    for (const tab of tabs.value.filter(
+      (item) =>
+        (item.companyId === companyId && item.dirKey === dirKey)
+        || (item.otherCompanyId === companyId && item.otherDirKey === dirKey),
+    )) {
+      close(tab.id);
+    }
+    pins.value = pins.value.filter((pin) => pin !== `dir:${companyId}:${dirKey}`);
+    if (compareBase.value?.companyId === companyId && compareBase.value.dirKey === dirKey) {
+      compareBase.value = null;
+    }
+  }
+
   function refreshActive(): void {
     if (active.value) active.value.refresh += 1;
   }
@@ -230,7 +246,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
 
   return {
     tabs, activeId, active, pins, expanded, sidebarWidth, hiddenInvoiceColumns, compareBase, seeded, createOpen,
-    open, close, closeCompany, refreshActive, togglePin, toggleExpanded,
+    open, close, closeCompany, closeDirectory, refreshActive, togglePin, toggleExpanded,
     hiddenColumnsFor, toggleInvoiceColumn, resetInvoiceColumns,
   };
 });

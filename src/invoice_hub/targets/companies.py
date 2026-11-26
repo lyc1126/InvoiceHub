@@ -10,6 +10,8 @@ cost pages and syncs keep working; the registry API itself reports the corruptio
 from __future__ import annotations
 
 import json
+import os
+import stat
 from datetime import datetime
 from pathlib import Path
 
@@ -44,6 +46,54 @@ def resolve_company_root(project_root: Path, stored: str) -> Path:
     return Path(canonical_path(candidate))
 
 
+def resolve_external_folder(project_root: Path, stored: str) -> Path:
+    """Return a company's stored external folder lexically without following symlinks/junctions.
+
+    External paths are canonicalized when imported; resolving again with ``canonical_path``
+    would silently follow a post-import symlink/junction swap to an unrelated directory.
+    """
+    candidate = Path(stored).expanduser()
+    if not candidate.is_absolute():
+        candidate = Path(canonical_path(project_root)) / candidate
+    return Path(os.path.normpath(os.path.abspath(str(candidate))))
+
+
+def external_path_is_real_dir(path: Path) -> bool:
+    """True only when ``path`` and every ancestor prefix are real non-link directories."""
+    normalized = Path(os.path.normpath(os.path.abspath(str(path))))
+    parts = normalized.parts
+    if not parts:
+        return False
+    cur = Path(parts[0])
+    for idx in range(len(parts)):
+        if idx > 0:
+            cur = cur / parts[idx]
+        try:
+            info = cur.lstat()
+        except OSError:
+            return False
+        if stat.S_ISLNK(info.st_mode) or (hasattr(cur, "is_junction") and cur.is_junction()):
+            return False
+        if not stat.S_ISDIR(info.st_mode):
+            return False
+    return True
+
+
+def _external_folder_paths(company: dict, project_root: Path) -> list[Path]:
+    paths: list[Path] = []
+    for entry in company.get("custom_folders") or []:
+        if not isinstance(entry, dict) or entry.get("location") != "external":
+            continue
+        raw = str(entry.get("external_path") or "").strip()
+        if not raw or "\0" in raw:
+            continue
+        candidate = resolve_external_folder(project_root, raw)
+        if not external_path_is_real_dir(candidate):
+            continue
+        paths.append(Path(canonical_path(candidate)))
+    return paths
+
+
 def taxpayer_type_for(periods: list[dict[str, str]], month: str) -> str | None:
     """The type in force in ``month`` (YYYY-MM), or None before the first known period."""
     current = None
@@ -72,10 +122,16 @@ def read_registry_companies(path: Path) -> list[dict]:
 
 
 def company_for_dir(companies: list[dict], project_root: Path, directory: Path) -> dict | None:
-    # Roots never nest (the registry rejects it), so at most one company contains a directory.
+    # Roots and external mounts never nest across companies (the registry rejects overlap),
+    # so at most one company contains a directory.
+    target = Path(directory)
     for company in companies:
-        if is_within(Path(directory), resolve_company_root(project_root, company["root_dir"])):
+        if is_within(target, resolve_company_root(project_root, company["root_dir"])):
             return company
+    for company in companies:
+        for external in _external_folder_paths(company, project_root):
+            if is_within(target, external):
+                return company
     return None
 
 

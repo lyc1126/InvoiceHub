@@ -431,7 +431,11 @@ Lifecycle lease 是 host 运行态授权快照，不是可持久化业务状态�
 - `root_dir` 按 `serialize_config_path` 保存：项目根内为相对路径，包外为绝对路径。根目录之间按解析后、不区分大小写的路径比较，不允许重复或互相嵌套，避免后续聚合把同一文件计入两家公司。
 - `subdirs` 是相对根目录的 POSIX 路径；拒绝绝对路径、盘符、`~`、空段、`.`/`..` 和 Windows 保留字符，六类之间不得相同或嵌套。登记时未给出的键按“标准名存在 → 根目录直接子目录中唯一命中提示词（同一文件夹命中多类则不用） → 标准名（待创建）”推断，此后映射固定保存，不随目录变化重新猜测。
 - `taxpayer_periods` 按月份升序、月份唯一；某月身份取 `effective_from <= 该月` 的最后一项（`targets/companies.py::taxpayer_type_for`），早于首项或为空时为“未设置”，不默认一般纳税人。成本开票参考以它为准，见 §9.3。
-- 读取到非 JSON、`schema_version != 1`、revision/列表结构错误或缺少 `id/name/root_dir/subdirs/taxpayer_periods` 的条目时返回 `COMPANY_REGISTRY_CORRUPT`，保留原文件并拒绝写入。
+- 可选扩展字段（仍保持 `schema_version: 1` 向后兼容，由 `_validate_optional_folder_fields` 严格校验，任一畸形/越界/重名/嵌套均返回 `COMPANY_REGISTRY_CORRUPT` 并拒写）：
+  - `hidden_subdirs`：已隐藏的标准槽位 key 列表（仅允许 `STANDARD_SUBDIRS` 内去重键；标准映射仍保留在 `subdirs` 中以免下游公司级统计断裂）。
+  - `subdir_labels`：标准槽位自定义显示名映射 `{std_key: label}`（仅改显示名称，不改硬盘路径语义）。
+  - `custom_folders`：自定义与导入文件夹条目列表（上限 `MAX_CUSTOM_FOLDERS = 100`），每项含 `id`（`dir_<12 位 hex>`）、`label`、`role`（6 类标准键之一或 `"general"`）、`location`（`"inside_root"` 存 `relative_path`，`"external"` 存经 `serialize_config_path` 规范化的 `path`）、`created_at`、`updated_at`。公司内自定义路径与标准目录互不重叠嵌套，外部导入路径亦禁止与自身或其它已登记公司根目录/外部目录重叠，并由 `targets/companies.py::company_for_dir` 参与跨进程纳税人/监控目录归属查找（跳过符号链接/junction）。
+- 读取到非 JSON、`schema_version != 1`、revision/列表结构错误或缺少 `id/name/root_dir/subdirs/taxpayer_periods`（或可选文件夹扩展字段损坏）的条目时返回 `COMPANY_REGISTRY_CORRUPT`，保留原文件并拒绝写入。
 - 子目录补建的 `plan_hash = SHA256(company_id, registry revision, 根路径键, [key, 路径键, action]..., directory_identities)`；`directory_identities` 对根和每级前缀保存 lstat 状态及设备 / inode，不含文件内容或目录 mtime（新增普通源文件不会误伤计划）。apply 在同一锁内重算并比对，逐层 mkdir 前复核现有 / 本次已建父路径身份，共享上级只建一次；链接 / junction（即使指向根内）与父路径文件阻断，同名替换使旧计划失效。执行中变化保留已建目录并列入 `failed`，不触碰既有文件；OS syscall 级并发及 Windows / 网络盘语义仍须平台实测。
 
 按公司只读目录（WS-07 第 2 步，`services/company_views.py`）：

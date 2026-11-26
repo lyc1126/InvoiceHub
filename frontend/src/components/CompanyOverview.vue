@@ -23,7 +23,8 @@ const loading = ref(false);
 let controller: AbortController | undefined;
 let generation = 0;
 const totals = computed(() => ledger.value?.totals);
-const complete = computed(() => props.company.subdirs.filter(item => item.status === "present").length);
+const visibleSubdirs = computed(() => props.company.subdirs.filter(item => !item.hidden));
+const complete = computed(() => visibleSubdirs.value.filter(item => item.status === "present").length);
 // Labels name the concrete month / quarter like the prototype ("11 月 / 四季度 / 今年").
 const today = new Date();
 const periods = [
@@ -92,7 +93,7 @@ onBeforeUnmount(() => { ++generation; controller?.abort(); window.removeEventLis
       </div>
     </div>
     <div class="overview-notice">
-      <span>资料夹结构{{ complete === company.subdirs.length ? "齐全" : "待补充" }}（{{ complete }}/{{ company.subdirs.length }}）：{{ company.subdirs.filter(item => item.status === "present").map(item => item.label).join("、") || "尚未找到资料目录" }}。</span>
+      <span>资料夹结构{{ complete === visibleSubdirs.length ? "齐全" : "待补充" }}（{{ complete }}/{{ visibleSubdirs.length }}）：{{ visibleSubdirs.filter(item => item.status === "present").map(item => item.label).join("、") || "尚未找到资料目录" }}。</span>
       <button type="button" :disabled="refreshing" :aria-busy="refreshing" @click="refreshInvoices">{{ refreshing ? "读取中…" : "更新发票数据" }}</button>
       <button type="button" @click="emit('section', 'directories')">查看资料夹</button>
     </div>
@@ -128,6 +129,6 @@ onBeforeUnmount(() => { ++generation; controller?.abort(); window.removeEventLis
       </tbody></table></div>
     </section>
     <OverviewDocuments :company="company" :start="range.start" :end="range.end" :active="active" />
-    <section class="overview-section"><header class="overview-section__head"><div><h3>资料目录</h3><p>原始文件保存在公司资料夹里，点下方目录即可查看。</p></div></header><div class="overview-sources"><button v-for="dir in company.subdirs" :key="dir.key" type="button" :disabled="dir.status !== 'present'" @click="workspace.open({ kind: 'directory', companyId: company.id, dirKey: dir.key })"><WorkspaceIcon :name="dir.key === 'bank_flow_dir' ? 'bank' : 'folder'" />{{ dir.label }}<small>{{ dir.status === 'present' ? '打开 ›' : '缺失' }}</small></button></div></section>
+    <section class="overview-section"><header class="overview-section__head"><div><h3>资料目录</h3><p>原始文件保存在公司资料夹或已导入目录里，点下方目录即可查看。</p></div></header><div class="overview-sources"><button v-for="dir in visibleSubdirs" :key="dir.key" type="button" :disabled="dir.status !== 'present'" @click="workspace.open({ kind: 'directory', companyId: company.id, dirKey: dir.key })"><WorkspaceIcon :name="(dir.role || dir.key) === 'bank_flow_dir' ? 'bank' : 'folder'" />{{ dir.label }}<small>{{ dir.status === 'present' ? '打开 ›' : '缺失' }}</small></button></div></section>
   </section>
 </template>

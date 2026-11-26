@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { nextTick, ref, watch } from "vue";
+import { computed, nextTick, ref, watch } from "vue";
 import type { Company, CostWorkbookRefresh, TaxpayerPeriod } from "../api/types";
 import { errorText } from "../format";
 import { useCompaniesStore } from "../stores/companies";
@@ -7,17 +7,34 @@ import MonthPicker from "./MonthPicker.vue";
 
 const props = defineProps<{ company: Company }>();
 const companies = useCompaniesStore();
+const standardSubdirs = computed(() => props.company.subdirs.filter((item) => item.kind !== "custom"));
 const name = ref("");
 const periods = ref<TaxpayerPeriod[]>([]);
 const subdirs = ref<Record<string, string>>({});
+// Baseline snapshot of standard subdir mappings when the draft was initialized or refreshed;
+// lets us auto-sync untouched keys after a folder rename/promote without wiping unsaved edits.
+const baseSubdirs = ref<Record<string, string>>({});
 const busy = ref(false);
 const error = ref("");
 const notice = ref("");
 const confirmRemove = ref(false);
 
+const staleMappingLabels = computed(() =>
+  standardSubdirs.value
+    .filter(
+      (item) =>
+        baseSubdirs.value[item.key] !== undefined
+        && baseSubdirs.value[item.key] !== item.relative_path
+        && subdirs.value[item.key] !== item.relative_path,
+    )
+    .map((item) => item.default_label || item.label),
+);
+
 function reset(): void {
   name.value = props.company.name;
-  subdirs.value = Object.fromEntries(props.company.subdirs.map((item) => [item.key, item.relative_path]));
+  const snapshot = Object.fromEntries(standardSubdirs.value.map((item) => [item.key, item.relative_path]));
+  subdirs.value = { ...snapshot };
+  baseSubdirs.value = { ...snapshot };
   periods.value = props.company.taxpayer_periods.map((item) => ({ ...item }));
   error.value = "";
   confirmRemove.value = false;
@@ -35,12 +52,19 @@ async function save(): Promise<void> {
     error.value = "请选择每条纳税人身份的生效月份。";
     return;
   }
+  if (staleMappingLabels.value.length) {
+    error.value = `资料目录映射（${staleMappingLabels.value.join("、")}）已在别处重命名或切换，请点击“放弃修改”刷新最新映射后再保存，避免覆盖新目录。`;
+    return;
+  }
   busy.value = true;
   error.value = "";
   notice.value = "";
   try {
-    const changed = Object.fromEntries(props.company.subdirs.filter((item) => subdirs.value[item.key] !== item.relative_path)
-      .map((item) => [item.key, subdirs.value[item.key]!]));
+    const changed = Object.fromEntries(
+      standardSubdirs.value
+        .filter((item) => subdirs.value[item.key] !== baseSubdirs.value[item.key] && subdirs.value[item.key] !== item.relative_path)
+        .map((item) => [item.key, subdirs.value[item.key]!]),
+    );
     const result = await companies.update(props.company.id, { name: name.value, taxpayer_periods: periods.value,
       ...(Object.keys(changed).length ? { subdirs: changed } : {}) });
     await nextTick();
@@ -64,12 +88,26 @@ async function remove(): Promise<void> {
   }
 }
 
-// Only a different company resets the form: list reloads triggered elsewhere (switching the
-// monitored folder, creating subfolders) must not wipe an unsaved draft.
+// Only a different company resets the whole form; for the same company, keep unsaved drafts
+// intact while syncing any untouched standard directory mapping after a disk rename or promote.
 watch(() => props.company.id, () => {
   notice.value = "";
   reset();
 }, { immediate: true });
+
+watch(
+  () => standardSubdirs.value.map((item) => `${item.key}=${item.relative_path}`).join("\n"),
+  () => {
+    for (const item of standardSubdirs.value) {
+      const key = item.key;
+      const untouched = !(key in subdirs.value) || subdirs.value[key] === baseSubdirs.value[key];
+      if (untouched) {
+        subdirs.value[key] = item.relative_path;
+        baseSubdirs.value[key] = item.relative_path;
+      }
+    }
+  },
+);
 </script>
 
 <template>
@@ -81,8 +119,8 @@ watch(() => props.company.id, () => {
     <fieldset class="field">
       <legend>资料目录映射</legend>
       <p class="muted">填写公司资料夹内的相对路径。保存只改变资料类型指向，不移动或重命名文件；缺少的目录可在“目录”里另行预览补建。</p>
-      <label v-for="item in company.subdirs" :key="item.key" class="field-row company-subdir-field">
-        <span>{{ item.label }}</span><input v-model="subdirs[item.key]" :aria-label="`${item.label} 映射`" required autocomplete="off" :disabled="busy">
+      <label v-for="item in standardSubdirs" :key="item.key" class="field-row company-subdir-field">
+        <span>{{ item.default_label || item.label }}</span><input v-model="subdirs[item.key]" :aria-label="`${item.default_label || item.label} 映射`" required autocomplete="off" :disabled="busy">
       </label>
     </fieldset>
     <fieldset class="field">
