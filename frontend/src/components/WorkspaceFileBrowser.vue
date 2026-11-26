@@ -574,6 +574,8 @@ onBeforeUnmount(() => {
 .ws-files__filters { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .ws-files__filters input { flex: 1 1 200px; }
 .ws-files__folder-btn { font-weight: 500; }
+.ws-files__table td.path { max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ws-files__table .row-actions { display: flex; flex-wrap: wrap; gap: 4px; }
 .ws-files__modal-form { display: grid; gap: 12px; }
 .ws-files__modal-form label { display: grid; gap: 4px; font-size: 13px; }
 .ws-files__confirm-check { display: flex !important; align-items: center; gap: 8px; }

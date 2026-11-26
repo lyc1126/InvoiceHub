@@ -411,8 +411,21 @@ function openMenu(node: SidebarNode, event: MouseEvent | KeyboardEvent): void {
   const fromPointer = event instanceof MouseEvent && event.clientX;
   const x = fromPointer ? (event as MouseEvent).clientX : (box?.right ?? 0) - 8;
   const y = fromPointer ? (event as MouseEvent).clientY : (box?.bottom ?? 0);
-  menu.value = { node, x: Math.min(x, window.innerWidth - 220), y: Math.min(y, window.innerHeight - 200), origin };
-  void nextTick(() => menuEl.value?.querySelector<HTMLElement>("button:not(:disabled)")?.focus());
+  menu.value = { node, x: Math.max(8, Math.min(x, window.innerWidth - 220)), y: Math.max(8, Math.min(y, window.innerHeight - 260)), origin };
+  void nextTick(() => {
+    const el = menuEl.value;
+    if (el && menu.value) {
+      const rect = el.getBoundingClientRect();
+      if (rect.width > 0 && rect.height > 0) {
+        menu.value = {
+          ...menu.value,
+          x: Math.max(8, Math.min(x, window.innerWidth - rect.width - 8)),
+          y: Math.max(8, Math.min(y, window.innerHeight - rect.height - 8)),
+        };
+      }
+      el.querySelector<HTMLElement>("button:not(:disabled)")?.focus();
+    }
+  });
 }
 
 function closeMenu(restoreFocus = true): void {
