@@ -822,10 +822,12 @@ def test_fallback_move_never_overwrites_and_list_search_reaches_beyond_limit(tmp
     assert [f["name"] for f in by_ext["files"]] == ["zzz_target_needle.ofd"]
 
     # 3) _match_override_identity prefers exact canonical path and only falls back to case-folding when samefile is True
-    upper_path = tmp_path / "Invoice.xml"
-    upper_path.write_text("u", encoding="utf-8")
-    upper_exact = wf_mod._exact_path(upper_path)
-    lower_exact = str(Path(upper_exact).with_name("invoice.xml"))
+    # Use a non-existent directory under tmp_path.resolve() so Windows NTFS Path.resolve() does not
+    # rewrite "invoice.xml" back to an existing on-disk "Invoice.xml" via GetFinalPathNameByHandleW.
+    case_dir = tmp_path.resolve() / "case_sensitive_sim"
+    upper_exact = wf_mod._exact_path(case_dir / "Invoice.xml")
+    lower_exact = wf_mod._exact_path(case_dir / "invoice.xml")
+    assert upper_exact != lower_exact
     items_both = {
         upper_exact: {"fields": {"销售方": "大写票"}},
         lower_exact: {"fields": {"销售方": "小写票"}},
