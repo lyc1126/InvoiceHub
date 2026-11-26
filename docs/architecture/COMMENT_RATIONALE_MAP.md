@@ -1,5 +1,12 @@
 # InvoiceHub 注释与设计原因地图
 
+## 2026-11-26 工作区 Phase 2：只读检索不建状态目录与无依赖二进制流导入
+
+| 文件与符号 | 原因与不变量 | 守护 |
+|---|---|---|
+| `services/workspace_search.py::WorkspaceSearchService`、`api/routes/workspace_search.py` | 跨公司全局搜索与侧栏项目索引发生在普通 GET 请求中，绝不能扫描源盘或构造 `MonitorState`（否则会为未同步目录凭空创建 `runtime/targets/<id>` 并拖慢甚至破坏只读契约）；仅通过 `generations.resolve(...).is_file()` 读取已建投影，并从 `项目归属.json.invoices` 的 `{project, updated_at}` 字典安全提取项目名。 | `test_workspace_search_and_files.py`、`frontend/tests/workspace-phase2.spec.ts` |
+| `services/workspace_files.py::WorkspaceFileService`、`api/routes/workspace_files.py::_read_bounded_stream` | 生产锁定运行时（macOS/Windows `requirements/*.lock`）不包含 `python-multipart`；文件上传复用 `request.stream()` 有界二进制流（单文件 50 MiB 上限）与 `O_EXCL` 无覆盖写入，无需新增任何第三方依赖。`DirectoryPanel.vue` 区分 `INVOICE_DIRS` 与 `REFRESHABLE_ROLES`，使 `general` 普通资料目录默认呈现 `WorkspaceFileBrowser` 而非空发票表，同时发票目录仍以 `DirectoryInvoices` 为默认视图且非监控发票目录继续在后端 `_assert_mutate_allowed` 与前端 `sourceActions` 双层守卫下保持只读。 | `test_workspace_search_and_files.py`、`frontend/tests/workspace-phase2.spec.ts`、`test_appstate_service_wiring.py` |
+
 ## 2026-11-26 工作区 Phase 1：公司级 CRUD 守卫与查询契约兼容
 
 | 文件与符号 | 原因与不变量 | 守护 |

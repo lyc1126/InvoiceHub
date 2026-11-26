@@ -1,5 +1,15 @@
 # InvoiceHub 数据结构与算法
 
+## 2026-11-26 工作区 Phase 2：只读全局搜索边界、6 字段手改扩展与无覆盖文件流转
+
+- **全局检索有界与只读约束**（`services/workspace_search.py`）：
+  - `WorkspaceSearchService` 设硬上限：最多扫描 100 家公司、500 个已建投影目录、50,000 条发票记录，返回最多 200 条发票命中及 80 条目录/项目实体命中；超出置 `truncated: true`。
+  - 仅在 `generations.resolve(..., "发票汇总.csv").is_file()` 为真时才读取该目录投影；未构建目录计入 `unbuilt_directories` 并跳过，绝不调用 `MonitorState` 或建状态目录。
+  - `project_index()` 兼容解析 `项目归属.json.invoices` 的 `{project, updated_at}` 字典值并合并已建 `成本发票明细.csv` 的备注项目与别名映射，返回与 `build_project_summary` 一致的活动项目名列表。
+- **6 字段受保护手改与无覆盖文件流转**（`monitoring/state.py`、`services/invoice_list.py`、`services/workspace_files.py`）：
+  - `EDITABLE_FIELDS` 扩展为 `("销售方", "购买方", "开票金额", "发票号码", "开票时间", "税率")`；单次 PATCH 将新字段合并入既有 `manual_overrides.json` 条目，并在单文件重命名与跨目录移动时自动把对应条目按键迁至新绝对路径（目标 profile 状态目录已存在时同步写入目标 profile，绝不为未同步目标凭空建状态目录）。
+  - 文件上传通过 `O_CREAT | O_EXCL`（POSIX `dir_fd` + `O_NOFOLLOW`）与 `fsync` 原子写入；跨目录移动先持久化 `workspace-moves/<job_id>.json`（含逐文件 `[dev, ino, size, mtime_ns, ctime_ns]` 签名、300 秒过期与 `plan_hash`），确认时按 profile ID 序持有全部已同步 profile 写锁、先落盘 `running` 意图、同盘用 `os.link` + `os.unlink`（跨盘临时文件 `fsync` + 非覆盖落盘 + `unlink` 源文件）确保绝不覆盖目标同名文件。
+
 ## 2026-11-26 工作区 Phase 1：公司级回收站/改名迁移与单目录深度检索排序
 
 - **公司根目录回收站与安全硬盘改名**（`services/company_folders.py`、`services/company_registry.py`）：

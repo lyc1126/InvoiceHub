@@ -32,7 +32,7 @@ MANUAL_OVERRIDES_FILE_NAME = "manual_overrides.json"
 STATUS_FILE_NAME = "monitor_status.json"
 SYNC_PROGRESS_FILE_NAME = "sync_progress.json"
 BUSINESS_LOG_NAME = "文件变化监控日志.txt"
-EDITABLE_FIELDS = ("销售方", "开票金额", "发票号码")
+EDITABLE_FIELDS = ("销售方", "购买方", "开票金额", "发票号码", "开票时间", "税率")
 SYNC_WRITE_LOCK_POLL_SECONDS = 0.1
 
 

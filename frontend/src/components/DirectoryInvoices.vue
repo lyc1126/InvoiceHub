@@ -3,7 +3,7 @@ import { companySourceKey } from "../stores/companies";
 import { computed, inject, nextTick, onMounted, onBeforeUnmount, ref, watch } from "vue";
 import { VIEW_ACTIVE } from "../modules";
 import { ApiError, request } from "../api/client";
-import type { Company, DirectoryInvoicesPayload, InvoiceRow, InvoiceTagMarks, PreviewRef, ProjectSummary } from "../api/types";
+import type { Company, DirectoryInvoicesPayload, FileMovePlanPayload, FileRenameResult, InvoiceRow, InvoiceTagMarks, PreviewRef, ProjectSummary } from "../api/types";
 import { errorText, ratePercent, money } from "../format";
 import { effectiveFolderRole } from "../relations";
 import { useTagsStore } from "../stores/tags";
@@ -11,6 +11,8 @@ import { useWorkspaceStore, type InvoiceColumnKey } from "../stores/workspace";
 import { toast } from "../toast";
 import SourcePreview from "./SourcePreview.vue";
 import DirectorySelectionBar, { type SelectedInvoice, type TrashJob } from "./DirectorySelectionBar.vue";
+import FileMoveModal from "./FileMoveModal.vue";
+import InvoiceManualEditModal from "./InvoiceManualEditModal.vue";
 import WorkspaceIcon from "./WorkspaceIcon.vue";
 import WsModal from "./WsModal.vue";
 
@@ -325,6 +327,88 @@ function toggleAmountSort(): void {
   sortDir.value = next;
   dateSort.value = "";
   void loadInvoices(1);
+}
+
+// ---- active monitored file-level CRUD: manual field edit, single-file rename, cross-directory move (WS-12)
+const manualEditRow = ref<InvoiceRow | null>(null);
+const fileRenameModal = ref<{ relativePath: string; currentName: string; newName: string; saving: boolean; error: string } | null>(null);
+const moveFilePaths = ref<string[] | null>(null);
+
+function relativePathForRow(row: { source_path?: string; source_file?: string }): string {
+  const dirPath = (invoices.value?.directory?.path || "").replace(/\\/g, "/").replace(/\/+$/, "");
+  const full = (row.source_path || "").replace(/\\/g, "/");
+  if (dirPath && full.startsWith(`${dirPath}/`)) {
+    return full.slice(dirPath.length + 1);
+  }
+  return row.source_file || full.split("/").pop() || "";
+}
+
+function openManualEdit(row: InvoiceRow): void {
+  if (!sourceActions.value) return;
+  closeTagMenu();
+  manualEditRow.value = row;
+}
+
+function openFileRename(row: InvoiceRow): void {
+  if (!sourceActions.value) return;
+  closeTagMenu();
+  const rel = relativePathForRow(row);
+  if (!rel) return;
+  fileRenameModal.value = {
+    relativePath: rel,
+    currentName: row.source_file || rel.split("/").pop() || rel,
+    newName: row.source_file || rel.split("/").pop() || rel,
+    saving: false,
+    error: "",
+  };
+}
+
+async function submitFileRename(): Promise<void> {
+  const state = fileRenameModal.value;
+  if (!state || state.saving) return;
+  const trimmed = state.newName.trim();
+  if (!trimmed) {
+    state.error = "新文件名不能为空。";
+    return;
+  }
+  state.saving = true;
+  state.error = "";
+  try {
+    const res = await request<FileRenameResult>(
+      `${base()}/directories/${encodeURIComponent(props.dirKey)}/files/rename`,
+      { method: "POST", body: { relative_path: state.relativePath, new_name: trimmed } },
+    );
+    fileRenameModal.value = null;
+    toast(res.renamed ? `已重命名为「${res.new_name}」。` : "文件名未变化。");
+    if (res.renamed) {
+      await request("/api/v1/bridge/rebuild", { method: "POST", body: {} }).catch(() => undefined);
+      clearSelection();
+      window.dispatchEvent(new CustomEvent("workspace:company-refreshed", { detail: { companyId: props.company.id } }));
+      await loadInvoices(invoicesPage.value);
+    }
+  } catch (cause) {
+    state.error = errorText(cause);
+  } finally {
+    state.saving = false;
+  }
+}
+
+function openMoveModal(rows: { source_path?: string; source_file?: string }[]): void {
+  if (!sourceActions.value) return;
+  closeTagMenu();
+  const paths = [...new Set(rows.map((r) => relativePathForRow(r)).filter(Boolean))];
+  if (!paths.length) return;
+  moveFilePaths.value = paths;
+}
+
+async function onFilesMoved(plan: FileMovePlanPayload): Promise<void> {
+  moveFilePaths.value = null;
+  if ((plan.moved ?? 0) > 0) {
+    await request("/api/v1/bridge/rebuild", { method: "POST", body: {} }).catch(() => undefined);
+    clearSelection();
+    window.dispatchEvent(new CustomEvent("workspace:company-refreshed", { detail: { companyId: props.company.id } }));
+    await loadInvoices(invoicesPage.value);
+  }
 }
 
 async function openRowFile(row: InvoiceRow, reveal: boolean): Promise<void> {
@@ -653,6 +737,31 @@ onMounted(() => {
   if (!tagStore.definitions) void tagStore.load();
 });
 
+function applyPendingLocate(): void {
+  const query = workspace.consumeLocate(props.company.id, props.dirKey);
+  if (query === null) return;
+  tagFilter.value = "";
+  fileExt.value = "";
+  statusFilter.value = "";
+  dateFrom.value = "";
+  dateTo.value = "";
+  amountMin.value = "";
+  amountMax.value = "";
+  taxRateFilter.value = "";
+  invoiceTypeFilter.value = "";
+  businessTypeFilter.value = "";
+  classificationFilter.value = "";
+  projectFilter.value = "";
+  searchScope.value = "workspace";
+  keyword.value = query;
+  void loadInvoices(1);
+}
+
+watch(
+  () => workspace.pendingLocate?.token,
+  () => { applyPendingLocate(); },
+);
+
 // Source/monitor identity changes invalidate selection; a metadata-only object refresh does not.
 watch(
   () => `${companySourceKey(props.company, [props.dirKey])}/${props.company.monitored}/${props.company.monitored_subdir_key ?? ""}`,
@@ -662,6 +771,11 @@ watch(
     tagMenu.value = null;
     columnMenuOpen.value = false;
     clearSelection();
+    const located = workspace.consumeLocate(props.company.id, props.dirKey);
+    if (located !== null) {
+      searchScope.value = "workspace";
+      keyword.value = located;
+    }
     void loadInvoices();
   },
   { immediate: true },
@@ -695,7 +809,7 @@ onBeforeUnmount(() => {
           <h3>发票列表 <span class="muted">· {{ invoices.count }} 张</span> <span v-if="invoices.read_only" class="tag">只读 · 上次汇总</span></h3>
           <p>{{ selectable ? "勾选后底部会出现合计详情和批量操作；" : "" }}右键一行（或按 Shift+F10）可以打标签{{ selectable ? "，在已勾选的行上右键可批量打标签" : "" }}。</p>
         </div>
-        <div v-if="invoices.directory.projection.summary_exists" class="dir-list-head__actions">
+        <div v-if="invoices.directory?.projection?.summary_exists" class="dir-list-head__actions">
           <button
             v-if="hiddenColumns.length"
             type="button"
@@ -982,6 +1096,21 @@ onBeforeUnmount(() => {
           <button
             type="button"
             role="menuitem"
+            @click="openManualEdit(tagMenu.row)"
+          >编辑手改字段…</button>
+          <button
+            type="button"
+            role="menuitem"
+            @click="openFileRename(tagMenu.row)"
+          >重命名原文件…</button>
+          <button
+            type="button"
+            role="menuitem"
+            @click="openMoveModal([tagMenu.row])"
+          >移动到其他目录…</button>
+          <button
+            type="button"
+            role="menuitem"
             @click="openRowFile(tagMenu.row, false)"
           >打开原文件</button>
           <button
@@ -990,6 +1119,12 @@ onBeforeUnmount(() => {
             @click="openRowFile(tagMenu.row, true)"
           >在文件夹中显示</button>
         </template>
+        <button
+          v-if="sourceActions && tagMenu.batch && selectedItems.length"
+          type="button"
+          role="menuitem"
+          @click="openMoveModal(selectedItems)"
+        >批量移动到其他目录…</button>
         <button type="button" @click="closeTagMenu">关闭</button>
       </div>
       <div v-if="pageCount() > 1" class="actions">
@@ -1029,6 +1164,42 @@ onBeforeUnmount(() => {
         <button type="button" aria-label="清除勾选" @click="clearSelection">×</button>
       </div>
       <SourcePreview v-if="previewing && sourceActions" label="已勾选发票" :preview="previewing" @close="previewing = null" />
+      <InvoiceManualEditModal
+        v-if="manualEditRow && sourceActions"
+        :row="manualEditRow"
+        :company-id="company.id"
+        @close="manualEditRow = null"
+        @saved="manualEditRow = null; loadInvoices(invoicesPage)"
+      />
+      <WsModal
+        v-if="fileRenameModal && sourceActions"
+        title="重命名原文件"
+        :subtitle="`当前文件：${fileRenameModal.relativePath}`"
+        @close="!fileRenameModal.saving && (fileRenameModal = null)"
+      >
+        <form class="stack" @submit.prevent="submitFileRename">
+          <p v-if="fileRenameModal.error" class="banner banner--error" role="alert">{{ fileRenameModal.error }}</p>
+          <label class="field">
+            新文件名（含扩展名）
+            <input v-model="fileRenameModal.newName" type="text" maxlength="180" aria-label="原文件新名称" :disabled="fileRenameModal.saving">
+          </label>
+          <p class="muted">重命名绝不覆盖同目录已有文件，会自动迁移该票已保存的手改字段并刷新汇总。</p>
+          <div class="actions">
+            <button type="submit" class="primary" :disabled="fileRenameModal.saving" :aria-busy="fileRenameModal.saving">
+              {{ fileRenameModal.saving ? "重命名中…" : "确认重命名" }}
+            </button>
+            <button type="button" class="ghost" :disabled="fileRenameModal.saving" @click="fileRenameModal = null">取消</button>
+          </div>
+        </form>
+      </WsModal>
+      <FileMoveModal
+        v-if="moveFilePaths && sourceActions"
+        :company="company"
+        :dir-key="dirKey"
+        :relative-paths="moveFilePaths"
+        @close="moveFilePaths = null"
+        @moved="onFilesMoved"
+      />
       <WsModal
         v-if="projectModal"
         title="调整项目归属"

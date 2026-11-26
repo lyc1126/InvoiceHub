@@ -60,6 +60,8 @@ from invoice_hub.services.file_preview import FilePreviewError, MAX_PREVIEW_SELE
 from invoice_hub.services.invoice_selection import selection_family_key
 from invoice_hub.services.invoice_list import InvoiceListService
 from invoice_hub.services.source_move import SourceMoveService, period_folder_check
+from invoice_hub.services.workspace_files import WorkspaceFileService
+from invoice_hub.services.workspace_search import WorkspaceSearchService
 from invoice_hub.storage import SQLiteRepository
 from invoice_hub.targets import AppConfig, target_profile_for
 from invoice_hub.targets.companies import company_outbound_for, company_taxpayer_for
@@ -230,6 +232,10 @@ class CompanyViewService:
             db_path=db_path,
             freshness_check=directory_freshness,
         )
+        # Read-only cross-directory / cross-company search and collapsed-project index (WS-11).
+        self.search = WorkspaceSearchService(self)
+        # File-level browse, upload, rename, cross-directory move, and native trash (WS-12).
+        self.files = WorkspaceFileService(self)
 
     @property
     def config(self) -> AppConfig:

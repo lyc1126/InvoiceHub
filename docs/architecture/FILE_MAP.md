@@ -1,5 +1,22 @@
 # InvoiceHub 完整文件地图
 
+## 2026-11-26 工作区 Phase 2：跨公司全局检索（WS-11）与文件级增删改查/通用文件视图（WS-12）
+
+| 文件 | 职责与联动 |
+|---|---|
+| `src/invoice_hub/services/workspace_search.py` | `WorkspaceSearchService`：跨目录/跨公司只读全局检索（多词 AND、购销方/项目/金额/税率/日期/角色筛选，有界截断，绝不扫盘、不建状态目录或切 `watch_dir`）与折叠公司项目索引；组合于 `CompanyViewService.search`。 |
+| `src/invoice_hub/services/workspace_files.py` | `WorkspaceFileService`：公司目录文件级 CRUD（嵌套子文件夹有界浏览与符号链接隔离、`create_empty_subdir` 安全建目录、导入冲突预览与 `O_EXCL` 无覆盖二进制流上传、单文件安全改名并迁移 `manual_overrides.json`、跨目录 `preview`/`confirm`/持久化意图日志无覆盖移动与原生回收站删除；非监控发票目录保持只读边界）；组合于 `CompanyViewService.files`。 |
+| `src/invoice_hub/api/routes/workspace_search.py` | `WS-11` 路由：`GET /api/v1/workspace/search` 与 `GET /api/v1/workspace/project-index`；经 `api/app.py` 挂载。 |
+| `src/invoice_hub/api/routes/workspace_files.py` | `WS-12` 路由：`/api/v1/companies/{company_id}/directories/{key}/files*`（含 `request.stream()` 有界二进制上传、同源写校验与线程池执行）；经 `api/app.py` 挂载。 |
+| `frontend/src/components/WorkspaceSearchModal.vue` | 跨公司/跨目录全局搜索弹窗（`WsModal`、`⌘K / Ctrl+K` 与侧栏直达），展示匹配目录、项目与发票，点击命中经 `stores/workspace.ts::locateInDirectory` 打开目标目录并自动带入定位条件。 |
+| `frontend/src/components/InvoiceManualEditModal.vue` | 活动监控发票目录的单票 6 字段手改弹窗（`销售方`/`购买方`/`开票金额`/`发票号码`/`开票时间`/`税率`），调用 `PATCH /api/v1/invoices/{invoice_key}/manual-fields`。 |
+| `frontend/src/components/FileMoveModal.vue` | 跨目录文件移动确认弹窗：支持跨公司/跨目录选目标、冲突策略、`move/preview` 计划核对、`plan_hash` + `confirm: true` 确认执行与失联只读日志查询（`GET .../files/move/{job_id}`）。 |
+| `frontend/src/components/WorkspaceFileBrowser.vue` | 通用文件与子文件夹管理视图：面包屑导航、新建子文件夹、拖放与选择文件冲突预览上传、表内搜文件名/扩展名/排序、重命名、跨目录移动与两步确认原生回收站删除；严格按 `can_mutate_existing` 与符号链接标记管控操作。 |
+| `tests/test_workspace_search_and_files.py` | `WS-11` / `WS-12` 后端回归：跨公司只读搜索/折叠项目索引不建状态目录、通用文件浏览/符号链接拦截/建目录/无覆盖上传、6 字段手改与重命名/跨目录移动手改迁移、非监控发票目录只读守卫及原生回收站调用。 |
+| `frontend/tests/workspace-phase2.spec.ts` | `WS-11` / `WS-12` 前端回归：全局搜索点击定位联动 `DirectoryInvoices`、侧栏折叠项目搜索自动展开与过滤、`DirectoryPanel` 普通资料直出 `WorkspaceFileBrowser`、活动监控目录手改/改名/移动入口及非监控只读隐藏。 |
+
+联动修改：`monitoring/state.py`（`EDITABLE_FIELDS` 扩展至 6 字段）、`services/invoice_list.py`、`services/company_views.py`、`api/app.py`；前端 `api/types.ts`、`stores/workspace.ts`、`App.vue`、`WorkspaceSidebar.vue`、`DirectoryPanel.vue`、`DirectoryInvoices.vue`、`CompanyBankLedger.vue`、`prototype.css` 与构建产物 `web/static/app/`。
+
 ## 2026-11-26 工作区 Phase 1：公司级增删改查闭环与单目录深度查询增强
 
 | 文件 | 职责与联动 |

@@ -1,11 +1,26 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, ref } from "vue";
 import type { BankLedger } from "../api/types";
 import { money } from "../format";
 
 const props = defineProps<{ bank: BankLedger }>();
+const filterText = ref("");
 const issues = computed(() => props.bank.issues ?? []);
-const accounts = computed(() => props.bank.accounts ?? []);
+const accounts = computed(() => {
+  const tokens = filterText.value.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
+  const list = props.bank.accounts ?? [];
+  if (!tokens.length) return list;
+  return list
+    .map((account) => {
+      const accountHaystack = `${account.label} ${account.account_name} ${account.account_no} ${account.bank_name}`.toLocaleLowerCase();
+      if (tokens.every((tok) => accountHaystack.includes(tok))) return account;
+      const matchedPeriods = account.periods.filter((row) =>
+        tokens.every((tok) => `${accountHaystack} ${row.period} ${row.inflow} ${row.outflow} ${row.closing ?? ""}`.toLocaleLowerCase().includes(tok)),
+      );
+      return matchedPeriods.length ? { ...account, periods: matchedPeriods } : null;
+    })
+    .filter((item): item is NonNullable<typeof item> => item !== null);
+});
 
 function state(row: { ok: boolean; missing_months: string[] }): string {
   if (row.missing_months.length) return `缺 ${row.missing_months.join("、")} 对账单`;
@@ -37,6 +52,11 @@ function state(row: { ok: boolean; missing_months: string[] }): string {
         </li>
       </ul>
 
+      <div class="toolbar">
+        <input v-model="filterText" type="search" aria-label="筛选银行账户或期间" placeholder="按银行名 / 账号 / 期间 / 金额筛选…">
+        <button v-if="filterText.trim()" type="button" class="ghost" @click="filterText = ''">清除</button>
+      </div>
+      <p v-if="!accounts.length && filterText.trim()" class="muted">没有匹配「{{ filterText.trim() }}」的银行账户或期间。</p>
       <table v-for="account in accounts" :key="account.account_no" class="grid ledger" :aria-label="account.label">
         <caption>{{ account.label }} · <span class="muted">{{ account.account_name }}，对账单 <span class="nowrap">{{ account.first_month }} 至 {{ account.last_month }}</span></span></caption>
         <thead>

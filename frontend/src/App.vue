@@ -16,6 +16,7 @@ import { useWorkspaceStore } from "./stores/workspace";
 import WsModal from "./components/WsModal.vue";
 import ShutdownDialog from "./components/ShutdownDialog.vue";
 import CompanyCreateForm from "./components/CompanyCreateForm.vue";
+import WorkspaceSearchModal from "./components/WorkspaceSearchModal.vue";
 import ServerConnectModal from "./components/ServerConnectModal.vue";
 import ServerSourcesPanel from "./components/ServerSourcesPanel.vue";
 import FeedbackDialog from "./components/FeedbackDialog.vue";
@@ -149,9 +150,16 @@ function refreshData(): void {
     window.dispatchEvent(new Event("workspace:invoices-updated"));
   }, 180);
 }
+function onGlobalKeydown(event: KeyboardEvent): void {
+  if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+    event.preventDefault();
+    workspace.openGlobalSearch();
+  }
+}
 onMounted(() => {
   void system.refresh();
   window.addEventListener("workspace:navigate", handoff);
+  window.addEventListener("keydown", onGlobalKeydown);
   // One outer stream keeps the home cache and monitor identity current. Hidden
   // classic views pause their own transports, leaving at most two active SSEs.
   if (typeof EventSource === "function") {
@@ -173,7 +181,7 @@ onMounted(() => {
     });
   }
 });
-onBeforeUnmount(() => { ++navigation; stream?.close(); clearTimeout(eventTimer); window.removeEventListener("workspace:navigate", handoff); });
+onBeforeUnmount(() => { ++navigation; stream?.close(); clearTimeout(eventTimer); window.removeEventListener("workspace:navigate", handoff); window.removeEventListener("keydown", onGlobalKeydown); });
 
 // Double click rebuilds only the active home tab or module context and rereads
 // its data. Other cached views and anything already saved remain untouched.
@@ -260,6 +268,11 @@ function showShutdown(): void { shutdownOpen.value = true; }
     <WsModal v-if="workspace.createOpen" title="添加公司资料夹" subtitle="登记已有公司资料夹，或在空位置新建标准工作区。" @close="workspace.createOpen = false">
       <CompanyCreateForm @created="onCompanyCreated" @cancel="workspace.createOpen = false" />
     </WsModal>
+    <WorkspaceSearchModal
+      v-if="workspace.globalSearchOpen"
+      @close="workspace.globalSearchOpen = false"
+      @navigate-home="route.name !== 'home' && navigate('/')"
+    />
     <div v-if="toastMessage" :key="toastMessage.id" class="ws-toast" :class="{ 'ws-toast--error': toastMessage.tone === 'error' }" role="status">{{ toastMessage.text }}</div>
   </div>
 </template>

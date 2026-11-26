@@ -129,6 +129,30 @@ export const useWorkspaceStore = defineStore("workspace", () => {
   const seeded = ref(false);
   // Prototype openWizard(): adding a company folder is a dialog over the current view, not a tab.
   const createOpen = ref(false);
+  // Global cross-directory / cross-company search modal (WS-11, Cmd/Ctrl+K).
+  const globalSearchOpen = ref(false);
+  const globalSearchSeed = ref("");
+  // One-shot cue handed from global search to DirectoryInvoices so clicking a hit opens
+  // the target directory tab and narrows immediately to that invoice or filename.
+  const pendingLocate = ref<{ companyId: string; dirKey: string; query: string; token: number } | null>(null);
+  let locateToken = 0;
+
+  function openGlobalSearch(seed = ""): void {
+    globalSearchSeed.value = seed;
+    globalSearchOpen.value = true;
+  }
+
+  function locateInDirectory(companyId: string, dirKey: string, query: string): void {
+    open({ kind: "directory", companyId, dirKey });
+    pendingLocate.value = { companyId, dirKey, query: query.trim(), token: ++locateToken };
+  }
+
+  function consumeLocate(companyId: string, dirKey: string): string | null {
+    const cue = pendingLocate.value;
+    if (!cue || cue.companyId !== companyId || cue.dirKey !== dirKey) return null;
+    pendingLocate.value = null;
+    return cue.query;
+  }
 
   const active = computed(() => tabs.value.find((tab) => tab.id === activeId.value) ?? null);
 
@@ -246,7 +270,9 @@ export const useWorkspaceStore = defineStore("workspace", () => {
 
   return {
     tabs, activeId, active, pins, expanded, sidebarWidth, hiddenInvoiceColumns, compareBase, seeded, createOpen,
+    globalSearchOpen, globalSearchSeed, pendingLocate,
     open, close, closeCompany, closeDirectory, refreshActive, togglePin, toggleExpanded,
+    openGlobalSearch, locateInDirectory, consumeLocate,
     hiddenColumnsFor, toggleInvoiceColumn, resetInvoiceColumns,
   };
 });

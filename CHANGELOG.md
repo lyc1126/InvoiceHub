@@ -2,6 +2,22 @@
 
 ## 未发布
 
+### 2026-11-26 工作区 Phase 2：跨公司全局检索（WS-11）与文件级增删改查/通用文件视图（WS-12）
+
+- 需求与起点：基于同一工作树 `InvoiceHub-workspace-crud-search`（分支 `codex/workspace-crud-search-p1`）的 Phase 1 本地检查点（`0669348`），按用户确认继续落地 Phase 2 两项核心能力：（1）`WS-11` 跨目录/跨公司只读全局检索、侧栏折叠公司项目检索与点击命中自动跳转定位；（2）`WS-12` 工作区通用文件与子文件夹浏览、拖放/选择文件无覆盖导入、活动监控目录单票 6 字段手改/安全改名与跨目录计划确认移动归档，以及原生回收站文件删除。
+- 采用方案：
+  - **WS-11 后端与前端**：
+    - 新增 `src/invoice_hub/services/workspace_search.py`（组合于 `CompanyViewService.search`，零改动 `AppState`）与 `src/invoice_hub/api/routes/workspace_search.py`：提供只读 `GET /api/v1/workspace/search`（跨公司/单公司、多词 AND、购销方/项目/金额/税率/日期/角色组合检索，严格仅读已有投影与 `项目归属.json`/`发票标签.json`，有界上限保护，绝不扫描磁盘、不建 `runtime/targets/<id>`、不切 `watch_dir`，同时返回匹配目录/项目与未汇总目录计数）及 `GET /api/v1/workspace/project-index`（为侧栏折叠公司提供零写盘项目索引）。
+    - 新增 `frontend/src/components/WorkspaceSearchModal.vue`（挂载于 `App.vue`，支持 `⌘K / Ctrl+K` 与侧栏按钮直达），点击发票命中调用 `stores/workspace.ts::locateInDirectory` 自动打开目标目录并由 `DirectoryInvoices.vue` 消费 `pendingLocate` 自动带入定位过滤；升级 `WorkspaceSidebar.vue` 支持侧栏检索自动加载折叠公司项目、自动展开并过滤匹配子目录/项目，以及一键跳转跨公司全局搜发票；`CompanyBankLedger.vue` 新增银行账户与期间表内快速过滤。
+  - **WS-12 后端与前端**：
+    - `monitoring/state.py` 与 `services/invoice_list.py`：将受保护手改字段 `EDITABLE_FIELDS` 扩展至 6 项核心字段（`销售方`、`购买方`、`开票金额`、`发票号码`、`开票时间`、`税率`），更新时合并保留既有手改字段并在增量重建中持久生效。
+    - 新增 `src/invoice_hub/services/workspace_files.py`（组合于 `CompanyViewService.files`）与 `src/invoice_hub/api/routes/workspace_files.py`：实现目录与嵌套子目录有界浏览（标记并禁用符号链接）、`create_empty_subdir` 安全新建子文件夹、导入冲突预览（`import-preview`）与零额外依赖有界二进制流上传（`upload`，复用 `request.stream()` 与 `O_EXCL` 绝不覆盖同名文件，支持 `rename`/`skip`）、单文件安全重命名（无覆盖并自动迁移 `manual_overrides.json`）、跨目录移动（`move/preview` → 持久化意图日志 `workspace-moves/<job_id>.json` → `plan_hash` + `confirm: true` 无覆盖原子移动 + 手改迁移 + 只读失联结果查询）及原生回收站删除（`trash/preview` → `plan_hash` + `confirm: true` → `move_to_trash`，严禁永久删除降级）；严格遵守 `BOOKKEEPING.md`，非监控发票目录拒绝打开/重命名/移动/删除现有原票。
+    - 新增 `frontend/src/components/WorkspaceFileBrowser.vue`、`InvoiceManualEditModal.vue` 与 `FileMoveModal.vue`，接入 `DirectoryPanel.vue`（非发票/普通资料目录直接呈现通用文件视图，发票目录保留默认发票列表并提供「发票列表 / 文件管理与导入」切换）与 `DirectoryInvoices.vue`（活动监控目录右键与批量菜单新增编辑手改字段、重命名原文件、移动到其他目录，非监控目录严格隐藏），重建并提交 `web/static/app/`。
+- 验证范围：
+  - 前端：`pnpm run typecheck`（0 错误）、`pnpm test`（23 份测试文件 185 项全部通过，含新增 `frontend/tests/workspace-phase2.spec.ts` 4 项）、`pnpm run build`（刷新 `web/static/app/`）。
+  - 后端：`pytest tests/test_workspace_search_and_files.py tests/test_company_crud_and_search.py tests/test_company_folders.py tests/test_company_setup.py tests/test_company_views.py tests/test_company_directory_guards.py tests/test_api_companies.py tests/test_appstate_service_wiring.py tests/test_workspace_frontend.py tests/test_api_contract.py`（226 项全部通过）、`python -m compileall src tests`、`ruff check`、`pytest tests/test_development_documentation.py` 与 `git diff --check`。
+- 未覆盖项：未覆盖真实默认配置、正式 Windows BAT、浏览器前台实机拖放/交互、系统原生选择器弹窗、macOS/Windows 真机原生回收站端到端调用与双平台打包产物。
+
 ### 2026-11-26 工作区 Phase 1：公司级增删改查闭环与单目录深度查询增强
 
 - 需求与起点：基于已合入 PR #34 的干净主线 `origin/main@2c809d817cb984d550bcf46abe71f97fd6a6e365`，在隔离工作树 `InvoiceHub-workspace-crud-search`（分支 `codex/workspace-crud-search-p1`）推进用户新增遗漏需求的 Phase 1：（1）补齐自建/导入公司资料夹及工作区公司级增删改查闭环（重点解决已创建/导入公司资料夹缺少直达移除与原生回收站删除选项、根目录无法重定位/硬盘改名、自建不能按需选目录与附带自定义目录、导入不能顺带纳入其它子目录）；（2）修复实测发现的查询硬缺陷（开具发票搜购买方失效、日期区间放行空日期、关键字无法搜项目/金额/税率且不支持多词、自定义目录角色未同步）并补齐高级组合筛选与排序。Phase 2（跨目录/跨公司全局检索、文件拖放导入/单票手改/重命名与跨目录移动归档、通用文件视图）同步登记至 `docs/PRODUCT_BACKLOG.md`（`WS-11`、`WS-12`）。

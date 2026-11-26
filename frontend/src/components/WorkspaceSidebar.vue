@@ -12,7 +12,7 @@ import { MODULES, type ModuleId } from "../modules";
 import { useModulesStore } from "../stores/modules";
 import { skinBypassRequested } from "../appearance";
 import { ApiError, request } from "../api/client";
-import type { Company, CompanySubdir, ProjectRenameResult, ProjectSummary, SubdirPlan } from "../api/types";
+import type { Company, CompanySubdir, ProjectRenameResult, ProjectSummary, SubdirPlan, WorkspaceProjectIndexPayload } from "../api/types";
 import { errorText } from "../format";
 import { INVOICE_DIRS, SAME_NUMBER, effectiveFolderRole, relationFor } from "../relations";
 import { companySourceKey, useCompaniesStore } from "../stores/companies";
@@ -32,12 +32,73 @@ const router = useRouter();
 const modules = useModulesStore();
 const searchOpen = ref(false);
 const search = ref("");
+const indexedProjects = ref<Record<string, string[]>>({});
+let indexedProjectsRevision = -1;
+let indexLoading = false;
+
+async function ensureProjectIndex(): Promise<void> {
+  const rev = companies.list?.revision ?? 0;
+  if (indexLoading || (indexedProjectsRevision === rev && Object.keys(indexedProjects.value).length > 0)) return;
+  indexLoading = true;
+  try {
+    const res = await request<WorkspaceProjectIndexPayload>("/api/v1/workspace/project-index");
+    indexedProjects.value = res.projects ?? {};
+    indexedProjectsRevision = res.revision ?? rev;
+  } catch {
+    // Non-fatal: sidebar still searches company names, subdirs and already-expanded projects.
+  } finally {
+    indexLoading = false;
+  }
+}
+
+watch(searchOpen, (open) => {
+  if (open) void ensureProjectIndex();
+});
+watch(search, (value) => {
+  if (value.trim()) void ensureProjectIndex();
+});
+
 function visibleSubdirs(company: Company): CompanySubdir[] {
   return company.subdirs.filter((item) => !item.hidden);
 }
-const visibleCompanies = computed(() => companies.companies.filter(company => {
-  const term = search.value.trim().toLocaleLowerCase();
-  return !term || [company.name, company.root_path, ...visibleSubdirs(company).map(dir => dir.label), ...(projects.value[company.id]?.names ?? [])].some(value => value.toLocaleLowerCase().includes(term));
+function projectNamesFor(companyId: string): string[] {
+  const loaded = projects.value[companyId]?.names;
+  if (loaded) return loaded;
+  return indexedProjects.value[companyId] ?? [];
+}
+function searchTokens(): string[] {
+  return search.value.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
+}
+function matchesTokens(text: string, tokens: string[]): boolean {
+  if (!tokens.length) return true;
+  const folded = text.toLocaleLowerCase();
+  return tokens.every((tok) => folded.includes(tok));
+}
+function companySelfMatches(company: Company, tokens: string[]): boolean {
+  return matchesTokens(`${company.name} ${company.root_path}`, tokens);
+}
+function filteredSubdirs(company: Company): CompanySubdir[] {
+  const all = visibleSubdirs(company);
+  const tokens = searchTokens();
+  if (!tokens.length || companySelfMatches(company, tokens)) return all;
+  return all.filter((dir) => matchesTokens(`${company.name} ${dir.label} ${dir.role_label ?? ""} ${dir.relative_path}`, tokens));
+}
+function filteredProjects(company: Company): string[] {
+  const all = projectNamesFor(company.id);
+  const tokens = searchTokens();
+  if (!tokens.length || companySelfMatches(company, tokens)) return all;
+  return all.filter((name) => matchesTokens(`${company.name} ${name}`, tokens));
+}
+function isCompanyExpanded(company: Company): boolean {
+  if (workspace.expanded.includes(company.id)) return true;
+  const tokens = searchTokens();
+  if (!tokens.length) return false;
+  return !companySelfMatches(company, tokens) && (filteredSubdirs(company).length > 0 || filteredProjects(company).length > 0);
+}
+const visibleCompanies = computed(() => companies.companies.filter((company) => {
+  const tokens = searchTokens();
+  if (!tokens.length) return true;
+  return companySelfMatches(company, tokens) || filteredSubdirs(company).length > 0 || filteredProjects(company).length > 0;
 }));
 function nodeIcon(node: SidebarNode): string {
   return node.kind === "company" ? "building" : node.kind === "project" ? "project" : effectiveFolderRole(node.subdir, node.dirKey) === "bank_flow_dir" ? "bank" : "folder";
@@ -519,8 +580,14 @@ onBeforeUnmount(() => {
         <a role="menuitem" :href="classicHref">返回经典界面</a>
       </div>
     </div>
-    <label v-if="searchOpen" class="ws-search"><WorkspaceIcon name="search" /><input v-model="search" aria-label="搜索公司、项目或目录" placeholder="搜索公司、项目或目录"></label>
+    <div v-if="searchOpen" class="ws-search-wrap">
+      <label class="ws-search"><WorkspaceIcon name="search" /><input v-model="search" aria-label="搜索公司、项目或目录" placeholder="搜索公司、项目或目录"></label>
+      <button v-if="search.trim()" type="button" class="ws-search-global-jump" @click="workspace.openGlobalSearch(search.trim()); emit('opened')">
+        跨公司搜索发票「{{ search.trim() }}」→
+      </button>
+    </div>
     <button type="button" class="ws-add" aria-haspopup="dialog" @click="workspace.createOpen = true; emit('opened')"><WorkspaceIcon name="building" />添加公司资料夹</button>
+    <button type="button" class="ws-add" aria-haspopup="dialog" @click="workspace.openGlobalSearch(search.trim()); emit('opened')"><WorkspaceIcon name="search" />全局搜索发票 <kbd class="ws-kbd">⌘K</kbd></button>
     <button type="button" class="ws-add" @click="emit('server')"><svg class="hub-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="12" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M12 15v4m-6 2h12M4 18h3m10 0h3" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>服务器链接（试验版）</button>
     <p v-if="workspace.compareBase" class="ws-compare-hint" role="status">
       已选 {{ nodesById.get(`dir:${workspace.compareBase.companyId}:${workspace.compareBase.dirKey}`)?.label ?? "目录" }} 进行核对，请到另一个目录点“与已选项进行比较”（关联资料核对账目，其他发票目录检查重复票号）。
@@ -585,10 +652,10 @@ onBeforeUnmount(() => {
             </button>
             <button type="button" class="ws-more" :aria-label="`${company.name} 的操作`" @click="openMenu(companyNode(company), $event)">⋯</button>
           </div>
-          <ul v-if="workspace.expanded.includes(company.id)" class="ws-children">
+          <ul v-if="isCompanyExpanded(company)" class="ws-children">
             <li v-if="projects[company.id]?.loading" class="muted ws-empty">读取项目…</li>
             <li v-else-if="projects[company.id]?.error" class="muted ws-empty" :title="projects[company.id]?.error">项目读取失败</li>
-            <li v-for="name in projects[company.id]?.names ?? []" :key="`p:${name}`" class="ws-row">
+            <li v-for="name in filteredProjects(company)" :key="`p:${name}`" class="ws-row">
               <button
                 type="button"
                 class="ws-node"
@@ -606,7 +673,7 @@ onBeforeUnmount(() => {
               <button type="button" class="ws-more" :aria-label="`项目 ${name} 的操作`" @click="openMenu(projectNode(company, name), $event)">⋯</button>
             </li>
             <li
-              v-for="subdir in visibleSubdirs(company)"
+              v-for="subdir in filteredSubdirs(company)"
               :key="subdir.key"
               class="ws-row"
               :class="{ 'ws-row--missing': subdir.status !== 'present', 'ws-row--base': isBase(directoryNode(company, subdir)) }"

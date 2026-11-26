@@ -5,7 +5,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { request } from "../api/client";
 import type { BridgeRebuildPayload, Company, CompanyDirectory, CompanySubdir, DirectoriesPayload } from "../api/types";
 import { FRESHNESS_LABELS, SUBDIR_STATUS_LABELS, errorText } from "../format";
-import { REFRESHABLE_ROLES, effectiveFolderRole } from "../relations";
+import { INVOICE_DIRS, REFRESHABLE_ROLES, effectiveFolderRole } from "../relations";
 import { toast } from "../toast";
 import BankLayouts from "./BankLayouts.vue";
 import CompanyFolderDeleteModal from "./CompanyFolderDeleteModal.vue";
@@ -13,6 +13,7 @@ import CompanyFolderEditModal from "./CompanyFolderEditModal.vue";
 import DirectoryInvoices from "./DirectoryInvoices.vue";
 import PeriodFolderCheck from "./PeriodFolderCheck.vue";
 import WatchSwitchConfirm from "./WatchSwitchConfirm.vue";
+import WorkspaceFileBrowser from "./WorkspaceFileBrowser.vue";
 
 // A directory tab: one company folder with its freshness and role-dispatched capabilities. Only
 // the active monitored folder has live notifications/file actions; non-monitored folders can
@@ -39,8 +40,10 @@ interface CustomPayrollMonth {
 }
 const payrollPreview = ref<{ loading: boolean; error: string; months: CustomPayrollMonth[]; unrecognized: { file: string; reason: string }[] } | null>(null);
 const effectiveRole = computed(() => effectiveFolderRole(directory.value, props.dirKey));
-const isInvoiceDir = computed(() => REFRESHABLE_ROLES.includes(effectiveRole.value));
+const isInvoiceDir = computed(() => INVOICE_DIRS.includes(effectiveRole.value));
+const isRefreshableDir = computed(() => REFRESHABLE_ROLES.includes(effectiveRole.value));
 const isCustomPayroll = computed(() => directory.value?.kind === "custom" && effectiveRole.value === "payroll_social_dir" && directory.value.status === "present");
+const viewMode = ref<"invoices" | "files">("invoices");
 const refreshState = computed(() => companies.refreshStates[props.company.id]);
 const refreshing = computed(() => refreshState.value?.status === "running");
 
@@ -202,6 +205,7 @@ watch(
     if (nextIdentity !== lastIdentity) {
       editTarget.value = null;
       deleteTarget.value = null;
+      viewMode.value = "invoices";
       lastIdentity = nextIdentity;
     }
     void load();
@@ -240,15 +244,19 @@ watch(
     <p v-if="rebuilding" class="banner banner--note" role="status" aria-busy="true">正在重新汇总当前监控目录，完成后列表将自动更新…</p>
     <p v-if="directory?.status === 'present' && !directory.active" class="overview-notice overview-notice--warn">
       <span>{{ directory.freshness.state === 'never_built' ? '这个文件夹还没读取过数据，点“读取数据”即可直接查看，不需要切换监控目录。' : directory.freshness.parser_stale && !(directory.freshness.added || directory.freshness.updated || directory.freshness.deleted) ? '识别规则已更新，点“更新数据”即可重新汇总；如需实时监控和删除/打印原票再设为监控目录。' : '当前显示的是上次读取的数据；有新发票时可点“更新数据”，如需实时监控和删除/打印原票再设为监控目录。' }}</span>
-      <button v-if="isInvoiceDir" type="button" class="primary" :disabled="refreshing" :aria-busy="refreshing" @click="readData">{{ refreshing ? "读取中…" : directory.freshness.state === "never_built" ? "读取数据" : "更新数据" }}</button>
+      <button v-if="isRefreshableDir" type="button" class="primary" :disabled="refreshing" :aria-busy="refreshing" @click="readData">{{ refreshing ? "读取中…" : directory.freshness.state === "never_built" ? "读取数据" : "更新数据" }}</button>
       <button type="button" @click="switching = true">设为监控目录</button>
     </p>
     <div v-if="directory" class="toolbar directory-toolbar">
       <span>{{ SUBDIR_STATUS_LABELS[directory.status] }}</span>
       <span :class="`fresh fresh--${directory.freshness.state}`" :title="directory.freshness.message">{{ FRESHNESS_LABELS[directory.freshness.state] }}</span>
       <span class="muted">上次读取 {{ directory.projection.summary_updated_at || "—" }}</span>
-      <button v-if="directory.status === 'present' && directory.active && isInvoiceDir" type="button" class="primary" :disabled="rebuilding" :aria-busy="rebuilding" @click="rebuildActive">{{ rebuilding ? "汇总中…" : "重新汇总" }}</button>
+      <button v-if="directory.status === 'present' && directory.active && isRefreshableDir" type="button" class="primary" :disabled="rebuilding" :aria-busy="rebuilding" @click="rebuildActive">{{ rebuilding ? "汇总中…" : "重新汇总" }}</button>
       <button type="button" :disabled="rebuilding" @click="load">检查变动</button>
+      <div v-if="directory.status === 'present' && isInvoiceDir" class="dir-view-tabs" role="tablist" aria-label="目录视图切换">
+        <button type="button" role="tab" :aria-selected="viewMode === 'invoices'" :class="{ primary: viewMode === 'invoices' }" @click="viewMode = 'invoices'">发票列表</button>
+        <button type="button" role="tab" :aria-selected="viewMode === 'files'" :class="{ primary: viewMode === 'files' }" @click="viewMode = 'files'">文件管理与导入</button>
+      </div>
     </div>
     <WatchSwitchConfirm v-if="switching && directory" :path="directory.path" @done="switched" @cancel="switching = false" />
     <!-- Folders kept by period (进项抵扣 / 银行流水 benchmark roles): content period vs. folder, confirmed moves (WS-05). -->
@@ -285,8 +293,17 @@ watch(
       </div>
       <p v-if="payrollPreview.unrecognized.length" class="muted">另有 {{ payrollPreview.unrecognized.length }} 个未识别文件。</p>
     </section>
-    <DirectoryInvoices v-if="directory?.status === 'present'" :company="company" :dir-key="dirKey" />
-    <p v-else-if="directory" class="muted">这个子目录{{ SUBDIR_STATUS_LABELS[directory.status] }}，没有可显示的发票。</p>
+    <template v-if="directory?.status === 'present'">
+      <DirectoryInvoices v-if="isInvoiceDir && viewMode === 'invoices'" :company="company" :dir-key="dirKey" />
+      <WorkspaceFileBrowser
+        v-else
+        :company="company"
+        :dir-key="dirKey"
+        :is-invoice-dir="isInvoiceDir"
+        @mutated="load"
+      />
+    </template>
+    <p v-else-if="directory" class="muted">这个子目录{{ SUBDIR_STATUS_LABELS[directory.status] }}，没有可显示的内容。</p>
 
     <CompanyFolderEditModal v-if="editTarget" :company="company" :subdir="editTarget" @close="editTarget = null" @done="onEdited" />
     <CompanyFolderDeleteModal v-if="deleteTarget" :company="company" :subdir="deleteTarget" @close="deleteTarget = null" @done="onDeleted" />
@@ -295,5 +312,6 @@ watch(
 
 <style scoped>
 .dir-head-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.dir-view-tabs { display: inline-flex; gap: 4px; margin-left: auto; }
 .payroll-check-errors { margin: 4px 0 0; padding-left: 16px; font-size: 12px; }
 </style>

@@ -642,8 +642,11 @@ class InvoiceListService:
             source_modified = None
         editable = {
             "销售方": {"source_value": item.get("seller", ""), "manual_value": item.get("seller", "")},
+            "购买方": {"source_value": item.get("buyer", ""), "manual_value": item.get("buyer", "")},
             "开票金额": {"source_value": item.get("amount", ""), "manual_value": item.get("amount", "")},
             "发票号码": {"source_value": item.get("invoice_number", ""), "manual_value": item.get("invoice_number", "")},
+            "开票时间": {"source_value": item.get("invoice_date", ""), "manual_value": item.get("invoice_date", "")},
+            "税率": {"source_value": item.get("tax_rate", ""), "manual_value": item.get("tax_rate", "")},
         }
         item.update(
             {
@@ -697,19 +700,23 @@ class InvoiceListService:
             except Exception:
                 raise KeyError(invoice_key)
             fields = dict((payload or {}).get("fields") or payload or {})
-            allowed = {"销售方", "开票金额", "发票号码"}
+            allowed = {"销售方", "购买方", "开票金额", "发票号码", "开票时间", "税率"}
             cleaned = {key: str(value or "").strip() for key, value in fields.items() if key in allowed}
             if not cleaned:
                 return {"ok": True, "updated": False, "invoice_key": invoice_key}
             for key, value in cleaned.items():
                 row[key] = value
+            row["手改状态"] = "已手改"
             identity = self._identity_for_row(row, index)
             overrides = read_json_object(monitor_state.manual_overrides_file, {"items": {}})
             items = overrides.setdefault("items", {})
+            existing_entry = items.get(identity)
+            merged_fields = dict(existing_entry.get("fields") or {}) if isinstance(existing_entry, dict) else {}
+            merged_fields.update(cleaned)
             items[identity] = {
                 "invoice_key": invoice_key,
                 "source_path": row.get("文件路径", ""),
-                "fields": cleaned,
+                "fields": merged_fields,
                 "updated_at": utc_now_text(),
             }
             atomic_write_json(monitor_state.manual_overrides_file, overrides)

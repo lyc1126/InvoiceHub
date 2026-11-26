@@ -1,0 +1,355 @@
+import { DOMWrapper, flushPromises, mount } from "@vue/test-utils";
+import { createPinia, setActivePinia } from "pinia";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { createMemoryHistory } from "vue-router";
+import DirectoryInvoices from "../src/components/DirectoryInvoices.vue";
+import DirectoryPanel from "../src/components/DirectoryPanel.vue";
+import WorkspaceSearchModal from "../src/components/WorkspaceSearchModal.vue";
+import WorkspaceSidebar from "../src/components/WorkspaceSidebar.vue";
+import { createAppRouter } from "../src/router";
+import { useCompaniesStore } from "../src/stores/companies";
+import { useWorkspaceStore } from "../src/stores/workspace";
+import type { Company, CompanyDirectory } from "../src/api/types";
+
+const COMPANY_A: Company = {
+  id: "co_a",
+  name: "甲公司",
+  root_dir: "/合成/甲",
+  root_path: "/合成/甲",
+  root_status: "present",
+  subdirs: [
+    { key: "cost_invoice_dir", label: "成本发票", default_label: "成本发票", kind: "standard", role: "cost_invoice_dir", role_label: "成本发票", location: "inside_root", hidden: false, can_promote_to_role: false, relative_path: "成本发票", path: "/合成/甲/成本发票", status: "present" },
+    { key: "expense_reimbursement_dir", label: "费用报销", default_label: "费用报销", kind: "standard", role: "expense_reimbursement_dir", role_label: "费用报销", location: "inside_root", hidden: false, can_promote_to_role: false, relative_path: "费用报销", path: "/合成/甲/费用报销", status: "present" },
+    { key: "cf_general", label: "合同归档", default_label: "合同归档", kind: "custom", role: "general", role_label: "普通资料", location: "inside_root", hidden: false, can_promote_to_role: false, relative_path: "合同归档", path: "/合成/甲/合同归档", status: "present" },
+  ],
+  missing_subdir_count: 0,
+  hidden_subdir_count: 0,
+  taxpayer_periods: [],
+  current_taxpayer_type: "general",
+  current_taxpayer_label: "一般纳税人",
+  monitored: true,
+  monitored_subdir_key: "cost_invoice_dir",
+};
+
+const COMPANY_B: Company = {
+  id: "co_b",
+  name: "乙公司",
+  root_dir: "/合成/乙",
+  root_path: "/合成/乙",
+  root_status: "present",
+  subdirs: [
+    { key: "cost_invoice_dir", label: "成本发票", default_label: "成本发票", kind: "standard", role: "cost_invoice_dir", role_label: "成本发票", location: "inside_root", hidden: false, can_promote_to_role: false, relative_path: "成本发票", path: "/合成/乙/成本发票", status: "present" },
+  ],
+  missing_subdir_count: 0,
+  hidden_subdir_count: 0,
+  taxpayer_periods: [],
+  current_taxpayer_type: "small_scale",
+  current_taxpayer_label: "小规模纳税人",
+  monitored: false,
+  monitored_subdir_key: null,
+};
+
+const DIRS_A: CompanyDirectory[] = COMPANY_A.subdirs.map((sub, idx) => ({
+  ...sub,
+  target_id: `t_a_${idx}`,
+  active: sub.key === "cost_invoice_dir",
+  read_only: sub.key !== "cost_invoice_dir",
+  projection: { summary_exists: true, summary_updated_at: "2026-11-26 10:00:00", cost_detail_exists: false, cost_detail_updated_at: "" },
+  freshness: { state: sub.key === "cost_invoice_dir" ? "monitored" : "fresh", message: "" },
+}));
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  document.body.innerHTML = "";
+  localStorage.clear();
+});
+
+describe("Phase 2 WS-11 global search & sidebar collapsed project search", () => {
+  it("runs cross-company search and locates clicked invoice in target DirectoryInvoices", async () => {
+    const requests: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        requests.push(url);
+        if (url === "/api/v1/companies") {
+          return new Response(JSON.stringify({ ok: true, revision: 2, companies: [COMPANY_A, COMPANY_B], monitored_company_id: "co_a", target_id: "t_a_0", watch_dir: "/合成/甲/成本发票", folder_roles: [] }), { status: 200 });
+        }
+        if (url.startsWith("/api/v1/workspace/search")) {
+          return new Response(JSON.stringify({
+            ok: true,
+            query: { q: "地铁" },
+            total_matches: 1,
+            truncated: false,
+            stats: { companies_scanned: 2, directories_scanned: 2, unbuilt_directories: 1, invoices_scanned: 15 },
+            directories: [{ company_id: "co_a", company_name: "甲公司", dir_key: "cf_general", dir_label: "合同归档", role: "general", role_label: "普通资料", kind: "custom", location: "inside_root", status: "present", monitored: false }],
+            projects: [{ company_id: "co_b", company_name: "乙公司", project: "地铁二期" }],
+            items: [{
+              invoice_key: "0",
+              source_file: "b_cost.xml",
+              source_path: "/合成/乙/成本发票/b_cost.xml",
+              file_type: "xml",
+              invoice_number: "26000009",
+              invoice_date: "2026-11-18",
+              seller: "北方机电",
+              buyer: "乙公司",
+              amount: "3450.00",
+              tax_rate: "13%",
+              status: "已识别",
+              project: "地铁二期",
+              company_id: "co_b",
+              company_name: "乙公司",
+              dir_key: "cost_invoice_dir",
+              dir_label: "成本发票",
+              dir_role: "cost_invoice_dir",
+              dir_role_label: "成本发票",
+              dir_kind: "standard",
+              dir_location: "inside_root",
+              monitored: false,
+              read_only: true,
+            }],
+          }), { status: 200 });
+        }
+        if (url === "/api/v1/invoice-tags") {
+          return new Response(JSON.stringify({ ok: true, revision: 1, tags: [] }), { status: 200 });
+        }
+        if (url.includes("/directories/cost_invoice_dir/invoices")) {
+          return new Response(JSON.stringify({
+            ok: true,
+            count: 1,
+            page: 1,
+            page_size: 100,
+            read_only: true,
+            directory: { ...DIRS_A[0], active: false, read_only: true },
+            items: [],
+          }), { status: 200 });
+        }
+        return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      }),
+    );
+
+    setActivePinia(createPinia());
+    const workspace = useWorkspaceStore();
+    const modal = mount(WorkspaceSearchModal, { attachTo: document.body });
+    await flushPromises();
+
+    const dialog = new DOMWrapper(document.body.querySelector('[role="dialog"]')!);
+    expect(dialog.text()).toContain("北方机电");
+    expect(dialog.text()).toContain("地铁二期");
+    expect(dialog.text()).toContain("另有 1 个目录尚未读取数据");
+
+    await dialog.get("tbody tr.ws-gsearch__row").trigger("click");
+    await flushPromises();
+
+    expect(workspace.active?.kind).toBe("directory");
+    expect(workspace.active?.companyId).toBe("co_b");
+    expect(workspace.pendingLocate?.query).toBe("26000009");
+
+    // Mounting DirectoryInvoices for co_b/cost_invoice_dir consumes pendingLocate and filters by 26000009
+    const dirInv = mount(DirectoryInvoices, { props: { company: COMPANY_B, dirKey: "cost_invoice_dir" } });
+    await flushPromises();
+    expect(workspace.pendingLocate).toBeNull();
+    expect(requests.some((u) => u.includes("/co_b/directories/cost_invoice_dir/invoices") && u.includes("keyword=26000009"))).toBe(true);
+
+    dirInv.unmount();
+    modal.unmount();
+  });
+
+  it("searches collapsed company projects in WorkspaceSidebar via project-index and auto-expands match", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        if (url === "/api/v1/workspace/project-index") {
+          return new Response(JSON.stringify({ ok: true, revision: 2, projects: { co_a: [], co_b: ["地铁二期项目"] }, truncated: false }), { status: 200 });
+        }
+        return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      }),
+    );
+
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    const router = createAppRouter(createMemoryHistory());
+    await router.push("/");
+    await router.isReady();
+    const companies = useCompaniesStore();
+    companies.list = { ok: true, revision: 2, companies: [COMPANY_A, COMPANY_B], monitored_company_id: "co_a", target_id: "t_a_0", watch_dir: "/合成/甲/成本发票", folder_roles: [] };
+
+    const wrapper = mount(WorkspaceSidebar, { global: { plugins: [pinia, router] } });
+    await flushPromises();
+
+    // Company B is collapsed initially
+    expect(wrapper.text()).not.toContain("地铁二期项目");
+    await wrapper.get('button[aria-label="搜索公司、项目或目录"]').trigger("click");
+    await flushPromises();
+    await wrapper.get('input[aria-label="搜索公司、项目或目录"]').setValue("地铁二期");
+    await flushPromises();
+
+    // Collapsed Company B automatically expands and shows the matched project; Company A is filtered out of tree
+    expect(wrapper.get("nav.ws-tree").text()).toContain("乙公司");
+    expect(wrapper.get("nav.ws-tree").text()).toContain("地铁二期项目");
+    expect(wrapper.get("nav.ws-tree").text()).not.toContain("甲公司");
+    expect(wrapper.text()).toContain("跨公司搜索发票「地铁二期」");
+    wrapper.unmount();
+  });
+});
+
+describe("Phase 2 WS-12 generic file browser and active invoice file actions", () => {
+  it("renders WorkspaceFileBrowser for general folders and supports mkdir, rename, and native trash", async () => {
+    const calls: { url: string; method: string; body?: unknown }[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init: RequestInit = {}) => {
+        const method = init.method ?? "GET";
+        const body = typeof init.body === "string" ? JSON.parse(init.body) : undefined;
+        calls.push({ url, method, body });
+        if (url.endsWith("/directories")) {
+          return new Response(JSON.stringify({ ok: true, revision: 2, company: COMPANY_A, directories: DIRS_A }), { status: 200 });
+        }
+        if (url.includes("/directories/cf_general/files?")) {
+          return new Response(JSON.stringify({
+            ok: true,
+            company_id: "co_a",
+            company_name: "甲公司",
+            dir_key: "cf_general",
+            dir_label: "合同归档",
+            dir_role: "general",
+            monitored: false,
+            can_upload: true,
+            can_mutate_existing: true,
+            subpath: "",
+            breadcrumbs: [{ name: "合同归档", subpath: "" }],
+            folders: [{ name: "2026", relative_path: "2026", mtime: "2026-11-20 10:00:00", mtime_ns: 1, is_symlink: false }],
+            files: [{ name: "采购合同.pdf", relative_path: "采购合同.pdf", ext: ".pdf", size_bytes: 2048, mtime: "2026-11-25 12:00:00", mtime_ns: 2, is_invoice_ext: true, is_symlink: false }],
+            extensions: [".pdf"],
+            total_folders: 1,
+            total_files: 1,
+            truncated: false,
+          }), { status: 200 });
+        }
+        if (url.endsWith("/files/mkdir")) {
+          return new Response(JSON.stringify({ ok: true, name: "补充协议", relative_path: "补充协议" }), { status: 200 });
+        }
+        if (url.endsWith("/files/trash/preview")) {
+          return new Response(JSON.stringify({
+            ok: true,
+            company_id: "co_a",
+            dir_key: "cf_general",
+            dir_label: "合同归档",
+            file_count: 1,
+            total_bytes: 2048,
+            items: [{ relative_path: "采购合同.pdf", name: "采购合同.pdf", size_bytes: 2048 }],
+            plan_hash: "hash_trash_1",
+          }), { status: 200 });
+        }
+        if (url.endsWith("/files/trash")) {
+          return new Response(JSON.stringify({ ok: true, trashed: 1, failed: 0, results: [], monitored: false }), { status: 200 });
+        }
+        return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      }),
+    );
+
+    setActivePinia(createPinia());
+    const panel = mount(DirectoryPanel, { props: { company: COMPANY_A, dirKey: "cf_general" }, attachTo: document.body });
+    await flushPromises();
+
+    expect(panel.text()).toContain("目录文件与导入");
+    expect(panel.text()).toContain("采购合同.pdf");
+
+    // Create subfolder
+    await panel.findAll("button").find((b) => b.text().includes("新建子文件夹"))!.trigger("click");
+    await panel.get('input[aria-label="新建子文件夹名称"]').setValue("补充协议");
+    await panel.get("form.ws-files__mkdir").trigger("submit");
+    await flushPromises();
+    expect(calls.some((c) => c.url.endsWith("/files/mkdir") && (c.body as { name?: string })?.name === "补充协议")).toBe(true);
+
+    // Native recycle-bin confirmation flow
+    await panel.findAll("button").find((b) => b.text() === "回收站")!.trigger("click");
+    await flushPromises();
+    const dialog = new DOMWrapper(document.body.querySelector('[role="dialog"]')!);
+    const confirmBtn = dialog.findAll("button").find((b) => b.text().includes("确认移入系统回收站"))!;
+    expect((confirmBtn.element as HTMLButtonElement).disabled).toBe(true);
+    await dialog.get('input[type="checkbox"]').setValue(true);
+    await confirmBtn.trigger("click");
+    await flushPromises();
+    expect(calls.some((c) => c.url.endsWith("/files/trash") && (c.body as { confirm?: boolean; plan_hash?: string })?.confirm === true && (c.body as { plan_hash?: string })?.plan_hash === "hash_trash_1")).toBe(true);
+
+    panel.unmount();
+  });
+
+  it("exposes manual edit/rename/move on active monitored invoice row and hides them on read-only directory", async () => {
+    const calls: { url: string; method: string; body?: unknown }[] = [];
+    const invoiceRow = {
+      invoice_key: "0",
+      source_file: "sample.xml",
+      source_path: "/合成/甲/成本发票/sample.xml",
+      file_type: "xml",
+      invoice_number: "11001",
+      invoice_date: "2026-11-10",
+      seller: "原销售方",
+      buyer: "甲公司",
+      amount: "500.00",
+      tax_rate: "13%",
+      status: "已识别",
+      tags: [],
+    };
+    let readOnlyMode = false;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init: RequestInit = {}) => {
+        const method = init.method ?? "GET";
+        const body = typeof init.body === "string" ? JSON.parse(init.body) : undefined;
+        calls.push({ url, method, body });
+        if (url === "/api/v1/invoice-tags") {
+          return new Response(JSON.stringify({ ok: true, revision: 1, tags: [] }), { status: 200 });
+        }
+        if (url.includes("/directories/cost_invoice_dir/invoices")) {
+          return new Response(JSON.stringify({
+            ok: true,
+            count: 1,
+            page: 1,
+            page_size: 100,
+            read_only: readOnlyMode,
+            directory: { ...DIRS_A[0], active: !readOnlyMode, read_only: readOnlyMode },
+            items: [invoiceRow],
+          }), { status: 200 });
+        }
+        if (url.endsWith("/manual-fields")) {
+          return new Response(JSON.stringify({ ok: true, updated: true, invoice_key: "0" }), { status: 200 });
+        }
+        return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      }),
+    );
+
+    setActivePinia(createPinia());
+    const activeWrap = mount(DirectoryInvoices, { props: { company: COMPANY_A, dirKey: "cost_invoice_dir" }, attachTo: document.body });
+    await flushPromises();
+
+    await activeWrap.get("tbody tr").trigger("contextmenu");
+    await flushPromises();
+    expect(activeWrap.text()).toContain("编辑手改字段…");
+    expect(activeWrap.text()).toContain("重命名原文件…");
+    expect(activeWrap.text()).toContain("移动到其他目录…");
+
+    // Open manual edit modal and save edited buyer + seller
+    await activeWrap.findAll('[role="menuitem"]').find((b) => b.text() === "编辑手改字段…")!.trigger("click");
+    await flushPromises();
+    const dialog = new DOMWrapper(document.body.querySelector('[role="dialog"]')!);
+    await dialog.get('input[aria-label="手改销售方"]').setValue("新销售方");
+    await dialog.get('input[aria-label="手改购买方"]').setValue("新购买方");
+    await dialog.get("form").trigger("submit");
+    await flushPromises();
+    const patchCall = calls.find((c) => c.url.endsWith("/api/v1/invoices/0/manual-fields") && c.method === "PATCH");
+    expect(patchCall?.body).toEqual({ fields: { 销售方: "新销售方", 购买方: "新购买方" } });
+    activeWrap.unmount();
+
+    // Non-monitored read-only directory must NOT expose manual edit / rename / move
+    readOnlyMode = true;
+    const roWrap = mount(DirectoryInvoices, { props: { company: { ...COMPANY_A, monitored: false, monitored_subdir_key: null }, dirKey: "cost_invoice_dir" }, attachTo: document.body });
+    await flushPromises();
+    await roWrap.get("tbody tr").trigger("contextmenu");
+    await flushPromises();
+    expect(roWrap.text()).not.toContain("编辑手改字段…");
+    expect(roWrap.text()).not.toContain("重命名原文件…");
+    expect(roWrap.text()).not.toContain("移动到其他目录…");
+    roWrap.unmount();
+  });
+});
