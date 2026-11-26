@@ -781,6 +781,105 @@ describe("Phase 2 WS-12 generic file browser and active invoice file actions", (
     panel.unmount();
   });
 
+  it("blocks Escape and hides header close button while FileMoveModal confirmation is running", async () => {
+    let resolveConfirm!: (res: Response) => void;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        if (url.endsWith("/directories")) {
+          return new Response(JSON.stringify({ ok: true, revision: 2, company: COMPANY_A, directories: DIRS_A }), { status: 200 });
+        }
+        if (url.includes("/directories/cf_general/files?")) {
+          return new Response(JSON.stringify({
+            ok: true,
+            company_id: "co_a",
+            company_name: "甲公司",
+            dir_key: "cf_general",
+            dir_label: "合同归档",
+            dir_role: "general",
+            monitored: false,
+            can_upload: true,
+            can_mutate_existing: true,
+            subpath: "",
+            breadcrumbs: [{ name: "合同归档", subpath: "" }],
+            folders: [],
+            files: [{ name: "待移动.pdf", relative_path: "待移动.pdf", ext: ".pdf", size_bytes: 120, mtime: "2026-11-26 10:00:00", mtime_ns: 1, is_invoice_ext: true, is_symlink: false }],
+            extensions: [".pdf"],
+            total_folders: 0,
+            total_files: 1,
+            truncated: false,
+          }), { status: 200 });
+        }
+        if (url.endsWith("/files/move/preview")) {
+          return new Response(JSON.stringify({
+            ok: true,
+            job_id: "move_busy_job",
+            company_id: "co_a",
+            dir_key: "cf_general",
+            status: "prepared",
+            conflict_policy: "reject",
+            items: [{ relative_path: "待移动.pdf", target_company_id: "co_a", target_company_name: "甲公司", target_dir_key: "expense_reimbursement_dir", target_dir_label: "费用报销", target_subpath: "", target_name: "待移动.pdf", action: "move", reason: "" }],
+            summary: { move: 1, rename: 0, conflict: 0, blocked: 0 },
+            can_confirm: true,
+            plan_hash: "hash_busy",
+          }), { status: 200 });
+        }
+        if (url.endsWith("/files/move/move_busy_job/confirm")) {
+          return await new Promise<Response>((resolve) => {
+            resolveConfirm = resolve;
+          });
+        }
+        return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      }),
+    );
+
+    setActivePinia(createPinia());
+    const companies = useCompaniesStore();
+    companies.list = { ok: true, revision: 2, companies: [COMPANY_A], monitored_company_id: "co_a", target_id: "t_a_0", watch_dir: "/合成/甲/成本发票", folder_roles: [] };
+
+    const panel = mount(DirectoryPanel, { props: { company: COMPANY_A, dirKey: "cf_general" }, attachTo: document.body });
+    await flushPromises();
+
+    await panel.findAll("button").find((b) => b.text() === "移动")!.trigger("click");
+    await flushPromises();
+    const dialog = new DOMWrapper(document.body.querySelector('[role="dialog"]')!);
+    await dialog.findAll("button").find((b) => b.text().includes("预览移动计划"))!.trigger("click");
+    await flushPromises();
+
+    // Start confirm without resolving yet
+    void dialog.findAll("button").find((b) => b.text().includes("确认移动 1 个文件"))!.trigger("click");
+    await flushPromises();
+
+    // Header close button is hidden and Escape cannot dismiss the modal while confirming
+    expect(document.body.querySelector('.ws-modal__x')).toBeNull();
+    const backdrop = new DOMWrapper(document.body.querySelector(".ws-modal-back")!);
+    await backdrop.trigger("keydown", { key: "Escape" });
+    await flushPromises();
+    expect(document.body.querySelector('[role="dialog"]')).not.toBeNull();
+
+    // Resolve confirm -> modal finishes cleanly and closes on completed move
+    resolveConfirm(new Response(JSON.stringify({
+      ok: true,
+      job_id: "move_busy_job",
+      company_id: "co_a",
+      dir_key: "cf_general",
+      status: "completed",
+      conflict_policy: "reject",
+      items: [],
+      summary: { move: 1, rename: 0, conflict: 0, blocked: 0 },
+      can_confirm: false,
+      plan_hash: "hash_busy",
+      moved: 1,
+      failed: 0,
+      unknown: 0,
+      pending: 0,
+      results: [{ relative_path: "待移动.pdf", target_company_id: "co_a", target_dir_key: "expense_reimbursement_dir", target_name: "待移动.pdf", status: "moved", message: "已移动" }],
+    }), { status: 200 }));
+    await flushPromises();
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull();
+    panel.unmount();
+  });
+
   it("exposes manual edit/rename/move on active monitored invoice row and hides them on read-only directory", async () => {
     const calls: { url: string; method: string; body?: unknown }[] = [];
     const invoiceRow = {

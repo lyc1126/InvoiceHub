@@ -61,7 +61,8 @@ async function submit(): Promise<void> {
   <WsModal
     title="编辑手改字段"
     :subtitle="`源文件：${row.source_file}（仅修改汇总与受保护手改记录，不改动源发票文件）`"
-    @close="$emit('close')"
+    :closable="!saving"
+    @close="!saving && emit('close')"
   >
     <form class="manual-edit-form" @submit.prevent="submit">
       <p v-if="error" class="banner banner--error" role="alert">{{ error }}</p>

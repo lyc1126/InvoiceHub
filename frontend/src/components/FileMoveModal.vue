@@ -159,7 +159,8 @@ async function checkLostJob(): Promise<void> {
     title="移动到其他目录"
     :subtitle="`已选 ${relativePaths.length} 个文件；先预览计划，确认后执行且绝不覆盖同名文件。`"
     :wide="true"
-    @close="$emit('close')"
+    :closable="!confirming && !checkingJob"
+    @close="!confirming && !checkingJob && emit('close')"
   >
     <div class="move-modal">
       <p v-if="error" class="banner banner--error" role="alert">{{ error }}</p>
@@ -260,7 +261,7 @@ async function checkLostJob(): Promise<void> {
         >
           {{ confirming ? "移动中…" : `确认移动 ${plan.items.length} 个文件` }}
         </button>
-        <button type="button" :disabled="confirming" @click="$emit('close')">关闭</button>
+        <button type="button" :disabled="confirming || checkingJob" @click="emit('close')">关闭</button>
       </div>
     </div>
   </WsModal>

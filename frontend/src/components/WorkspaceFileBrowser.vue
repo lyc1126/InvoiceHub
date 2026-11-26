@@ -641,7 +641,7 @@ onBeforeUnmount(() => {
       </table>
     </div>
 
-    <WsModal v-if="renameTarget" title="重命名文件" :subtitle="`当前文件：${renameTarget.relative_path}`" @close="renameTarget = null">
+    <WsModal v-if="renameTarget" title="重命名文件" :subtitle="`当前文件：${renameTarget.relative_path}`" :closable="!renameBusy" @close="!renameBusy && (renameTarget = null)">
       <form class="ws-files__modal-form" @submit.prevent="submitRename">
         <p v-if="renameError" class="banner banner--error" role="alert">{{ renameError }}</p>
         <label>
@@ -665,7 +665,7 @@ onBeforeUnmount(() => {
       @moved="onMoved"
     />
 
-    <WsModal v-if="trashPreview" title="移入系统回收站" :subtitle="`目录：${trashPreview.dir_label}`" @close="closeTrashModal">
+    <WsModal v-if="trashPreview" title="移入系统回收站" :subtitle="`目录：${trashPreview.dir_label}`" :closable="!trashBusy && !trashChecking" @close="closeTrashModal">
       <div class="ws-files__modal-form">
         <p v-if="trashError" class="banner banner--error" role="alert">{{ trashError }}</p>
         <p>

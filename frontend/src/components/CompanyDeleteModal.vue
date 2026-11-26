@@ -86,6 +86,7 @@ async function submitTrash(): Promise<void> {
   <WsModal
     :title="`移除或删除公司工作区 · ${company.name}`"
     subtitle="请选择「仅从清单移除」或「将公司资料夹移入系统回收站」"
+    :closable="!busy"
     @close="!busy && emit('close')"
   >
     <div class="company-delete-body">
