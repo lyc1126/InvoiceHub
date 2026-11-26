@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import Callable
 
 from invoice_hub.domain.models import TargetProfile, utc_now_text
-from invoice_hub.platform import HostRpcCommand, host_rpc, pick_directory
+from invoice_hub.platform import HostRpcCommand, host_rpc, open_local_path, pick_directory
 from invoice_hub.projections.cost_analysis import TAXPAYER_LABELS
 from invoice_hub.services.dossier import BUSINESS_DOSSIER_DIR_HINTS
 from invoice_hub.services.company_directory_guard import (
@@ -47,7 +47,11 @@ from invoice_hub.services.company_folders import (
     FOLDER_ROLES,
     MAX_CUSTOM_FOLDERS,
     CompanyFolderService,
+    _is_forbidden_system_root,
+    _paths_overlap,
     clean_folder_label,
+    clean_folder_role,
+    clean_single_folder_name,
     folder_roles_payload,
 )
 from invoice_hub.targets.paths import serialize_config_path
@@ -562,7 +566,7 @@ class CompanyRegistryService:
                 key: ("user" if key in (payload.get("subdirs") or {}) else detected[key][1]) for key in STANDARD_SUBDIRS
             }
             now = utc_now_text()
-            company = {
+            company: dict = {
                 "id": f"co_{uuid.uuid4().hex[:12]}",
                 "name": name,
                 "root_dir": root_dir,
@@ -571,12 +575,65 @@ class CompanyRegistryService:
                 "created_at": now,
                 "updated_at": now,
             }
+            raw_hidden = payload.get("hidden_subdirs")
+            if raw_hidden is not None:
+                if (
+                    not isinstance(raw_hidden, list)
+                    or any(not isinstance(item, str) or item not in STANDARD_SUBDIRS for item in raw_hidden)
+                    or len(set(raw_hidden)) != len(raw_hidden)
+                ):
+                    raise _invalid("隐藏子目录列表无效。", "hidden_subdirs")
+                if raw_hidden:
+                    company["hidden_subdirs"] = [key for key in STANDARD_SUBDIRS if key in raw_hidden]
+            raw_custom = payload.get("custom_folders")
+            if raw_custom is not None:
+                if not isinstance(raw_custom, list) or len(raw_custom) > MAX_CUSTOM_FOLDERS:
+                    raise _invalid(f"自定义文件夹最多 {MAX_CUSTOM_FOLDERS} 个。", "custom_folders")
+                built_custom = []
+                for idx, item in enumerate(raw_custom):
+                    if not isinstance(item, dict):
+                        raise _invalid("自定义文件夹条目格式错误。", f"custom_folders.{idx}")
+                    rel = clean_relative_subdir(item.get("relative_path"), f"custom_folders.{idx}.relative_path")
+                    label = clean_folder_label(item.get("label") or rel, f"custom_folders.{idx}.label")
+                    role = clean_folder_role(item.get("role"), f"custom_folders.{idx}.role")
+                    built_custom.append({
+                        "id": f"dir_{uuid.uuid4().hex[:12]}",
+                        "label": label,
+                        "role": role,
+                        "location": "inside_root",
+                        "relative_path": rel,
+                        "external_path": "",
+                        "created_at": now,
+                        "updated_at": now,
+                    })
+                if built_custom:
+                    company["custom_folders"] = built_custom
+            try:
+                self._validate_optional_folder_fields(company)
+            except ValueError as exc:
+                raise _invalid("自定义文件夹路径与标准目录重复或互相嵌套。", "custom_folders") from exc
             registry["companies"].append(company)
             self._save(registry)
             self.repo.append_event("companies.created", {"company_id": company["id"], "revision": registry["revision"]})
         result = self.get_company(company["id"])
         result["subdir_sources"] = sources
         return self._after_write(result, taxpayer_before)
+
+    def open_company_root(self, company_id: str) -> dict:
+        with self._lock:
+            registry = self._load()
+            company = self._find(registry, company_id)
+            root = self._registered_root(company["root_dir"])
+            if external_path_snapshot(root)[1][0] != "present":
+                raise CompanyRegistryError(
+                    "COMPANY_ROOT_UNAVAILABLE", "该公司资料夹在硬盘上不存在、是链接或不可用，无法打开。", status_code=409
+                )
+        try:
+            open_local_path(root)
+        except OSError as exc:
+            raise CompanyRegistryError("COMPANY_FOLDER_IO_ERROR", f"打开公司资料夹失败：{exc.strerror or exc}", status_code=409) from exc
+        self.repo.append_event("companies.root_opened", {"company_id": company_id})
+        return {"ok": True, "opened": True, "company_id": company_id, "path": str(root)}
 
     def update_company(self, company_id: str, payload: object) -> dict:
         payload = payload if isinstance(payload, dict) else {}
@@ -588,8 +645,65 @@ class CompanyRegistryService:
             updated = dict(company)
             if "name" in payload:
                 updated["name"] = self._clean_name(payload.get("name"), registry, company_id)
-            if "root_dir" in payload:
-                updated["root_dir"] = self._clean_root(payload.get("root_dir"), registry, company_id)
+            rename_root_on_disk = bool(payload.get("rename_root_on_disk"))
+            if rename_root_on_disk and "root_dir" in payload:
+                raise _invalid("同时修改公司根目录路径与重命名硬盘文件夹不能合并提交，请分开操作。", "root_dir")
+            disk_commit = lambda: None
+            disk_rollback = lambda: None
+            pending_disk_rename: tuple[Path, Path] | None = None
+            if rename_root_on_disk:
+                new_root_name = clean_single_folder_name(payload.get("new_root_name"), "new_root_name")
+                old_root = self._registered_root(company["root_dir"])
+                if external_path_snapshot(old_root)[1][0] != "present":
+                    raise CompanyRegistryError(
+                        "COMPANY_ROOT_UNAVAILABLE", "原公司资料夹不存在、是链接或不可用，无法重命名硬盘文件夹。", status_code=409
+                    )
+                new_root = old_root.parent / new_root_name
+                if str(new_root) != str(old_root):
+                    if _is_forbidden_system_root(old_root, self.config.root_dir) or _is_forbidden_system_root(new_root, self.config.root_dir):
+                        raise _invalid("受保护的系统、用户或程序根目录禁止重命名。", "new_root_name")
+                    watch_dir = Path(self.active_profile.watch_dir)
+                    if _paths_overlap(old_root, watch_dir) or _paths_overlap(new_root, watch_dir):
+                        raise CompanyRegistryError(
+                            "COMPANY_FOLDER_MONITORED",
+                            "该公司下有目录正在监控，请先切换监控目录后再重命名硬盘公司文件夹。",
+                            status_code=409,
+                        )
+                    case_only = False
+                    if new_root.exists() or new_root.is_symlink():
+                        try:
+                            case_only = new_root.samefile(old_root) and new_root.name != old_root.name
+                        except OSError:
+                            case_only = False
+                        if not case_only:
+                            raise _invalid(f"目标文件夹名已存在：{new_root_name}", "new_root_name")
+                    stored_new_root = self._clean_root(str(new_root), registry, company_id, allow_missing=True)
+                    for ext in company.get("custom_folders") or []:
+                        if ext.get("location") != "external":
+                            continue
+                        ext_path = resolve_external_folder(self.config.root_dir, ext["external_path"])
+                        if _paths_overlap(new_root, ext_path):
+                            raise _invalid(
+                                f"新公司根路径不能与本公司外部文件夹“{ext['label']}”重叠。",
+                                "new_root_name",
+                            )
+                    # Defer the actual filesystem rename until every submitted field (subdirs,
+                    # taxpayer_periods, etc.) has been validated, so invalid requests never rename disk state.
+                    pending_disk_rename = (old_root, new_root)
+                    updated["root_dir"] = stored_new_root
+            elif "root_dir" in payload:
+                new_stored_root = self._clean_root(payload.get("root_dir"), registry, company_id)
+                resolved_new = self._resolve_root(new_stored_root)
+                for ext in company.get("custom_folders") or []:
+                    if ext.get("location") != "external":
+                        continue
+                    ext_path = resolve_external_folder(self.config.root_dir, ext["external_path"])
+                    if _paths_overlap(resolved_new, ext_path):
+                        raise _invalid(
+                            f"新的公司根目录不能与本公司外部文件夹“{ext['label']}”重叠。",
+                            "root_dir",
+                        )
+                updated["root_dir"] = new_stored_root
             if "subdirs" in payload:
                 next_subdirs = self._clean_subdirs(payload.get("subdirs"), company["subdirs"])
                 for key, rel in next_subdirs.items():
@@ -607,10 +721,22 @@ class CompanyRegistryService:
             if "taxpayer_periods" in payload:
                 updated["taxpayer_periods"] = clean_taxpayer_periods(payload.get("taxpayer_periods"))
             if updated != company:
-                updated["updated_at"] = utc_now_text()
-                company.clear()
-                company.update(updated)
-                self._save(registry)
+                if pending_disk_rename is not None:
+                    disk_commit, disk_rollback = self.folders.rename_company_root_with_overrides(
+                        company, pending_disk_rename[0], pending_disk_rename[1]
+                    )
+                previous_snapshot = dict(company)
+                try:
+                    updated["updated_at"] = utc_now_text()
+                    company.clear()
+                    company.update(updated)
+                    self._save(registry)
+                except Exception:
+                    company.clear()
+                    company.update(previous_snapshot)
+                    disk_rollback()
+                    raise
+                disk_commit()
                 self.repo.append_event("companies.updated", {"company_id": company_id, "revision": registry["revision"]})
         return self._after_write(self.get_company(company_id), taxpayer_before)
 

@@ -1,5 +1,22 @@
 # InvoiceHub 注释与设计原因地图
 
+## 2026-11-26 工作区 Phase 2：只读检索不建状态目录与无依赖二进制流导入
+
+| 文件与符号 | 原因与不变量 | 守护 |
+|---|---|---|
+| `services/workspace_search.py::WorkspaceSearchService`、`api/routes/workspace_search.py` | 跨公司全局搜索与侧栏项目索引发生在普通 GET 请求中，绝不能扫描源盘或构造 `MonitorState`（否则会为未同步目录凭空创建 `runtime/targets/<id>` 并拖慢甚至破坏只读契约）；仅通过 `generations.resolve(...).is_file()` 读取已建投影，并从 `项目归属.json.invoices` 的 `{project, updated_at}` 字典安全提取项目名。 | `test_workspace_search_and_files.py`、`frontend/tests/workspace-phase2.spec.ts` |
+| `services/workspace_files.py::WorkspaceFileService`、`api/routes/workspace_files.py::_read_bounded_stream` | 生产锁定运行时（macOS/Windows `requirements/*.lock`）不包含 `python-multipart`；文件上传复用 `request.stream()` 有界二进制流（单文件 50 MiB 上限）与 `O_EXCL` 无覆盖写入，无需新增任何第三方依赖，且批量上传中途失败时前端立即从待导入队列剔除已成功文件并刷新剩余预览，防止重试重复生成副本。跨设备或无硬链支持的文件系统回退移动直接走 `O_CREAT | O_EXCL | O_NOFOLLOW`，绝不回退到会覆盖目标的 `os.rename()`。目录列表先应用文件名/扩展名筛选再受 2000 条响应上限截断（另设 10 万扫描安全阀），保证大目录超前 2000 项文件仍可通过检索直达。单文件纯大小写重命名必须先以 `lstat` + `os.path.samestat` 核对目标不是链接且确为同一 inode 才允许 `os.rename`，防止大小写敏感盘上静默覆盖同名异大小写文件。跨目录移动与回收站计划均将解析后的源/目标目录路径哈希与 `(dev, ino)` 身份绑定进 `plan_hash` 并在锁内复核，执行期间逐文件追加 fsynced `.jsonl` 意图与观察日志、中断由只读 `GET` 回放恢复且不重做；跨目录移动已手改发票时必须先持久化目标 `manual_overrides.json`（目标状态目录尚未初始化时为此显式写操作创建并纳入排好序的双侧锁）再删除源条目，防止用户手改字段静默丢失。`DirectoryPanel.vue` 区分 `INVOICE_DIRS` 与 `REFRESHABLE_ROLES`，使 `general` 普通资料目录默认呈现 `WorkspaceFileBrowser` 而非空发票表，同时发票目录仍以 `DirectoryInvoices` 为默认视图且非监控发票目录继续在后端 `_assert_mutate_allowed` 与前端 `sourceActions` 双层守卫下保持只读。 | `test_workspace_search_and_files.py`、`frontend/tests/workspace-phase2.spec.ts`、`test_appstate_service_wiring.py` |
+| `monitoring/state.py::EDITABLE_FIELDS` / `MANUAL_OVERRIDE_FIELDS`、`services/invoice_list.py::update_manual_fields`、`frontend/src/components/InvoiceManualEditModal.vue` | `MONITORING.md` 明确将 Excel 自动同步（`sync_excel_manual_edits`）限制为 `销售方/开票金额/发票号码` 三字段，避免工作簿其它列差异被静默提升为权威手改；显式 API 手改编辑器使用独立的六字段常量 `MANUAL_OVERRIDE_FIELDS`，且前端弹窗同时提交展示行的 `source_path` 与 `target_id` 并在 `sync_write_lock` 内校验，防止后台同步增删行导致 `invoice_key` 偏移而误改其它发票。 | `test_workspace_search_and_files.py`、`frontend/tests/workspace-phase2.spec.ts` |
+| `services/company_registry.py::CompanyRegistryService.update_company` | 合并提交公司根目录硬盘改名与 `subdirs`/`taxpayer_periods` 更新时，必须先完整校验全部字段（含自定义目录冲突与重复纳税人月份）再执行 `rename_company_root_with_overrides`，并将后续全部写盘路径纳入回滚保护，避免校验报错绕过回滚导致硬盘改名后清单仍指向旧路径。 | `test_company_crud_and_search.py` |
+
+## 2026-11-26 工作区 Phase 1：公司级 CRUD 守卫与查询契约兼容
+
+| 文件与符号 | 原因与不变量 | 守护 |
+|---|---|---|
+| `services/invoice_list.py::filter_invoice_items` / `sort_invoice_items` 与 `frontend/src/components/DirectoryInvoices.vue::queryFilters` | 经典 `/api/v1/invoices` 契约测试明确锁定 `search_scope=invoice|filename|all` 仅按单子串匹配公告字段（不搜 `buyer`、不跨字段分词），而工作区开具发票与深度查询必须支持搜购买方、项目、金额、税率及空格多词 AND；保留三项旧 scope 语义不变并新增 `workspace`/`party`/`buyer` 范围，在消除真实查询缺陷的同时零破坏经典契约。`DirectoryInvoices.vue` 排序为 `invoice_date` 时仅把 `date_sort` 放在末尾且省略冗余 `sort_by`，维持既有 `endsWith("date_sort=asc")` 前端契约并仅在按金额排序时发 `sort_by=amount`。 | `test_api_contract.py`、`test_company_crud_and_search.py`、`frontend/tests/directory-preview.spec.ts`、`frontend/tests/workspace-crud-search.spec.ts` |
+| `services/company_folders.py::_company_trash_plan` / `trash_company` / `rename_company_root_with_overrides` | 外部导入目录（`location="external"`）物理上不属于公司根目录树；公司级回收站删除必须显式列示并完全隔离外部目录，绝不能误删外部文件，且仅调用原生 `move_to_trash` 禁止永久删除降级。公司根目录硬盘重命名会导致所有公司内子目录路径及对应 `TargetProfile.id` 同步变化，必须一次性锁齐全部已有状态子目录并迁移每份 `manual_overrides.json`，登记写盘失败时完整回滚改名与覆盖，防止用户手改字段丢失。 | `test_company_crud_and_search.py`、`frontend/tests/workspace-crud-search.spec.ts` |
+| `services/company_detection.py::_inspect` / `register` 与 `frontend/src/components/DirectoryInvoices.vue`（`effectiveFolderRole` 与 `sourceActions` 门禁） | 登记已有公司资料夹顺带发现的 `extra_folders` 必须排除点目录、内部做账目录及链接并将其实时目录身份纳入 `plan_hash`，防止检测与确认之间被替换为软链接。工作区自定义进项/销项文件夹须通过 `effectiveFolderRole(subdir, dirKey)` 而非硬编码标准键启用购买方提示和项目列，且非监控目录严格通过 `sourceActions`（`!read_only`）屏蔽单行预览/打开原文件/在文件夹中显示，遵守 `BOOKKEEPING.md` 只读行边界。 | `test_company_crud_and_search.py`、`frontend/tests/workspace-crud-search.spec.ts`、`frontend/tests/directory-preview.spec.ts` |
+
 ## 2026-11-25 公司自定义与默认文件夹全生命周期及基准功能指向
 
 | 文件与符号 | 原因与不变量 | 守护 |

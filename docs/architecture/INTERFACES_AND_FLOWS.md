@@ -1,5 +1,43 @@
 # InvoiceHub 接口与运行流程
 
+## 2026-11-26 工作区 Phase 2：跨公司全局检索（WS-11）与文件级增改移/通用浏览（WS-12）
+
+- **WS-11 只读全局检索与项目索引**（`api/routes/workspace_search.py` → `CompanyViewService.search`）：
+  | 方法与路径 | 契约 |
+  |---|---|
+  | `GET /api/v1/workspace/search` | 支持 `q`（或 `keyword`）、`search_scope`（`workspace`/`party`/`buyer`/`invoice`/`filename`/`all`）、`scope`（`all`/`company`）、`company_id`、`role`、`date_from`/`date_to`、`amount_min`/`amount_max`、`tax_rate`、`project`、`tag`、`sort_by`/`sort_dir`、`limit`（1..200）；严格只读已有投影与公司项目/标签元数据，绝不扫描磁盘、不建 `runtime/targets/<id>`、不切 `watch_dir`；返回 `items`（含 `company_id`/`dir_key`/`monitored`/`read_only`）、`directories`、`projects`、`stats`（含 `unbuilt_directories`）与 `truncated`。 |
+  | `GET /api/v1/workspace/project-index` | 返回 `{revision, projects: {company_id: [project_names...]}}`，仅读已有 `项目归属.json` 与已建明细 CSV，供侧栏搜索折叠公司的项目。 |
+- **WS-12 工作区文件级增删改查与 6 字段手改**（`api/routes/workspace_files.py` → `CompanyViewService.files`，写路由统一同源校验 + 线程池执行）：
+  | 方法与路径 | 契约 |
+  |---|---|
+  | `GET /api/v1/companies/{company_id}/directories/{key}/files` | 有界单层目录浏览（`subpath`、`q`、`ext`、`sort_by`、`sort_dir`，单层上限 2000 项），返回 `breadcrumbs`/`folders`/`files`/`can_mutate_existing`，标记并禁用符号链接。 |
+  | `POST /api/v1/companies/{company_id}/directories/{key}/files/mkdir` | 经 `company_directory_guard.create_empty_subdir` 在 `subpath` 下创建空子文件夹，拒绝 `..`、Windows 保留名、冲突与链接。 |
+  | `POST /api/v1/companies/{company_id}/directories/{key}/files/open` | 在系统打开文件或显示所在位置（`reveal: bool`）；拒绝链接，非监控发票目录返回 409 `COMPANY_DIRECTORY_READ_ONLY`。 |
+  | `POST /api/v1/companies/{company_id}/directories/{key}/files/import-preview` | 零写冲突预览：返回每文件名在 `rename`/`skip` 策略下的 `action` 与目标文件名。 |
+  | `POST /api/v1/companies/{company_id}/directories/{key}/files/upload` | 零额外依赖有界二进制流上传（`application/octet-stream`，单文件上限 50 MiB，复用 `request.stream()` 与 `O_EXCL` 绝不覆盖已有文件）。 |
+  | `POST /api/v1/companies/{company_id}/directories/{key}/files/rename` | 单文件无覆盖安全重命名，同步迁移 `manual_overrides.json`；非监控发票目录返回 409。 |
+  | `POST /api/v1/companies/{company_id}/directories/{key}/files/move/preview`、`POST /api/v1/companies/{company_id}/directories/{key}/files/move/{job_id}/confirm`、`GET /api/v1/companies/{company_id}/directories/{key}/files/move/{job_id}` | 跨公司/跨目录文件移动：先将源/目标目录路径哈希与 `(dev, ino)` 身份及源签名绑定进 `plan_hash` 并持久化计划（`runtime/local_state/workspace-moves/<job_id>.json`），显式确认在锁内复核目录身份后写 `running` 并按每文件追加 fsynced `.jsonl` 意图与观察日志再无覆盖移动、先持久化目标 `manual_overrides.json`（目标状态目录尚未初始化时为此显式写操作创建）再清理源条目；失联/中断只读 `GET` 回放 `.jsonl` 恢复逐文件结果，不自动重试。 |
+  | `POST /api/v1/companies/{company_id}/directories/{key}/files/trash/preview`、`POST /api/v1/companies/{company_id}/directories/{key}/files/trash/{job_id}/confirm`、`GET /api/v1/companies/{company_id}/directories/{key}/files/trash/{job_id}` | 两步确认原生回收站删除：预览绑定源目录身份并生成持久化任务（`runtime/local_state/workspace-trash/<job_id>.json`）；确认时在锁内先复核目录身份与全部签名再写 `running` 与逐文件 fsynced 意图/观察日志（`.jsonl`）后调用 `move_to_trash`（失败即停止、严禁永久删除降级）；重复确认或失联中断绝不重做，提供只读 `GET` 回执查询；非监控发票目录返回 409。 |
+  | `PATCH /api/v1/invoices/{invoice_key}/manual-fields` | 受保护手改字段（显式 API 编辑）扩展至 6 项（`销售方`、`购买方`、`开票金额`、`发票号码`、`开票时间`、`税率`），更新时合并保留既有手改字段；工作区手改弹窗同时提交 `source_path` 与 `target_id` 并在写锁内校验，行漂移或切换目录返回 409 拒绝误改。Excel 自动同步（`sync_excel_manual_edits`）仍严格限定为 `MONITORING.md` 原 3 字段（`销售方/开票金额/发票号码`）。 |
+
+## 2026-11-26 工作区 Phase 1：公司级增删改查闭环与单目录深度查询增强
+
+- **公司级 CRUD 与打开本地目录路由**（`api/routes/companies.py`、`api/routes/company_folders.py`，沿用同一 RLock、revision CAS 与同源校验）：
+  | 方法与路径 | 契约 |
+  |---|---|
+  | `POST /api/v1/companies/{company_id}/trash-preview` | 带 `revision` 有界扫描公司根目录内容（文件/子目录数与字节数、`truncated`）并列出 `external_folders`（明确不受影响）；阻断缺失/链接目录、监控中目录、系统根/用户主目录/程序根或跨公司重叠，返回绑定根身份的 `plan_hash`。 |
+  | `POST /api/v1/companies/{company_id}/trash` | 带 `revision`、`plan_hash`、`confirm: true`；复核根目录与全部外部目录实时身份、按 ID 序获取公司内已有状态子目录写锁，调用原生 `move_to_trash` 移入系统回收站/废纸篓并从 `companies.json` 移除公司登记（严禁永久删除降级，外部导入文件夹零改动）。 |
+  | `POST /api/v1/companies/{company_id}/open-root` | 验证公司根目录为真实非链接目录后调用 `open_local_path` 在系统文件管理器中打开，并写 `companies.root_opened` 诊断日志。 |
+  | `POST /api/v1/companies/{company_id}/folders/{key}/open` | 验证目标标准或自定义目录为真实非链接目录后调用 `open_local_path` 打开，写 `companies.folder_opened`。 |
+  | `PATCH /api/v1/companies/{company_id}` | 原 `root_dir` 重定位补齐与本公司 `external` 自定义目录重叠检查；新增可选 `rename_root_on_disk: true` + `new_root_name`（与修改 `root_dir` 互斥，监控中或路径冲突拒绝，原子重命名公司根文件夹并同步迁移全部公司内子目录 `manual_overrides.json`，清单写失败自动回滚）。 |
+  | `POST /api/v1/companies/setup-jobs` | 支持可选 `selected_standard_keys`（未选标准目录不建盘并记入 `hidden_subdirs`）与 `custom_folders`（`[{label, relative_path, role}]`，纳入同一 `plan_hash` 与无链接空目录创建）；缺省参数与旧版 100% 兼容。 |
+  | `POST /api/v1/companies/detect` 与 `POST /api/v1/companies` | `detect` 新增扫描根内未被 6 类标准映射占用的真实一级子目录返回 `extra_folders`（跳过点目录、内部做账目录及链接，绑定 `extra_identities` 入 `plan_hash`）；登记时支持可选 `import_extra_folders` 以 `inside_root` 自定义目录一并纳入（零文件移动）。 |
+- **单目录深度查询与排序增强**（`GET /api/v1/invoices` 与 `GET /api/v1/companies/{company_id}/directories/{key}/invoices`）：
+  - 保留经典 `search_scope=invoice|filename|all` 单串子串兼容契约；新增 `search_scope=workspace|party|buyer`，支持空格分词多词 AND 匹配（`workspace` 覆盖销售方、购买方、票号、文件名、项目、金额、税率及标准百分数、大类、业务类型与开票日期；`party` 覆盖销售方与购买方；`buyer` 覆盖购买方）。
+  - 修复 `date_from`/`date_to` 放行空日期行的缺陷（指定日期边界时严格排除空/非法日期）。
+  - 新增 `amount_min` / `amount_max`（精确 `Decimal` 校验，非法或下限大于上限返回 HTTP 422）、`tax_rate`（支持标准百分数与 `__missing__`）、`project`（支持精确匹配与 `__unassigned__`）、`tag=__untagged__`、`sort_by`（`invoice_date`/`amount`/`seller`/`buyer`/`source_file`）与 `sort_dir`（`asc`/`desc`，兼容旧 `date_sort`，缺失值统一排尾）。
+  - `directory_invoices` 在过滤前全量汇总目录级 `filter_options`（`invoice_types`、`business_types`、`tax_rates`、`projects`、`file_types`）返回给前端高级筛选栏；经典 `/api/v1/invoices` 保持原响应键集合不变。
+
 ## 2026-11-25 公司自定义与默认文件夹全生命周期管理及基准功能指向
 
 公司清单路由新增 `api/routes/company_folders.py`（共享 `CompanyRegistryService` 的 RLock、revision CAS、同源校验与线程池执行），在保持单一活动 `watch_dir` 与公司主账簿/成本/凭证草稿口径隔离的前提下，开放自定义与默认文件夹的全生命周期管理及以默认 6 类目录为基准的功能指向（`cost_invoice_dir`、`issued_invoice_dir`、`expense_reimbursement_dir`、`bank_flow_dir`、`input_deduction_dir`、`payroll_social_dir`、`general`）：

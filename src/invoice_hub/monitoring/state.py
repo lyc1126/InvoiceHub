@@ -32,7 +32,10 @@ MANUAL_OVERRIDES_FILE_NAME = "manual_overrides.json"
 STATUS_FILE_NAME = "monitor_status.json"
 SYNC_PROGRESS_FILE_NAME = "sync_progress.json"
 BUSINESS_LOG_NAME = "文件变化监控日志.txt"
+# MONITORING.md strictly limits Excel workbook auto-sync to the original three fields;
+# explicit API manual edits (WS-12) may store up to six protected fields in manual_overrides.json.
 EDITABLE_FIELDS = ("销售方", "开票金额", "发票号码")
+MANUAL_OVERRIDE_FIELDS = ("销售方", "购买方", "开票金额", "发票号码", "开票时间", "税率")
 SYNC_WRITE_LOCK_POLL_SECONDS = 0.1
 
 
@@ -602,7 +605,7 @@ class MonitorState:
             source_path = raw.get("source_path") or key
             normalized_key = canonical_path(source_path)
             fields = raw.get("fields") if isinstance(raw.get("fields"), dict) else {}
-            cleaned = {field: str(fields.get(field) or "").strip() for field in EDITABLE_FIELDS if field in fields}
+            cleaned = {field: str(fields.get(field) or "").strip() for field in MANUAL_OVERRIDE_FIELDS if field in fields}
             if cleaned:
                 items[normalized_key] = {"source_path": normalized_key, "fields": cleaned, "updated_at": str(raw.get("updated_at") or "")}
         return items
@@ -622,7 +625,7 @@ class MonitorState:
                 continue
             changed = False
             for field, value in fields.items():
-                if field in EDITABLE_FIELDS and str(row.get(field) or "") != str(value or ""):
+                if field in MANUAL_OVERRIDE_FIELDS and str(row.get(field) or "") != str(value or ""):
                     row[field] = str(value or "")
                     changed = True
             if changed:

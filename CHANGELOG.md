@@ -2,6 +2,43 @@
 
 ## 未发布
 
+### 2026-11-26 工作区 Phase 2：跨公司全局检索（WS-11）与文件级增删改查/通用文件视图（WS-12）
+
+- 需求与起点：基于同一工作树 `InvoiceHub-workspace-crud-search`（分支 `codex/workspace-crud-search-p1`）的 Phase 1 本地检查点（`0669348`），按用户确认继续落地 Phase 2 两项核心能力：（1）`WS-11` 跨目录/跨公司只读全局检索、侧栏折叠公司项目检索与点击命中自动跳转定位；（2）`WS-12` 工作区通用文件与子文件夹浏览、拖放/选择文件无覆盖导入、活动监控目录单票 6 字段手改/安全改名与跨目录计划确认移动归档，以及原生回收站文件删除。
+- 采用方案：
+  - **WS-11 后端与前端**：
+    - 新增 `src/invoice_hub/services/workspace_search.py`（组合于 `CompanyViewService.search`，零改动 `AppState`）与 `src/invoice_hub/api/routes/workspace_search.py`：提供只读 `GET /api/v1/workspace/search`（跨公司/单公司、多词 AND、购销方/项目/金额/税率/日期/角色组合检索，严格仅读已有投影与 `项目归属.json`/`发票标签.json`，有界上限保护，绝不扫描磁盘、不建 `runtime/targets/<id>`、不切 `watch_dir`，同时返回匹配目录/项目与未汇总目录计数）及 `GET /api/v1/workspace/project-index`（为侧栏折叠公司提供零写盘项目索引）。
+    - 新增 `frontend/src/components/WorkspaceSearchModal.vue`（挂载于 `App.vue`，支持 `⌘K / Ctrl+K` 与侧栏按钮直达），点击发票命中调用 `stores/workspace.ts::locateInDirectory` 自动打开目标目录并由 `DirectoryInvoices.vue` 消费 `pendingLocate` 自动带入定位过滤；升级 `WorkspaceSidebar.vue` 支持侧栏检索自动加载折叠公司项目、自动展开并过滤匹配子目录/项目，以及一键跳转跨公司全局搜发票；`CompanyBankLedger.vue` 新增银行账户与期间表内快速过滤。
+  - **WS-12 后端与前端**：
+    - `monitoring/state.py`、`services/invoice_list.py`、`api/routes/invoices.py` 与 `InvoiceManualEditModal.vue`：保持 `EDITABLE_FIELDS` 严格为 `MONITORING.md` 原 3 字段（`销售方/开票金额/发票号码`）供 Excel 自动同步使用，新增独立 `MANUAL_OVERRIDE_FIELDS` 6 字段供显式 API 手改使用并在增量重建中合并保留；工作区手改弹窗提交展示行 `source_path` 与 `target_id` 并在写锁内校验，行漂移或切目录返回 409 拒改。
+    - 新增 `src/invoice_hub/services/workspace_files.py`（组合于 `CompanyViewService.files`）与 `src/invoice_hub/api/routes/workspace_files.py`：实现目录与嵌套子目录有界浏览（先应用文件名/扩展名筛选再受单层 2000 项上限截断，保证大目录超窗文件可检索，并标记禁用符号链接）、`create_empty_subdir` 安全新建子文件夹、导入冲突预览（`import-preview`）与零额外依赖有界二进制流上传（`upload`，复用 `request.stream()` 与 `O_EXCL` 绝不覆盖同名文件，支持 `rename`/`skip`，批量中途失败自动剔除已完成文件并刷新剩余队列预览防重试重复）、单文件安全重命名（无覆盖，`lstat` + `samestat` 校验纯大小写改名不覆盖大小写敏感盘上的独立文件，并自动迁移 `manual_overrides.json`、失败回滚文件名）、跨目录移动（`move/preview` 将源/目标目录路径哈希与 `(dev, ino)` 身份绑定进 `plan_hash` → 持久化意图日志 `workspace-moves/<job_id>.json` + 逐文件 fsynced `.jsonl` 意图与观察 → 锁内复核目录身份及签名后同盘 `os.link` 或跨盘 `O_CREAT|O_EXCL|O_NOFOLLOW` 无覆盖原子移动，绝不回退覆盖式 `os.rename()` + 目标状态目录按需初始化并先持久化目标 `manual_overrides.json` 再删源条目 + 失败回滚文件 + 中断只读 `GET` 回放结果）及原生回收站删除（`trash/preview` 绑定源目录身份 → 持久化任务 `workspace-trash/<job_id>.json` + `.jsonl` 逐文件 fsynced 意图/观察 → `trash/{job_id}/confirm` 失败即止严禁永久删除降级，重复确认/中断绝不重做，提供只读 `GET .../trash/{job_id}` 恢复结果）；严格遵守 `BOOKKEEPING.md`，非监控发票目录拒绝打开/重命名/移动/删除现有原票。
+    - `src/invoice_hub/services/company_registry.py::update_company`：PR #35 自动评审 P1 修复，先完整校验 `subdirs` 与 `taxpayer_periods` 全部提交字段后再执行公司根硬盘重命名，并将后续保存路径全纳入回滚保护，防止校验报错绕过回滚导致目录与清单失配。
+    - 新增 `frontend/src/components/WorkspaceFileBrowser.vue`、`InvoiceManualEditModal.vue` 与 `FileMoveModal.vue`（上传批次执行期间冻结目标子路径/冲突策略并禁用目录切换防中途跑偏；跨目录移动部分失败或失联恢复时保持回执弹窗打开并锁定目标控件防丢失逐文件结果），接入 `DirectoryPanel.vue`（非发票/普通资料目录直接呈现通用文件视图，发票目录保留默认发票列表并提供「发票列表 / 文件管理与导入」切换）与 `DirectoryInvoices.vue`（活动监控目录右键与批量菜单新增编辑手改字段、重命名原文件、移动到其他目录，非监控目录严格隐藏），重建并提交 `web/static/app/`。
+  - **隔离实机预览布局修复**：在独立合成后端（`127.0.0.1:18769`，数据全位于 `/tmp/ih-p1p2-preview`）实机浏览器走查中同步修复 4 处细节：（1）`prototype.css` 为 `.ws-sidebar-toggle` 增加 `flex: none; white-space: nowrap;`、为 `.ws-tabs` 增加 `flex: 1 1 0; min-width: 0;`，防止多标签打开时“公司与目录”按钮被挤压竖排折行；（2）`WorkspaceSidebar.vue::openMenu` 改用 `nextTick` 实测浮层宽高做视口边界夹紧，修复新增公司右键项后底部略裁切；（3）`WorkspaceFileBrowser.vue` 为文件表 `.row-actions` 启用自动换行并为文件名列加 `max-width` 单行省略，消除窄容器下右侧操作按钮裁切；（4）`prototype.css` 将 `.filters .field :is(input,select)` 与 `.invoice-tags input, .invoice-tags select` 的 `min-height: 36px; padding: 0 10px;` 调整为 `height: 36px; padding: 6px 10px; line-height: 22px;`，修复主筛选栏、高级筛选栏及标签设置中原生 `<select>` 文字贴顶未垂直居中的问题。
+- 验证范围：
+  - 前端：`pnpm run typecheck`（0 错误）、`pnpm test`（23 份测试文件 185 项全部通过，含新增 `frontend/tests/workspace-phase2.spec.ts` 4 项）、`pnpm run build`（刷新 `web/static/app/`）。
+  - 后端：`pytest tests/test_workspace_search_and_files.py tests/test_company_crud_and_search.py tests/test_company_folders.py tests/test_company_setup.py tests/test_company_views.py tests/test_company_directory_guards.py tests/test_api_companies.py tests/test_appstate_service_wiring.py tests/test_workspace_frontend.py tests/test_api_contract.py`（226 项全部通过）、`python -m compileall src tests`、`ruff check`、`pytest tests/test_development_documentation.py` 与 `git diff --check`。
+- 未覆盖项：未覆盖真实默认配置、正式 Windows BAT、浏览器前台实机拖放/交互、系统原生选择器弹窗、macOS/Windows 真机原生回收站端到端调用与双平台打包产物。
+
+### 2026-11-26 工作区 Phase 1：公司级增删改查闭环与单目录深度查询增强
+
+- 需求与起点：基于已合入 PR #34 的干净主线 `origin/main@2c809d817cb984d550bcf46abe71f97fd6a6e365`，在隔离工作树 `InvoiceHub-workspace-crud-search`（分支 `codex/workspace-crud-search-p1`）推进用户新增遗漏需求的 Phase 1：（1）补齐自建/导入公司资料夹及工作区公司级增删改查闭环（重点解决已创建/导入公司资料夹缺少直达移除与原生回收站删除选项、根目录无法重定位/硬盘改名、自建不能按需选目录与附带自定义目录、导入不能顺带纳入其它子目录）；（2）修复实测发现的查询硬缺陷（开具发票搜购买方失效、日期区间放行空日期、关键字无法搜项目/金额/税率且不支持多词、自定义目录角色未同步）并补齐高级组合筛选与排序。Phase 2（跨目录/跨公司全局检索、文件拖放导入/单票手改/重命名与跨目录移动归档、通用文件视图）同步登记至 `docs/PRODUCT_BACKLOG.md`（`WS-11`、`WS-12`）。
+- 采用方案：
+  - **后端公司级 CRUD 闭环**：
+    - `src/invoice_hub/services/company_folders.py` 与 `src/invoice_hub/api/routes/companies.py` / `company_folders.py`：新增 `POST /api/v1/companies/{company_id}/trash-preview` 与 `POST /api/v1/companies/{company_id}/trash`（有界扫描文件/子目录数与字节数、明确列示外部导入目录不受影响、阻断监控中/系统根/用户主目录/程序根/跨公司重叠、带 `plan_hash` + `confirm: true` 与全公司子目录写锁调用 `move_to_trash` 移入系统原生回收站并解除登记，严禁永久删除降级）；新增 `POST /api/v1/companies/{company_id}/open-root` 与 `POST /api/v1/companies/{company_id}/folders/{key}/open` 安全打开本地目录（拒绝缺失/链接目录）。
+    - `src/invoice_hub/services/company_registry.py`：`create_company` 支持校验并持久化可选 `hidden_subdirs` 与 `custom_folders`；`update_company` 为 `root_dir` 重定位补齐与本公司外部文件夹重叠校验，并新增可选 `rename_root_on_disk` + `new_root_name` 安全硬盘改名（通过 `CompanyFolderService.rename_company_root_with_overrides` 在全子目录写锁内原子改名并迁移全部公司内子目录的 `manual_overrides.json`，清单写入失败自动回滚）。
+    - `src/invoice_hub/services/company_setup.py`：支持可选 `selected_standard_keys`（未选标准目录不建盘并记入 `hidden_subdirs`）与 `custom_folders`（纳入同一 `plan_hash` 与防篡改 `_mkdir` 流程）；不传时与旧版 100% 兼容。
+    - `src/invoice_hub/services/company_detection.py`：`_inspect` 额外扫描根内未被 6 类占用的真实一级子目录返回 `extra_folders`（含建议角色、文件数并绑定 `extra_identities` 入 `plan_hash`），`register` 支持可选 `import_extra_folders` 一次性以 `inside_root` 自定义目录纳入（零文件移动）。
+  - **后端单目录深度查询与缺陷修复**：
+    - `src/invoice_hub/services/invoice_list.py`、`src/invoice_hub/services/company_views.py`、`src/invoice_hub/api/routes/invoices.py` 与 `companies.py`：在 100% 保留经典 `search_scope=invoice|filename|all` 单串兼容语义前提下，新增 `workspace`、`party`、`buyer` 深度搜索范围并支持空格分词多词 AND 匹配（覆盖销售方、购买方、票号、文件名、项目、金额、税率及标准化百分数、发票大类、业务类型、开票日期）；修复 `date_from`/`date_to` 放行空日期记录的缺陷；新增精确 `Decimal` 金额区间（`amount_min`/`amount_max`，非法输入 422）、标准化税率筛选（`tax_rate` 及 `__missing__`）、项目筛选（`project` 及 `__unassigned__`）、未打标签筛选（`tag=__untagged__`）、多字段排序（`sort_by`/`sort_dir`，兼容旧 `date_sort`，缺失值统一排尾）以及目录级全量 `filter_options` 元数据。
+  - **Vue 3 工作区前端交互**：
+    - 新增 `frontend/src/components/CompanyDeleteModal.vue`（遵循 `WORKSPACE_UI_STANDARD.md` 令牌与 `WsModal`，默认“仅从清单移除”，可选“移入系统回收站并移出清单”预览勾选确认），接入 `WorkspaceSidebar.vue`（公司右键新增编辑设置/打开文件夹/移除或删除公司、目录右键新增打开文件夹）、`CompanyPanel.vue`（页头快捷操作与失效根目录重定位提示）及 `CompanySettings.vue`（新增公司根目录路径重定位、原生目录选择器与可选硬盘改名）。
+    - 更新 `CompanyCreateForm.vue`（自建支持勾选标准目录子集与新增自定义子目录；导入向导展示并允许勾选顺带导入 `extra_folders`）、`DirectoryPanel.vue`（页头新增打开文件夹）、`DirectoryInvoices.vue`（改用 `effectiveFolderRole` 修复自定义目录提示与项目列；默认 `workspace` 多词搜索 + 回车直搜 + 搜索范围切换 + `重复发票` 状态 + 可折叠高级筛选栏 + 金额与开票时间排序 + 一键重置筛选 + 活动监控目录单行预览/打开原文件/在文件夹中显示）、`stores/companies.ts`、`api/types.ts`、`prototype.css`，重建并提交 `web/static/app/`。
+- 验证范围：
+  - 前端：`pnpm run typecheck`（0 错误）、`pnpm test`（22 份测试文件 181 项全部通过，含新增 `frontend/tests/workspace-crud-search.spec.ts` 4 项）、`pnpm run build`（生成 `web/static/app/`）。
+  - 后端：`pytest tests/test_company_crud_and_search.py tests/test_company_folders.py tests/test_company_setup.py tests/test_company_views.py tests/test_company_directory_guards.py tests/test_workspace_frontend.py tests/test_api_contract.py`（169 项全部通过）、`python -m compileall src tests`、`ruff check`（涉及源码与测试全部通过）、`pytest tests/test_development_documentation.py` 与 `git diff --check`。
+- 未覆盖项：未覆盖真实默认配置、正式 Windows BAT、浏览器前台实机交互、系统原生选择器真实弹窗、macOS/Windows 真机原生回收站端到端调用与双平台最新打包产物。
+
 ### 2026-11-25 支持公司自定义与默认文件夹全生命周期管理及基准功能指向
 
 - 需求与起点：基于已合入 PR #33 的干净主线 `origin/main@da6491cec736203b494e5ebd7aeb6e4fa9debdb2`，新建隔离工作树与分支 `codex/company-custom-folders`，解决 `v1.0.0` 发布前用户提出的紧急必要需求：（1）公司资料夹下除默认 6 类目录外，支持用户自定义文件夹的新建、删除、重命名与导入已存在文件夹（涵盖默认目录的创建、隐藏恢复与回收站删除）；（2）自定义与导入的文件夹支持以默认 6 类目录为基准的功能指向，并开放完整单目录操作同时默认隔离公司总账/成本 V2/凭证草稿口径。

@@ -118,6 +118,23 @@ def router() -> APIRouter:
         _require_same_origin_write(request)
         return await _call(lambda: _state(request).companies.delete_company(company_id, revision))
 
+    @routes.post("/api/v1/companies/{company_id}/trash-preview")
+    async def preview_trash_company(request: Request, company_id: str):
+        _require_same_origin_write(request)
+        payload = await _json_body(request)
+        return await _call(lambda: _state(request).companies.folders.preview_trash_company(company_id, payload))
+
+    @routes.post("/api/v1/companies/{company_id}/trash")
+    async def trash_company(request: Request, company_id: str):
+        _require_same_origin_write(request)
+        payload = await _json_body(request)
+        return await _call(lambda: _state(request).companies.folders.trash_company(company_id, payload))
+
+    @routes.post("/api/v1/companies/{company_id}/open-root")
+    async def open_company_root(request: Request, company_id: str):
+        _require_same_origin_write(request)
+        return await _call(lambda: _state(request).companies.open_company_root(company_id))
+
     @routes.get("/api/v1/companies/{company_id}/subdirs/plan")
     async def company_subdir_plan(request: Request, company_id: str, keys: str = Query("")):
         parsed = [item.strip() for item in keys.split(",") if item.strip()] if keys.strip() else None
@@ -153,13 +170,20 @@ def router() -> APIRouter:
         request: Request,
         company_id: str,
         key: str,
-        search_scope: Literal["invoice", "filename", "all"] = "all",
+        search_scope: Literal["invoice", "filename", "all", "workspace", "party", "buyer"] = "all",
         page: int | None = Query(None, ge=1),
         page_size: int = Query(100, ge=1, le=200),
         date_sort: Literal["", "asc", "desc"] = "",
+        sort_by: Literal["", "invoice_date", "amount", "seller", "buyer", "source_file"] = "",
+        sort_dir: Literal["", "asc", "desc"] = "",
     ):
-        # Same filters as GET /api/v1/invoices so the workspace can reuse the homepage list.
-        filters = {**dict(request.query_params), "search_scope": search_scope}
+        # Same filters as GET /api/v1/invoices plus workspace multi-token, project, amount and tax_rate filters.
+        filters = {
+            **dict(request.query_params),
+            "search_scope": search_scope,
+            "sort_by": sort_by,
+            "sort_dir": sort_dir,
+        }
         return await _call(lambda: _state(request).company_views.directory_invoices(company_id, key, filters))
 
     @routes.get("/api/v1/companies/{company_id}/cost-tax-profile")

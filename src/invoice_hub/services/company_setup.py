@@ -17,6 +17,11 @@ import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from invoice_hub.services.company_folders import (
+    MAX_CUSTOM_FOLDERS,
+    clean_folder_label,
+    clean_folder_role,
+)
 from invoice_hub.services.company_registry import (
     MAX_COMPANIES, STANDARD_SUBDIRS, CompanyRegistryError, clean_relative_subdir, clean_taxpayer_periods,
 )
@@ -85,23 +90,46 @@ class CompanySetupService:
                     or not isinstance(job["binding"].get("items"), list)):
                 raise ValueError()
             binding = job["binding"]
+            raw = binding["input"]
+            subdirs = raw.get("subdirs")
+            selected_keys = raw.get("selected_standard_keys")
+            custom_folders = raw.get("custom_folders")
             if (not isinstance(binding["input"].get("name"), str)
                     or any(not isinstance(value, str) for value in job["created"])
-                    or len(binding["items"]) != len(STANDARD_SUBDIRS)
-                    or any(not isinstance(item, dict) or item.get("key") not in STANDARD_SUBDIRS
+                    or not binding["items"]
+                    or any(not isinstance(item, dict)
+                           or not isinstance(item.get("key"), str) or not item["key"]
                            or not isinstance(item.get("label"), str)
                            or not isinstance(item.get("relative_path"), str) for item in binding["items"])):
                 raise ValueError()
-            raw = binding["input"]
-            subdirs = raw.get("subdirs")
+            if selected_keys is not None:
+                if (not isinstance(selected_keys, list)
+                        or any(not isinstance(k, str) or k not in STANDARD_SUBDIRS for k in selected_keys)
+                        or len(set(selected_keys)) != len(selected_keys)):
+                    raise ValueError()
+            if custom_folders is not None:
+                if not isinstance(custom_folders, list) or len(custom_folders) > MAX_CUSTOM_FOLDERS:
+                    raise ValueError()
+            effective_keys = list(STANDARD_SUBDIRS) if selected_keys is None else [k for k in STANDARD_SUBDIRS if k in selected_keys]
+            expected_items = [{"key": key, "label": label, "relative_path": subdirs[key]}
+                              for key, (label, _) in STANDARD_SUBDIRS.items() if key in effective_keys]
+            if custom_folders:
+                for idx, entry in enumerate(custom_folders):
+                    if not isinstance(entry, dict):
+                        raise ValueError()
+                    rel = clean_relative_subdir(entry.get("relative_path"), "custom_folders")
+                    label = clean_folder_label(entry.get("label"), "custom_folders")
+                    role = clean_folder_role(entry.get("role"), "custom_folders")
+                    if entry != {"label": label, "relative_path": rel, "role": role}:
+                        raise ValueError()
+                    expected_items.append({"key": f"custom_{idx}", "label": label, "relative_path": rel, "kind": "custom", "role": role})
             if (job["plan_hash"] != self._hash(binding)
                     or type(binding.get("revision")) is not int or binding["revision"] < 0
                     or raw.get("revision") != binding["revision"] or type(raw.get("revision")) is not int
                     or not isinstance(subdirs, dict) or set(subdirs) != set(STANDARD_SUBDIRS)
                     or self.registry._clean_subdirs(subdirs, {}) != subdirs
                     or clean_taxpayer_periods(raw.get("taxpayer_periods")) != raw.get("taxpayer_periods")
-                    or binding["items"] != [{"key": key, "label": label, "relative_path": subdirs[key]}
-                                            for key, (label, _) in STANDARD_SUBDIRS.items()]):
+                    or binding["items"] != expected_items):
                 raise ValueError()
             signatures = job.get("created_signatures")
             signature = binding.get("parent_signature")
@@ -144,12 +172,54 @@ class CompanySetupService:
             raise _error("新工作区不能与当前监控目录重叠，请另选位置。")
         subdirs = self.registry._clean_subdirs(raw.get("subdirs"), {key: value[0] for key, value in STANDARD_SUBDIRS.items()})
         periods = clean_taxpayer_periods(raw.get("taxpayer_periods"))
+        raw_selected = raw.get("selected_standard_keys")
+        if raw_selected is None:
+            selected_keys: list[str] | None = None
+            effective_keys = list(STANDARD_SUBDIRS)
+        else:
+            if (not isinstance(raw_selected, list)
+                    or any(not isinstance(k, str) or k not in STANDARD_SUBDIRS for k in raw_selected)
+                    or len(set(raw_selected)) != len(raw_selected)):
+                raise _error("所选标准目录列表无效。")
+            selected_keys = [k for k in STANDARD_SUBDIRS if k in raw_selected]
+            effective_keys = selected_keys
+        raw_custom = raw.get("custom_folders")
+        cleaned_custom: list[dict[str, str]] = []
+        if raw_custom is not None:
+            if not isinstance(raw_custom, list) or len(raw_custom) > MAX_CUSTOM_FOLDERS:
+                raise _error(f"自定义文件夹最多 {MAX_CUSTOM_FOLDERS} 个。")
+            seen_rel = {value.casefold() for value in subdirs.values()}
+            for idx, entry in enumerate(raw_custom):
+                if not isinstance(entry, dict):
+                    raise _error("自定义文件夹格式错误。")
+                rel = clean_relative_subdir(entry.get("relative_path"), f"custom_folders.{idx}.relative_path")
+                label = clean_folder_label(entry.get("label") or rel, f"custom_folders.{idx}.label")
+                role = clean_folder_role(entry.get("role"), f"custom_folders.{idx}.role")
+                folded = rel.casefold()
+                if any(folded == other or folded.startswith(other + "/") or other.startswith(folded + "/") for other in seen_rel):
+                    raise _error(f"自定义文件夹“{label}”的路径与其它目录重复或互相嵌套。")
+                seen_rel.add(folded)
+                cleaned_custom.append({"label": label, "relative_path": rel, "role": role})
+        if not effective_keys and not cleaned_custom:
+            raise _error("至少需要创建一个标准目录或自定义目录。")
+        items = [{"key": key, "label": label, "relative_path": subdirs[key]}
+                 for key, (label, _) in STANDARD_SUBDIRS.items() if key in effective_keys]
+        for idx, entry in enumerate(cleaned_custom):
+            items.append({"key": f"custom_{idx}", "label": entry["label"], "relative_path": entry["relative_path"],
+                          "kind": "custom", "role": entry["role"]})
+        input_payload: dict = {
+            "revision": registry["revision"], "name": name, "parent_dir": str(parent),
+            "folder_name": folder, "subdirs": subdirs, "taxpayer_periods": periods,
+        }
+        if selected_keys is not None:
+            input_payload["selected_standard_keys"] = selected_keys
+        if cleaned_custom:
+            input_payload["custom_folders"] = cleaned_custom
         return {
             "revision": registry["revision"], "root_path": str(root), "root_dir": stored_root,
             "parent_signature": _signature(parent),
-            "input": {"revision": registry["revision"], "name": name, "parent_dir": str(parent),
-                      "folder_name": folder, "subdirs": subdirs, "taxpayer_periods": periods},
-            "items": [{"key": key, "label": label, "relative_path": subdirs[key]} for key, (label, _) in STANDARD_SUBDIRS.items()],
+            "input": input_payload,
+            "items": items,
         }
 
     @staticmethod
@@ -233,9 +303,18 @@ class CompanySetupService:
                 self._save(job)
                 # The same RLock protects filesystem creation -> registry CAS. _binding refused
                 # overlap with watch_dir, so this registration cannot acquire the cost writer lock.
-                result = self.registry.create_company({"revision": binding["revision"], "name": binding["input"]["name"],
+                create_payload: dict = {
+                    "revision": binding["revision"], "name": binding["input"]["name"],
                     "root_dir": binding["root_dir"], "subdirs": binding["input"]["subdirs"],
-                    "taxpayer_periods": binding["input"]["taxpayer_periods"]})
+                    "taxpayer_periods": binding["input"]["taxpayer_periods"],
+                }
+                if "selected_standard_keys" in binding["input"]:
+                    hidden_keys = [k for k in STANDARD_SUBDIRS if k not in binding["input"]["selected_standard_keys"]]
+                    if hidden_keys:
+                        create_payload["hidden_subdirs"] = hidden_keys
+                if binding["input"].get("custom_folders"):
+                    create_payload["custom_folders"] = binding["input"]["custom_folders"]
+                result = self.registry.create_company(create_payload)
                 job.update(state="completed", in_progress="", company=result["company"], message="已创建空目录并登记；监控目录未切换。")
             except (OSError, sqlite3.Error, CompanyRegistryError) as exc:
                 if job["state"] == "registering":

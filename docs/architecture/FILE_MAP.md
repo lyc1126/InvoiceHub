@@ -1,5 +1,32 @@
 # InvoiceHub 完整文件地图
 
+## 2026-11-26 工作区 Phase 2：跨公司全局检索（WS-11）与文件级增删改查/通用文件视图（WS-12）
+
+| 文件 | 职责与联动 |
+|---|---|
+| `src/invoice_hub/services/workspace_search.py` | `WorkspaceSearchService`：跨目录/跨公司只读全局检索（多词 AND、购销方/项目/金额/税率/日期/角色筛选，有界截断，绝不扫盘、不建状态目录或切 `watch_dir`）与折叠公司项目索引；组合于 `CompanyViewService.search`。 |
+| `src/invoice_hub/services/workspace_files.py` | `WorkspaceFileService`：公司目录文件级 CRUD（嵌套子文件夹有界浏览与符号链接隔离、`create_empty_subdir` 安全建目录、导入冲突预览与 `O_EXCL` 无覆盖二进制流上传、单文件安全改名并迁移 `manual_overrides.json`、跨目录 `preview`/`confirm`/持久化意图日志无覆盖移动与原生回收站删除；非监控发票目录保持只读边界）；组合于 `CompanyViewService.files`。 |
+| `src/invoice_hub/api/routes/workspace_search.py` | `WS-11` 路由：`GET /api/v1/workspace/search` 与 `GET /api/v1/workspace/project-index`；经 `api/app.py` 挂载。 |
+| `src/invoice_hub/api/routes/workspace_files.py` | `WS-12` 路由：`/api/v1/companies/{company_id}/directories/{key}/files*`（含 `request.stream()` 有界二进制上传、同源写校验与线程池执行）；经 `api/app.py` 挂载。 |
+| `frontend/src/components/WorkspaceSearchModal.vue` | 跨公司/跨目录全局搜索弹窗（`WsModal`、`⌘K / Ctrl+K` 与侧栏直达），展示匹配目录、项目与发票，点击命中经 `stores/workspace.ts::locateInDirectory` 打开目标目录并自动带入定位条件。 |
+| `frontend/src/components/InvoiceManualEditModal.vue` | 活动监控发票目录的单票 6 字段手改弹窗（`销售方`/`购买方`/`开票金额`/`发票号码`/`开票时间`/`税率`），调用 `PATCH /api/v1/invoices/{invoice_key}/manual-fields`。 |
+| `frontend/src/components/FileMoveModal.vue` | 跨目录文件移动确认弹窗：支持跨公司/跨目录选目标、冲突策略、`move/preview` 计划核对、`plan_hash` + `confirm: true` 确认执行与失联只读日志查询（`GET .../files/move/{job_id}`）。 |
+| `frontend/src/components/WorkspaceFileBrowser.vue` | 通用文件与子文件夹管理视图：面包屑导航、新建子文件夹、拖放与选择文件冲突预览上传、表内搜文件名/扩展名/排序、重命名、跨目录移动与两步确认原生回收站删除；严格按 `can_mutate_existing` 与符号链接标记管控操作。 |
+| `tests/test_workspace_search_and_files.py` | `WS-11` / `WS-12` 后端回归：跨公司只读搜索/折叠项目索引不建状态目录、通用文件浏览/符号链接拦截/建目录/无覆盖上传、6 字段手改与重命名/跨目录移动手改迁移、非监控发票目录只读守卫及原生回收站调用。 |
+| `frontend/tests/workspace-phase2.spec.ts` | `WS-11` / `WS-12` 前端回归：全局搜索点击定位联动 `DirectoryInvoices`、侧栏折叠项目搜索自动展开与过滤、`DirectoryPanel` 普通资料直出 `WorkspaceFileBrowser`、活动监控目录手改/改名/移动入口及非监控只读隐藏。 |
+
+联动修改：`monitoring/state.py`（`EDITABLE_FIELDS` 扩展至 6 字段）、`services/invoice_list.py`、`services/company_views.py`、`api/app.py`；前端 `api/types.ts`、`stores/workspace.ts`、`App.vue`、`WorkspaceSidebar.vue`、`DirectoryPanel.vue`、`DirectoryInvoices.vue`、`CompanyBankLedger.vue`、`prototype.css` 与构建产物 `web/static/app/`。
+
+## 2026-11-26 工作区 Phase 1：公司级增删改查闭环与单目录深度查询增强
+
+| 文件 | 职责与联动 |
+|---|---|
+| `frontend/src/components/CompanyDeleteModal.vue` | 公司级双模式移除/删除弹窗（`WsModal`）：默认「仅从工作区清单移除」（零文件改动），可选「移入系统回收站并移出清单」（先走 `/trash-preview` 展示文件/子目录数与不受影响的外部导入目录，勾选确认后带 `plan_hash` 调用 `/trash`，严禁永久删除）。由 `WorkspaceSidebar.vue`、`CompanyPanel.vue`、`CompanySettings.vue` 复用。 |
+| `tests/test_company_crud_and_search.py` | Phase 1 后端回归：公司级回收站预览/确认（外部目录不受影响、监控/系统根阻断）、公司根安全硬盘改名与 `manual_overrides.json` 迁移/回滚、自建可选标准子目录与自定义目录、检测顺带发现并导入 `extra_folders`、打开本地目录安全校验，以及单目录深度查询（`workspace`/`party`/`buyer` 多词 AND、空日期不穿透、精确 `Decimal` 金额区间、税率/项目/未打标/多字段排序与经典契约兼容）。 |
+| `frontend/tests/workspace-crud-search.spec.ts` | Phase 1 前端回归：`CompanyDeleteModal` 双模式移除与预览勾选回收站、`CompanyCreateForm` 自建勾选标准/自定义子目录与导入 `extra_folders`、`CompanySettings` 根目录重定位与安全硬盘改名、以及 `DirectoryInvoices` 自定义目录角色同步、多词搜索、高级组合筛选、金额排序、一键重置与非监控目录单行只读门禁。 |
+
+联动修改：`services/company_folders.py`、`company_registry.py`、`company_setup.py`、`company_detection.py`、`invoice_list.py`、`company_views.py`、`api/routes/companies.py`、`company_folders.py`、`invoices.py`；前端 `types.ts`、`stores/companies.ts`、`WorkspaceSidebar.vue`、`CompanyPanel.vue`、`CompanySettings.vue`、`CompanyCreateForm.vue`、`DirectoryPanel.vue`、`DirectoryInvoices.vue`、`prototype.css` 与 Vite 构建产物 `web/static/app/`。
+
 ## 2026-11-23 服务品目与凭证库存隔离
 
 | 文件 | 职责与联动 |
@@ -854,6 +881,7 @@
 | `tests/test_company_voucher_generate.py` | 页面生成草稿与改记入期：与 `voucher_cli draft` 逐单元格一致、重新生成先备份并沿用未变凭证的审核与改过的摘要、内容变了列入重新审核、只接受列出的读回文件与合法月份、缺发票明细的生成失败提示；改记入期后凭证移到新月份并标跨期、命令行读同一调整、撤销与调到范围外、revision 冲突与损坏文件拒绝。 | services/company_vouchers、bank/vouchers、bank/voucher_cli。 |
 | `tests/test_api_companies.py` | 公司清单 API：空清单不建文件、子目录识别与歧义回退、revision CAS、根目录重复/嵌套、相对/绝对路径保存、子目录越界、纳税人生效期、补建预览/确认/过期、链接逃逸、损坏文件拒写、删除不碰文件、`monitored` 标记且不切换目录、跨来源拒绝。 | services/company_registry、api/routes/companies。 |
 | `tests/test_company_folders.py` | 公司自定义与默认文件夹全生命周期及基准功能指向：新建预览/确认/计划过期、根内/根外导入与重叠/链接/损坏拒绝、外部目录 `company_for_dir` 归属、显示名与硬盘改名（含监控拦截）、非破坏移除/隐藏与默认恢复、原生回收站预览/确认（绝不永久删除）、根内自定义目录晋升并保留旧槽位，以及按 `role` 分发的后台刷新、目录发票、同号检查、属期核对、银行版式与只读工资社保预览。 | `services/company_folders.py`、`company_registry.py`、`company_views.py`、`company_refresh.py`、`company_bank_layouts.py`、`api/routes/company_folders.py`。 |
+| `tests/test_company_crud_and_search.py` | Phase 1 公司级增删改查闭环与单目录深度查询回归：公司级原生回收站预览/确认与外部目录隔离、根目录重定位与安全硬盘改名（含手改覆盖迁移与失败回滚）、自建可选标准子目录与自定义子目录、检测顺带发现并导入 `extra_folders`、打开本地目录，以及 `workspace`/`party`/`buyer` 多词检索、空日期不穿透、金额/税率/项目/未打标筛选与多字段排序。 | `services/company_folders.py`、`company_registry.py`、`company_setup.py`、`company_detection.py`、`invoice_list.py`、`company_views.py`、`api/routes/companies.py`、`invoices.py`。 |
 | `tests/test_company_setup.py` | 公司 picker 只填草稿、固定私有能力、来源与空 body、取消 / 脱敏失败 / 超时；新建计划不写用户根，确认仅执行一次，非法路径、重复 / 嵌套、父身份变化、部分失败、崩溃与登记观察未知、相对路径登记。 | `company_registry.py`、`company_setup.py`、`api/routes/companies.py`。 |
 | `tests/test_api_bookkeeping.py` | 做账 API、错误模型和废弃接口 410。 | AppState、api、bookkeeping。 |
 | `tests/test_bookkeeping_decisions.py` | W9 会计决定与提案 revision。 | decisions、vouchers。 |
@@ -938,12 +966,13 @@
 | `frontend/src/stores/workspace.ts` | 首页的标签、置顶、展开的公司、侧栏宽度、按目录类型记忆的发票列表隐藏列（`hiddenInvoiceColumns`，至少保留 1 列）与“选择以进行比较”的目录；标签 id 由类型 + 对象组成（同一对象只开一个）；`refresh` 计数让双击 `hi.` 只重建当前标签；置顶、展开、宽度与隐藏列存本机 `localStorage`（`invoicehub.workspace.v1`，仅界面偏好）；`clampSidebar` 限制 220—460px 且内容区至少 620px。 | `HomeView.vue`、`WorkspaceSidebar.vue`、`DirectoryInvoices.vue`、`App.vue`。 |
 | `frontend/src/components/WorkspaceSidebar.vue` | 工作区侧栏：`InvoiceHub ⌄` 菜单（刷新公司清单、发票标签、返回经典界面）、添加公司资料夹、置顶区、公司 › 项目 / 六类目录树（项目在展开时才读取；监控中目录带绿点；缺失目录灰显）、右键 / 行尾 ⋯ / Shift+F10 菜单（打开、置顶、选择以进行比较、与已选项进行比较，无勾稽关系或不同公司时禁用并说明）、已选时可比较的行直接显示“⇄ 比较”、悬停名片（全名与路径）、可拖动调宽的分隔条（键盘左右键、Home/双击复位、到限位提示）与底部监控状态。 | `relations.ts`；`/api/v1/companies/{id}/projects`。 |
 | `frontend/src/relations.ts` | 同一公司可勾稽的四组目录（抵扣、进销存、应付、应收）与 `relationFor`，以及可做同号检查的发票目录 `INVOICE_DIRS` 与 `SAME_NUMBER`；只用于提供后端接受的组合，不做任何计算。 | `CompanyCompare.vue`、`WorkspaceSidebar.vue`。 |
-| `frontend/src/components/CompanyPanel.vue` | 公司标签：名称、纳税人身份与资料夹路径，目录 / 发票账簿 / 项目 / 勾稽 / 凭证草稿 / 工资社保 / 设置七个分区；`v-show` 保留各分区状态，账簿、项目、勾稽、凭证草稿与工资社保首次打开才加载。 | 由 `HomeView.vue` 渲染。 |
-| `frontend/src/components/DirectoryPanel.vue` | 目录标签：子目录状态、是否最新、上次汇总、重新检查与“设为监控目录”，下方为该目录发票列表。 | `/api/v1/companies/{id}/directories`；`DirectoryInvoices.vue`。 |
-| `frontend/src/components/DirectoryInvoices.vue` | 目录发票列表（上次投影；非监控目录只读）：全部显示列居中对齐并限制购销方/项目单行最大宽度（悬停完整 `title`）以收紧购销方间隔；提供「显示列」菜单、右键表头与一键恢复隐藏列（按 `dirKey` 持久化）；标签色点列，右键 / Shift+F10 打标签（只更新该行；在多行勾选中的行上作用于全部勾选的发票，打开时读取当前标记），按标签筛选与后端开票时间排序 / 分页，显示大类与业务样式及经典格式配色；监控目录且非临时结果时有勾选列（表头勾选本页，含部分选中），“全选筛选结果”按同一筛选分页读取全部记录；删除后保留逐文件结果面板；勾选预览使用 `SourcePreview.vue`，投影或监控身份变化时清除旧选择，迟到列表 / 全选不覆盖新状态。 | `/api/v1/companies/{id}/directories/{key}/invoices`、`invoice-tags`；`DirectorySelectionBar.vue`、`stores/workspace.ts`。 |
+| `frontend/src/components/CompanyPanel.vue` | 公司标签：名称、纳税人身份与资料夹路径，页头快捷操作（打开文件夹、公司设置、移除/删除公司）与失效根目录提示，目录 / 发票账簿 / 项目 / 勾稽 / 凭证草稿 / 工资社保 / 设置七个分区；`v-show` 保留各分区状态，账簿、项目、勾稽、凭证草稿与工资社保首次打开才加载。 | 由 `HomeView.vue` 渲染；复用 `CompanyDeleteModal.vue`。 |
+| `frontend/src/components/DirectoryPanel.vue` | 目录标签：子目录状态、是否最新、上次汇总、打开文件夹、重新检查与“设为监控目录”，下方按目录功能指向渲染发票列表 / 属期核对 / 银行版式 / 只读工资社保。 | `/api/v1/companies/{id}/directories`、`folders/{key}/open`；`DirectoryInvoices.vue`。 |
+| `frontend/src/components/DirectoryInvoices.vue` | 目录发票列表（上次投影；非监控目录只读）：全部显示列居中对齐并限制购销方/项目单行最大宽度（悬停完整 `title`）；按 `effectiveFolderRole` 适配标准与自定义目录提示和项目列；支持默认 `workspace` 多词搜索、搜索范围切换（全字段/购销方/购买方/销方票号/文件名）、重复发票与未打标签筛选、可折叠高级筛选栏（日期区间/金额区间/税率/票种/业务/识别状态/项目）、开票时间与开票金额双向排序、一键重置筛选；提供「显示列」菜单、右键表头与一键恢复隐藏列（按 `dirKey` 持久化）；标签色点列，右键 / Shift+F10 打标签（活动监控目录单行另提供预览原票/打开原文件/在文件夹中显示，非监控目录严格隐藏）；监控目录且非临时结果时有勾选列与全选筛选结果；删除后保留逐文件结果面板；勾选预览使用 `SourcePreview.vue`，迟到列表 / 全选不覆盖新状态。 | `/api/v1/companies/{id}/directories/{key}/invoices`、`invoice-tags`；`DirectorySelectionBar.vue`、`stores/workspace.ts`。 |
 | `frontend/src/components/DirectorySelectionBar.vue` | 勾选底部操作条与宽弹窗合计详情：张数、三项金额、按开票项目+明细税率分组及规格型号/单位/数量/算术与加权均价明细、来源发票跳转预览、关键字与税率筛选（不改变顶部勾选总额）均来自 `selection-summary`；“预览”把完整选择交给目录页的共用原票面板；打印（先开窗再填 `print-jobs` 的地址）、开具入库单（会话交接到单据页，最多 1000 条）、删除所选（`trash-jobs` 预备清单 → 条内确认 → 响应丢失只读执行日志），取消勾选与全选筛选结果。 | `/api/v1/invoices/selection-summary`、`print-jobs`、`trash-jobs*`、`WsModal.vue`。 |
 | `frontend/src/components/WatchSwitchConfirm.vue` | “设为监控目录”确认：说明只监控一个目录，确认后调用 `PUT /api/v1/settings` 并刷新系统快照与公司清单。 | `CompanyDirectories.vue`、`DirectoryPanel.vue`。 |
-| `frontend/src/components/CompanyCreateForm.vue` | 登记已有资料夹 / 从零新建向导：独立原生选择只填草稿；新建填写上级位置、根名称与六类相对目录，计划 / 显式确认 / 未知只 GET；纳税人不默认。 | `stores/companies.ts::create/planSetup/confirmSetup/getSetup`。 |
+| `frontend/src/components/CompanyCreateForm.vue` | 登记已有资料夹 / 从零新建向导：独立原生选择只填草稿；登记已有资料夹展示检测到的六类候选并列出根内其它子目录供勾选一并导入；新建支持按需勾选标准子目录子集与附带自定义子目录，计划 / 显式确认 / 未知只 GET；纳税人不默认。 | `stores/companies.ts::create/planSetup/confirmSetup/getSetup`。 |
+| `frontend/src/components/CompanyDeleteModal.vue` | 公司级移除与回收站删除双模式弹窗：默认「仅从工作区清单移除」（零文件改动），切换「移入系统回收站并移出清单」时先加载 `/trash-preview` 统计与外部目录隔离警示并要求勾选确认，绝不永久删除。 | `stores/companies.ts`（`remove`/`previewTrashCompany`/`trashCompany`）；由 `WorkspaceSidebar.vue`、`CompanyPanel.vue`、`CompanySettings.vue` 复用。 |
 | `frontend/src/components/CompanyDirectories.vue` | 公司的子目录表（含默认槽位与自定义/外部导入目录、功能指向标签、状态、上次汇总、是否最新）、补建预览与确认、新建/导入/恢复/重命名指向/移除与回收站弹窗入口、设为监控目录；操作列包裹 `.overview-table-wrap` 并支持按钮换行防裁切。 | `/api/v1/companies/{id}/directories`、`subdirs/*`、`folders/*`；`WatchSwitchConfirm.vue`、`CompanyFolderCreateModal.vue`、`CompanyFolderEditModal.vue`、`CompanyFolderDeleteModal.vue`。 |
 | `frontend/src/components/CompanyFolderCreateModal.vue` | 新建空文件夹（先预览路径与角色、带 `plan_hash` 确认）、导入已有文件夹（展示根内未登记候选并支持原生目录选择器跨路径导入）与恢复已隐藏默认目录的三页签 `WsModal`。 | `stores/companies.ts`（`discoverFolders`/`previewCreateFolder`/`createFolder`/`importFolder`/`restoreFolder`/`pickFolderDirectory`）；由 `WorkspaceSidebar.vue`、`CompanyDirectories.vue` 复用。 |
 | `frontend/src/components/CompanyFolderEditModal.vue` | 重命名与功能指向弹窗：修改显示名、调整自定义目录基准角色、可选同步重命名硬盘实际目录（监控中或缺失时禁用并提示）以及根内自定义目录一键二次确认晋升为主标准槽位。 | `stores/companies.ts`（`updateFolder`/`promoteFolder`）；由 `WorkspaceSidebar.vue`、`CompanyDirectories.vue`、`DirectoryPanel.vue` 复用。 |
@@ -966,10 +995,11 @@
 | `frontend/src/components/CompanyVouchers.vue` | “凭证草稿”分区：选择审核表与月份、只看有问题的；每张凭证一张卡片，逐格编辑摘要 / 科目编码 / 借贷 / 供应商，输入时显示借贷合计（只作显示），审核下拉（待审核 / 通过 / 不导入）；每张凭证可改所属期与记账日期（改月时日期移到月末并提示重新编号）；草稿核对表折叠只读显示；发票凭证的原始单据与同期 / 跨期、“改记入期”；“生成草稿…”面板（起止年月、统一记月末、序时账读回与科目表快照，结果列出沿用 / 需重审 / 新增 / 消失）；“导出已审核…”面板列出各月通过张数、可填账套已用到的号、必填制单人，确认后导出并逐项显示结果（有未保存改动时禁用）；保存只提交改动行、审核状态与所属期 / 日期并带 revision，冲突时刷新提示，审核通过被拒时保留改动并在凭证旁列出后端原因。 | `/api/v1/companies/{id}/voucher-drafts*`。 |
 | `frontend/src/components/InvoiceTagsEditor.vue` | 发票标签管理：颜色、名称、意义的增删改，整表保存带 revision，删除时说明会移除已打标记，冲突时刷新。 | `stores/tags.ts`，`/api/v1/invoice-tags`；首页“发票标签”标签。 |
 | `frontend/src/stores/tags.ts` | 标签定义的 Pinia store：读取、整表保存（带 revision，冲突时重读）与按 id 查找。 | `InvoiceTagsEditor.vue`、`DirectoryInvoices.vue`。 |
-| `frontend/src/components/CompanySettings.vue` | 公司名称、六类相对目录映射与纳税人身份生效期编辑（不移动 / 改名文件）、从清单移除（说明不删除任何文件）；只在切换公司时重置草稿；显示成本汇总表是否已按新身份重写。 | `stores/companies.ts::update/remove`。 |
+| `frontend/src/components/CompanySettings.vue` | 公司名称、根目录重定位（支持原生目录选择器与打开目录）、可选安全硬盘重命名（同步迁移手改覆盖）、六类相对目录映射（含 `baseSubdirs` 防覆盖基线）与纳税人身份生效期编辑，以及调用 `CompanyDeleteModal.vue` 执行移除或移入系统回收站；只在切换公司时重置草稿；显示成本汇总表是否已按新身份重写。 | `stores/companies.ts::update/remove/openCompanyRoot/pickFolderDirectory`；`CompanyDeleteModal.vue`。 |
 | `frontend/src/styles.css` | 共用经典皮肤变量的外框 / 表单 / 浮层样式、模块列、工作区侧栏与标签、窄屏布局（900px 以下侧栏改抽屉，640px 以下模块列横排）。 | 仅作用于 `/workspace`。 |
 | `frontend/tests/directory-preview.spec.ts` | WS-01 目录排序与勾选原票、101 个文件的窗口 / 跳转、XML 纯文本与迟到正文、持续失效恢复、监控切换。 | Vitest + Vue Test Utils；相邻比较预览仍由 `companies.spec.ts` 覆盖。 |
 | `frontend/tests/company-folders.spec.ts` | 自定义与默认文件夹 UI 及按角色分发回归：新建预览/确认、根内候选与原生选择器外部导入、隐藏默认目录恢复、监控改名保护与晋升确认、移除/回收站双模式预览校验、侧栏隐藏过滤、`DirectoryPanel` 按角色挂载银行版式/属期/只读社保及保存改名自动关窗与注销关闭标签页。 | Vitest + Vue Test Utils；守护 `CompanyFolder*Modal.vue`、`DirectoryPanel.vue`、`WorkspaceSidebar.vue`、`stores/workspace.ts`。 |
+| `frontend/tests/workspace-crud-search.spec.ts` | Phase 1 公司级 CRUD 与单目录深度查询前端回归：`CompanyDeleteModal` 双模式移除/预览回收站、`CompanyCreateForm` 自建可选标准/自定义目录与导入 `extra_folders`、`CompanySettings` 重定位与硬盘改名、`DirectoryInvoices` 自定义目录角色同步、多词搜索、高级筛选、金额排序、重置与非监控目录只读门禁。 | Vitest + Vue Test Utils；守护 `CompanyDeleteModal.vue`、`CompanyCreateForm.vue`、`CompanySettings.vue`、`DirectoryInvoices.vue`。 |
 | `frontend/tests/company-setup.spec.ts` | WS-02 原生选择重复 / 取消 / 迟到、从零向导先计划后确认、确认失联只 GET、映射只保存改动引用、目录选择 / 旧路径 / 监控确认失效与未保存项目草稿保护。 | Vitest + Vue Test Utils；服务端文件系统边界由 `test_company_setup.py` 覆盖。 |
 | `frontend/tests/client.spec.ts` | 请求封装的成功、错误、`ok:false`、请求体与超时测试。 | Vitest + happy-dom。 |
 | `frontend/tests/companies.spec.ts` | 公司标签：侧栏列出公司并默认打开监控中的公司、新建带 revision 且不假定纳税人身份、版本冲突后重新读取、补建必须先预览并发送 `plan_hash`、预览过期要求重新预览、守恒校验失败标红且展开、非监控目录只读、金额分组。 | Vitest + Vue Test Utils，桩接 `fetch`。 |

@@ -144,12 +144,53 @@ export interface CompanyFolderTrashPlan {
   plan_hash: string;
 }
 
+export interface CompanyTrashPlan {
+  ok: boolean;
+  company_id: string;
+  company_name: string;
+  revision: number;
+  path: string;
+  can_trash: boolean;
+  blocked_reason: string;
+  file_count: number;
+  dir_count: number;
+  total_bytes: number;
+  truncated: boolean;
+  external_folders: { key: string; label: string; path: string }[];
+  plan_hash: string;
+}
+
+export interface CompanyTrashPayload {
+  ok: boolean;
+  deleted: string;
+  trashed_path: string;
+  external_folders_untouched: { key: string; label: string; path: string }[];
+  revision: number;
+  cost_workbook?: CostWorkbookRefresh;
+}
+
+export interface CompanyExtraFolderCandidate {
+  relative_path: string;
+  path: string;
+  label: string;
+  suggested_role: FolderRole;
+  file_count: number | null;
+}
+
+export interface CompanySetupCustomFolderInput {
+  label: string;
+  relative_path: string;
+  role: FolderRole;
+}
+
 export interface CompanySetupInput {
   name: string;
   parent_dir: string;
   folder_name: string;
   subdirs: Record<string, string>;
   taxpayer_periods: TaxpayerPeriod[];
+  selected_standard_keys?: string[];
+  custom_folders?: CompanySetupCustomFolderInput[];
 }
 
 export interface CompanySetupJob {
@@ -159,7 +200,7 @@ export interface CompanySetupJob {
   plan_hash: string;
   root_path: string;
   name: string;
-  items: { key: string; label: string; relative_path: string }[];
+  items: { key: string; label: string; relative_path: string; kind?: "standard" | "custom"; role?: FolderRole }[];
   created: string[];
   in_progress: string;
   message: string;
@@ -278,6 +319,16 @@ export interface InvoiceRow {
 
 export interface InvoiceListStats { total: number; recognized: number; needs_review: number; duplicates: number; total_amount: string | number; total_amount_valid_count?: number; total_amount_missing_count?: number; total_amount_conflict_count?: number }
 
+export interface InvoiceFilterOptions {
+  projects: string[];
+  tax_rates: string[];
+  invoice_types: string[];
+  business_types: string[];
+  has_unassigned_project: boolean;
+  has_missing_tax_rate: boolean;
+  has_duplicates: boolean;
+}
+
 export interface DirectoryInvoicesPayload {
   ok: boolean;
   count: number;
@@ -288,6 +339,7 @@ export interface DirectoryInvoicesPayload {
   directory: CompanyDirectory;
   tags_error?: string;
   projects_error?: string;
+  filter_options?: InvoiceFilterOptions;
   /** Full-folder and fully filtered statistics, including tags, before pagination. */
   stats?: { all?: InvoiceListStats; filtered?: InvoiceListStats };
   /** A first, still-building result: rows may move, so nothing can be selected (classic homepage rule). */
@@ -684,6 +736,7 @@ export interface SkinsPayload {
 export interface CompanyDetection {
   root_status: SubdirStatus;
   subdirs: { key: string; label: string; relative_path: string; status: SubdirStatus; path: string; file_count: number | null; suggested_action: string; candidates?: string[]; selection_required?: boolean }[];
+  extra_folders?: CompanyExtraFolderCandidate[];
   plan_hash: string;
 }
 
@@ -706,3 +759,202 @@ export interface CompanyRefreshState {
   directories: Record<string, CompanyRefreshDirStatus>;
   updated_at: string;
 }
+
+export interface WorkspaceSearchInvoiceHit extends InvoiceRow {
+  company_id: string;
+  company_name: string;
+  dir_key: string;
+  dir_label: string;
+  dir_role: string;
+  dir_role_label: string;
+  dir_kind: "standard" | "custom";
+  dir_location: "inside_root" | "external";
+  monitored: boolean;
+  read_only: boolean;
+}
+
+export interface WorkspaceSearchDirectoryHit {
+  company_id: string;
+  company_name: string;
+  dir_key: string;
+  dir_label: string;
+  role: string;
+  role_label: string;
+  kind: "standard" | "custom";
+  location: "inside_root" | "external";
+  status: SubdirStatus;
+  monitored: boolean;
+}
+
+export interface WorkspaceSearchProjectHit {
+  company_id: string;
+  company_name: string;
+  project: string;
+}
+
+export interface WorkspaceSearchPayload {
+  ok: boolean;
+  query: Record<string, unknown>;
+  total_matches: number;
+  truncated: boolean;
+  stats: {
+    companies_scanned: number;
+    directories_scanned: number;
+    unbuilt_directories: number;
+    invoices_scanned: number;
+  };
+  items: WorkspaceSearchInvoiceHit[];
+  directories: WorkspaceSearchDirectoryHit[];
+  projects: WorkspaceSearchProjectHit[];
+}
+
+export interface WorkspaceProjectIndexPayload {
+  ok: boolean;
+  revision: number;
+  projects: Record<string, string[]>;
+  truncated: boolean;
+}
+
+export interface DirectoryFileFolder {
+  name: string;
+  relative_path: string;
+  mtime: string;
+  mtime_ns: number;
+  is_symlink: boolean;
+}
+
+export interface DirectoryFileEntry {
+  name: string;
+  relative_path: string;
+  ext: string;
+  size_bytes: number;
+  mtime: string;
+  mtime_ns: number;
+  is_invoice_ext: boolean;
+  is_symlink: boolean;
+}
+
+export interface DirectoryFilesPayload {
+  ok: boolean;
+  company_id: string;
+  company_name: string;
+  dir_key: string;
+  dir_label: string;
+  dir_role: string;
+  monitored: boolean;
+  can_upload: boolean;
+  can_mutate_existing: boolean;
+  subpath: string;
+  breadcrumbs: { name: string; subpath: string }[];
+  folders: DirectoryFileFolder[];
+  files: DirectoryFileEntry[];
+  extensions: string[];
+  total_folders: number;
+  total_files: number;
+  truncated: boolean;
+}
+
+export interface FileImportPreviewPayload {
+  ok: boolean;
+  company_id: string;
+  dir_key: string;
+  subpath: string;
+  conflict_policy: "rename" | "skip";
+  monitored: boolean;
+  items: { original_name: string; target_name: string; action: "write" | "rename" | "skip" | "blocked"; conflict: boolean; reason: string }[];
+  summary: { write: number; rename: number; skip: number; blocked: number };
+}
+
+export interface FileUploadResult {
+  ok: boolean;
+  status: "imported" | "renamed" | "skipped";
+  original_name: string;
+  saved_name: string;
+  relative_path: string;
+  size_bytes: number;
+  monitored: boolean;
+  message: string;
+}
+
+export interface FileRenameResult {
+  ok: boolean;
+  renamed: boolean;
+  old_relative_path: string;
+  new_relative_path: string;
+  old_name?: string;
+  new_name: string;
+  manual_override_migrated: boolean;
+  monitored: boolean;
+}
+
+export interface FileMovePreviewItem {
+  relative_path: string;
+  source_name: string;
+  target_company_id: string;
+  target_company_name: string;
+  target_dir_key: string;
+  target_dir_label: string;
+  target_subpath: string;
+  target_name: string;
+  action: "move" | "rename" | "conflict" | "blocked";
+  reason: string;
+}
+
+export interface FileMovePlanPayload {
+  ok: boolean;
+  job_id: string;
+  company_id: string;
+  company_name: string;
+  dir_key: string;
+  dir_label: string;
+  conflict_policy: "reject" | "rename";
+  plan_hash: string;
+  status: string;
+  can_confirm: boolean;
+  summary: { move: number; rename: number; conflict: number; blocked: number };
+  items: FileMovePreviewItem[];
+  results: {
+    relative_path: string;
+    target_company_id: string;
+    target_dir_key: string;
+    target_name: string;
+    status: "moved" | "failed" | "moving" | "unknown" | "pending";
+    message: string;
+  }[];
+  moved?: number;
+  failed?: number;
+  unknown?: number;
+  pending?: number;
+  overrides_migrated?: number;
+}
+
+export interface FileTrashItemStatus {
+  relative_path: string;
+  name: string;
+  size_bytes: number;
+  status: "pending" | "moving" | "trashed" | "failed" | "unknown";
+  message: string;
+}
+
+export interface FileTrashJobPayload {
+  ok: boolean;
+  job_id: string;
+  company_id: string;
+  company_name?: string;
+  dir_key: string;
+  dir_label: string;
+  monitored: boolean;
+  status: "prepared" | "running" | "completed" | "partial";
+  file_count: number;
+  total_bytes: number;
+  plan_hash: string;
+  trashed: number;
+  failed: number;
+  unknown: number;
+  pending: number;
+  items: FileTrashItemStatus[];
+  results: FileTrashItemStatus[];
+}
+
+export type FileTrashPreviewPayload = FileTrashJobPayload;
+export type FileTrashConfirmPayload = FileTrashJobPayload;

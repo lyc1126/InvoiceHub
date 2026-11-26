@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, reactive, ref, watch } from "vue";
 import { request } from "../api/client";
-import type { CompanyDetection, CompanyPayload, CompanySetupJob, TaxpayerType } from "../api/types";
+import type { CompanyDetection, CompanyPayload, CompanySetupCustomFolderInput, CompanySetupJob, FolderRole, FolderRoleMeta, TaxpayerType } from "../api/types";
 import { errorText, SUBDIR_STATUS_LABELS } from "../format";
 import { useCompaniesStore } from "../stores/companies";
 import MonthPicker from "./MonthPicker.vue";
@@ -16,6 +16,30 @@ watch(taxpayerChoice, (value) => { form.taxpayer_type = value === "general" || v
 const form = reactive({ name: "", root_dir: "", parent_dir: "", folder_name: "", taxpayer_type: "" as TaxpayerType | "", effective_from: "" });
 const subdirs = reactive<Record<string, string>>({});
 const standards = computed(() => companies.list?.standard_subdirs ?? []);
+const DEFAULT_ROLES: FolderRoleMeta[] = [
+  { key: "cost_invoice_dir", label: "成本发票", short_tag: "进项", description: "" },
+  { key: "issued_invoice_dir", label: "开具发票", short_tag: "销项", description: "" },
+  { key: "expense_reimbursement_dir", label: "费用报销", short_tag: "报销", description: "" },
+  { key: "bank_flow_dir", label: "银行流水", short_tag: "流水", description: "" },
+  { key: "input_deduction_dir", label: "进项抵扣", short_tag: "抵扣", description: "" },
+  { key: "payroll_social_dir", label: "工资社保", short_tag: "工资", description: "" },
+  { key: "general", label: "普通资料（未指定）", short_tag: "资料", description: "" },
+];
+const folderRoles = computed<FolderRoleMeta[]>(() => companies.list?.folder_roles?.length ? companies.list.folder_roles : DEFAULT_ROLES);
+const selectedStandardKeys = ref<string[]>([]);
+interface CustomDraftRow { id: number; label: string; relative_path: string; role: FolderRole; relTouched: boolean }
+let customRowSeq = 0;
+const customDrafts = ref<CustomDraftRow[]>([]);
+function addCustomDraft(): void {
+  customDrafts.value.push({ id: ++customRowSeq, label: "", relative_path: "", role: "general", relTouched: false });
+}
+function onCustomLabelInput(row: CustomDraftRow): void {
+  if (!row.relTouched) row.relative_path = row.label.trim();
+}
+function removeCustomDraft(id: number): void {
+  customDrafts.value = customDrafts.value.filter((item) => item.id !== id);
+}
+const extraSelections = reactive<Record<string, { checked: boolean; label: string; role: FolderRole }>>({});
 const busy = ref(false);
 const picking = ref(false);
 const error = ref("");
@@ -52,6 +76,10 @@ function detect(delay = 300): void {
       if (!disposed && mine === detectGeneration) {
         detection.value = result;
         for (const item of result.subdirs) existingSubdirs[item.key] = item.selection_required ? "" : item.relative_path;
+        for (const key of Object.keys(extraSelections)) delete extraSelections[key];
+        for (const extra of result.extra_folders ?? []) {
+          extraSelections[extra.relative_path] = { checked: false, label: extra.label, role: extra.suggested_role };
+        }
       }
     } catch (cause) {
       if (!disposed && mine === detectGeneration) error.value = errorText(cause);
@@ -83,11 +111,31 @@ async function readRegistration(): Promise<void> {
 let disposed = false;
 let pickerGeneration = 0;
 let pickerController: AbortController | undefined;
-const planInput = () => ({ name: form.name, parent_dir: form.parent_dir, folder_name: form.folder_name,
-  subdirs: { ...subdirs }, taxpayer_periods: form.taxpayer_type ? [{ effective_from: form.effective_from, taxpayer_type: form.taxpayer_type }] : [] });
+const planInput = () => {
+  const customPayload: CompanySetupCustomFolderInput[] = customDrafts.value
+    .filter((row) => row.label.trim() || row.relative_path.trim())
+    .map((row) => ({
+      label: row.label.trim() || row.relative_path.trim(),
+      relative_path: row.relative_path.trim() || row.label.trim(),
+      role: row.role,
+    }));
+  const allStandardSelected = standards.value.length > 0 && selectedStandardKeys.value.length === standards.value.length;
+  return {
+    name: form.name,
+    parent_dir: form.parent_dir,
+    folder_name: form.folder_name,
+    subdirs: { ...subdirs },
+    taxpayer_periods: form.taxpayer_type ? [{ effective_from: form.effective_from, taxpayer_type: form.taxpayer_type }] : [],
+    ...(!allStandardSelected && standards.value.length ? { selected_standard_keys: [...selectedStandardKeys.value] } : {}),
+    ...(customPayload.length ? { custom_folders: customPayload } : {}),
+  };
+};
 
 watch(() => standards.value.map((item) => `${item.key}:${item.label}`).join("/"), () => {
   for (const item of standards.value) if (!(item.key in subdirs)) subdirs[item.key] = item.label;
+  if (!selectedStandardKeys.value.length && standards.value.length) {
+    selectedStandardKeys.value = standards.value.map((item) => item.key);
+  }
 }, { immediate: true });
 watch(() => form.name, (value, previous) => {
   if (!form.folder_name || form.folder_name === previous) form.folder_name = value;
@@ -136,9 +184,17 @@ async function submit(): Promise<void> {
   try {
     if (mode.value === "existing") {
       registrationHash.value = detection.value!.plan_hash;
+      const importExtras = (detection.value?.extra_folders ?? [])
+        .filter((extra) => extraSelections[extra.relative_path]?.checked)
+        .map((extra) => ({
+          relative_path: extra.relative_path,
+          label: extraSelections[extra.relative_path]?.label || extra.label,
+          role: extraSelections[extra.relative_path]?.role || extra.suggested_role,
+        }));
       const result = await companies.create({ name: form.name, root_dir: form.root_dir,
         create_missing: [...createMissing.value], plan_hash: registrationHash.value,
         subdirs: chosenSubdirs(),
+        ...(importExtras.length ? { import_extra_folders: importExtras } : {}),
         // Empty stays 未设置; no taxpayer type is assumed.
         taxpayer_periods: form.taxpayer_type ? [{ effective_from: form.effective_from, taxpayer_type: form.taxpayer_type }] : [] });
       if (!disposed && result.company) emit("created", result.subdir_sources ?? {});
@@ -264,6 +320,37 @@ onBeforeUnmount(() => {
             </tr></tbody>
           </table></div>
           <p v-if="createMissing.length" class="overview-notice">点击“登记”即确认创建勾选的 {{ createMissing.length }} 类空目录；不会移动、改名或覆盖文件。</p>
+          <div v-if="detection.extra_folders?.length" class="wz-extra-folders">
+            <p class="muted"><strong>发现其它已有子目录（{{ detection.extra_folders.length }} 个）</strong>：可勾选一并导入为自定义文件夹并指定功能指向，不会移动或修改文件。</p>
+            <div class="overview-table-wrap"><table class="grid">
+              <thead><tr><th>导入</th><th>子目录</th><th>文件数</th><th>功能指向</th></tr></thead>
+              <tbody>
+                <tr v-for="extra in detection.extra_folders" :key="extra.relative_path">
+                  <td>
+                    <input
+                      v-if="extraSelections[extra.relative_path]"
+                      v-model="extraSelections[extra.relative_path]!.checked"
+                      type="checkbox"
+                      :aria-label="`一并导入 ${extra.relative_path}`"
+                      :disabled="busy || !!registrationHash"
+                    >
+                  </td>
+                  <td class="mono">{{ extra.relative_path }}</td>
+                  <td>{{ extra.file_count === null ? "待核对" : `${extra.file_count} 个` }}</td>
+                  <td>
+                    <select
+                      v-if="extraSelections[extra.relative_path]"
+                      v-model="extraSelections[extra.relative_path]!.role"
+                      :aria-label="`${extra.relative_path} 功能指向`"
+                      :disabled="busy || !!registrationHash || !extraSelections[extra.relative_path]!.checked"
+                    >
+                      <option v-for="role in folderRoles" :key="role.key" :value="role.key">{{ role.label }}</option>
+                    </select>
+                  </td>
+                </tr>
+              </tbody>
+            </table></div>
+          </div>
         </template>
       </section>
       <label class="field"><span>公司名称</span><input v-model="form.name" aria-label="公司名称" required maxlength="80" autocomplete="off" :disabled="busy || !!registrationHash"></label>
@@ -278,11 +365,53 @@ onBeforeUnmount(() => {
         </span>
       </fieldset>
       <fieldset v-if="mode === 'new'" class="field">
-        <legend>六类资料目录（可调整）</legend>
+        <legend>标准资料目录（可按需勾选创建，未勾选的可日后补建）</legend>
         <div class="overview-table-wrap"><table class="grid">
-          <thead><tr><th>资料类型</th><th>子目录名称</th></tr></thead>
-          <tbody><tr v-for="item in standards" :key="item.key"><td>{{ item.label }}</td><td><input v-model="subdirs[item.key]" :aria-label="`${item.label} 子目录`" required :disabled="busy || !!registrationHash" autocomplete="off"></td></tr></tbody>
+          <thead><tr><th>创建</th><th>资料类型</th><th>子目录名称</th></tr></thead>
+          <tbody>
+            <tr v-for="item in standards" :key="item.key">
+              <td>
+                <input
+                  v-model="selectedStandardKeys"
+                  type="checkbox"
+                  :value="item.key"
+                  :aria-label="`创建 ${item.label}`"
+                  :disabled="busy || !!registrationHash"
+                >
+              </td>
+              <td>{{ item.label }}</td>
+              <td>
+                <input
+                  v-model="subdirs[item.key]"
+                  :aria-label="`${item.label} 子目录`"
+                  required
+                  :disabled="busy || !!registrationHash"
+                  autocomplete="off"
+                >
+              </td>
+            </tr>
+          </tbody>
         </table></div>
+      </fieldset>
+      <fieldset v-if="mode === 'new'" class="field">
+        <legend>附带自定义子目录（可选）</legend>
+        <p class="muted">除标准目录外，可顺带新建项目专项、其他收入或通用资料子目录。</p>
+        <div v-if="customDrafts.length" class="overview-table-wrap"><table class="grid">
+          <thead><tr><th>显示名称</th><th>子目录路径</th><th>功能指向</th><th>操作</th></tr></thead>
+          <tbody>
+            <tr v-for="row in customDrafts" :key="row.id">
+              <td><input v-model="row.label" aria-label="自定义目录名称" placeholder="如：专项进项" maxlength="80" :disabled="busy" @input="onCustomLabelInput(row)"></td>
+              <td><input v-model="row.relative_path" class="mono" aria-label="自定义目录路径" placeholder="相对路径" :disabled="busy" @input="row.relTouched = true"></td>
+              <td>
+                <select v-model="row.role" aria-label="自定义目录功能指向" :disabled="busy">
+                  <option v-for="role in folderRoles" :key="role.key" :value="role.key">{{ role.label }}</option>
+                </select>
+              </td>
+              <td><button type="button" class="ghost" :disabled="busy" @click="removeCustomDraft(row.id)">移除</button></td>
+            </tr>
+          </tbody>
+        </table></div>
+        <div><button type="button" :disabled="busy || !!registrationHash" @click="addCustomDraft">+ 添加自定义子目录</button></div>
       </fieldset>
     </template>
     <section v-else class="wz-plan" aria-label="新建工作区计划">
@@ -314,4 +443,5 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .wz-candidate { display: block; max-width: 240px; margin-top: 4px; }
+.wz-extra-folders { margin-top: 10px; display: grid; gap: 6px; }
 </style>

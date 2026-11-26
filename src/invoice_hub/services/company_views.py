@@ -60,6 +60,8 @@ from invoice_hub.services.file_preview import FilePreviewError, MAX_PREVIEW_SELE
 from invoice_hub.services.invoice_selection import selection_family_key
 from invoice_hub.services.invoice_list import InvoiceListService
 from invoice_hub.services.source_move import SourceMoveService, period_folder_check
+from invoice_hub.services.workspace_files import WorkspaceFileService
+from invoice_hub.services.workspace_search import WorkspaceSearchService
 from invoice_hub.storage import SQLiteRepository
 from invoice_hub.targets import AppConfig, target_profile_for
 from invoice_hub.targets.companies import company_outbound_for, company_taxpayer_for
@@ -230,6 +232,10 @@ class CompanyViewService:
             db_path=db_path,
             freshness_check=directory_freshness,
         )
+        # Read-only cross-directory / cross-company search and collapsed-project index (WS-11).
+        self.search = WorkspaceSearchService(self)
+        # File-level browse, upload, rename, cross-directory move, and native trash (WS-12).
+        self.files = WorkspaceFileService(self)
 
     @property
     def config(self) -> AppConfig:
@@ -296,7 +302,12 @@ class CompanyViewService:
         page = filters.pop("page", None)
         page_size = max(1, min(200, int(filters.pop("page_size", None) or 100)))
         tag_filter = str(filters.pop("tag", "") or "")
-        payload, read_only = self._list_payload(profile, filters)
+        sort_by = str(filters.pop("sort_by", "") or "")
+        sort_dir = str(filters.pop("sort_dir", "") or "")
+        date_sort = str(filters.pop("date_sort", "") or "")
+        # Read the full directory projection once so project assignments and tags can participate
+        # in workspace multi-token search, project filtering, and directory-wide filter_options.
+        payload, read_only = self._list_payload(profile, {})
         if not read_only:
             payload = self.active_project_fields(payload)
         # Copies: the active folder's rows come from the live homepage service, whose payload
@@ -316,12 +327,21 @@ class CompanyViewService:
                 tags_error = exc.message
         for item in items:
             item["tags"] = marks.get(str(item.get("invoice_number") or ""), [])
+        filter_options = InvoiceListService.collect_filter_options(items)
+        try:
+            items = InvoiceListService.filter_invoice_items(items, filters)
+        except ValueError as exc:
+            raise CompanyRegistryError("INVOICE_FILTER_INVALID", str(exc), status_code=422) from exc
         if tag_filter:
-            items = [item for item in items if tag_filter in item["tags"]]
-            payload["items"] = items
-            payload["count"] = len(items)
-            payload["stats"] = {**payload["stats"], "filtered": InvoiceListService._invoice_stats(items)}
+            if tag_filter == "__untagged__":
+                items = [item for item in items if not item["tags"]]
+            else:
+                items = [item for item in items if tag_filter in item["tags"]]
+        items = InvoiceListService.sort_invoice_items(items, sort_by=sort_by, sort_dir=sort_dir, date_sort=date_sort)
         count = len(items)
+        payload["items"] = items
+        payload["count"] = count
+        payload["stats"] = {**payload["stats"], "filtered": InvoiceListService._invoice_stats(items)}
         if page is not None:
             last_page = max(1, (count + page_size - 1) // page_size)
             page = max(1, min(int(page), last_page))
@@ -332,6 +352,7 @@ class CompanyViewService:
             directory=self._directory_view(subdir, profile, self.active_profile.id, check_freshness=False),
             read_only=read_only,
             tags_error=tags_error,
+            filter_options=filter_options,
         )
         return payload
 

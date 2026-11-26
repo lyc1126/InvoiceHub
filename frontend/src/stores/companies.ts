@@ -12,6 +12,8 @@ import type {
   CompanyRefreshState,
   CompanySetupInput,
   CompanySetupJob,
+  CompanyTrashPayload,
+  CompanyTrashPlan,
   FolderRole,
   SubdirCreateResult,
   SubdirPlan,
@@ -25,11 +27,15 @@ export interface NewCompany {
   taxpayer_periods: TaxpayerPeriod[];
   subdirs?: Record<string, string>;
   create_missing?: string[];
+  import_extra_folders?: { relative_path: string; label?: string; role?: FolderRole }[];
   plan_hash?: string;
 }
 
 export interface CompanyPatch {
   name?: string;
+  root_dir?: string;
+  rename_root_on_disk?: boolean;
+  new_root_name?: string;
   taxpayer_periods?: TaxpayerPeriod[];
   subdirs?: Record<string, string>;
 }
@@ -112,6 +118,42 @@ export const useCompaniesStore = defineStore("companies", () => {
     if (selectedId.value === id) selectedId.value = null;
     await load();
     return result;
+  }
+
+  function previewTrashCompany(id: string): Promise<CompanyTrashPlan> {
+    return write((revision) =>
+      request<CompanyTrashPlan>(`/api/v1/companies/${encodeURIComponent(id)}/trash-preview`, {
+        method: "POST",
+        body: { revision },
+      }),
+    );
+  }
+
+  async function trashCompany(id: string, planHash: string): Promise<CompanyTrashPayload> {
+    const result = await write((revision) =>
+      request<CompanyTrashPayload>(`/api/v1/companies/${encodeURIComponent(id)}/trash`, {
+        method: "POST",
+        body: { revision, plan_hash: planHash, confirm: true },
+        timeoutMs: 60_000,
+      }),
+    );
+    if (selectedId.value === id) selectedId.value = null;
+    await load();
+    return result;
+  }
+
+  function openCompanyRoot(id: string): Promise<{ ok: boolean; opened: boolean; path: string }> {
+    return request<{ ok: boolean; opened: boolean; path: string }>(`/api/v1/companies/${encodeURIComponent(id)}/open-root`, {
+      method: "POST",
+      body: {},
+    });
+  }
+
+  function openFolder(companyId: string, key: string): Promise<{ ok: boolean; opened: boolean; path: string }> {
+    return request<{ ok: boolean; opened: boolean; path: string }>(
+      `/api/v1/companies/${encodeURIComponent(companyId)}/folders/${encodeURIComponent(key)}/open`,
+      { method: "POST", body: {} },
+    );
   }
 
   function subdirPlan(id: string, keys?: string[]): Promise<SubdirPlan> {
@@ -335,7 +377,8 @@ export const useCompaniesStore = defineStore("companies", () => {
   return {
     planSetup, getSetup, confirmSetup, acceptSetup,
     list, companies, selected, selectedId, loading, error, refreshStates,
-    load, create, update, remove, subdirPlan, createSubdirs, refreshData,
+    load, create, update, remove, previewTrashCompany, trashCompany,
+    openCompanyRoot, openFolder, subdirPlan, createSubdirs, refreshData,
     discoverFolders, previewCreateFolder, createFolder, importFolder,
     updateFolder, removeFolder, restoreFolder, previewTrashFolder, trashFolder,
     promoteFolder, pickFolderDirectory,

@@ -73,4 +73,9 @@ def router() -> APIRouter:
         payload = await _json_body(request)
         return await _call(lambda: _state(request).companies.folders.promote_folder(company_id, key, payload))
 
+    @routes.post("/api/v1/companies/{company_id}/folders/{key}/open")
+    async def open_company_folder(request: Request, company_id: str, key: str):
+        _require_same_origin_write(request)
+        return await _call(lambda: _state(request).companies.folders.open_folder(company_id, key))
+
     return routes

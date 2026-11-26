@@ -14,10 +14,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import threading
 from datetime import datetime
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Callable
 
@@ -28,13 +29,17 @@ from invoice_hub.extraction.classification import (
     CLASSIFICATION_STATUS_NEEDS_REVIEW,
     CLASSIFICATION_STATUS_OK,
 )
-from invoice_hub.monitoring.state import MonitorState, is_pid_alive
+from invoice_hub.monitoring.state import MANUAL_OVERRIDE_FIELDS, MonitorState, canonical_path, is_pid_alive
 from invoice_hub.platform import open_local_path
 from invoice_hub.projections.cost_analysis import invoice_cost_breakdown
 from invoice_hub.projections.costs import CostProjectionService
 from invoice_hub.projections.summary import SUMMARY_HEADERS, write_summary_xlsx
 from invoice_hub.services.invoice_selection import (
-    file_format_from_source, invoice_number_from_filename, selection_family_key, selection_money_value,
+    StaleInvoiceSelectionError,
+    file_format_from_source,
+    invoice_number_from_filename,
+    selection_family_key,
+    selection_money_value,
 )
 from invoice_hub.storage import SQLiteRepository, atomic_write_json, read_csv_rows, read_json_object, write_csv_rows
 from invoice_hub.storage import generations
@@ -117,7 +122,7 @@ class InvoiceListService:
             override = overrides.get(self._identity_for_row(row, index)) or {}
             fields = override.get("fields") if isinstance(override, dict) else {}
             if isinstance(fields, dict):
-                for key in ("销售方", "开票金额", "发票号码"):
+                for key in MANUAL_OVERRIDE_FIELDS:
                     if key in fields:
                         row[key] = str(fields.get(key) or "")
                 row["手改状态"] = "已手改"
@@ -131,27 +136,163 @@ class InvoiceListService:
         required = (row.get("销售方"), row.get("发票号码"))
         return "已识别" if all(str(value or "").strip() for value in required) and is_valid_money(str(row.get("开票金额") or "")) else "待核对"
 
-    def _filter_invoice_items(self, items: list[dict], filters: dict | None) -> list[dict]:
+    @staticmethod
+    def _normalize_date_ymd(value: object) -> str:
+        match = re.match(r"^\s*(\d{4})[-/.年](\d{1,2})[-/.月](\d{1,2})", str(value or ""))
+        if not match:
+            return ""
+        year, month, day = (int(part) for part in match.groups())
+        if not (1 <= month <= 12 and 1 <= day <= 31):
+            return ""
+        return f"{year:04d}-{month:02d}-{day:02d}"
+
+    @staticmethod
+    def _parse_filter_decimal(raw: object, label: str) -> Decimal | None:
+        text = str(raw or "").strip()
+        if not text:
+            return None
+        try:
+            value = Decimal(text)
+        except InvalidOperation as exc:
+            raise ValueError(f"{label} 必须是有效数字。") from exc
+        if not value.is_finite():
+            raise ValueError(f"{label} 必须是有限数字。")
+        return value
+
+    @staticmethod
+    def _normalize_tax_rate_label(value: object) -> str:
+        text = str(value or "").strip()
+        if not text:
+            return ""
+        if text.endswith("%"):
+            inner = text[:-1].strip()
+            try:
+                num = Decimal(inner)
+                if num.is_finite():
+                    normalized = format(num.normalize(), "f")
+                    if "." in normalized:
+                        normalized = normalized.rstrip("0").rstrip(".")
+                    return f"{normalized}%"
+            except InvalidOperation:
+                return text
+        try:
+            num = Decimal(text)
+            if num.is_finite() and Decimal("0") <= num <= Decimal("1"):
+                pct = (num * Decimal("100")).normalize()
+                normalized = format(pct, "f")
+                if "." in normalized:
+                    normalized = normalized.rstrip("0").rstrip(".")
+                return f"{normalized}%"
+        except InvalidOperation:
+            pass
+        return text
+
+    @classmethod
+    def collect_filter_options(cls, items: list[dict]) -> dict:
+        projects: set[str] = set()
+        tax_rates: set[str] = set()
+        invoice_types: set[str] = set()
+        business_types: set[str] = set()
+        has_unassigned_project = False
+        has_missing_tax_rate = False
+        has_duplicates = False
+        for item in items:
+            proj = str(item.get("project") or "").strip()
+            if proj:
+                projects.add(proj)
+            else:
+                has_unassigned_project = True
+            rate = cls._normalize_tax_rate_label(item.get("tax_rate"))
+            if rate:
+                tax_rates.add(rate)
+            else:
+                has_missing_tax_rate = True
+            itype = str(item.get("invoice_type") or "").strip()
+            if itype:
+                invoice_types.add(itype)
+            btype = str(item.get("business_type") or "").strip()
+            if btype:
+                business_types.add(btype)
+            if item.get("duplicate") or item.get("status") == "重复发票":
+                has_duplicates = True
+
+        def _rate_sort_key(rate_text: str) -> tuple[int, Decimal, str]:
+            if rate_text.endswith("%"):
+                try:
+                    return (0, Decimal(rate_text[:-1]), rate_text)
+                except InvalidOperation:
+                    pass
+            return (1, Decimal("0"), rate_text)
+
+        return {
+            "projects": sorted(projects, key=lambda v: v.casefold()),
+            "tax_rates": sorted(tax_rates, key=_rate_sort_key),
+            "invoice_types": sorted(invoice_types),
+            "business_types": sorted(business_types),
+            "has_unassigned_project": has_unassigned_project,
+            "has_missing_tax_rate": has_missing_tax_rate,
+            "has_duplicates": has_duplicates,
+        }
+
+    @classmethod
+    def filter_invoice_items(cls, items: list[dict], filters: dict | None) -> list[dict]:
         filters = filters or {}
         keyword = str(filters.get("keyword") or "").strip().casefold()
-        search_fields = {
+        scope = str(filters.get("search_scope") or "all")
+        search_field_map = {
             "invoice": ("seller", "invoice_number"),
             "filename": ("source_file",),
             "all": ("seller", "invoice_number", "source_file"),
-        }[str(filters.get("search_scope") or "all")]
+            "buyer": ("buyer", "invoice_number"),
+            "party": ("seller", "buyer", "invoice_number"),
+            "workspace": (
+                "seller",
+                "buyer",
+                "invoice_number",
+                "source_file",
+                "project",
+                "amount",
+                "tax_rate",
+                "invoice_type",
+                "business_type",
+                "invoice_date",
+            ),
+        }
+        if scope not in search_field_map:
+            raise ValueError(f"不支持的搜索范围：{scope}")
+        search_fields = search_field_map[scope]
+        # Legacy scopes keep single-substring semantics for classic API compatibility;
+        # new workspace/party/buyer scopes support whitespace-separated multi-token AND matching.
+        multi_token = scope in {"workspace", "party", "buyer"}
+        tokens = [token for token in keyword.split() if token] if (keyword and multi_token) else ([keyword] if keyword else [])
         file_ext = str(filters.get("file_ext") or "").strip().casefold()
         status = str(filters.get("status") or "").strip()
         invoice_type = str(filters.get("invoice_type") or "").strip()
         business_type = str(filters.get("business_type") or "").strip()
         classification_filter = str(filters.get("classification_status") or "").strip()
-        date_from = str(filters.get("date_from") or "").strip()
-        date_to = str(filters.get("date_to") or "").strip()
+        raw_date_from = str(filters.get("date_from") or "").strip()
+        raw_date_to = str(filters.get("date_to") or "").strip()
+        date_from = cls._normalize_date_ymd(raw_date_from) or raw_date_from
+        date_to = cls._normalize_date_ymd(raw_date_to) or raw_date_to
+        amount_min = cls._parse_filter_decimal(filters.get("amount_min"), "最小金额")
+        amount_max = cls._parse_filter_decimal(filters.get("amount_max"), "最大金额")
+        if amount_min is not None and amount_max is not None and amount_min > amount_max:
+            raise ValueError("最小金额不能大于最大金额。")
+        tax_rate_filter = str(filters.get("tax_rate") or "").strip()
+        tax_rate_target = "" if tax_rate_filter in {"", "__missing__"} else cls._normalize_tax_rate_label(tax_rate_filter).casefold()
+        project_filter = str(filters.get("project") or "").strip()
 
         def matches(item: dict) -> bool:
-            # The homepage defaults to visible invoice fields; legacy API callers
-            # retain filename matching. Match each field separately, never across boundaries.
-            if keyword and not any(keyword in str(item.get(key) or "").casefold() for key in search_fields):
-                return False
+            # Match each field separately, never across field boundaries.
+            if tokens:
+                field_values = [str(item.get(key) or "").casefold() for key in search_fields]
+                if scope == "workspace":
+                    norm_rate = cls._normalize_tax_rate_label(item.get("tax_rate")).casefold()
+                    if norm_rate:
+                        field_values.append(norm_rate)
+                for token in tokens:
+                    if not any(token in value for value in field_values):
+                        return False
             if file_ext and not str(item.get("source_file") or "").casefold().endswith(file_ext):
                 return False
             if status and item.get("status") != status:
@@ -162,14 +303,85 @@ class InvoiceListService:
                 return False
             if classification_filter and item.get("classification_status") != classification_filter:
                 return False
-            invoice_date = str(item.get("invoice_date") or "")
-            if date_from and invoice_date and invoice_date < date_from:
-                return False
-            if date_to and invoice_date and invoice_date > date_to:
-                return False
+            if date_from or date_to:
+                norm_date = cls._normalize_date_ymd(item.get("invoice_date"))
+                if not norm_date:
+                    return False
+                if date_from and norm_date < date_from:
+                    return False
+                if date_to and norm_date > date_to:
+                    return False
+            if amount_min is not None or amount_max is not None:
+                amount_value = selection_money_value(item.get("amount"))
+                if amount_value is None:
+                    return False
+                if amount_min is not None and amount_value < amount_min:
+                    return False
+                if amount_max is not None and amount_value > amount_max:
+                    return False
+            if tax_rate_filter:
+                norm_rate = cls._normalize_tax_rate_label(item.get("tax_rate")).casefold()
+                if tax_rate_filter == "__missing__":
+                    if norm_rate:
+                        return False
+                elif norm_rate != tax_rate_target:
+                    return False
+            if project_filter:
+                proj = str(item.get("project") or "").strip()
+                if project_filter == "__unassigned__":
+                    if proj:
+                        return False
+                elif proj != project_filter:
+                    return False
             return True
 
         return [item for item in items if matches(item)]
+
+    def _filter_invoice_items(self, items: list[dict], filters: dict | None) -> list[dict]:
+        return self.filter_invoice_items(items, filters)
+
+    @classmethod
+    def sort_invoice_items(
+        cls,
+        items: list[dict],
+        *,
+        sort_by: str = "",
+        sort_dir: str = "",
+        date_sort: str = "",
+    ) -> list[dict]:
+        active_by = str(sort_by or "").strip()
+        active_dir = str(sort_dir or "").strip()
+        if not active_by and date_sort in {"asc", "desc"}:
+            active_by = "invoice_date"
+            active_dir = date_sort
+        if not active_by:
+            return items
+        if active_dir not in {"asc", "desc"}:
+            active_dir = "desc" if active_by in {"invoice_date", "amount"} else "asc"
+        reverse = active_dir == "desc"
+
+        if active_by == "invoice_date":
+            def _date_key(item: dict) -> tuple[int, int, int] | None:
+                norm = cls._normalize_date_ymd(item.get("invoice_date"))
+                if not norm:
+                    return None
+                return (int(norm[0:4]), int(norm[5:7]), int(norm[8:10]))
+
+            present = [item for item in items if _date_key(item) is not None]
+            missing = [item for item in items if _date_key(item) is None]
+            return sorted(present, key=_date_key, reverse=reverse) + missing
+
+        if active_by == "amount":
+            present = [item for item in items if selection_money_value(item.get("amount")) is not None]
+            missing = [item for item in items if selection_money_value(item.get("amount")) is None]
+            return sorted(present, key=lambda item: selection_money_value(item.get("amount")), reverse=reverse) + missing
+
+        if active_by in {"seller", "buyer", "source_file"}:
+            present = [item for item in items if str(item.get(active_by) or "").strip()]
+            missing = [item for item in items if not str(item.get(active_by) or "").strip()]
+            return sorted(present, key=lambda item: str(item.get(active_by) or "").strip().casefold(), reverse=reverse) + missing
+
+        return items
 
     @staticmethod
     def _invoice_stats(items: list[dict]) -> dict:
@@ -331,13 +543,12 @@ class InvoiceListService:
                     payload = self._build_invoice_payload(rows=rows)
                     snapshot.update(provisional=True, revision=meta["revision"], progress=meta, source_label="正在整理的临时结果")
             items = self._filter_invoice_items(payload["items"], filters)
-            if filters.get("date_sort") in {"asc", "desc"}:
-                def date_key(item):
-                    match = re.match(r"(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})", str(item.get("invoice_date") or ""))
-                    return tuple(map(int, match.groups())) if match else ()
-                dated = [item for item in items if date_key(item)]
-                undated = [item for item in items if not date_key(item)]
-                items = sorted(dated, key=date_key, reverse=filters["date_sort"] == "desc") + undated
+            items = self.sort_invoice_items(
+                items,
+                sort_by=str(filters.get("sort_by") or ""),
+                sort_dir=str(filters.get("sort_dir") or ""),
+                date_sort=str(filters.get("date_sort") or ""),
+            )
             count = len(items)
             payload.update(count=count, items=items, stats={"all": payload["stats"]["all"], "filtered": self._invoice_stats(items)}, snapshot=snapshot)
             if "page" in filters:
@@ -436,8 +647,11 @@ class InvoiceListService:
             source_modified = None
         editable = {
             "销售方": {"source_value": item.get("seller", ""), "manual_value": item.get("seller", "")},
+            "购买方": {"source_value": item.get("buyer", ""), "manual_value": item.get("buyer", "")},
             "开票金额": {"source_value": item.get("amount", ""), "manual_value": item.get("amount", "")},
             "发票号码": {"source_value": item.get("invoice_number", ""), "manual_value": item.get("invoice_number", "")},
+            "开票时间": {"source_value": item.get("invoice_date", ""), "manual_value": item.get("invoice_date", "")},
+            "税率": {"source_value": item.get("tax_rate", ""), "manual_value": item.get("tax_rate", "")},
         }
         item.update(
             {
@@ -479,31 +693,65 @@ class InvoiceListService:
             self._write_summary_rows(rows)
 
     def update_manual_fields(self, invoice_key: str, payload: dict | None) -> dict:
+        body = payload if isinstance(payload, dict) else {}
+        expected_target_id = str(body.get("target_id") or "").strip()
+        expected_source_path = str(body.get("source_path") or "").strip()
         with self._lock:
             profile = self.active_profile.model_copy(deep=True)
             profile_identity = _profile_identity(profile)
+        if expected_target_id and expected_target_id != profile.id:
+            raise StaleInvoiceSelectionError("当前监控目录已切换，请刷新列表后再保存手改字段。")
         monitor_state = MonitorState(profile, self._db_path, sync_interval_seconds=60)
         with monitor_state.sync_write_lock():
+            if expected_target_id:
+                with self._lock:
+                    if _profile_identity(self.active_profile) != profile_identity:
+                        raise StaleInvoiceSelectionError("当前监控目录已切换，请刷新列表后再保存手改字段。")
             rows = read_csv_rows(generations.resolve(Path(profile.workspace_dir), Path(profile.watch_dir), "发票汇总.csv"))
             try:
                 index = int(invoice_key)
+                if index < 0:
+                    raise IndexError(index)
                 row = rows[index]
             except Exception:
+                if expected_source_path or expected_target_id:
+                    raise StaleInvoiceSelectionError("发票列表已变化，请刷新后再保存手改字段。") from None
                 raise KeyError(invoice_key)
-            fields = dict((payload or {}).get("fields") or payload or {})
-            allowed = {"销售方", "开票金额", "发票号码"}
+            # Validate displayed source identity under the write lock so background sync row
+            # insertions/deletions can never silently apply edits to a shifted replacement row.
+            if expected_source_path:
+                live_source_path = str(row.get("文件路径") or "").strip()
+                same_source = False
+                if live_source_path:
+                    live_canon = canonical_path(live_source_path)
+                    expected_canon = canonical_path(expected_source_path)
+                    if live_canon == expected_canon:
+                        same_source = True
+                    elif live_canon.casefold() == expected_canon.casefold():
+                        try:
+                            same_source = os.path.samefile(live_canon, expected_canon)
+                        except OSError:
+                            same_source = False
+                if not same_source:
+                    raise StaleInvoiceSelectionError("该发票行在列表刷新后已变化，为防止误改其它发票已取消保存，请刷新列表后重试。")
+            fields = dict(body.get("fields") or body)
+            allowed = set(MANUAL_OVERRIDE_FIELDS)
             cleaned = {key: str(value or "").strip() for key, value in fields.items() if key in allowed}
             if not cleaned:
                 return {"ok": True, "updated": False, "invoice_key": invoice_key}
             for key, value in cleaned.items():
                 row[key] = value
+            row["手改状态"] = "已手改"
             identity = self._identity_for_row(row, index)
             overrides = read_json_object(monitor_state.manual_overrides_file, {"items": {}})
             items = overrides.setdefault("items", {})
+            existing_entry = items.get(identity)
+            merged_fields = dict(existing_entry.get("fields") or {}) if isinstance(existing_entry, dict) else {}
+            merged_fields.update(cleaned)
             items[identity] = {
                 "invoice_key": invoice_key,
                 "source_path": row.get("文件路径", ""),
-                "fields": cleaned,
+                "fields": merged_fields,
                 "updated_at": utc_now_text(),
             }
             atomic_write_json(monitor_state.manual_overrides_file, overrides)
