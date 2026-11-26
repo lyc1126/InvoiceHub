@@ -401,6 +401,103 @@ describe("Phase 2 WS-12 generic file browser and active invoice file actions", (
     panel.unmount();
   });
 
+  it("removes completed files from upload queue on partial failure and retries only remaining files", async () => {
+    const uploadedNames: string[] = [];
+    const previewBatches: string[][] = [];
+    let secondAttempts = 0;
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init: RequestInit = {}) => {
+        const body = typeof init.body === "string" ? JSON.parse(init.body) : undefined;
+        if (url.endsWith("/directories")) {
+          return new Response(JSON.stringify({ ok: true, revision: 2, company: COMPANY_A, directories: DIRS_A }), { status: 200 });
+        }
+        if (url.includes("/directories/cf_general/files?")) {
+          return new Response(JSON.stringify({
+            ok: true,
+            company_id: "co_a",
+            company_name: "甲公司",
+            dir_key: "cf_general",
+            dir_label: "合同归档",
+            dir_role: "general",
+            monitored: false,
+            can_upload: true,
+            can_mutate_existing: true,
+            subpath: "",
+            breadcrumbs: [{ name: "合同归档", subpath: "" }],
+            folders: [],
+            files: [],
+            extensions: [],
+            total_folders: 0,
+            total_files: 0,
+            truncated: false,
+          }), { status: 200 });
+        }
+        if (url.endsWith("/files/import-preview")) {
+          const names = (body as { filenames: string[] }).filenames;
+          previewBatches.push(names);
+          return new Response(JSON.stringify({
+            ok: true,
+            company_id: "co_a",
+            dir_key: "cf_general",
+            subpath: "",
+            conflict_policy: "rename",
+            monitored: false,
+            items: names.map((name) => ({ original_name: name, target_name: name, action: "write", conflict: false, reason: "" })),
+            summary: { write: names.length, rename: 0, skip: 0, blocked: 0 },
+          }), { status: 200 });
+        }
+        if (url.includes("/files/upload?")) {
+          const filename = new URL(url, "http://localhost").searchParams.get("filename") ?? "";
+          uploadedNames.push(filename);
+          if (filename === "second.pdf" && secondAttempts === 0) {
+            secondAttempts += 1;
+            return new Response(JSON.stringify({ detail: "磁盘临时繁忙" }), { status: 500 });
+          }
+          return new Response(JSON.stringify({
+            ok: true,
+            status: "imported",
+            original_name: filename,
+            saved_name: filename,
+            relative_path: filename,
+            size_bytes: 5,
+            monitored: false,
+            message: `已导入「${filename}」。`,
+          }), { status: 200 });
+        }
+        return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      }),
+    );
+
+    setActivePinia(createPinia());
+    const panel = mount(DirectoryPanel, { props: { company: COMPANY_A, dirKey: "cf_general" }, attachTo: document.body });
+    await flushPromises();
+
+    // Stage 2 files via dropzone
+    const f1 = new File(["aaa"], "first.pdf", { type: "application/pdf" });
+    const f2 = new File(["bbb"], "second.pdf", { type: "application/pdf" });
+    await panel.get(".ws-files__dropzone").trigger("drop", { dataTransfer: { files: [f1, f2] } });
+    await flushPromises();
+    expect(previewBatches).toEqual([["first.pdf", "second.pdf"]]);
+
+    // First confirm: first.pdf succeeds, second.pdf fails
+    await panel.findAll("button").find((b) => b.text().includes("确认导入"))!.trigger("click");
+    await flushPromises();
+
+    expect(panel.text()).toContain("磁盘临时繁忙");
+    expect(panel.text()).toContain("待导入 1 个文件");
+    expect(previewBatches).toEqual([["first.pdf", "second.pdf"], ["second.pdf"]]);
+
+    // Retry confirm: must upload ONLY second.pdf, never re-uploading first.pdf
+    await panel.findAll("button").find((b) => b.text().includes("确认导入"))!.trigger("click");
+    await flushPromises();
+
+    expect(uploadedNames).toEqual(["first.pdf", "second.pdf", "second.pdf"]);
+    expect(panel.text()).not.toContain("待导入");
+    panel.unmount();
+  });
+
   it("exposes manual edit/rename/move on active monitored invoice row and hides them on read-only directory", async () => {
     const calls: { url: string; method: string; body?: unknown }[] = [];
     const invoiceRow = {

@@ -18,7 +18,6 @@ import hashlib
 import json
 import os
 import re
-import secrets
 import stat
 import threading
 import time
@@ -46,6 +45,7 @@ if TYPE_CHECKING:
     from invoice_hub.services.company_views import CompanyViewService
 
 MAX_LIST_ENTRIES = 2_000
+MAX_SCAN_ENTRIES = 100_000
 MAX_UPLOAD_FILE_BYTES = 50 * 1024 * 1024
 MAX_BATCH_ITEMS = 100
 MOVE_PLAN_EXPIRY_SECONDS = 300
@@ -344,7 +344,12 @@ def _write_new_file_atomic(target_dir: Path, filename: str, raw_bytes: bytes) ->
 
 
 def _move_file_no_overwrite(src: Path, dst: Path) -> None:
-    """Move ``src`` to ``dst`` without ever overwriting an existing destination file."""
+    """Move ``src`` to ``dst`` without ever overwriting an existing destination file.
+
+    Uses atomic same-filesystem ``os.link`` first; on cross-device moves or filesystems without
+    hard-link support (e.g. FAT/SMB), writes directly via ``O_CREAT | O_EXCL | O_NOFOLLOW`` so
+    concurrent destination creation always fails with ``FileExistsError`` instead of overwriting.
+    """
     if dst.exists() or _is_link(dst):
         raise FileExistsError(f"目标文件已存在：{dst.name}")
     try:
@@ -360,35 +365,16 @@ def _move_file_no_overwrite(src: Path, dst: Path) -> None:
     except OSError as exc:
         if isinstance(exc, FileExistsError):
             raise
-        # Cross-device link (EXDEV) or filesystem without hard-link support: copy to temp, fsync, O_EXCL create, unlink src.
+        # Cross-device link (EXDEV) or filesystem without hard-link support: never fall back to
+        # overwriting os.rename(); atomically create destination exclusively with O_CREAT|O_EXCL.
         raw = src.read_bytes()
-        tmp_name = f".ih-move-{secrets.token_hex(8)}.tmp"
-        tmp_path = dst.parent / tmp_name
-        fd = os.open(tmp_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0), 0o600)
+        _write_new_file_atomic(dst.parent, dst.name, raw)
         try:
-            with os.fdopen(fd, "wb") as handle:
-                handle.write(raw)
-                handle.flush()
-                os.fsync(handle.fileno())
-            if dst.exists() or _is_link(dst):
-                raise FileExistsError(f"目标文件已存在：{dst.name}")
-            os.link(tmp_path, dst)
-        except OSError as link_exc:
-            if isinstance(link_exc, FileExistsError):
-                with contextlib.suppress(OSError):
-                    tmp_path.unlink(missing_ok=True)
-                raise
-            # Final fallback when os.link itself is unsupported on destination FS (e.g. FAT/SMB):
-            # double-check non-existence then rename temp -> dst.
-            if dst.exists() or _is_link(dst):
-                with contextlib.suppress(OSError):
-                    tmp_path.unlink(missing_ok=True)
-                raise FileExistsError(f"目标文件已存在：{dst.name}")
-            os.rename(tmp_path, dst)
-        finally:
+            os.unlink(src)
+        except OSError:
             with contextlib.suppress(OSError):
-                tmp_path.unlink(missing_ok=True)
-        os.unlink(src)
+                dst.unlink(missing_ok=True)
+            raise
 
 
 class WorkspaceFileService:
@@ -469,20 +455,31 @@ class WorkspaceFileService:
                     if entry.name.startswith(".") or entry.name.startswith("~$"):
                         continue
                     scanned += 1
-                    if scanned > MAX_LIST_ENTRIES:
+                    if scanned > MAX_SCAN_ENTRIES:
                         truncated = True
                         break
-                    rel = f"{prefix}/{entry.name}" if prefix else entry.name
+                    # Apply cheap filename/extension filters BEFORE counting against MAX_LIST_ENTRIES
+                    # so entries beyond the first 2,000 raw directory entries remain reachable by search.
+                    folded_name = entry.name.casefold()
+                    suffix = Path(entry.name).suffix.lower()
+                    if tokens and not all(tok in f"{folded_name} {suffix}" for tok in tokens):
+                        continue
                     try:
                         info = entry.stat(follow_symlinks=False)
                     except OSError:
                         continue
+                    rel = f"{prefix}/{entry.name}" if prefix else entry.name
                     is_sym = stat.S_ISLNK(info.st_mode) or (hasattr(Path(entry.path), "is_junction") and Path(entry.path).is_junction())
                     if is_sym:
+                        if ext_filter and suffix != ext_filter:
+                            continue
+                        if len(folders) + len(files) >= MAX_LIST_ENTRIES:
+                            truncated = True
+                            break
                         files.append({
                             "name": entry.name,
                             "relative_path": rel,
-                            "ext": Path(entry.name).suffix.lower(),
+                            "ext": suffix,
                             "size_bytes": 0,
                             "mtime": _fmt_mtime(info.st_mtime),
                             "mtime_ns": int(info.st_mtime_ns),
@@ -491,8 +488,13 @@ class WorkspaceFileService:
                         })
                         continue
                     if stat.S_ISDIR(info.st_mode):
-                        if tokens and not all(tok in entry.name.casefold() for tok in tokens):
+                        if ext_filter:
                             continue
+                        if tokens and not all(tok in folded_name for tok in tokens):
+                            continue
+                        if len(folders) + len(files) >= MAX_LIST_ENTRIES:
+                            truncated = True
+                            break
                         folders.append({
                             "name": entry.name,
                             "relative_path": rel,
@@ -501,13 +503,13 @@ class WorkspaceFileService:
                             "is_symlink": False,
                         })
                     elif stat.S_ISREG(info.st_mode):
-                        suffix = Path(entry.name).suffix.lower()
                         if suffix:
                             extensions.add(suffix)
                         if ext_filter and suffix != ext_filter:
                             continue
-                        if tokens and not all(tok in f"{entry.name} {suffix}".casefold() for tok in tokens):
-                            continue
+                        if len(folders) + len(files) >= MAX_LIST_ENTRIES:
+                            truncated = True
+                            break
                         files.append({
                             "name": entry.name,
                             "relative_path": rel,

@@ -144,12 +144,12 @@ async function stageFilesForImport(list: FileList | File[]): Promise<void> {
   await refreshImportPreview();
 }
 
-async function refreshImportPreview(): Promise<void> {
+async function refreshImportPreview(preserveError = false): Promise<void> {
   if (!stagedFiles.value.length) {
     importPreview.value = null;
     return;
   }
-  error.value = "";
+  if (!preserveError) error.value = "";
   try {
     importPreview.value = await request<FileImportPreviewPayload>(`${base()}/import-preview`, {
       method: "POST",
@@ -160,7 +160,7 @@ async function refreshImportPreview(): Promise<void> {
       },
     });
   } catch (cause) {
-    error.value = errorText(cause);
+    if (!preserveError) error.value = errorText(cause);
     importPreview.value = null;
   }
 }
@@ -188,13 +188,16 @@ async function confirmUpload(): Promise<void> {
   if (!stagedFiles.value.length || uploading.value) return;
   uploading.value = true;
   error.value = "";
-  uploadResults.value = [];
+  const remaining = [...stagedFiles.value];
+  const totalCount = remaining.length;
+  let processedCount = 0;
   let importedCount = 0;
   let skippedCount = 0;
   try {
-    for (let idx = 0; idx < stagedFiles.value.length; idx += 1) {
-      const file = stagedFiles.value[idx]!;
-      uploadProgress.value = `正在导入 ${idx + 1}/${stagedFiles.value.length}：${file.name}`;
+    while (remaining.length > 0) {
+      const file = remaining[0]!;
+      processedCount += 1;
+      uploadProgress.value = `正在导入 ${processedCount}/${totalCount}：${file.name}`;
       const params = new URLSearchParams({
         filename: file.name,
         subpath: subpath.value,
@@ -212,6 +215,9 @@ async function confirmUpload(): Promise<void> {
       uploadResults.value.push(body);
       if (body.status === "skipped") skippedCount += 1;
       else importedCount += 1;
+      // Remove completed/skipped file immediately so retrying after a later failure never duplicates it.
+      remaining.shift();
+      stagedFiles.value = [...remaining];
     }
     stagedFiles.value = [];
     importPreview.value = null;
@@ -227,7 +233,26 @@ async function confirmUpload(): Promise<void> {
       window.dispatchEvent(new CustomEvent("workspace:company-refreshed", { detail: { companyId: props.company.id } }));
     }
   } catch (cause) {
-    error.value = errorText(cause);
+    const failureMessage = errorText(cause);
+    stagedFiles.value = [...remaining];
+    if (importedCount > 0 || skippedCount > 0) {
+      await load();
+      emit("mutated");
+      if (props.isInvoiceDir && importedCount > 0) {
+        if (data.value?.monitored) {
+          await request("/api/v1/bridge/rebuild", { method: "POST", body: {} }).catch(() => undefined);
+        } else {
+          void companies.refreshData(props.company.id, { keys: [props.dirKey], force: true, silent: true });
+        }
+        window.dispatchEvent(new CustomEvent("workspace:company-refreshed", { detail: { companyId: props.company.id } }));
+      }
+    }
+    if (remaining.length > 0) {
+      await refreshImportPreview(true);
+    } else {
+      importPreview.value = null;
+    }
+    error.value = failureMessage;
   } finally {
     uploading.value = false;
     uploadProgress.value = "";
@@ -506,7 +531,7 @@ onBeforeUnmount(() => {
     </div>
 
     <p v-if="loading && !data" class="muted" role="status" aria-busy="true">正在读取目录文件…</p>
-    <p v-if="data?.truncated" class="banner banner--note" role="status">当前目录条目数超过 2000 项，仅展示前 2000 项；请进入子文件夹或输入关键字缩小范围。</p>
+    <p v-if="data?.truncated" class="banner banner--note" role="status">当前目录匹配条目数超过 2000 项，仅展示前 2000 项；请输入更精确的文件名关键字、按扩展名筛选或进入子文件夹缩小范围。</p>
 
     <div v-if="data" class="overview-table-wrap">
       <table class="grid ws-files__table" aria-label="目录文件清单">

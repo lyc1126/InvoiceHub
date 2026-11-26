@@ -752,3 +752,65 @@ def test_manual_edit_source_identity_guard_excel_3field_boundary_and_move_journa
         json={"confirm": True, "plan_hash": plan["plan_hash"]},
         headers=SAME_ORIGIN,
     ).status_code == 409
+
+
+def test_fallback_move_never_overwrites_and_list_search_reaches_beyond_limit(tmp_path: Path, monkeypatch) -> None:
+    import errno
+    from invoice_hub.services import workspace_files as wf_mod
+
+    # 1) Cross-device / no-hardlink fallback must use O_CREAT|O_EXCL and never overwrite a concurrent dst
+    src = tmp_path / "src.txt"
+    dst = tmp_path / "dst.txt"
+    src.write_text("from-source", encoding="utf-8")
+
+    def _link_race_creates_dst(_s, _d) -> None:
+        # Simulate another writer creating dst right after initial exists() check while FS rejects hard links.
+        dst.write_text("concurrent-existing", encoding="utf-8")
+        raise OSError(errno.EOPNOTSUPP, "hard links unsupported")
+
+    monkeypatch.setattr(wf_mod.os, "link", _link_race_creates_dst)
+    try:
+        wf_mod._move_file_no_overwrite(src, dst)
+        raise AssertionError("expected FileExistsError")
+    except FileExistsError:
+        pass
+    assert src.read_text(encoding="utf-8") == "from-source"
+    assert dst.read_text(encoding="utf-8") == "concurrent-existing"
+
+    # When dst is genuinely absent, O_EXCL fallback completes the move and removes src
+    dst2 = tmp_path / "dst_ok.txt"
+    monkeypatch.setattr(wf_mod.os, "link", lambda _s, _d: (_ for _ in ()).throw(OSError(errno.EXDEV, "cross-device")))
+    wf_mod._move_file_no_overwrite(src, dst2)
+    assert not src.exists()
+    assert dst2.read_text(encoding="utf-8") == "from-source"
+
+    # 2) list_files applies q / ext filters BEFORE MAX_LIST_ENTRIES so entries past the cap remain searchable
+    _, client = _create_app_client(tmp_path / "app", monkeypatch)
+    comp = tmp_path / "app" / "大目录公司"
+    (comp / "资料库").mkdir(parents=True)
+    for i in range(12):
+        (comp / "资料库" / f"item_{i:02d}.txt").write_text("x", encoding="utf-8")
+    (comp / "资料库" / "zzz_target_needle.ofd").write_text("ofd", encoding="utf-8")
+
+    reg = _register_company(client, "大目录公司", comp, revision=0)
+    cid = reg["company"]["id"]
+    imp = client.post(
+        f"/api/v1/companies/{cid}/folders/import",
+        json={"revision": reg["revision"], "location": "inside_root", "relative_path": "资料库", "label": "资料库", "role": "general"},
+        headers=SAME_ORIGIN,
+    )
+    assert imp.status_code == 200
+    gkey = next(sub["key"] for sub in imp.json()["company"]["subdirs"] if sub["label"] == "资料库")
+
+    monkeypatch.setattr(wf_mod, "MAX_LIST_ENTRIES", 5)
+    unfiltered = client.get(f"/api/v1/companies/{cid}/directories/{gkey}/files").json()
+    assert unfiltered["truncated"] is True
+    assert len(unfiltered["files"]) == 5
+
+    by_query = client.get(f"/api/v1/companies/{cid}/directories/{gkey}/files", params={"q": "target_needle"}).json()
+    assert by_query["truncated"] is False
+    assert [f["name"] for f in by_query["files"]] == ["zzz_target_needle.ofd"]
+
+    by_ext = client.get(f"/api/v1/companies/{cid}/directories/{gkey}/files", params={"ext": ".ofd"}).json()
+    assert by_ext["truncated"] is False
+    assert [f["name"] for f in by_ext["files"]] == ["zzz_target_needle.ofd"]
