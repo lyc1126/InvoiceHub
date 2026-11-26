@@ -211,6 +211,8 @@ def router() -> APIRouter:
         try:
             payload = await request.json()
             return await run_in_threadpool(_state(request).invoices.update_manual_fields, invoice_key, payload)
+        except StaleInvoiceSelectionError as exc:
+            raise HTTPException(status_code=409, detail=str(exc))
         except KeyError:
             raise HTTPException(status_code=404, detail="invoice not found")
 

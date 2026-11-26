@@ -814,14 +814,74 @@ class WorkspaceFileService:
             raise CompanyRegistryError("WORKSPACE_MOVE_NOT_FOUND", "移动计划不存在或已失效。", status_code=404)
         return self._move_root / f"{job_id}.json"
 
+    def _move_journal_path(self, job_id: str) -> Path:
+        return self._job_path(job_id).with_suffix(".jsonl")
+
     def _save_job(self, job: dict) -> None:
         self._move_root.mkdir(parents=True, exist_ok=True)
         atomic_write_json(self._job_path(job["job_id"]), job)
 
-    def get_move_job(self, company_id: str, key: str, job_id: str) -> dict:
+    def _append_move_journal(self, job_id: str, index: int, result: dict) -> None:
+        """Append and fsync one per-file move intent/observation so interrupted runs remain diagnosable."""
+        self._move_root.mkdir(parents=True, exist_ok=True)
+        entry = {"index": index, "result": result}
+        with self._move_journal_path(job_id).open("a", encoding="utf-8") as stream:
+            stream.write(json.dumps(entry, ensure_ascii=False) + "\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+
+    def _load_move_job(self, company_id: str, key: str, job_id: str) -> dict:
         job = read_json_object(self._job_path(job_id))
         if not isinstance(job, dict) or job.get("company_id") != company_id or job.get("dir_key") != key:
             raise CompanyRegistryError("WORKSPACE_MOVE_NOT_FOUND", "移动计划不存在或已失效。", status_code=404)
+        journal = self._move_journal_path(job_id)
+        if job.get("status") == "running" and isinstance(job.get("items"), list):
+            items = job["items"]
+            by_idx: dict[int, dict] = {}
+            if journal.is_file():
+                for line in journal.read_text(encoding="utf-8").splitlines():
+                    try:
+                        event = json.loads(line)
+                        idx = int(event["index"])
+                        res = event["result"]
+                        if 0 <= idx < len(items) and isinstance(res, dict):
+                            by_idx[idx] = dict(res)
+                    except (ValueError, KeyError, TypeError, IndexError):
+                        break  # An interrupted trailing journal write is never treated as completion.
+            rebuilt: list[dict] = []
+            moved_n = failed_n = unknown_n = pending_n = 0
+            for idx, item in enumerate(items):
+                rec = by_idx.get(idx)
+                if rec is None:
+                    pending_n += 1
+                    rebuilt.append({
+                        "relative_path": item["relative_path"],
+                        "target_company_id": item["target_company_id"],
+                        "target_dir_key": item["target_dir_key"],
+                        "target_name": item["target_name"],
+                        "status": "pending",
+                        "message": "尚未执行。",
+                    })
+                else:
+                    st = str(rec.get("status") or "unknown")
+                    if st == "moved":
+                        moved_n += 1
+                    elif st == "failed":
+                        failed_n += 1
+                    elif st in {"moving", "unknown"}:
+                        unknown_n += 1
+                    else:
+                        pending_n += 1
+                    rebuilt.append(rec)
+            job["results"] = rebuilt
+            job["moved"] = moved_n
+            job["failed"] = failed_n
+            job["unknown"] = unknown_n
+            job["pending"] = pending_n
+        return job
+
+    def get_move_job(self, company_id: str, key: str, job_id: str) -> dict:
+        job = self._load_move_job(company_id, key, job_id)
         return {"ok": True, **job}
 
     def preview_move(self, company_id: str, key: str, payload: object) -> dict:
@@ -1069,8 +1129,10 @@ class WorkspaceFileService:
                 job["started_at"] = time.time()
                 self._save_job(job)
 
-            for item, dst_profile, _, dst_parent in resolved_targets:
+            for idx, (item, dst_profile, _, dst_parent) in enumerate(resolved_targets):
                 rel_parts = _clean_rel_parts(item["relative_path"], allow_empty=False, label="源文件路径")
+                dst_name = item["target_name"]
+                started_move = False
                 try:
                     src_file = _check_chain_no_links(src_dir_path, rel_parts, expect_file=True)
                     live_sig = _file_signature(src_file)
@@ -1080,6 +1142,20 @@ class WorkspaceFileService:
                     dst_file = dst_parent / dst_name
                     if dst_name.casefold() in _existing_names_folded(dst_parent) or dst_file.exists() or _is_link(dst_file):
                         raise FileExistsError(f"目标目录已存在「{dst_name}」，未覆盖。")
+                    # Persist fsynced per-file moving intent BEFORE mutating disk state.
+                    started_move = True
+                    self._append_move_journal(
+                        job_id,
+                        idx,
+                        {
+                            "relative_path": item["relative_path"],
+                            "target_company_id": item["target_company_id"],
+                            "target_dir_key": item["target_dir_key"],
+                            "target_name": dst_name,
+                            "status": "moving",
+                            "message": "正在移动文件…",
+                        },
+                    )
                     _move_file_no_overwrite(src_file, dst_file)
                     try:
                         if _migrate_single_override(src_profile, dst_profile, src_file, dst_file):
@@ -1091,29 +1167,41 @@ class WorkspaceFileService:
                             _move_file_no_overwrite(dst_file, src_file)
                         raise
                     moved_count += 1
-                    results.append({
+                    moved_entry = {
                         "relative_path": item["relative_path"],
                         "target_company_id": item["target_company_id"],
                         "target_dir_key": item["target_dir_key"],
                         "target_name": dst_name,
                         "status": "moved",
                         "message": f"已移至「{item['target_dir_label']}/{dst_name}」。",
-                    })
+                    }
+                    self._append_move_journal(job_id, idx, moved_entry)
+                    results.append(moved_entry)
                 except (CompanyRegistryError, FileExistsError, OSError) as exc:
                     failed_count += 1
                     msg = exc.message if isinstance(exc, CompanyRegistryError) else str(exc)
-                    results.append({
+                    src_still_here = True
+                    if started_move:
+                        try:
+                            src_still_here = src_dir_path.joinpath(*rel_parts).exists()
+                        except OSError:
+                            src_still_here = False
+                    failed_entry = {
                         "relative_path": item["relative_path"],
                         "target_company_id": item["target_company_id"],
                         "target_dir_key": item["target_dir_key"],
-                        "target_name": item["target_name"],
-                        "status": "failed",
+                        "target_name": dst_name,
+                        "status": "failed" if src_still_here else "unknown",
                         "message": msg,
-                    })
+                    }
+                    self._append_move_journal(job_id, idx, failed_entry)
+                    results.append(failed_entry)
 
             job["results"] = results
             job["moved"] = moved_count
             job["failed"] = failed_count
+            job["unknown"] = sum(1 for r in results if r["status"] in {"unknown", "moving"})
+            job["pending"] = 0
             job["overrides_migrated"] = overrides_migrated
             job["status"] = "completed" if failed_count == 0 else "partial"
             job["finished_at"] = time.time()

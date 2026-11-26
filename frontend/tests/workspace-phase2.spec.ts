@@ -464,7 +464,11 @@ describe("Phase 2 WS-12 generic file browser and active invoice file actions", (
     await dialog.get("form").trigger("submit");
     await flushPromises();
     const patchCall = calls.find((c) => c.url.endsWith("/api/v1/invoices/0/manual-fields") && c.method === "PATCH");
-    expect(patchCall?.body).toEqual({ fields: { 销售方: "新销售方", 购买方: "新购买方" } });
+    expect(patchCall?.body).toEqual({
+      fields: { 销售方: "新销售方", 购买方: "新购买方" },
+      source_path: "/合成/甲/成本发票/sample.xml",
+      target_id: "t_a_0",
+    });
     activeWrap.unmount();
 
     // Non-monitored read-only directory must NOT expose manual edit / rename / move

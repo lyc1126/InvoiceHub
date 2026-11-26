@@ -207,9 +207,31 @@ async function checkLostJob(): Promise<void> {
         </table>
       </div>
 
+      <div v-if="plan?.results?.length" class="move-modal__plan">
+        <p class="muted">
+          执行回执（状态：{{ plan.status }}）：已移动 {{ plan.moved ?? 0 }} · 失败 {{ plan.failed ?? 0 }} · 待核对 {{ plan.unknown ?? 0 }} · 未执行 {{ plan.pending ?? 0 }}
+        </p>
+        <table class="grid" aria-label="移动执行结果">
+          <thead>
+            <tr>
+              <th>原文件</th>
+              <th>目标文件名</th>
+              <th>结果</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="res in plan.results" :key="res.relative_path" :class="{ 'row--danger': res.status === 'failed' || res.status === 'unknown' || res.status === 'moving' }">
+              <td class="path mono">{{ res.relative_path }}</td>
+              <td class="path mono">{{ res.target_name }}</td>
+              <td>{{ res.message || res.status }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
       <div class="actions">
         <button
-          v-if="plan && plan.status === 'prepared'"
+          v-if="plan && plan.status === 'prepared' && !lostResponseJobId"
           type="button"
           class="primary"
           :disabled="!plan.can_confirm || confirming"

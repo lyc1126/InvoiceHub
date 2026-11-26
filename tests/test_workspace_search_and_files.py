@@ -625,3 +625,130 @@ def test_rename_case_only_rejects_distinct_inode_and_move_rejects_remapped_desti
     assert doc.is_file()
     assert not (comp / "费用报销新" / "contract.txt").exists()
     assert not (comp / "费用报销" / "contract.txt").exists()
+
+
+def test_manual_edit_source_identity_guard_excel_3field_boundary_and_move_journal_recovery(tmp_path: Path, monkeypatch) -> None:
+    from openpyxl import load_workbook
+    from invoice_hub.monitoring.state import EDITABLE_FIELDS, MANUAL_OVERRIDE_FIELDS, MonitorState
+
+    app, client = _create_app_client(tmp_path, monkeypatch)
+    comp = tmp_path / "评审回归公司"
+    (comp / "成本发票").mkdir(parents=True)
+    (comp / "费用报销").mkdir(parents=True)
+    inv_a = comp / "成本发票" / "a_first.xml"
+    inv_b = comp / "成本发票" / "b_second.xml"
+    inv_a.write_text(_make_xml("原卖方A", "原买方A", "50000001", "2026-10-01", "100.00", "0.13"), encoding="utf-8")
+    inv_b.write_text(_make_xml("原卖方B", "原买方B", "50000002", "2026-10-02", "200.00", "0.06"), encoding="utf-8")
+
+    reg = _register_company(client, "评审回归公司", comp, revision=0)
+    cid = reg["company"]["id"]
+    assert client.put("/api/v1/settings", json={"watch_dir": str(comp / "成本发票")}, headers=SAME_ORIGIN).status_code == 200
+    assert client.post("/api/v1/bridge/rebuild", json={}, headers=SAME_ORIGIN).json()["ok"] is True
+
+    # 1) Manual edit bound to source_path & target_id rejects stale row shift / wrong target with 409
+    active_target_id = app.state.invoice_hub.active_profile.id
+    wrong_source = client.patch(
+        "/api/v1/invoices/0/manual-fields",
+        json={"fields": {"销售方": "误改值"}, "source_path": str(inv_b.resolve()), "target_id": active_target_id},
+        headers=SAME_ORIGIN,
+    )
+    assert wrong_source.status_code == 409
+    wrong_target = client.patch(
+        "/api/v1/invoices/0/manual-fields",
+        json={"fields": {"销售方": "误改值"}, "source_path": str(inv_a.resolve()), "target_id": "other_target"},
+        headers=SAME_ORIGIN,
+    )
+    assert wrong_target.status_code == 409
+    listed = client.get("/api/v1/invoices").json()["items"]
+    assert listed[0]["seller"] == "原卖方A"
+
+    # Matching source_path + target_id succeeds for all 6 API manual override fields
+    assert EDITABLE_FIELDS == ("销售方", "开票金额", "发票号码")
+    assert set(MANUAL_OVERRIDE_FIELDS) == {"销售方", "购买方", "开票金额", "发票号码", "开票时间", "税率"}
+    ok_edit = client.patch(
+        "/api/v1/invoices/0/manual-fields",
+        json={
+            "fields": {"购买方": "API改买方", "开票时间": "2026-11-25", "税率": "9%"},
+            "source_path": str(inv_a.resolve()),
+            "target_id": active_target_id,
+        },
+        headers=SAME_ORIGIN,
+    )
+    assert ok_edit.status_code == 200
+
+    # 2) Excel workbook auto-sync stays strictly limited to the original 3 fields per MONITORING.md
+    profile = app.state.invoice_hub.active_profile
+    ms = MonitorState(profile, app.state.invoice_hub.layout.db_path)
+    wb = load_workbook(ms.summary_xlsx)
+    ws = wb.active
+    headers = [str(cell.value or "").strip() for cell in ws[1]]
+    col = {name: idx + 1 for idx, name in enumerate(headers)}
+    # Edit row for b_second.xml (row 3 in xlsx): change 销售方 (allowed) AND 购买方/开票时间/税率 (must NOT be synced)
+    target_row = next(r for r in range(2, ws.max_row + 1) if str(ws.cell(r, col["文件名"]).value) == "b_second.xml")
+    ws.cell(target_row, col["销售方"]).value = "Excel改卖方B"
+    ws.cell(target_row, col["购买方"]).value = "Excel不应同步买方"
+    ws.cell(target_row, col["开票时间"]).value = "2099-01-01"
+    ws.cell(target_row, col["税率"]).value = "1%"
+    wb.save(ms.summary_xlsx)
+    wb.close()
+
+    synced = ms.sync_excel_manual_edits()
+    assert synced == 1
+    overrides = ms.load_manual_overrides()
+    b_fields = overrides[str(inv_b.resolve())]["fields"]
+    assert b_fields == {"销售方": "Excel改卖方B"}
+    assert "购买方" not in b_fields
+    assert "开票时间" not in b_fields
+    assert "税率" not in b_fields
+    # Explicit API 6-field edits on inv_a remain intact
+    a_fields = overrides[str(inv_a.resolve())]["fields"]
+    assert a_fields == {"购买方": "API改买方", "开票时间": "2026-11-25", "税率": "9%"}
+
+    # 3) Interrupted running move job replays per-file .jsonl observations on GET without replaying moves
+    plan = client.post(
+        f"/api/v1/companies/{cid}/directories/cost_invoice_dir/files/move/preview",
+        json={
+            "conflict_policy": "reject",
+            "items": [
+                {"relative_path": "a_first.xml", "target_company_id": cid, "target_dir_key": "expense_reimbursement_dir"},
+                {"relative_path": "b_second.xml", "target_company_id": cid, "target_dir_key": "expense_reimbursement_dir"},
+            ],
+        },
+        headers=SAME_ORIGIN,
+    ).json()
+    move_root = app.state.invoice_hub.company_views.files._move_root
+    job_file = move_root / f"{plan['job_id']}.json"
+    saved = json.loads(job_file.read_text(encoding="utf-8"))
+    saved["status"] = "running"
+    job_file.write_text(json.dumps(saved, ensure_ascii=False), encoding="utf-8")
+    (move_root / f"{plan['job_id']}.jsonl").write_text(
+        json.dumps(
+            {
+                "index": 0,
+                "result": {
+                    "relative_path": "a_first.xml",
+                    "target_company_id": cid,
+                    "target_dir_key": "expense_reimbursement_dir",
+                    "target_name": "a_first.xml",
+                    "status": "moved",
+                    "message": "已移至「费用报销/a_first.xml」。",
+                },
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    recovered = client.get(f"/api/v1/companies/{cid}/directories/cost_invoice_dir/files/move/{plan['job_id']}")
+    assert recovered.status_code == 200
+    rbody = recovered.json()
+    assert rbody["status"] == "running"
+    assert rbody["moved"] == 1
+    assert rbody["pending"] == 1
+    assert [r["status"] for r in rbody["results"]] == ["moved", "pending"]
+    # Confirming an interrupted running move job is blocked (409)
+    assert client.post(
+        f"/api/v1/companies/{cid}/directories/cost_invoice_dir/files/move/{plan['job_id']}/confirm",
+        json={"confirm": True, "plan_hash": plan["plan_hash"]},
+        headers=SAME_ORIGIN,
+    ).status_code == 409

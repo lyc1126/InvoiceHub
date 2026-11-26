@@ -1168,6 +1168,7 @@ onBeforeUnmount(() => {
         v-if="manualEditRow && sourceActions"
         :row="manualEditRow"
         :company-id="company.id"
+        :target-id="invoices?.directory.target_id || ''"
         @close="manualEditRow = null"
         @saved="manualEditRow = null; loadInvoices(invoicesPage)"
       />

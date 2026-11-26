@@ -913,9 +913,18 @@ export interface FileMovePlanPayload {
   can_confirm: boolean;
   summary: { move: number; rename: number; conflict: number; blocked: number };
   items: FileMovePreviewItem[];
-  results: { relative_path: string; target_company_id: string; target_dir_key: string; target_name: string; status: "moved" | "failed"; message: string }[];
+  results: {
+    relative_path: string;
+    target_company_id: string;
+    target_dir_key: string;
+    target_name: string;
+    status: "moved" | "failed" | "moving" | "unknown" | "pending";
+    message: string;
+  }[];
   moved?: number;
   failed?: number;
+  unknown?: number;
+  pending?: number;
   overrides_migrated?: number;
 }
 

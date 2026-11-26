@@ -28,13 +28,17 @@ from invoice_hub.extraction.classification import (
     CLASSIFICATION_STATUS_NEEDS_REVIEW,
     CLASSIFICATION_STATUS_OK,
 )
-from invoice_hub.monitoring.state import MonitorState, is_pid_alive
+from invoice_hub.monitoring.state import MANUAL_OVERRIDE_FIELDS, MonitorState, canonical_path, is_pid_alive
 from invoice_hub.platform import open_local_path
 from invoice_hub.projections.cost_analysis import invoice_cost_breakdown
 from invoice_hub.projections.costs import CostProjectionService
 from invoice_hub.projections.summary import SUMMARY_HEADERS, write_summary_xlsx
 from invoice_hub.services.invoice_selection import (
-    file_format_from_source, invoice_number_from_filename, selection_family_key, selection_money_value,
+    StaleInvoiceSelectionError,
+    file_format_from_source,
+    invoice_number_from_filename,
+    selection_family_key,
+    selection_money_value,
 )
 from invoice_hub.storage import SQLiteRepository, atomic_write_json, read_csv_rows, read_json_object, write_csv_rows
 from invoice_hub.storage import generations
@@ -117,7 +121,7 @@ class InvoiceListService:
             override = overrides.get(self._identity_for_row(row, index)) or {}
             fields = override.get("fields") if isinstance(override, dict) else {}
             if isinstance(fields, dict):
-                for key in ("销售方", "开票金额", "发票号码"):
+                for key in MANUAL_OVERRIDE_FIELDS:
                     if key in fields:
                         row[key] = str(fields.get(key) or "")
                 row["手改状态"] = "已手改"
@@ -688,19 +692,38 @@ class InvoiceListService:
             self._write_summary_rows(rows)
 
     def update_manual_fields(self, invoice_key: str, payload: dict | None) -> dict:
+        body = payload if isinstance(payload, dict) else {}
+        expected_target_id = str(body.get("target_id") or "").strip()
+        expected_source_path = str(body.get("source_path") or "").strip()
         with self._lock:
             profile = self.active_profile.model_copy(deep=True)
             profile_identity = _profile_identity(profile)
+        if expected_target_id and expected_target_id != profile.id:
+            raise StaleInvoiceSelectionError("当前监控目录已切换，请刷新列表后再保存手改字段。")
         monitor_state = MonitorState(profile, self._db_path, sync_interval_seconds=60)
         with monitor_state.sync_write_lock():
+            if expected_target_id:
+                with self._lock:
+                    if _profile_identity(self.active_profile) != profile_identity:
+                        raise StaleInvoiceSelectionError("当前监控目录已切换，请刷新列表后再保存手改字段。")
             rows = read_csv_rows(generations.resolve(Path(profile.workspace_dir), Path(profile.watch_dir), "发票汇总.csv"))
             try:
                 index = int(invoice_key)
+                if index < 0:
+                    raise IndexError(index)
                 row = rows[index]
             except Exception:
+                if expected_source_path or expected_target_id:
+                    raise StaleInvoiceSelectionError("发票列表已变化，请刷新后再保存手改字段。") from None
                 raise KeyError(invoice_key)
-            fields = dict((payload or {}).get("fields") or payload or {})
-            allowed = {"销售方", "购买方", "开票金额", "发票号码", "开票时间", "税率"}
+            # Validate displayed source identity under the write lock so background sync row
+            # insertions/deletions can never silently apply edits to a shifted replacement row.
+            if expected_source_path:
+                live_source_path = str(row.get("文件路径") or "").strip()
+                if not live_source_path or canonical_path(live_source_path).casefold() != canonical_path(expected_source_path).casefold():
+                    raise StaleInvoiceSelectionError("该发票行在列表刷新后已变化，为防止误改其它发票已取消保存，请刷新列表后重试。")
+            fields = dict(body.get("fields") or body)
+            allowed = set(MANUAL_OVERRIDE_FIELDS)
             cleaned = {key: str(value or "").strip() for key, value in fields.items() if key in allowed}
             if not cleaned:
                 return {"ok": True, "updated": False, "invoice_key": invoice_key}

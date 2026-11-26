@@ -7,9 +7,9 @@ import { toast } from "../toast";
 import WsModal from "./WsModal.vue";
 
 // Manual invoice field editor for the active monitored directory (WS-12).
-// Writes protected overrides via PATCH /api/v1/invoices/{invoice_key}/manual-fields so
-// subsequent incremental rebuilds keep the user's edited values.
-const props = defineProps<{ row: InvoiceRow; companyId: string }>();
+// Writes protected overrides via PATCH /api/v1/invoices/{invoice_key}/manual-fields and binds
+// the displayed source_path + target_id so row shifts during background sync are rejected (409).
+const props = defineProps<{ row: InvoiceRow; companyId: string; targetId?: string }>();
 const emit = defineEmits<{ close: []; saved: [] }>();
 
 const seller = ref(props.row.seller || "");
@@ -40,7 +40,11 @@ async function submit(): Promise<void> {
   try {
     await request(`/api/v1/invoices/${encodeURIComponent(props.row.invoice_key)}/manual-fields`, {
       method: "PATCH",
-      body: { fields },
+      body: {
+        fields,
+        source_path: props.row.source_path || "",
+        ...(props.targetId ? { target_id: props.targetId } : {}),
+      },
     });
     toast(`已保存手改字段（${Object.keys(fields).join("、")}），后续重新汇总会自动保留。`, "info", 4000);
     window.dispatchEvent(new CustomEvent("workspace:company-refreshed", { detail: { companyId: props.companyId } }));

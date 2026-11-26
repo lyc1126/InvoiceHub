@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from fastapi.testclient import TestClient
 import pytest
@@ -233,7 +234,8 @@ def test_company_root_relocate_and_disk_rename_migrates_overrides(app, client, t
     new_profile = target_profile_for(app.state.invoice_hub.config, new_root / "成本发票")
     new_overrides = MonitorState(new_profile).manual_overrides_file
     assert new_overrides.is_file()
-    assert canonical_path(new_root / "成本发票" / "demo.xml") in new_overrides.read_text(encoding="utf-8")
+    migrated_items = json.loads(new_overrides.read_text(encoding="utf-8"))["items"]
+    assert canonical_path(new_root / "成本发票" / "demo.xml") in migrated_items
 
     # Relocating to another existing folder works cleanly without moving disk files.
     relocated_dir = _make_company_root(tmp_path / "biz", "迁移目标公司")
