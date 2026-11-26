@@ -498,6 +498,183 @@ describe("Phase 2 WS-12 generic file browser and active invoice file actions", (
     panel.unmount();
   });
 
+  it("freezes upload destination during in-flight batch and keeps partial move receipt modal open", async () => {
+    const uploadSubpaths: string[] = [];
+    let releaseFirstUpload: (() => void) | null = null;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init: RequestInit = {}) => {
+        const body = typeof init.body === "string" ? JSON.parse(init.body) : undefined;
+        if (url === "/api/v1/companies") {
+          return new Response(JSON.stringify({ ok: true, revision: 2, companies: [COMPANY_A], monitored_company_id: "co_a", target_id: "t_a_0", watch_dir: "/合成/甲/成本发票", folder_roles: [] }), { status: 200 });
+        }
+        if (url.endsWith("/directories")) {
+          return new Response(JSON.stringify({ ok: true, revision: 2, company: COMPANY_A, directories: DIRS_A }), { status: 200 });
+        }
+        if (url.includes("/directories/cf_general/files?")) {
+          const parsed = new URL(url, "http://localhost");
+          const curSub = parsed.searchParams.get("subpath") ?? "";
+          return new Response(JSON.stringify({
+            ok: true,
+            company_id: "co_a",
+            company_name: "甲公司",
+            dir_key: "cf_general",
+            dir_label: "合同归档",
+            dir_role: "general",
+            monitored: false,
+            can_upload: true,
+            can_mutate_existing: true,
+            subpath: curSub,
+            breadcrumbs: curSub ? [{ name: "合同归档", subpath: "" }, { name: curSub, subpath: curSub }] : [{ name: "合同归档", subpath: "" }],
+            folders: curSub ? [] : [{ name: "2026", relative_path: "2026", mtime: "2026-11-20 10:00:00", mtime_ns: 1, is_symlink: false }],
+            files: [{ name: "采购合同.pdf", relative_path: curSub ? `${curSub}/采购合同.pdf` : "采购合同.pdf", ext: ".pdf", size_bytes: 2048, mtime: "2026-11-25 12:00:00", mtime_ns: 2, is_invoice_ext: true, is_symlink: false }],
+            extensions: [".pdf"],
+            total_folders: curSub ? 0 : 1,
+            total_files: 1,
+            truncated: false,
+          }), { status: 200 });
+        }
+        if (url.endsWith("/files/import-preview")) {
+          const names = (body as { filenames: string[] }).filenames;
+          return new Response(JSON.stringify({
+            ok: true,
+            company_id: "co_a",
+            dir_key: "cf_general",
+            subpath: "",
+            conflict_policy: "rename",
+            monitored: false,
+            items: names.map((name) => ({ original_name: name, target_name: name, action: "write", conflict: false, reason: "" })),
+            summary: { write: names.length, rename: 0, skip: 0, blocked: 0 },
+          }), { status: 200 });
+        }
+        if (url.includes("/files/upload?")) {
+          const parsed = new URL(url, "http://localhost");
+          const filename = parsed.searchParams.get("filename") ?? "";
+          uploadSubpaths.push(`${filename}@${parsed.searchParams.get("subpath") ?? ""}`);
+          if (filename === "a.pdf") {
+            await new Promise<void>((resolve) => {
+              releaseFirstUpload = resolve;
+            });
+          }
+          return new Response(JSON.stringify({
+            ok: true,
+            status: "imported",
+            original_name: filename,
+            saved_name: filename,
+            relative_path: filename,
+            size_bytes: 5,
+            monitored: false,
+            message: `已导入「${filename}」。`,
+          }), { status: 200 });
+        }
+        if (url.endsWith("/files/move/preview")) {
+          return new Response(JSON.stringify({
+            ok: true,
+            job_id: "11111111111111111111111111111111",
+            company_id: "co_a",
+            company_name: "甲公司",
+            dir_key: "cf_general",
+            dir_label: "合同归档",
+            conflict_policy: "reject",
+            plan_hash: "move_hash_partial",
+            status: "prepared",
+            can_confirm: true,
+            summary: { move: 1, rename: 0, conflict: 0, blocked: 0 },
+            items: [{
+              relative_path: "采购合同.pdf",
+              source_name: "采购合同.pdf",
+              target_company_id: "co_a",
+              target_company_name: "甲公司",
+              target_dir_key: "expense_reimbursement_dir",
+              target_dir_label: "费用报销",
+              target_subpath: "",
+              target_name: "采购合同.pdf",
+              action: "move",
+              reason: "",
+            }],
+            results: [],
+          }), { status: 200 });
+        }
+        if (url.endsWith("/files/move/11111111111111111111111111111111/confirm")) {
+          return new Response(JSON.stringify({
+            ok: true,
+            job_id: "11111111111111111111111111111111",
+            company_id: "co_a",
+            company_name: "甲公司",
+            dir_key: "cf_general",
+            dir_label: "合同归档",
+            conflict_policy: "reject",
+            plan_hash: "move_hash_partial",
+            status: "partial",
+            can_confirm: true,
+            summary: { move: 1, rename: 0, conflict: 0, blocked: 0 },
+            items: [{
+              relative_path: "采购合同.pdf",
+              source_name: "采购合同.pdf",
+              target_company_id: "co_a",
+              target_company_name: "甲公司",
+              target_dir_key: "expense_reimbursement_dir",
+              target_dir_label: "费用报销",
+              target_subpath: "",
+              target_name: "采购合同.pdf",
+              action: "move",
+              reason: "",
+            }],
+            moved: 0,
+            failed: 1,
+            unknown: 0,
+            pending: 0,
+            results: [{
+              relative_path: "采购合同.pdf",
+              target_company_id: "co_a",
+              target_dir_key: "expense_reimbursement_dir",
+              target_name: "采购合同.pdf",
+              status: "failed",
+              message: "目标文件已存在",
+            }],
+          }), { status: 200 });
+        }
+        return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      }),
+    );
+
+    setActivePinia(createPinia());
+    const companiesStore = useCompaniesStore();
+    await companiesStore.load();
+    const panel = mount(DirectoryPanel, { props: { company: COMPANY_A, dirKey: "cf_general" }, attachTo: document.body });
+    await flushPromises();
+
+    // 1) Freeze upload destination while navigating subfolder during in-flight upload
+    const fa = new File(["a"], "a.pdf", { type: "application/pdf" });
+    const fb = new File(["b"], "b.pdf", { type: "application/pdf" });
+    await panel.get(".ws-files__dropzone").trigger("drop", { dataTransfer: { files: [fa, fb] } });
+    await flushPromises();
+    const uploadClick = panel.findAll("button").find((b) => b.text().includes("确认导入"))!.trigger("click");
+    await flushPromises();
+    // Folder navigation buttons are disabled while uploading; attempting click cannot change subpath
+    const enterBtn = panel.findAll("button").find((b) => b.text() === "进入")!;
+    expect((enterBtn.element as HTMLButtonElement).disabled).toBe(true);
+    await enterBtn.trigger("click");
+    releaseFirstUpload!();
+    await uploadClick;
+    await flushPromises();
+    expect(uploadSubpaths).toEqual(["a.pdf@", "b.pdf@"]);
+
+    // 2) Partial move keeps FileMoveModal open with per-file receipt visible
+    await panel.findAll("button").find((b) => b.text() === "移动")!.trigger("click");
+    await flushPromises();
+    const dialog = new DOMWrapper(document.body.querySelector('[role="dialog"]')!);
+    await dialog.findAll("button").find((b) => b.text().includes("预览移动计划"))!.trigger("click");
+    await flushPromises();
+    await dialog.findAll("button").find((b) => b.text().includes("确认移动"))!.trigger("click");
+    await flushPromises();
+
+    expect(document.body.querySelector('[role="dialog"]')).not.toBeNull();
+    expect(dialog.text()).toContain("目标文件已存在");
+    expect(dialog.text()).toContain("执行回执");
+    panel.unmount();
+  });
+
   it("exposes manual edit/rename/move on active monitored invoice row and hides them on read-only directory", async () => {
     const calls: { url: string; method: string; body?: unknown }[] = [];
     const invoiceRow = {

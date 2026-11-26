@@ -402,7 +402,11 @@ function openMoveModal(rows: { source_path?: string; source_file?: string }[]): 
 }
 
 async function onFilesMoved(plan: FileMovePlanPayload): Promise<void> {
-  moveFilePaths.value = null;
+  // Keep FileMoveModal mounted on partial/unknown outcomes so per-file receipts remain inspectable.
+  const keepOpen = plan.status !== "completed" || (plan.failed ?? 0) > 0 || (plan.unknown ?? 0) > 0 || (plan.pending ?? 0) > 0;
+  if (!keepOpen) {
+    moveFilePaths.value = null;
+  }
   if ((plan.moved ?? 0) > 0) {
     await request("/api/v1/bridge/rebuild", { method: "POST", body: {} }).catch(() => undefined);
     clearSelection();

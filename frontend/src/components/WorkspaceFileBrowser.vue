@@ -111,6 +111,7 @@ function scheduleLoad(): void {
 }
 
 function openSubpath(next: string): void {
+  if (uploading.value) return;
   subpath.value = next;
   stagedFiles.value = [];
   importPreview.value = null;
@@ -188,6 +189,15 @@ async function confirmUpload(): Promise<void> {
   if (!stagedFiles.value.length || uploading.value) return;
   uploading.value = true;
   error.value = "";
+  // Freeze the confirmed destination and conflict policy for the entire batch so
+  // concurrent navigation or policy tweaks can never divert later files mid-batch.
+  const uploadBase = base();
+  const targetSubpath = subpath.value;
+  const targetPolicy = uploadConflictPolicy.value;
+  const targetCompanyId = props.company.id;
+  const targetDirKey = props.dirKey;
+  const targetIsInvoiceDir = Boolean(props.isInvoiceDir);
+  const targetMonitored = Boolean(data.value?.monitored);
   const remaining = [...stagedFiles.value];
   const totalCount = remaining.length;
   let processedCount = 0;
@@ -200,10 +210,10 @@ async function confirmUpload(): Promise<void> {
       uploadProgress.value = `正在导入 ${processedCount}/${totalCount}：${file.name}`;
       const params = new URLSearchParams({
         filename: file.name,
-        subpath: subpath.value,
-        conflict_policy: uploadConflictPolicy.value,
+        subpath: targetSubpath,
+        conflict_policy: targetPolicy,
       });
-      const response = await fetch(`${base()}/upload?${params.toString()}`, {
+      const response = await fetch(`${uploadBase}/upload?${params.toString()}`, {
         method: "POST",
         headers: { "Content-Type": "application/octet-stream" },
         body: file,
@@ -224,13 +234,13 @@ async function confirmUpload(): Promise<void> {
     toast(`导入完成：写入 ${importedCount} 个${skippedCount ? `，跳过 ${skippedCount} 个` : ""}。`, "info", 4500);
     await load();
     emit("mutated");
-    if (props.isInvoiceDir && importedCount > 0) {
-      if (data.value?.monitored) {
+    if (targetIsInvoiceDir && importedCount > 0) {
+      if (targetMonitored) {
         await request("/api/v1/bridge/rebuild", { method: "POST", body: {} }).catch(() => undefined);
       } else {
-        void companies.refreshData(props.company.id, { keys: [props.dirKey], force: true, silent: true });
+        void companies.refreshData(targetCompanyId, { keys: [targetDirKey], force: true, silent: true });
       }
-      window.dispatchEvent(new CustomEvent("workspace:company-refreshed", { detail: { companyId: props.company.id } }));
+      window.dispatchEvent(new CustomEvent("workspace:company-refreshed", { detail: { companyId: targetCompanyId } }));
     }
   } catch (cause) {
     const failureMessage = errorText(cause);
@@ -238,16 +248,16 @@ async function confirmUpload(): Promise<void> {
     if (importedCount > 0 || skippedCount > 0) {
       await load();
       emit("mutated");
-      if (props.isInvoiceDir && importedCount > 0) {
-        if (data.value?.monitored) {
+      if (targetIsInvoiceDir && importedCount > 0) {
+        if (targetMonitored) {
           await request("/api/v1/bridge/rebuild", { method: "POST", body: {} }).catch(() => undefined);
         } else {
-          void companies.refreshData(props.company.id, { keys: [props.dirKey], force: true, silent: true });
+          void companies.refreshData(targetCompanyId, { keys: [targetDirKey], force: true, silent: true });
         }
-        window.dispatchEvent(new CustomEvent("workspace:company-refreshed", { detail: { companyId: props.company.id } }));
+        window.dispatchEvent(new CustomEvent("workspace:company-refreshed", { detail: { companyId: targetCompanyId } }));
       }
     }
-    if (remaining.length > 0) {
+    if (remaining.length > 0 && subpath.value === targetSubpath) {
       await refreshImportPreview(true);
     } else {
       importPreview.value = null;
@@ -305,7 +315,11 @@ async function submitRename(): Promise<void> {
 }
 
 async function onMoved(result: FileMovePlanPayload): Promise<void> {
-  movePaths.value = null;
+  // Keep FileMoveModal mounted on partial/unknown outcomes so the user can inspect per-file receipts.
+  const keepOpen = result.status !== "completed" || (result.failed ?? 0) > 0 || (result.unknown ?? 0) > 0 || (result.pending ?? 0) > 0;
+  if (!keepOpen) {
+    movePaths.value = null;
+  }
   await load();
   if ((result.moved ?? 0) > 0 && props.isInvoiceDir && data.value?.monitored) {
     await request("/api/v1/bridge/rebuild", { method: "POST", body: {} }).catch(() => undefined);
@@ -457,7 +471,7 @@ onBeforeUnmount(() => {
     <nav v-if="data?.breadcrumbs?.length" class="ws-files__crumbs" aria-label="当前路径">
       <template v-for="(crumb, idx) in data.breadcrumbs" :key="crumb.subpath">
         <span v-if="idx > 0" class="muted">/</span>
-        <button type="button" class="link" :aria-current="idx === data.breadcrumbs.length - 1 ? 'location' : undefined" @click="openSubpath(crumb.subpath)">
+        <button type="button" class="link" :disabled="uploading" :aria-current="idx === data.breadcrumbs.length - 1 ? 'location' : undefined" @click="openSubpath(crumb.subpath)">
           {{ crumb.name }}
         </button>
       </template>
@@ -547,21 +561,21 @@ onBeforeUnmount(() => {
         <tbody>
           <tr v-if="subpath">
             <td colspan="5">
-              <button type="button" class="link" @click="openSubpath(subpath.includes('/') ? subpath.slice(0, subpath.lastIndexOf('/')) : '')">
+              <button type="button" class="link" :disabled="uploading" @click="openSubpath(subpath.includes('/') ? subpath.slice(0, subpath.lastIndexOf('/')) : '')">
                 ← 返回上一级目录
               </button>
             </td>
           </tr>
           <tr v-for="folder in data.folders" :key="`dir:${folder.relative_path}`">
             <td>
-              <button type="button" class="link ws-files__folder-btn" @click="openSubpath(folder.relative_path)">
+              <button type="button" class="link ws-files__folder-btn" :disabled="uploading" @click="openSubpath(folder.relative_path)">
                 📁 {{ folder.name }}
               </button>
             </td>
             <td class="muted">文件夹</td>
             <td class="num muted">—</td>
             <td class="mono muted nowrap">{{ folder.mtime || "—" }}</td>
-            <td><button type="button" class="ghost" @click="openSubpath(folder.relative_path)">进入</button></td>
+            <td><button type="button" class="ghost" :disabled="uploading" @click="openSubpath(folder.relative_path)">进入</button></td>
           </tr>
           <tr v-for="file in data.files" :key="`file:${file.relative_path}`">
             <td class="path mono" :title="file.relative_path">

@@ -30,6 +30,10 @@ const error = ref("");
 const plan = ref<FileMovePlanPayload | null>(null);
 const lostResponseJobId = ref("");
 
+const receiptLocked = computed(
+  () => confirming.value || Boolean(lostResponseJobId.value) || Boolean(plan.value && plan.value.status !== "prepared"),
+);
+
 const targetCompany = computed(() =>
   companies.companies.find((item) => item.id === targetCompanyId.value) ?? props.company,
 );
@@ -103,6 +107,9 @@ async function confirmMove(): Promise<void> {
       },
     );
     plan.value = res;
+    if (res.status !== "completed" || (res.failed ?? 0) > 0 || (res.unknown ?? 0) > 0 || (res.pending ?? 0) > 0) {
+      error.value = `部分文件未完成移动（已移动 ${res.moved ?? 0}，失败 ${res.failed ?? 0}，待核对 ${res.unknown ?? 0}，未执行 ${res.pending ?? 0}）；请核对下方逐文件回执。`;
+    }
     toast(`移动完成：成功 ${res.moved ?? 0} 个${res.failed ? `，失败 ${res.failed} 个` : ""}。`, res.failed ? "error" : "info", 4500);
     emit("moved", res);
   } catch (cause) {
@@ -124,7 +131,12 @@ async function checkLostJob(): Promise<void> {
     plan.value = res;
     if (res.status === "completed" || res.status === "partial") {
       lostResponseJobId.value = "";
+      if (res.status !== "completed" || (res.failed ?? 0) > 0 || (res.unknown ?? 0) > 0) {
+        error.value = `部分文件未完成移动（已移动 ${res.moved ?? 0}，失败 ${res.failed ?? 0}，待核对 ${res.unknown ?? 0}，未执行 ${res.pending ?? 0}）；请核对下方逐文件回执。`;
+      }
       emit("moved", res);
+    } else if (res.status === "running") {
+      error.value = "该移动任务仍在执行或上次中断，请核对下方逐文件回执，切勿重复确认。";
     }
   } catch (cause) {
     error.value = errorText(cause);
@@ -147,13 +159,13 @@ async function checkLostJob(): Promise<void> {
       <div class="move-modal__controls">
         <label>
           <span>目标公司</span>
-          <select v-model="targetCompanyId" aria-label="移动目标公司" :disabled="confirming">
+          <select v-model="targetCompanyId" aria-label="移动目标公司" :disabled="receiptLocked">
             <option v-for="c in companies.companies" :key="c.id" :value="c.id">{{ c.name }}</option>
           </select>
         </label>
         <label>
           <span>目标目录</span>
-          <select v-model="targetDirKey" aria-label="移动目标目录" :disabled="confirming || !availableTargetDirs.length">
+          <select v-model="targetDirKey" aria-label="移动目标目录" :disabled="receiptLocked || !availableTargetDirs.length">
             <option v-for="sub in availableTargetDirs" :key="sub.key" :value="sub.key">
               {{ sub.label }}{{ sub.kind === "custom" ? `（${sub.role_label || "普通资料"}）` : "" }}
             </option>
@@ -161,11 +173,11 @@ async function checkLostJob(): Promise<void> {
         </label>
         <label>
           <span>目标子路径（可选）</span>
-          <input v-model="targetSubpath" type="text" placeholder="留空放到目录根，如 2026-11" aria-label="移动目标子路径" :disabled="confirming">
+          <input v-model="targetSubpath" type="text" placeholder="留空放到目录根，如 2026-11" aria-label="移动目标子路径" :disabled="receiptLocked">
         </label>
         <label>
           <span>同名冲突策略</span>
-          <select v-model="conflictPolicy" aria-label="同名冲突策略" :disabled="confirming">
+          <select v-model="conflictPolicy" aria-label="同名冲突策略" :disabled="receiptLocked">
             <option value="reject">遇同名拒绝覆盖（推荐）</option>
             <option value="rename">遇同名自动追加序号重命名</option>
           </select>
@@ -173,7 +185,7 @@ async function checkLostJob(): Promise<void> {
       </div>
 
       <div class="actions">
-        <button type="button" :disabled="previewing || confirming || !targetDirKey" :aria-busy="previewing" @click="buildPreview">
+        <button type="button" :disabled="previewing || receiptLocked || !targetDirKey" :aria-busy="previewing" @click="buildPreview">
           {{ previewing ? "生成计划中…" : "预览移动计划" }}
         </button>
         <button v-if="lostResponseJobId" type="button" :disabled="checkingJob" @click="checkLostJob">
