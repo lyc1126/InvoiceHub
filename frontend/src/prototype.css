@@ -273,7 +273,7 @@ html[data-active-skin='website-dark'] .ws-row:hover, html[data-active-skin='webs
 .workspace-module--settings > .module-company-content { padding-bottom:16px; }
 .invoice-tags .actions { display:flex; gap:8px; }
 .invoice-tags td { vertical-align:middle; }
-.invoice-tags input, .invoice-tags select { width:100%; min-height:36px; padding:0 10px; }
+.invoice-tags input, .invoice-tags select { width:100%; height:36px; min-height:36px; padding:6px 10px; line-height:22px; }
 .invoice-tags td:first-child { display:flex; align-items:center; gap:6px; }
 .invoice-tags td:first-child select { width:96px; }
 .swatch { display:inline-block; flex:none; width:16px; height:16px; border-radius:50%; }
@@ -443,7 +443,7 @@ html[data-active-skin='website-dark'] .ws-toast { background:#30352a; color:var(
 /* Prototype .filters / .field: labelled controls on one baseline. */
 .filters { display:flex; flex-wrap:wrap; gap:10px; align-items:flex-end; margin-bottom:12px; }
 .filters .field { display:grid; gap:4px; color:var(--muted); font-size:12.5px; }
-.filters .field :is(input,select) { min-width:150px; min-height:36px; padding:0 10px; color:var(--text); font-size:14px; }
+.filters .field :is(input,select) { min-width:150px; height:36px; min-height:36px; padding:6px 10px; line-height:22px; color:var(--text); font-size:14px; }
 /* Selection summary details modal (matches prototype openSummary / sumGroups). */
 .sum-cards { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; margin-bottom:14px; }
 .sum-card { padding:12px 14px; border:1px solid var(--line); border-left:3px solid var(--ws-lime-deep); border-radius:4px; background:var(--surface-2); display:grid; gap:3px; }
