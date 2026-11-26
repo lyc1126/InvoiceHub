@@ -506,7 +506,7 @@ preview 和 print 都以短期内存 job 输出，不能把 PNG、XML 文本或�
 
 ### 3.4.1 Tauri 私有握手与原生选择器
 
-2026-09-09 当前源码的启动顺序：固定端口检查 → spawn → 有界重试（检查 child 存活，单轮共享 5 秒总预算、整体 20 秒）→ proof/health/首页/OpenAPI → 偏好 → fresh ownership 重验 → arm → tray → surface → release gate/manage。`local_http.rs` 按 Content-Length、无正文状态或 chunked 完成响应；仅 close-delimited 响应等待正常 EOF，截断/reset 前未完整的响应继续失败。总响应 128 KiB、响应头 16 KiB，私有字段不进错误信息。
+2026-09-09 当前源码的启动顺序：固定端口检查 → spawn → 有界重试（检查 child 存活，单轮共享 5 秒总预算、整体 20 秒）→ proof/health/首页/OpenAPI → 偏好 → fresh ownership 重验 → arm → tray → surface → release gate/manage。`local_http.rs` 按 Content-Length、无正文状态或 chunked 完成响应；仅 close-delimited 响应等待正常 EOF，截断/reset 前未完整的响应继续失败。普通探针总响应 128 KiB、`/openapi.json` 握手独立 1 MiB、响应头 16 KiB，私有字段不进错误信息。
 
 `runtime/startup_probe.log` 每次初始握手覆盖写入 host_pid/backend_pid/attempts/elapsed_ms/child_before_cleanup，后续追加 preferences/ownership 阶段。错误仅包含固定接口、阶段、字节计数、状态码与系统错误码；诊断提示同时给出 stdout/stderr 路径。该日志与失败清理后的监听观察都只是诊断，不参与授权。
 

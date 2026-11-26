@@ -1,8 +1,13 @@
 from __future__ import annotations
 
 import json
+import re
 import tomllib
 from pathlib import Path
+
+from fastapi.testclient import TestClient
+
+from invoice_hub.api.app import create_app
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -484,3 +489,71 @@ def test_tauri_fixed_port_conflict_recovery_requires_confirmation_and_revalidati
     assert "ExistingInstanceShutdownTimedOut" in backend
     assert "pub fn offer_existing_invoicehub_shutdown" in diag
     assert "--no-startup-dialog" in diag[diag.index("pub fn offer_existing_invoicehub_shutdown") :]
+
+
+def _parse_rust_byte_const(source: str, name: str) -> int:
+    match = re.search(rf"const\s+{re.escape(name)}\s*:\s*usize\s*=\s*([^;]+);", source)
+    assert match is not None, f"missing Rust constant {name}"
+    expr = match.group(1).replace("_", "").strip()
+    assert re.fullmatch(r"\d+(?:\s*\*\s*\d+)*", expr), f"unexpected size expression for {name}: {expr}"
+    value = 1
+    for factor in expr.split("*"):
+        value *= int(factor.strip())
+    return value
+
+
+def test_tauri_handshake_response_limits_cover_actual_fastapi_endpoints(tmp_path: Path) -> None:
+    backend = (ROOT / "src-tauri" / "src" / "backend.rs").read_text(encoding="utf-8")
+    local_http = (ROOT / "src-tauri" / "src" / "local_http.rs").read_text(encoding="utf-8")
+
+    default_limit = _parse_rust_byte_const(backend, "MAX_HTTP_RESPONSE_BYTES")
+    openapi_limit = _parse_rust_byte_const(backend, "MAX_OPENAPI_RESPONSE_BYTES")
+    max_header_bytes = _parse_rust_byte_const(local_http, "MAX_HEADER_BYTES")
+    assert default_limit == 128 * 1024
+    assert openapi_limit > default_limit
+
+    # Keep the wider response ceiling strictly scoped to OPENAPI_PATH in production code.
+    prod_backend = backend[: backend.index("#[cfg(test)]")]
+    assert prod_backend.count("MAX_OPENAPI_RESPONSE_BYTES") == 2
+    probe_fn = prod_backend[
+        prod_backend.index("fn probe_backend_at") : prod_backend.index("pub fn probe_backend_with_retry")
+    ]
+    openapi_call = probe_fn[probe_fn.index("OPENAPI_PATH,") :]
+    assert "MAX_OPENAPI_RESPONSE_BYTES" in openapi_call
+    assert "MAX_OPENAPI_RESPONSE_BYTES" not in probe_fn[: probe_fn.index("OPENAPI_PATH,")]
+
+    path_consts = dict(
+        re.findall(r'pub const ([A-Z0-9_]+):\s*&str\s*=\s*"([^"]+)";', prod_backend)
+    )
+    ops_block = prod_backend[
+        prod_backend.index("const REQUIRED_OPENAPI_OPERATIONS") : prod_backend.index("];", prod_backend.index("const REQUIRED_OPENAPI_OPERATIONS"))
+    ]
+    required_operations: list[tuple[str, str]] = []
+    for raw_path, method in re.findall(r'\(\s*("[^"]+"|[A-Z0-9_]+)\s*,\s*"([a-z]+)"\s*\)', ops_block):
+        path = raw_path[1:-1] if raw_path.startswith('"') else path_consts[raw_path]
+        required_operations.append((path, method))
+    assert required_operations
+
+    cfg = tmp_path / "app.local.json"
+    cfg.write_text(json.dumps({"watch_dir": str(tmp_path)}), encoding="utf-8")
+    client = TestClient(create_app(root_dir=tmp_path, config_path=str(cfg)))
+
+    for path in ("/", "/api/v1/health", "/api/v1/preferences"):
+        response = client.get(path)
+        assert response.status_code == 200
+        assert len(response.content) + max_header_bytes <= default_limit, (
+            f"{path} response ({len(response.content)} bytes + {max_header_bytes} header budget) "
+            f"exceeds MAX_HTTP_RESPONSE_BYTES ({default_limit})"
+        )
+
+    openapi_response = client.get("/openapi.json")
+    assert openapi_response.status_code == 200
+    assert len(openapi_response.content) + max_header_bytes <= openapi_limit, (
+        f"/openapi.json response ({len(openapi_response.content)} bytes + {max_header_bytes} header budget) "
+        f"exceeds MAX_OPENAPI_RESPONSE_BYTES ({openapi_limit})"
+    )
+    registered_paths = openapi_response.json()["paths"]
+    for path, method in required_operations:
+        assert path in registered_paths and method in registered_paths[path], (
+            f"missing required OpenAPI operation: {method.upper()} {path}"
+        )

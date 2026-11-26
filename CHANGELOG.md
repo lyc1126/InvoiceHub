@@ -2,6 +2,20 @@
 
 ## 未发布
 
+### 2026-11-26 修复 Tauri 严格握手 `/openapi.json` 超出 128 KiB 上限的启动阻断
+
+- 需求与起点：基于干净主线 `main@933d7d7` 新建独立 worktree `../InvoiceHub-openapi-limit`（分支 `codex/fix-tauri-openapi-limit`，未改动原工作区既有未提交文件）。Windows x64 `v1.0.0` 候选 EXE 两次真机严格握手启动失败，实测 `/openapi.json` 正文为 140,330 字节（235 条路径），超出双平台共享 `src-tauri/src/backend.rs` 统一的 128 KiB（131,072 字节）HTTP 响应上限；复核同源 `933d7d7` macOS 候选内嵌核心生成的 `/openapi.json` 同样为 140,330 字节，确认为双平台共用的宿主阻断。
+- 采用方案：
+  - `src-tauri/src/backend.rs`：保持普通本地探针响应上限为 `MAX_HTTP_RESPONSE_BYTES = 128 * 1024`，新增独立常量 `MAX_OPENAPI_RESPONSE_BYTES = 1024 * 1024`（1 MiB）；拆分私有辅助函数 `probe_backend_at`、`local_get_at` 并为 `local_request_at` 显式透传 `max_response_bytes`，仅在 `OPENAPI_PATH` 握手探测处使用 `MAX_OPENAPI_RESPONSE_BYTES`，`desktop-host-proof`/`health`/`/`/`preferences`/`server/shutdown` 与旧实例冲突探测继续严格受限于 128 KiB。
+  - `src-tauri/src/backend.rs` 单元测试：新增 `probe_backend_accepts_openapi_larger_than_default_http_limit`（回环端到端验证 >128 KiB 的完整 HMAC+health+首页+OpenAPI 握手通过）与 `probe_backend_rejects_oversized_openapi_and_preserves_non_openapi_limit`（验证 >1 MiB 的 OpenAPI 仍以 `response_too_large` 拒收，且 `/` 在 140 KiB 时仍按 128 KiB 拒收）。
+  - `tests/test_tauri_lifecycle_contract.py`：新增 `test_tauri_handshake_response_limits_cover_actual_fastapi_endpoints`，解析 `backend.rs` 与 `local_http.rs` 上限常量并锁定 `MAX_OPENAPI_RESPONSE_BYTES` 仅用于 `OPENAPI_PATH`，随后实测真实 `create_app()` 的 `/`、`/api/v1/health`、`/api/v1/preferences`（含 16 KiB 响应头余量）低于 128 KiB、`/openapi.json`（含 16 KiB 响应头余量）低于 `MAX_OPENAPI_RESPONSE_BYTES`，且 `REQUIRED_OPENAPI_OPERATIONS` 全部已注册。
+  - 文档同步：同步更新 `docs/architecture/rules/TAURI_HOST.md`、`docs/architecture/INTERFACES_AND_FLOWS.md`、`docs/architecture/COMMENT_RATIONALE_MAP.md` 与 `docs/architecture/AGENT_TASK_MAP.md`。
+- 验证范围：
+  - Rust（macOS ARM64，Rust `1.85.0`）：`cargo fmt --check`、`cargo clippy --offline --locked --all-targets -- -D warnings` 与 `cargo test --offline --locked` 全部通过（lib 63 + main 6 + lifecycle_contract 10 + monitor_recovery_contract 17 + update_coordinator_contract 12 + windows_marker_store_contract 1，共 109 项，0 失败）。
+  - Python：执行 `tests/test_tauri_lifecycle_contract.py`、`tests/test_tauri_host_rpc.py`、`tests/test_tauri_foundation.py`、`tests/test_tauri_dev_app.py`、`tests/test_tauri_windows_portable.py`、`tests/test_tauri_public_preview_smoke.py`、`tests/test_tauri_recovery_smoke.py`、`tests/test_workspace_frontend.py`、`tests/test_api_contract.py` 与 `tests/test_development_documentation.py`，以及 `ruff check`、`python -m compileall -q src tests` 与 `git diff --check`。
+  - `core_build_id` 说明：`src-tauri/` 不在 `BUILD_INPUTS` 范围内，Python 业务核心指纹不受影响，但合入新 commit 后双平台桌面宿主需基于同一新 clean commit 同源重打。
+- 未覆盖项：未覆盖真实默认配置、正式 Windows BAT、浏览器前台拉起、系统原生选择器弹窗、macOS/Windows 候选成品重新构建及双平台真机严格握手/冒烟验证；待分支合入 `main` 产生新 `RC_SHA` 后分别重打 macOS 与 Windows 候选并执行真机验收。
+
 ### 2026-11-26 工作区 Phase 2：跨公司全局检索（WS-11）与文件级增删改查/通用文件视图（WS-12）
 
 - 需求与起点：基于同一工作树 `InvoiceHub-workspace-crud-search`（分支 `codex/workspace-crud-search-p1`）的 Phase 1 本地检查点（`0669348`），按用户确认继续落地 Phase 2 两项核心能力：（1）`WS-11` 跨目录/跨公司只读全局检索、侧栏折叠公司项目检索与点击命中自动跳转定位；（2）`WS-12` 工作区通用文件与子文件夹浏览、拖放/选择文件无覆盖导入、活动监控目录单票 6 字段手改/安全改名与跨目录计划确认移动归档，以及原生回收站文件删除。
