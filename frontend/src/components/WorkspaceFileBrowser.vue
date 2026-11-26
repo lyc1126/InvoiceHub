@@ -53,6 +53,7 @@ const importPreview = ref<FileImportPreviewPayload | null>(null);
 const uploading = ref(false);
 const uploadProgress = ref("");
 const uploadResults = ref<FileUploadResult[]>([]);
+const ambiguousUploads = ref<string[]>([]);
 
 // Single-file rename
 const renameTarget = ref<DirectoryFileEntry | null>(null);
@@ -116,6 +117,7 @@ function openSubpath(next: string): void {
   stagedFiles.value = [];
   importPreview.value = null;
   uploadResults.value = [];
+  ambiguousUploads.value = [];
   void load();
 }
 
@@ -138,10 +140,12 @@ async function createSubfolder(): Promise<void> {
 }
 
 async function stageFilesForImport(list: FileList | File[]): Promise<void> {
+  if (uploading.value) return;
   const files = Array.from(list).filter((file) => file && file.name);
   if (!files.length) return;
   stagedFiles.value = files;
   uploadResults.value = [];
+  ambiguousUploads.value = [];
   await refreshImportPreview();
 }
 
@@ -186,7 +190,7 @@ function onFilePicked(event: Event): void {
 }
 
 async function confirmUpload(): Promise<void> {
-  if (!stagedFiles.value.length || uploading.value) return;
+  if (!stagedFiles.value.length || uploading.value || ambiguousUploads.value.length > 0) return;
   uploading.value = true;
   error.value = "";
   // Freeze the confirmed destination and conflict policy for the entire batch so
@@ -203,6 +207,7 @@ async function confirmUpload(): Promise<void> {
   let processedCount = 0;
   let importedCount = 0;
   let skippedCount = 0;
+  let hadAmbiguousOutcome = false;
   try {
     while (remaining.length > 0) {
       const file = remaining[0]!;
@@ -213,14 +218,39 @@ async function confirmUpload(): Promise<void> {
         subpath: targetSubpath,
         conflict_policy: targetPolicy,
       });
-      const response = await fetch(`${uploadBase}/upload?${params.toString()}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/octet-stream" },
-        body: file,
-      });
+      let response: Response;
+      try {
+        response = await fetch(`${uploadBase}/upload?${params.toString()}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/octet-stream" },
+          body: file,
+        });
+      } catch (networkCause) {
+        // Network/response loss may occur after the backend already wrote the file on disk.
+        // Quarantine this file out of the retry queue so confirming again under `rename` can never create a duplicate copy.
+        remaining.shift();
+        if (!ambiguousUploads.value.includes(file.name)) {
+          ambiguousUploads.value = [...ambiguousUploads.value, file.name];
+        }
+        hadAmbiguousOutcome = true;
+        throw new Error(
+          `「${file.name}」的导入结果未知（${errorText(networkCause)}）；已从重试队列移出并刷新目录，请先核对是否已落盘，避免重复生成副本。`,
+        );
+      }
       const body = await response.json().catch(() => ({})) as FileUploadResult & { detail?: string; error?: { message?: string } };
       if (!response.ok) {
-        throw new Error(body.error?.message || body.detail || `导入「${file.name}」失败（HTTP ${response.status}）`);
+        const msg = body.error?.message || body.detail || `导入「${file.name}」失败（HTTP ${response.status}）`;
+        if (response.status >= 500) {
+          // 5xx may happen after disk write (e.g. post-write event logging error); treat outcome as unknown rather than blindly retryable.
+          remaining.shift();
+          if (!ambiguousUploads.value.includes(file.name)) {
+            ambiguousUploads.value = [...ambiguousUploads.value, file.name];
+          }
+          hadAmbiguousOutcome = true;
+          throw new Error(`「${file.name}」服务端异常（${msg}），结果未知；已从重试队列移出并刷新目录，请先核对是否已落盘。`);
+        }
+        // 4xx is a confirmed pre-write rejection (e.g. lock busy, oversize, invalid name) and stays retryable.
+        throw new Error(msg);
       }
       uploadResults.value.push(body);
       if (body.status === "skipped") skippedCount += 1;
@@ -245,10 +275,10 @@ async function confirmUpload(): Promise<void> {
   } catch (cause) {
     const failureMessage = errorText(cause);
     stagedFiles.value = [...remaining];
-    if (importedCount > 0 || skippedCount > 0) {
+    if (importedCount > 0 || skippedCount > 0 || hadAmbiguousOutcome) {
       await load();
       emit("mutated");
-      if (targetIsInvoiceDir && importedCount > 0) {
+      if (targetIsInvoiceDir && (importedCount > 0 || hadAmbiguousOutcome)) {
         if (targetMonitored) {
           await request("/api/v1/bridge/rebuild", { method: "POST", body: {} }).catch(() => undefined);
         } else {
@@ -436,6 +466,7 @@ watch(
     stagedFiles.value = [];
     importPreview.value = null;
     uploadResults.value = [];
+    ambiguousUploads.value = [];
     trashPreview.value = null;
     trashResult.value = null;
     lostTrashJobId.value = "";
@@ -503,10 +534,10 @@ onBeforeUnmount(() => {
             <option value="skip">跳过已有同名文件</option>
           </select>
         </label>
-        <button type="button" class="primary" :disabled="uploading || (importPreview.summary.write + importPreview.summary.rename === 0)" :aria-busy="uploading" @click="confirmUpload">
+        <button type="button" class="primary" :disabled="uploading || ambiguousUploads.length > 0 || (importPreview.summary.write + importPreview.summary.rename === 0)" :aria-busy="uploading" @click="confirmUpload">
           {{ uploading ? (uploadProgress || "导入中…") : `确认导入（写入 ${importPreview.summary.write + importPreview.summary.rename} 个）` }}
         </button>
-        <button type="button" :disabled="uploading" @click="stagedFiles = []; importPreview = null">取消</button>
+        <button type="button" :disabled="uploading" @click="stagedFiles = []; importPreview = null; ambiguousUploads = []">取消</button>
       </div>
       <ul class="ws-files__import-list">
         <li v-for="item in importPreview.items" :key="item.original_name">
@@ -517,6 +548,11 @@ onBeforeUnmount(() => {
           <strong v-else class="check--failed">→ 阻断：{{ item.reason }}</strong>
         </li>
       </ul>
+    </div>
+
+    <div v-if="ambiguousUploads.length" class="banner banner--error" role="alert">
+      结果待核对（已移出重试队列，防止重复生成副本）：{{ ambiguousUploads.join("、") }}。请先查看下方已刷新的目录列表确认是否已落盘。
+      <button type="button" class="link" @click="ambiguousUploads = []">我已核对目录</button>
     </div>
 
     <div v-if="uploadResults.length" class="banner banner--note" role="status">

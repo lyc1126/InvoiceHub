@@ -18,6 +18,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import stat
 import threading
 import time
@@ -48,6 +49,7 @@ MAX_LIST_ENTRIES = 2_000
 MAX_SCAN_ENTRIES = 100_000
 MAX_UPLOAD_FILE_BYTES = 50 * 1024 * 1024
 MAX_BATCH_ITEMS = 100
+_MOVE_COPY_CHUNK_BYTES = 1024 * 1024
 MOVE_PLAN_EXPIRY_SECONDS = 300
 TRASH_PLAN_EXPIRY_SECONDS = 300
 _INVALID_NAME_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
@@ -366,12 +368,59 @@ def _write_new_file_atomic(target_dir: Path, filename: str, raw_bytes: bytes) ->
     return target
 
 
+def _copy_file_to_new_atomic(src: Path, target_dir: Path, filename: str) -> Path:
+    """Stream ``src`` into a brand-new regular file in bounded chunks without overwriting or following links."""
+    src_flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)
+    src_fd = os.open(src, src_flags)
+    try:
+        src_stat = os.fstat(src_fd)
+        if not stat.S_ISREG(src_stat.st_mode):
+            raise CompanyRegistryError("WORKSPACE_FILE_INVALID", "源文件不是普通文件或包含链接。", status_code=409)
+    except Exception:
+        os.close(src_fd)
+        raise
+
+    target = target_dir / filename
+    with os.fdopen(src_fd, "rb") as src_handle:
+        if os.open in os.supports_dir_fd:
+            dir_fd = os.open(target_dir, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+            try:
+                dst_fd = os.open(filename, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=dir_fd)
+                try:
+                    with os.fdopen(dst_fd, "wb") as dst_handle:
+                        shutil.copyfileobj(src_handle, dst_handle, length=_MOVE_COPY_CHUNK_BYTES)
+                        dst_handle.flush()
+                        os.fsync(dst_handle.fileno())
+                except Exception:
+                    with contextlib.suppress(OSError):
+                        os.unlink(filename, dir_fd=dir_fd)
+                    raise
+            finally:
+                os.close(dir_fd)
+            return target
+
+        if _is_link(target_dir) or _is_link(target):
+            raise CompanyRegistryError("WORKSPACE_FILE_LINK_BLOCKED", "目标目录或文件包含链接，已拒绝写入。", status_code=409)
+        dst_fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0), 0o600)
+        try:
+            with os.fdopen(dst_fd, "wb") as dst_handle:
+                shutil.copyfileobj(src_handle, dst_handle, length=_MOVE_COPY_CHUNK_BYTES)
+                dst_handle.flush()
+                os.fsync(dst_handle.fileno())
+        except Exception:
+            with contextlib.suppress(OSError):
+                target.unlink(missing_ok=True)
+            raise
+        return target
+
+
 def _move_file_no_overwrite(src: Path, dst: Path) -> None:
     """Move ``src`` to ``dst`` without ever overwriting an existing destination file.
 
     Uses atomic same-filesystem ``os.link`` first; on cross-device moves or filesystems without
-    hard-link support (e.g. FAT/SMB), writes directly via ``O_CREAT | O_EXCL | O_NOFOLLOW`` so
-    concurrent destination creation always fails with ``FileExistsError`` instead of overwriting.
+    hard-link support (e.g. FAT/SMB), streams in bounded chunks into a destination created with
+    ``O_CREAT | O_EXCL | O_NOFOLLOW`` so concurrent destination creation always fails with
+    ``FileExistsError`` instead of overwriting or loading huge files into RAM.
     """
     if dst.exists() or _is_link(dst):
         raise FileExistsError(f"目标文件已存在：{dst.name}")
@@ -389,9 +438,8 @@ def _move_file_no_overwrite(src: Path, dst: Path) -> None:
         if isinstance(exc, FileExistsError):
             raise
         # Cross-device link (EXDEV) or filesystem without hard-link support: never fall back to
-        # overwriting os.rename(); atomically create destination exclusively with O_CREAT|O_EXCL.
-        raw = src.read_bytes()
-        _write_new_file_atomic(dst.parent, dst.name, raw)
+        # overwriting os.rename(); stream-copy into an exclusively created destination file.
+        _copy_file_to_new_atomic(src, dst.parent, dst.name)
         try:
             os.unlink(src)
         except OSError:

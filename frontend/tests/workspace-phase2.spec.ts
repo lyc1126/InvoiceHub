@@ -453,7 +453,7 @@ describe("Phase 2 WS-12 generic file browser and active invoice file actions", (
           uploadedNames.push(filename);
           if (filename === "second.pdf" && secondAttempts === 0) {
             secondAttempts += 1;
-            return new Response(JSON.stringify({ detail: "磁盘临时繁忙" }), { status: 500 });
+            return new Response(JSON.stringify({ detail: "目录正在写入，请稍后重试" }), { status: 409 });
           }
           return new Response(JSON.stringify({
             ok: true,
@@ -485,7 +485,7 @@ describe("Phase 2 WS-12 generic file browser and active invoice file actions", (
     await panel.findAll("button").find((b) => b.text().includes("确认导入"))!.trigger("click");
     await flushPromises();
 
-    expect(panel.text()).toContain("磁盘临时繁忙");
+    expect(panel.text()).toContain("目录正在写入，请稍后重试");
     expect(panel.text()).toContain("待导入 1 个文件");
     expect(previewBatches).toEqual([["first.pdf", "second.pdf"], ["second.pdf"]]);
 
@@ -494,6 +494,110 @@ describe("Phase 2 WS-12 generic file browser and active invoice file actions", (
     await flushPromises();
 
     expect(uploadedNames).toEqual(["first.pdf", "second.pdf", "second.pdf"]);
+    expect(panel.text()).not.toContain("待导入");
+    panel.unmount();
+  });
+
+  it("quarantines unknown upload outcomes on lost response and never retries ambiguous files", async () => {
+    const uploadedNames: string[] = [];
+    const previewBatches: string[][] = [];
+    let listLoads = 0;
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init: RequestInit = {}) => {
+        const body = typeof init.body === "string" ? JSON.parse(init.body) : undefined;
+        if (url.endsWith("/directories")) {
+          return new Response(JSON.stringify({ ok: true, revision: 2, company: COMPANY_A, directories: DIRS_A }), { status: 200 });
+        }
+        if (url.includes("/directories/cf_general/files?")) {
+          listLoads += 1;
+          return new Response(JSON.stringify({
+            ok: true,
+            company_id: "co_a",
+            company_name: "甲公司",
+            dir_key: "cf_general",
+            dir_label: "合同归档",
+            dir_role: "general",
+            monitored: false,
+            can_upload: true,
+            can_mutate_existing: true,
+            subpath: "",
+            breadcrumbs: [{ name: "合同归档", subpath: "" }],
+            folders: [],
+            files: [],
+            extensions: [],
+            total_folders: 0,
+            total_files: 0,
+            truncated: false,
+          }), { status: 200 });
+        }
+        if (url.endsWith("/files/import-preview")) {
+          const names = (body as { filenames: string[] }).filenames;
+          previewBatches.push(names);
+          return new Response(JSON.stringify({
+            ok: true,
+            company_id: "co_a",
+            dir_key: "cf_general",
+            subpath: "",
+            conflict_policy: "rename",
+            monitored: false,
+            items: names.map((name) => ({ original_name: name, target_name: name, action: "write", conflict: false, reason: "" })),
+            summary: { write: names.length, rename: 0, skip: 0, blocked: 0 },
+          }), { status: 200 });
+        }
+        if (url.includes("/files/upload?")) {
+          const filename = new URL(url, "http://localhost").searchParams.get("filename") ?? "";
+          uploadedNames.push(filename);
+          if (filename === "second.pdf") {
+            throw new TypeError("Failed to fetch");
+          }
+          return new Response(JSON.stringify({
+            ok: true,
+            status: "imported",
+            original_name: filename,
+            saved_name: filename,
+            relative_path: filename,
+            size_bytes: 5,
+            monitored: false,
+            message: `已导入「${filename}」。`,
+          }), { status: 200 });
+        }
+        return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      }),
+    );
+
+    setActivePinia(createPinia());
+    const panel = mount(DirectoryPanel, { props: { company: COMPANY_A, dirKey: "cf_general" }, attachTo: document.body });
+    await flushPromises();
+    const loadsBefore = listLoads;
+
+    const f1 = new File(["aaa"], "first.pdf", { type: "application/pdf" });
+    const f2 = new File(["bbb"], "second.pdf", { type: "application/pdf" });
+    const f3 = new File(["ccc"], "third.pdf", { type: "application/pdf" });
+    await panel.get(".ws-files__dropzone").trigger("drop", { dataTransfer: { files: [f1, f2, f3] } });
+    await flushPromises();
+
+    // Confirm: first.pdf succeeds, second.pdf drops response (unknown outcome) -> quarantined, third.pdf remains unsent
+    await panel.findAll("button").find((b) => b.text().includes("确认导入"))!.trigger("click");
+    await flushPromises();
+
+    expect(listLoads).toBeGreaterThan(loadsBefore);
+    expect(panel.text()).toContain("结果待核对");
+    expect(panel.text()).toContain("second.pdf");
+    // Only unsent third.pdf remains in preview; second.pdf is NOT queued for blind retry
+    expect(previewBatches).toEqual([["first.pdf", "second.pdf", "third.pdf"], ["third.pdf"]]);
+    const confirmBtn = panel.findAll("button").find((b) => b.text().includes("确认导入"))!;
+    expect((confirmBtn.element as HTMLButtonElement).disabled).toBe(true);
+
+    // User reconciles directory, then continues uploading remaining unsent third.pdf only
+    await panel.findAll("button").find((b) => b.text() === "我已核对目录")!.trigger("click");
+    await flushPromises();
+    expect((confirmBtn.element as HTMLButtonElement).disabled).toBe(false);
+    await confirmBtn.trigger("click");
+    await flushPromises();
+
+    expect(uploadedNames).toEqual(["first.pdf", "second.pdf", "third.pdf"]);
     expect(panel.text()).not.toContain("待导入");
     panel.unmount();
   });

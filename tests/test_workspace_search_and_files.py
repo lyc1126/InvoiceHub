@@ -777,8 +777,14 @@ def test_fallback_move_never_overwrites_and_list_search_reaches_beyond_limit(tmp
     assert src.read_text(encoding="utf-8") == "from-source"
     assert dst.read_text(encoding="utf-8") == "concurrent-existing"
 
-    # When dst is genuinely absent, O_EXCL fallback completes the move and removes src
+    # When dst is genuinely absent, O_EXCL fallback streams in bounded chunks without read_bytes() and removes src
     dst2 = tmp_path / "dst_ok.txt"
+    monkeypatch.setattr(wf_mod, "_MOVE_COPY_CHUNK_BYTES", 4)
+    monkeypatch.setattr(
+        Path,
+        "read_bytes",
+        lambda self: (_ for _ in ()).throw(AssertionError("fallback move must stream instead of read_bytes()")),
+    )
     monkeypatch.setattr(wf_mod.os, "link", lambda _s, _d: (_ for _ in ()).throw(OSError(errno.EXDEV, "cross-device")))
     wf_mod._move_file_no_overwrite(src, dst2)
     assert not src.exists()
