@@ -9,6 +9,13 @@ import time
 from pathlib import Path
 
 from invoice_hub.services.company_directory_guard import create_empty_subdir, directory_entry, subdir_snapshot
+from invoice_hub.services.company_folders import (
+    _DISCOVERY_SKIP_NAMES,
+    MAX_CUSTOM_FOLDERS,
+    CompanyFolderService,
+    clean_folder_label,
+    clean_folder_role,
+)
 from invoice_hub.services.company_registry import STANDARD_SUBDIRS, CompanyRegistryError, detect_subdir_options
 from invoice_hub.storage import atomic_write_json
 
@@ -61,6 +68,27 @@ class CompanyDetectionService:
             detected[key] = (relative, "user" if key in chosen else detected[key][1])
         snapshots = {key: subdir_snapshot(root, value[0]) for key, value in detected.items()}
         candidate_ids = {key: {name: subdir_snapshot(root, name) for name in names} for key, names in candidates.items()}
+        # Discover additional direct subfolders not claimed by the six standard slots so the
+        # import wizard can register them as custom folders in one pass without moving files.
+        extra_names: list[str] = []
+        if root_status == "present":
+            mapped_folded = [rel.casefold() for rel in mappings.values()]
+            try:
+                for entry in sorted(root.iterdir(), key=lambda item: item.name.casefold()):
+                    name = entry.name
+                    if name.startswith(".") or name in _DISCOVERY_SKIP_NAMES:
+                        continue
+                    if directory_entry(entry)[0] != "present":
+                        continue
+                    folded = name.casefold()
+                    if any(folded == other or folded.startswith(other + "/") or other.startswith(folded + "/") for other in mapped_folded):
+                        continue
+                    extra_names.append(name)
+                    if len(extra_names) >= MAX_CUSTOM_FOLDERS:
+                        break
+            except OSError:
+                extra_names = []
+        extra_identities = {name: subdir_snapshot(root, name) for name in extra_names}
         subdirs = []
         for key, (label, _) in STANDARD_SUBDIRS.items():
             relative = detected[key][0]
@@ -70,15 +98,38 @@ class CompanyDetectionService:
                             "status": status, "file_count": count, "candidates": candidates.get(key, []),
                             "selection_required": len(candidates.get(key, [])) > 1 and detected[key][1] == "default",
                             "suggested_action": {"present": "keep", "missing": "create"}.get(status, "blocked")})
+        extra_folders = [
+            {
+                "relative_path": name,
+                "path": str(root / name),
+                "label": name,
+                "suggested_role": CompanyFolderService._suggest_role(name),
+                "file_count": _file_count(root / name),
+            }
+            for name in extra_names
+        ]
         if (snapshots != {key: subdir_snapshot(root, value[0]) for key, value in detected.items()}
-                or candidate_ids != {key: {name: subdir_snapshot(root, name) for name in names} for key, names in candidates.items()}):
+                or candidate_ids != {key: {name: subdir_snapshot(root, name) for name in names} for key, names in candidates.items()}
+                or extra_identities != {name: subdir_snapshot(root, name) for name in extra_names}):
             raise _error("检测期间目录已变化，请重新检测。", "COMPANY_PLAN_STALE", 409)
         # Bind identities, not just names. Counts are informational and never authorize mkdir.
         # The user's choice and every offered candidate bind the plan. A same-name
         # replacement must invalidate registration rather than silently select new data.
-        binding = {"root": str(root), "subdirs": mappings, "identities": snapshots, "candidates": candidate_ids}
+        binding = {
+            "root": str(root),
+            "subdirs": mappings,
+            "identities": snapshots,
+            "candidates": candidate_ids,
+            "extra_identities": extra_identities,
+        }
         plan_hash = hashlib.sha256(json.dumps(binding, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
-        return {"ok": True, "root_status": root_status, "subdirs": subdirs, "plan_hash": plan_hash}, binding
+        return {
+            "ok": True,
+            "root_status": root_status,
+            "subdirs": subdirs,
+            "extra_folders": extra_folders,
+            "plan_hash": plan_hash,
+        }, binding
 
     def detect(self, payload: object) -> dict:
         with self.registry._lock:
@@ -152,6 +203,24 @@ class CompanyDetectionService:
             available = {item["key"] for item in preview["subdirs"] if item["suggested_action"] == "create"}
             if not set(keys) <= available:
                 raise _error("只允许勾选检测为缺失的目录。")
+            raw_extra = payload.get("import_extra_folders", [])
+            if not isinstance(raw_extra, list) or len(raw_extra) > MAX_CUSTOM_FOLDERS:
+                raise _error("顺带导入的其它子目录格式无效。")
+            allowed_extra = binding.get("extra_identities") or {}
+            extra_by_rel = {item["relative_path"]: item for item in preview.get("extra_folders", [])}
+            import_custom: list[dict[str, str]] = []
+            seen_extra: set[str] = set()
+            for idx, item in enumerate(raw_extra):
+                if not isinstance(item, dict):
+                    raise _error("顺带导入的子目录条目格式错误。")
+                rel = str(item.get("relative_path") or "").strip()
+                if rel not in allowed_extra or rel in seen_extra:
+                    raise _error("只允许导入本次检测发现的其它子目录。")
+                seen_extra.add(rel)
+                default_meta = extra_by_rel.get(rel) or {}
+                label = clean_folder_label(item.get("label") or default_meta.get("label") or rel, f"import_extra_folders.{idx}.label")
+                role = clean_folder_role(item.get("role") or default_meta.get("suggested_role") or "general", f"import_extra_folders.{idx}.role")
+                import_custom.append({"label": label, "relative_path": rel, "role": role})
             # Validate all registration fields before the first filesystem effect.
             self.registry._clean_name(payload.get("name"), registry, None)
             self.registry._clean_root(payload["root_dir"], registry, None)
@@ -186,9 +255,21 @@ class CompanyDetectionService:
                     current = subdir_snapshot(root, relative)
                     if any(current[prefix] != observed[prefix] for prefix in current):
                         raise _error("目录身份已变化，已创建目录保留，请核对。")
+                for extra in import_custom:
+                    rel = extra["relative_path"]
+                    if subdir_snapshot(root, rel) != allowed_extra[rel]:
+                        raise _error("待导入子目录身份已变化，请重新检测后再登记。", "COMPANY_PLAN_STALE", 409)
                 job["state"] = "registering"
                 self._save(job)
-                result = self.registry.create_company({**{key: value for key, value in payload.items() if key not in {"plan_hash", "create_missing"}}, "subdirs": binding["subdirs"]})
+                create_body = {
+                    key: value
+                    for key, value in payload.items()
+                    if key not in {"plan_hash", "create_missing", "import_extra_folders", "custom_folders"}
+                }
+                create_body["subdirs"] = binding["subdirs"]
+                if import_custom:
+                    create_body["custom_folders"] = import_custom
+                result = self.registry.create_company(create_body)
                 job.update(state="completed", result=result, company=result["company"])
                 self._save(job)
             except (OSError, CompanyRegistryError) as exc:

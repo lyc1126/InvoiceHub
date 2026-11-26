@@ -78,6 +78,7 @@ html[data-active-skin='website-dark'] .ws-row:hover, html[data-active-skin='webs
 .ws-live--off { box-shadow:none; background:var(--line); }
 .ws-menu { min-width:236px; border-color:var(--line-strong); border-radius:6px; box-shadow:var(--ws-shadow); }
 .ws-menu button, .ws-menu a { justify-content:flex-start; border-radius:4px; padding:7px 10px; min-height:0; }
+.ws-menu__danger { color:var(--red); }
 .ws-menu--head { z-index:45; }
 .ws-card { border-color:var(--line-strong); border-radius:4px; }
 .ws-home { display:flex; min-height:100%; height:100%; }

@@ -134,6 +134,15 @@ async function switched(): Promise<void> {
   await load();
 }
 
+async function openDirectoryInExplorer(): Promise<void> {
+  if (!directory.value || directory.value.status !== "present") return;
+  try {
+    await companies.openFolder(props.company.id, props.dirKey);
+  } catch (cause) {
+    toast(errorText(cause), "error", 4000);
+  }
+}
+
 function readData(): void {
   void companies.refreshData(props.company.id, { keys: [props.dirKey], force: directory.value?.freshness.state !== "never_built" });
 }
@@ -216,6 +225,7 @@ watch(
       </div>
       <div class="dir-head-actions">
         <span v-if="directory" class="status-chip" :class="{ 'status-chip--live': directory.active }"><i v-if="directory.active" class="ws-live" />{{ directory.active ? "当前监控目录" : "未监控 · 只读 · 上次汇总" }}</span>
+        <button v-if="directory?.status === 'present'" type="button" class="ghost" @click="openDirectoryInExplorer">打开文件夹</button>
         <button v-if="directory" type="button" class="ghost" @click="editTarget = directory">重命名 / 指向</button>
         <button v-if="directory" type="button" class="ghost" @click="deleteTarget = directory">移除 / 删除</button>
       </div>

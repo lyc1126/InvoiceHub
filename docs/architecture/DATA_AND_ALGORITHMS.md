@@ -1,5 +1,17 @@
 # InvoiceHub 数据结构与算法
 
+## 2026-11-26 工作区 Phase 1：公司级回收站/改名迁移与单目录深度检索排序
+
+- **公司根目录回收站与安全硬盘改名**（`services/company_folders.py`、`services/company_registry.py`）：
+  - `companies.json` 保持 `schema_version: 1` 不变；自建向导未勾选的标准槽位记入 `hidden_subdirs`，附带或检测顺带导入的根内目录记入 `custom_folders`（`location: "inside_root"`）。
+  - `_company_trash_plan` 通过 `external_path_snapshot` 校验根目录与全部外部导入目录逐级无符号链接/junction，采用与单目录一致的有界扫描上限统计文件/子目录数与字节数，将目录实时 `(dev, ino)` 身份与外部路径列表绑定入 `plan_hash`；确认执行前按目标 profile ID 排序获取公司内全部已有状态目录的 `try_sync_write_lock`，仅调用 `platform/trash.py::move_to_trash` 移入系统原生回收站并清除登记条目，外部导入文件夹零改动。
+  - `rename_company_root_with_overrides` 在全部公司内已有状态子目录写锁内原子重命名公司根文件夹，遍历公司内所有标准与自定义子目录并按新旧路径重写对应 profile 的 `manual_overrides.json` 键名后原子写入新 profile；清单写盘失败时按逆序执行 rollback 同步恢复目录名与手改覆盖。
+- **单目录深度过滤与多字段排序算法**（`services/invoice_list.py`、`services/company_views.py`）：
+  - `directory_invoices` 一次性读取完整目录投影并先挂载 `project` 与 `tags`，随后计算未筛选态 `filter_options`（去重排序后的票种、业务类型、标准化税率、项目与文件格式），再执行 `filter_invoice_items` → `tag`（含 `__untagged__`）→ `sort_invoice_items` → `stats.filtered` 统计与分页，确保按项目检索/筛选与筛选后聚合口径严格一致。
+  - 关键字检索区分两类模式：经典 `invoice`/`filename`/`all` 保持单子串匹配不变；`workspace`/`party`/`buyer` 按空白分词拆分为多词 token，要求所有 token 均命中对应字段集合（AND 逻辑），并将税率如 `0.13` / `13%` 统一规范为百分数标签以便同时命中 `13%`、`0.13` 等写法。
+  - 日期区间先经 `_normalize_date_ymd` 解析 `YYYY-MM-DD`，指定 `date_from` 或 `date_to` 时严格排除缺失或不可解析日期的行；金额区间采用精确 `Decimal` 解析（非法值或 `amount_min > amount_max` 抛 `ValueError` 转 HTTP 422，空金额行在指定区间时排除）。
+  - `sort_invoice_items` 支持 `invoice_date`/`amount`/`seller`/`buyer`/`source_file` 五类排序键及 `asc`/`desc` 方向，非缺失值按类型精确比较（金额按 `Decimal`、日期按规范串、文本按小写），缺失值无论升序或降序一律排在末尾。
+
 ## 2026-11-23 草稿品目类型与金额守恒
 
 - 文件 schema 不变，复用 `成本开票状态.json.item_catalog` 的标准名链和 `goods/service/expense/fixed_asset`。生成入口按来源严格解析 v1（状态读取上限 20 MiB、品目最多 2000 个），缺失状态保持旧货物行为，坏结构/重复 JSON 键/未来版本不得当空表。目录身份及原字节只存在本次生成内存，不另存品目主数据或 SQLite 发票表。

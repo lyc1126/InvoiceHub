@@ -5,6 +5,7 @@ import { VIEW_ACTIVE } from "../modules";
 import { ApiError, request } from "../api/client";
 import type { Company, DirectoryInvoicesPayload, InvoiceRow, InvoiceTagMarks, PreviewRef, ProjectSummary } from "../api/types";
 import { errorText, ratePercent, money } from "../format";
+import { effectiveFolderRole } from "../relations";
 import { useTagsStore } from "../stores/tags";
 import { useWorkspaceStore, type InvoiceColumnKey } from "../stores/workspace";
 import { toast } from "../toast";
@@ -37,12 +38,65 @@ watch(viewActive, (active) => {
   if (stale) { stale = false; void loadInvoices(invoicesPage.value); }
 });
 const tagFilter = ref("");
-// Prototype filters; all are applied by the server before sorting/paging (WEB_UI rule).
+// Prototype + Phase 1 deep filters; all are applied by the server before sorting/paging (WEB_UI rule).
 const keyword = ref("");
+const searchScope = ref<"workspace" | "party" | "buyer" | "invoice" | "filename">("workspace");
 const fileExt = ref("");
 const statusFilter = ref("");
+const advancedOpen = ref(false);
+const dateFrom = ref("");
+const dateTo = ref("");
+const amountMin = ref("");
+const amountMax = ref("");
+const taxRateFilter = ref("");
+const invoiceTypeFilter = ref("");
+const businessTypeFilter = ref("");
+const classificationFilter = ref("");
+const projectFilter = ref("");
 let keywordTimer: ReturnType<typeof setTimeout> | undefined;
 function keywordChanged(): void { clearTimeout(keywordTimer); keywordTimer = setTimeout(() => void loadInvoices(1), 300); }
+function applyKeywordNow(): void { clearTimeout(keywordTimer); void loadInvoices(1); }
+const advancedFilterCount = computed(() => [
+  dateFrom.value,
+  dateTo.value,
+  amountMin.value.trim(),
+  amountMax.value.trim(),
+  taxRateFilter.value,
+  invoiceTypeFilter.value,
+  businessTypeFilter.value,
+  classificationFilter.value,
+  projectFilter.value,
+].filter(Boolean).length);
+const activeFilterCount = computed(() =>
+  [
+    keyword.value.trim(),
+    searchScope.value !== "workspace" ? searchScope.value : "",
+    fileExt.value,
+    statusFilter.value,
+    tagFilter.value,
+  ].filter(Boolean).length + advancedFilterCount.value,
+);
+function resetFilters(): void {
+  clearTimeout(keywordTimer);
+  keyword.value = "";
+  searchScope.value = "workspace";
+  fileExt.value = "";
+  statusFilter.value = "";
+  tagFilter.value = "";
+  dateFrom.value = "";
+  dateTo.value = "";
+  amountMin.value = "";
+  amountMax.value = "";
+  taxRateFilter.value = "";
+  invoiceTypeFilter.value = "";
+  businessTypeFilter.value = "";
+  classificationFilter.value = "";
+  projectFilter.value = "";
+  sortBy.value = "";
+  sortDir.value = "";
+  dateSort.value = "";
+  void loadInvoices(1);
+}
 // Revision of this company's 发票标签.json, read lazily before the first mark is saved.
 const marksRevision = ref<number | null>(null);
 // Batch mode (WS-06): opened on a row that belongs to a multi-row selection, the menu works on
@@ -58,10 +112,13 @@ const invoicesPage = ref(1);
 const invoicesLoading = ref(false);
 const PAGE_SIZE = 50;
 const dateSort = ref<"" | "asc" | "desc">("");
+const sortBy = ref<"" | "invoice_date" | "amount">("");
+const sortDir = ref<"" | "asc" | "desc">("");
 const previewing = ref<PreviewRef | null>(null);
 let listGeneration = 0;
 let selectionGeneration = 0;
-const dateSortLabel = computed(() => dateSort.value === "asc" ? "按开票时间倒序排序" : "按开票时间正序排序");
+const dateSortLabel = computed(() => (sortBy.value === "invoice_date" && sortDir.value === "asc") ? "按开票时间倒序排序" : "按开票时间正序排序");
+const amountSortLabel = computed(() => (sortBy.value === "amount" && sortDir.value === "desc") ? "按开票金额正序排序" : "按开票金额倒序排序");
 const formatLabel = (row: InvoiceRow) => ["PDF", "OFD", "XML"].includes(row.file_format?.toUpperCase()) ? row.file_format.toUpperCase() : "未知";
 const formatTone = (row: InvoiceRow) => formatLabel(row) === "未知" ? "unknown" : formatLabel(row).toLowerCase();
 // Settled nonmonitor lists can select for company tags. Source actions retain a separate
@@ -71,7 +128,28 @@ const selected = ref(new Map<string, SelectedRow>());
 const selectingAll = ref(false);
 const selectable = computed(() => !!invoices.value && !invoices.value.snapshot?.provisional);
 const sourceActions = computed(() => selectable.value && !invoices.value?.read_only);
-const isProjectDir = computed(() => props.dirKey === "cost_invoice_dir" || props.dirKey === "issued_invoice_dir");
+const currentSubdir = computed(() => props.company.subdirs?.find((item) => item.key === props.dirKey) ?? invoices.value?.directory ?? null);
+const effectiveRole = computed(() => effectiveFolderRole(currentSubdir.value, props.dirKey));
+const isProjectDir = computed(() => effectiveRole.value === "cost_invoice_dir" || effectiveRole.value === "issued_invoice_dir");
+const keywordPlaceholder = computed(() => {
+  if (searchScope.value === "filename") return "输入文件名关键字";
+  if (searchScope.value === "buyer") return "购买方 / 发票号（支持空格多词）";
+  if (searchScope.value === "invoice") return "销售方 / 发票号";
+  if (searchScope.value === "party") return "销售方 / 购买方 / 发票号（支持空格多词）";
+  return effectiveRole.value === "issued_invoice_dir"
+    ? "购买方 / 销售方 / 票号 / 项目 / 金额（空格多词）"
+    : "销售方 / 购买方 / 票号 / 项目 / 金额（空格多词）";
+});
+const availableInvoiceTypes = computed(() => {
+  const base = ["增值税专用发票", "增值税普通发票"];
+  for (const item of invoices.value?.filter_options?.invoice_types ?? []) {
+    if (item && !base.includes(item)) base.push(item);
+  }
+  return base;
+});
+const availableBusinessTypes = computed(() => invoices.value?.filter_options?.business_types ?? []);
+const availableTaxRates = computed(() => invoices.value?.filter_options?.tax_rates ?? []);
+const availableProjects = computed(() => invoices.value?.filter_options?.projects ?? []);
 
 // Column visibility (UI preference in workspace store, keyed by dirKey so hiding 购买方 in
 // 成本发票 does not hide it in 开具发票). Structural tag-dot and checkbox columns stay fixed.
@@ -216,15 +294,51 @@ function previewSingle(item: SelectedInvoice): void {
 
 const queryFilters = () => [
   tagFilter.value && `&tag=${encodeURIComponent(tagFilter.value)}`,
-  dateSort.value && `&date_sort=${dateSort.value}`,
   keyword.value.trim() && `&keyword=${encodeURIComponent(keyword.value.trim())}`,
+  (keyword.value.trim() || searchScope.value !== "workspace") && `&search_scope=${encodeURIComponent(searchScope.value)}`,
   fileExt.value && `&file_ext=${encodeURIComponent(fileExt.value)}`,
   statusFilter.value && `&status=${encodeURIComponent(statusFilter.value)}`,
+  dateFrom.value && `&date_from=${encodeURIComponent(dateFrom.value)}`,
+  dateTo.value && `&date_to=${encodeURIComponent(dateTo.value)}`,
+  amountMin.value.trim() && `&amount_min=${encodeURIComponent(amountMin.value.trim())}`,
+  amountMax.value.trim() && `&amount_max=${encodeURIComponent(amountMax.value.trim())}`,
+  taxRateFilter.value && `&tax_rate=${encodeURIComponent(taxRateFilter.value)}`,
+  invoiceTypeFilter.value && `&invoice_type=${encodeURIComponent(invoiceTypeFilter.value)}`,
+  businessTypeFilter.value && `&business_type=${encodeURIComponent(businessTypeFilter.value)}`,
+  classificationFilter.value && `&classification_status=${encodeURIComponent(classificationFilter.value)}`,
+  projectFilter.value && `&project=${encodeURIComponent(projectFilter.value)}`,
+  sortBy.value === "amount" && sortDir.value && `&sort_by=amount&sort_dir=${sortDir.value}`,
+  dateSort.value && `&date_sort=${dateSort.value}`,
 ].filter(Boolean).join("");
 
 function toggleDateSort(): void {
-  dateSort.value = dateSort.value === "asc" ? "desc" : "asc";
+  const next: "asc" | "desc" = sortBy.value === "invoice_date" && sortDir.value === "asc" ? "desc" : "asc";
+  sortBy.value = "invoice_date";
+  sortDir.value = next;
+  dateSort.value = next;
   void loadInvoices(1);
+}
+
+function toggleAmountSort(): void {
+  const next: "asc" | "desc" = sortBy.value === "amount" && sortDir.value === "desc" ? "asc" : "desc";
+  sortBy.value = "amount";
+  sortDir.value = next;
+  dateSort.value = "";
+  void loadInvoices(1);
+}
+
+async function openRowFile(row: InvoiceRow, reveal: boolean): Promise<void> {
+  if (!sourceActions.value) return;
+  closeTagMenu();
+  const endpoint = reveal
+    ? `/api/v1/invoices/${encodeURIComponent(row.invoice_key)}/open-location`
+    : `/api/v1/invoices/${encodeURIComponent(row.invoice_key)}/open-file`;
+  try {
+    const res = await request<{ ok: boolean; message?: string }>(endpoint, { method: "POST", body: {} });
+    if (!res.ok) toast(res.message || "无法打开文件。", "error", 4000);
+  } catch (cause) {
+    toast(errorText(cause), "error", 4000);
+  }
 }
 
 async function selectAll(): Promise<void> {
@@ -644,13 +758,89 @@ onBeforeUnmount(() => {
       <p v-if="invoices.tags_error" class="banner banner--error" role="alert">标签读取失败，未显示：{{ invoices.tags_error }}</p>
       <p v-if="invoices.projects_error" class="banner banner--error" role="alert">{{ invoices.projects_error }}</p>
       <div class="filters">
-        <label class="field">关键字<input v-model="keyword" aria-label="关键字" :placeholder="dirKey === 'issued_invoice_dir' ? '购买方 / 发票号 / 文件名' : '销售方 / 发票号 / 文件名'" @input="keywordChanged"></label>
+        <label class="field filter-keyword">
+          关键字
+          <input
+            v-model="keyword"
+            aria-label="关键字"
+            :placeholder="keywordPlaceholder"
+            @input="keywordChanged"
+            @keydown.enter.prevent="applyKeywordNow"
+          >
+        </label>
+        <label class="field">
+          范围
+          <select v-model="searchScope" aria-label="搜索范围" @change="loadInvoices(1)">
+            <option value="workspace">全部字段（多词）</option>
+            <option value="party">购销方 / 票号</option>
+            <option value="buyer">仅购买方 / 票号</option>
+            <option value="invoice">仅销售方 / 票号</option>
+            <option value="filename">仅文件名</option>
+          </select>
+        </label>
         <label class="field">格式<select v-model="fileExt" aria-label="格式" @change="loadInvoices(1)"><option value="">全部</option><option value=".pdf">PDF</option><option value=".ofd">OFD</option><option value=".xml">XML</option></select></label>
-        <label class="field">状态<select v-model="statusFilter" aria-label="状态" @change="loadInvoices(1)"><option value="">全部</option><option value="已识别">已识别</option><option value="待核对">待核对</option></select></label>
+        <label class="field">状态<select v-model="statusFilter" aria-label="状态" @change="loadInvoices(1)"><option value="">全部</option><option value="已识别">已识别</option><option value="待核对">待核对</option><option value="重复发票">重复发票</option></select></label>
         <label v-if="tagStore.tags.length" class="field">标签<select v-model="tagFilter" aria-label="按标签筛选" @change="loadInvoices(1)">
           <option value="">全部</option>
+          <option value="__untagged__">未打标签</option>
           <option v-for="tag in tagStore.tags" :key="tag.id" :value="tag.id">{{ tag.name }}</option>
         </select></label>
+        <div class="filter-actions">
+          <button
+            type="button"
+            class="ghost"
+            :aria-expanded="advancedOpen"
+            @click="advancedOpen = !advancedOpen"
+          >
+            {{ advancedOpen ? "收起高级筛选" : "高级筛选" }}<span v-if="advancedFilterCount" class="col-picker__badge">{{ advancedFilterCount }}</span>
+          </button>
+          <button
+            v-if="activeFilterCount || sortBy"
+            type="button"
+            class="ghost"
+            @click="resetFilters"
+          >重置筛选</button>
+        </div>
+      </div>
+      <div v-if="advancedOpen" class="panel filters filters--advanced" aria-label="高级筛选条件">
+        <label class="field">开票日期起<input v-model="dateFrom" type="date" aria-label="开票日期起" @change="loadInvoices(1)"></label>
+        <label class="field">开票日期止<input v-model="dateTo" type="date" aria-label="开票日期止" @change="loadInvoices(1)"></label>
+        <label class="field">最小金额<input v-model="amountMin" type="text" inputmode="decimal" aria-label="最小金额" placeholder="如 1000" @change="loadInvoices(1)" @keydown.enter.prevent="loadInvoices(1)"></label>
+        <label class="field">最大金额<input v-model="amountMax" type="text" inputmode="decimal" aria-label="最大金额" placeholder="如 50000" @change="loadInvoices(1)" @keydown.enter.prevent="loadInvoices(1)"></label>
+        <label class="field">税率
+          <select v-model="taxRateFilter" aria-label="税率筛选" @change="loadInvoices(1)">
+            <option value="">全部</option>
+            <option v-for="rate in availableTaxRates" :key="rate" :value="rate">{{ rate }}</option>
+            <option v-if="invoices.filter_options?.has_missing_tax_rate" value="__missing__">税率未识别</option>
+          </select>
+        </label>
+        <label class="field">发票大类
+          <select v-model="invoiceTypeFilter" aria-label="发票大类筛选" @change="loadInvoices(1)">
+            <option value="">全部</option>
+            <option v-for="itype in availableInvoiceTypes" :key="itype" :value="itype">{{ itype }}</option>
+          </select>
+        </label>
+        <label v-if="availableBusinessTypes.length" class="field">业务类型
+          <select v-model="businessTypeFilter" aria-label="业务类型筛选" @change="loadInvoices(1)">
+            <option value="">全部</option>
+            <option v-for="btype in availableBusinessTypes" :key="btype" :value="btype">{{ btype }}</option>
+          </select>
+        </label>
+        <label class="field">分类识别
+          <select v-model="classificationFilter" aria-label="分类识别状态" @change="loadInvoices(1)">
+            <option value="">全部</option>
+            <option value="ok">识别正常</option>
+            <option value="needs_review">待核对</option>
+            <option value="conflict">同票格式冲突</option>
+          </select>
+        </label>
+        <label v-if="isProjectDir" class="field">项目
+          <select v-model="projectFilter" aria-label="按项目筛选" @change="loadInvoices(1)">
+            <option value="">全部</option>
+            <option value="__unassigned__">未归属</option>
+            <option v-for="proj in availableProjects" :key="proj" :value="proj">{{ proj }}</option>
+          </select>
+        </label>
       </div>
       <div v-if="invoices.directory.projection.summary_exists" class="directory-invoices-wrap">
         <table class="grid directory-invoices-table" :aria-busy="invoicesLoading">
@@ -664,9 +854,11 @@ onBeforeUnmount(() => {
               <th v-if="isProjectDir && isColumnVisible('project')" class="invoice-project">项目</th>
               <th v-if="isColumnVisible('classification')">发票分类与业务</th>
               <th v-if="isColumnVisible('tax_rate')">税率</th>
-              <th v-if="isColumnVisible('amount')" class="num">开票金额</th>
-              <th v-if="isColumnVisible('invoice_date')" :aria-sort="dateSort === 'asc' ? 'ascending' : dateSort === 'desc' ? 'descending' : 'none'">
-                <button type="button" class="link" :aria-label="dateSortLabel" @click="toggleDateSort">开票时间 {{ dateSort === 'asc' ? '↑' : dateSort === 'desc' ? '↓' : '↕' }}</button>
+              <th v-if="isColumnVisible('amount')" class="num" :aria-sort="sortBy === 'amount' ? (sortDir === 'asc' ? 'ascending' : 'descending') : 'none'">
+                <button type="button" class="link" :aria-label="amountSortLabel" @click="toggleAmountSort">开票金额 {{ sortBy === 'amount' ? (sortDir === 'asc' ? '↑' : '↓') : '↕' }}</button>
+              </th>
+              <th v-if="isColumnVisible('invoice_date')" :aria-sort="sortBy === 'invoice_date' ? (sortDir === 'asc' ? 'ascending' : 'descending') : 'none'">
+                <button type="button" class="link" :aria-label="dateSortLabel" @click="toggleDateSort">开票时间 {{ sortBy === 'invoice_date' ? (sortDir === 'asc' ? '↑' : '↓') : '↕' }}</button>
               </th>
               <th v-if="isColumnVisible('status')">状态</th>
               <th v-if="selectable" class="select-cell">
@@ -781,6 +973,23 @@ onBeforeUnmount(() => {
           role="menuitem"
           @click="openProjectAssign(tagMenu.batch ? undefined : [tagMenu.row])"
         >{{ tagMenu.batch ? "批量调整项目归属…" : "调整项目归属…" }}</button>
+        <template v-if="sourceActions && !tagMenu.batch && tagMenu.row.source_path">
+          <button
+            type="button"
+            role="menuitem"
+            @click="previewSingle({ invoice_key: tagMenu.row.invoice_key, source_path: tagMenu.row.source_path! }); closeTagMenu()"
+          >预览原票</button>
+          <button
+            type="button"
+            role="menuitem"
+            @click="openRowFile(tagMenu.row, false)"
+          >打开原文件</button>
+          <button
+            type="button"
+            role="menuitem"
+            @click="openRowFile(tagMenu.row, true)"
+          >在文件夹中显示</button>
+        </template>
         <button type="button" @click="closeTagMenu">关闭</button>
       </div>
       <div v-if="pageCount() > 1" class="actions">
@@ -862,3 +1071,9 @@ onBeforeUnmount(() => {
     </section>
   </div>
 </template>
+
+<style scoped>
+.filter-keyword { flex: 1 1 220px; }
+.filter-actions { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 6px; }
+.filters--advanced { margin-top: 8px; padding: 10px 12px; background: var(--surface-2); border-color: var(--line); }
+</style>

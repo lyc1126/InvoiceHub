@@ -144,12 +144,53 @@ export interface CompanyFolderTrashPlan {
   plan_hash: string;
 }
 
+export interface CompanyTrashPlan {
+  ok: boolean;
+  company_id: string;
+  company_name: string;
+  revision: number;
+  path: string;
+  can_trash: boolean;
+  blocked_reason: string;
+  file_count: number;
+  dir_count: number;
+  total_bytes: number;
+  truncated: boolean;
+  external_folders: { key: string; label: string; path: string }[];
+  plan_hash: string;
+}
+
+export interface CompanyTrashPayload {
+  ok: boolean;
+  deleted: string;
+  trashed_path: string;
+  external_folders_untouched: { key: string; label: string; path: string }[];
+  revision: number;
+  cost_workbook?: CostWorkbookRefresh;
+}
+
+export interface CompanyExtraFolderCandidate {
+  relative_path: string;
+  path: string;
+  label: string;
+  suggested_role: FolderRole;
+  file_count: number | null;
+}
+
+export interface CompanySetupCustomFolderInput {
+  label: string;
+  relative_path: string;
+  role: FolderRole;
+}
+
 export interface CompanySetupInput {
   name: string;
   parent_dir: string;
   folder_name: string;
   subdirs: Record<string, string>;
   taxpayer_periods: TaxpayerPeriod[];
+  selected_standard_keys?: string[];
+  custom_folders?: CompanySetupCustomFolderInput[];
 }
 
 export interface CompanySetupJob {
@@ -159,7 +200,7 @@ export interface CompanySetupJob {
   plan_hash: string;
   root_path: string;
   name: string;
-  items: { key: string; label: string; relative_path: string }[];
+  items: { key: string; label: string; relative_path: string; kind?: "standard" | "custom"; role?: FolderRole }[];
   created: string[];
   in_progress: string;
   message: string;
@@ -278,6 +319,16 @@ export interface InvoiceRow {
 
 export interface InvoiceListStats { total: number; recognized: number; needs_review: number; duplicates: number; total_amount: string | number; total_amount_valid_count?: number; total_amount_missing_count?: number; total_amount_conflict_count?: number }
 
+export interface InvoiceFilterOptions {
+  projects: string[];
+  tax_rates: string[];
+  invoice_types: string[];
+  business_types: string[];
+  has_unassigned_project: boolean;
+  has_missing_tax_rate: boolean;
+  has_duplicates: boolean;
+}
+
 export interface DirectoryInvoicesPayload {
   ok: boolean;
   count: number;
@@ -288,6 +339,7 @@ export interface DirectoryInvoicesPayload {
   directory: CompanyDirectory;
   tags_error?: string;
   projects_error?: string;
+  filter_options?: InvoiceFilterOptions;
   /** Full-folder and fully filtered statistics, including tags, before pagination. */
   stats?: { all?: InvoiceListStats; filtered?: InvoiceListStats };
   /** A first, still-building result: rows may move, so nothing can be selected (classic homepage rule). */
@@ -684,6 +736,7 @@ export interface SkinsPayload {
 export interface CompanyDetection {
   root_status: SubdirStatus;
   subdirs: { key: string; label: string; relative_path: string; status: SubdirStatus; path: string; file_count: number | null; suggested_action: string; candidates?: string[]; selection_required?: boolean }[];
+  extra_folders?: CompanyExtraFolderCandidate[];
   plan_hash: string;
 }
 

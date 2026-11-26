@@ -183,8 +183,8 @@ def test_active_directory_hands_over_to_the_live_invoice_list(app, client, compa
     assert payload["read_only"] is False and payload["count"] == 2
     assert payload["items"][0]["detail_url"].startswith("/invoices/")
     homepage = client.get("/api/v1/invoices").json()
-    assert "tags_error" not in homepage and all("tags" not in item for item in homepage["items"])  # no leak back
-    company_keys = ("company_id", "directory_key", "directory", "read_only", "tags_error")
+    assert "tags_error" not in homepage and "filter_options" not in homepage and all("tags" not in item for item in homepage["items"])  # no leak back
+    company_keys = ("company_id", "directory_key", "directory", "read_only", "tags_error", "filter_options")
     stripped = {**payload, "items": [{key: value for key, value in item.items() if key != "tags"} for item in payload["items"]]}
     assert stripped == {**homepage, **{key: payload[key] for key in company_keys}}
 

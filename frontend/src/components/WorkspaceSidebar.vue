@@ -7,6 +7,7 @@ import ProjectRenameModal from "./ProjectRenameModal.vue";
 import CompanyFolderCreateModal from "./CompanyFolderCreateModal.vue";
 import CompanyFolderEditModal from "./CompanyFolderEditModal.vue";
 import CompanyFolderDeleteModal from "./CompanyFolderDeleteModal.vue";
+import CompanyDeleteModal from "./CompanyDeleteModal.vue";
 import { MODULES, type ModuleId } from "../modules";
 import { useModulesStore } from "../stores/modules";
 import { skinBypassRequested } from "../appearance";
@@ -229,6 +230,43 @@ const menuEl = ref<HTMLElement | null>(null);
 const folderCreateModal = ref<{ company: Company; mode: "create" | "import" | "restore" } | null>(null);
 const folderEditModal = ref<{ company: Company; subdir: CompanySubdir } | null>(null);
 const folderDeleteModal = ref<{ company: Company; subdir: CompanySubdir } | null>(null);
+const companyDeleteModal = ref<Company | null>(null);
+
+function openCompanySettings(company: Company): void {
+  closeMenu(false);
+  openHome({ kind: "company", companyId: company.id });
+  void nextTick(() => {
+    window.dispatchEvent(new CustomEvent("workspace:open-company-section", { detail: { companyId: company.id, section: "settings" } }));
+  });
+}
+
+async function openCompanyInExplorer(company: Company): Promise<void> {
+  closeMenu(false);
+  try {
+    await companies.openCompanyRoot(company.id);
+  } catch (cause) {
+    toast(errorText(cause), "error", 4000);
+  }
+}
+
+async function openSubdirInExplorer(node: SidebarNode): Promise<void> {
+  if (!node.dirKey) return;
+  closeMenu(false);
+  try {
+    await companies.openFolder(node.company.id, node.dirKey);
+  } catch (cause) {
+    toast(errorText(cause), "error", 4000);
+  }
+}
+
+function openCompanyDelete(company: Company): void {
+  closeMenu(false);
+  companyDeleteModal.value = company;
+}
+
+function onCompanyDeleteDone(): void {
+  companyDeleteModal.value = null;
+}
 
 function openFolderCreate(company: Company, mode: "create" | "import" | "restore" = "create"): void {
   closeMenu(false);
@@ -644,12 +682,30 @@ onBeforeUnmount(() => {
       <button type="button" role="menuitem" @click="workspace.togglePin(menu.node.id); closeMenu()">
         {{ workspace.pins.includes(menu.node.id) ? "取消置顶" : "置顶" }}
       </button>
-      <button
-        v-if="menu.node.kind === 'company'"
-        type="button"
-        role="menuitem"
-        @click="openFolderCreate(menu.node.company, 'create')"
-      >新建 / 导入文件夹…</button>
+      <template v-if="menu.node.kind === 'company'">
+        <button
+          type="button"
+          role="menuitem"
+          @click="openFolderCreate(menu.node.company, 'create')"
+        >新建 / 导入文件夹…</button>
+        <button
+          type="button"
+          role="menuitem"
+          @click="openCompanySettings(menu.node.company)"
+        >编辑公司 / 重定位目录…</button>
+        <button
+          type="button"
+          role="menuitem"
+          :disabled="menu.node.company.root_status !== 'present'"
+          @click="openCompanyInExplorer(menu.node.company)"
+        >在文件管理器中打开</button>
+        <button
+          type="button"
+          role="menuitem"
+          class="ws-menu__danger"
+          @click="openCompanyDelete(menu.node.company)"
+        >移除或删除公司…</button>
+      </template>
       <button
         v-if="menu.node.kind === 'project'"
         type="button"
@@ -663,6 +719,12 @@ onBeforeUnmount(() => {
           role="menuitem"
           @click="startCreateSubdir(menu.node)"
         >创建此文件夹…</button>
+        <button
+          type="button"
+          role="menuitem"
+          :disabled="menu.node.subdir?.status !== 'present'"
+          @click="openSubdirInExplorer(menu.node)"
+        >在文件管理器中打开</button>
         <button
           type="button"
           role="menuitem"
@@ -752,6 +814,13 @@ onBeforeUnmount(() => {
       :subdir="folderDeleteModal.subdir"
       @close="folderDeleteModal = null"
       @done="onFolderDeleteDone"
+    />
+
+    <CompanyDeleteModal
+      v-if="companyDeleteModal"
+      :company="companyDeleteModal"
+      @close="companyDeleteModal = null"
+      @done="onCompanyDeleteDone"
     />
   </aside>
 </template>

@@ -30,13 +30,26 @@ def router() -> APIRouter:
     routes = APIRouter()
 
     @routes.get("/api/v1/invoices")
-    def invoices(request: Request, search_scope: Literal["invoice", "filename", "all"] = "all",
-                 page: int | None = Query(None, ge=1), page_size: int = Query(100, ge=1, le=200),
-                 date_sort: Literal["", "asc", "desc"] = "") -> dict:
+    def invoices(
+        request: Request,
+        search_scope: Literal["invoice", "filename", "all", "workspace", "party", "buyer"] = "all",
+        page: int | None = Query(None, ge=1),
+        page_size: int = Query(100, ge=1, le=200),
+        date_sort: Literal["", "asc", "desc"] = "",
+        sort_by: Literal["", "invoice_date", "amount", "seller", "buyer", "source_file"] = "",
+        sort_dir: Literal["", "asc", "desc"] = "",
+    ) -> dict:
         state = _state(request)
-        return state.company_views.active_project_fields(
-            state.invoices.list_invoices({**dict(request.query_params), "search_scope": search_scope})
-        )
+        try:
+            listed = state.invoices.list_invoices({
+                **dict(request.query_params),
+                "search_scope": search_scope,
+                "sort_by": sort_by,
+                "sort_dir": sort_dir,
+            })
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return state.company_views.active_project_fields(listed)
 
     @routes.post("/api/v1/invoices/trash-jobs")
     async def prepare_invoice_trash(request: Request):

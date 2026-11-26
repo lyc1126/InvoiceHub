@@ -1,5 +1,13 @@
 # InvoiceHub 注释与设计原因地图
 
+## 2026-11-26 工作区 Phase 1：公司级 CRUD 守卫与查询契约兼容
+
+| 文件与符号 | 原因与不变量 | 守护 |
+|---|---|---|
+| `services/invoice_list.py::filter_invoice_items` / `sort_invoice_items` 与 `frontend/src/components/DirectoryInvoices.vue::queryFilters` | 经典 `/api/v1/invoices` 契约测试明确锁定 `search_scope=invoice|filename|all` 仅按单子串匹配公告字段（不搜 `buyer`、不跨字段分词），而工作区开具发票与深度查询必须支持搜购买方、项目、金额、税率及空格多词 AND；保留三项旧 scope 语义不变并新增 `workspace`/`party`/`buyer` 范围，在消除真实查询缺陷的同时零破坏经典契约。`DirectoryInvoices.vue` 排序为 `invoice_date` 时仅把 `date_sort` 放在末尾且省略冗余 `sort_by`，维持既有 `endsWith("date_sort=asc")` 前端契约并仅在按金额排序时发 `sort_by=amount`。 | `test_api_contract.py`、`test_company_crud_and_search.py`、`frontend/tests/directory-preview.spec.ts`、`frontend/tests/workspace-crud-search.spec.ts` |
+| `services/company_folders.py::_company_trash_plan` / `trash_company` / `rename_company_root_with_overrides` | 外部导入目录（`location="external"`）物理上不属于公司根目录树；公司级回收站删除必须显式列示并完全隔离外部目录，绝不能误删外部文件，且仅调用原生 `move_to_trash` 禁止永久删除降级。公司根目录硬盘重命名会导致所有公司内子目录路径及对应 `TargetProfile.id` 同步变化，必须一次性锁齐全部已有状态子目录并迁移每份 `manual_overrides.json`，登记写盘失败时完整回滚改名与覆盖，防止用户手改字段丢失。 | `test_company_crud_and_search.py`、`frontend/tests/workspace-crud-search.spec.ts` |
+| `services/company_detection.py::_inspect` / `register` 与 `frontend/src/components/DirectoryInvoices.vue`（`effectiveFolderRole` 与 `sourceActions` 门禁） | 登记已有公司资料夹顺带发现的 `extra_folders` 必须排除点目录、内部做账目录及链接并将其实时目录身份纳入 `plan_hash`，防止检测与确认之间被替换为软链接。工作区自定义进项/销项文件夹须通过 `effectiveFolderRole(subdir, dirKey)` 而非硬编码标准键启用购买方提示和项目列，且非监控目录严格通过 `sourceActions`（`!read_only`）屏蔽单行预览/打开原文件/在文件夹中显示，遵守 `BOOKKEEPING.md` 只读行边界。 | `test_company_crud_and_search.py`、`frontend/tests/workspace-crud-search.spec.ts`、`frontend/tests/directory-preview.spec.ts` |
+
 ## 2026-11-25 公司自定义与默认文件夹全生命周期及基准功能指向
 
 | 文件与符号 | 原因与不变量 | 守护 |

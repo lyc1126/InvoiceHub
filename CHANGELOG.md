@@ -2,6 +2,25 @@
 
 ## 未发布
 
+### 2026-11-26 工作区 Phase 1：公司级增删改查闭环与单目录深度查询增强
+
+- 需求与起点：基于已合入 PR #34 的干净主线 `origin/main@2c809d817cb984d550bcf46abe71f97fd6a6e365`，在隔离工作树 `InvoiceHub-workspace-crud-search`（分支 `codex/workspace-crud-search-p1`）推进用户新增遗漏需求的 Phase 1：（1）补齐自建/导入公司资料夹及工作区公司级增删改查闭环（重点解决已创建/导入公司资料夹缺少直达移除与原生回收站删除选项、根目录无法重定位/硬盘改名、自建不能按需选目录与附带自定义目录、导入不能顺带纳入其它子目录）；（2）修复实测发现的查询硬缺陷（开具发票搜购买方失效、日期区间放行空日期、关键字无法搜项目/金额/税率且不支持多词、自定义目录角色未同步）并补齐高级组合筛选与排序。Phase 2（跨目录/跨公司全局检索、文件拖放导入/单票手改/重命名与跨目录移动归档、通用文件视图）同步登记至 `docs/PRODUCT_BACKLOG.md`（`WS-11`、`WS-12`）。
+- 采用方案：
+  - **后端公司级 CRUD 闭环**：
+    - `src/invoice_hub/services/company_folders.py` 与 `src/invoice_hub/api/routes/companies.py` / `company_folders.py`：新增 `POST /api/v1/companies/{company_id}/trash-preview` 与 `POST /api/v1/companies/{company_id}/trash`（有界扫描文件/子目录数与字节数、明确列示外部导入目录不受影响、阻断监控中/系统根/用户主目录/程序根/跨公司重叠、带 `plan_hash` + `confirm: true` 与全公司子目录写锁调用 `move_to_trash` 移入系统原生回收站并解除登记，严禁永久删除降级）；新增 `POST /api/v1/companies/{company_id}/open-root` 与 `POST /api/v1/companies/{company_id}/folders/{key}/open` 安全打开本地目录（拒绝缺失/链接目录）。
+    - `src/invoice_hub/services/company_registry.py`：`create_company` 支持校验并持久化可选 `hidden_subdirs` 与 `custom_folders`；`update_company` 为 `root_dir` 重定位补齐与本公司外部文件夹重叠校验，并新增可选 `rename_root_on_disk` + `new_root_name` 安全硬盘改名（通过 `CompanyFolderService.rename_company_root_with_overrides` 在全子目录写锁内原子改名并迁移全部公司内子目录的 `manual_overrides.json`，清单写入失败自动回滚）。
+    - `src/invoice_hub/services/company_setup.py`：支持可选 `selected_standard_keys`（未选标准目录不建盘并记入 `hidden_subdirs`）与 `custom_folders`（纳入同一 `plan_hash` 与防篡改 `_mkdir` 流程）；不传时与旧版 100% 兼容。
+    - `src/invoice_hub/services/company_detection.py`：`_inspect` 额外扫描根内未被 6 类占用的真实一级子目录返回 `extra_folders`（含建议角色、文件数并绑定 `extra_identities` 入 `plan_hash`），`register` 支持可选 `import_extra_folders` 一次性以 `inside_root` 自定义目录纳入（零文件移动）。
+  - **后端单目录深度查询与缺陷修复**：
+    - `src/invoice_hub/services/invoice_list.py`、`src/invoice_hub/services/company_views.py`、`src/invoice_hub/api/routes/invoices.py` 与 `companies.py`：在 100% 保留经典 `search_scope=invoice|filename|all` 单串兼容语义前提下，新增 `workspace`、`party`、`buyer` 深度搜索范围并支持空格分词多词 AND 匹配（覆盖销售方、购买方、票号、文件名、项目、金额、税率及标准化百分数、发票大类、业务类型、开票日期）；修复 `date_from`/`date_to` 放行空日期记录的缺陷；新增精确 `Decimal` 金额区间（`amount_min`/`amount_max`，非法输入 422）、标准化税率筛选（`tax_rate` 及 `__missing__`）、项目筛选（`project` 及 `__unassigned__`）、未打标签筛选（`tag=__untagged__`）、多字段排序（`sort_by`/`sort_dir`，兼容旧 `date_sort`，缺失值统一排尾）以及目录级全量 `filter_options` 元数据。
+  - **Vue 3 工作区前端交互**：
+    - 新增 `frontend/src/components/CompanyDeleteModal.vue`（遵循 `WORKSPACE_UI_STANDARD.md` 令牌与 `WsModal`，默认“仅从清单移除”，可选“移入系统回收站并移出清单”预览勾选确认），接入 `WorkspaceSidebar.vue`（公司右键新增编辑设置/打开文件夹/移除或删除公司、目录右键新增打开文件夹）、`CompanyPanel.vue`（页头快捷操作与失效根目录重定位提示）及 `CompanySettings.vue`（新增公司根目录路径重定位、原生目录选择器与可选硬盘改名）。
+    - 更新 `CompanyCreateForm.vue`（自建支持勾选标准目录子集与新增自定义子目录；导入向导展示并允许勾选顺带导入 `extra_folders`）、`DirectoryPanel.vue`（页头新增打开文件夹）、`DirectoryInvoices.vue`（改用 `effectiveFolderRole` 修复自定义目录提示与项目列；默认 `workspace` 多词搜索 + 回车直搜 + 搜索范围切换 + `重复发票` 状态 + 可折叠高级筛选栏 + 金额与开票时间排序 + 一键重置筛选 + 活动监控目录单行预览/打开原文件/在文件夹中显示）、`stores/companies.ts`、`api/types.ts`、`prototype.css`，重建并提交 `web/static/app/`。
+- 验证范围：
+  - 前端：`pnpm run typecheck`（0 错误）、`pnpm test`（22 份测试文件 181 项全部通过，含新增 `frontend/tests/workspace-crud-search.spec.ts` 4 项）、`pnpm run build`（生成 `web/static/app/`）。
+  - 后端：`pytest tests/test_company_crud_and_search.py tests/test_company_folders.py tests/test_company_setup.py tests/test_company_views.py tests/test_company_directory_guards.py tests/test_workspace_frontend.py tests/test_api_contract.py`（169 项全部通过）、`python -m compileall src tests`、`ruff check`（涉及源码与测试全部通过）、`pytest tests/test_development_documentation.py` 与 `git diff --check`。
+- 未覆盖项：未覆盖真实默认配置、正式 Windows BAT、浏览器前台实机交互、系统原生选择器真实弹窗、macOS/Windows 真机原生回收站端到端调用与双平台最新打包产物。
+
 ### 2026-11-25 支持公司自定义与默认文件夹全生命周期管理及基准功能指向
 
 - 需求与起点：基于已合入 PR #33 的干净主线 `origin/main@da6491cec736203b494e5ebd7aeb6e4fa9debdb2`，新建隔离工作树与分支 `codex/company-custom-folders`，解决 `v1.0.0` 发布前用户提出的紧急必要需求：（1）公司资料夹下除默认 6 类目录外，支持用户自定义文件夹的新建、删除、重命名与导入已存在文件夹（涵盖默认目录的创建、隐藏恢复与回收站删除）；（2）自定义与导入的文件夹支持以默认 6 类目录为基准的功能指向，并开放完整单目录操作同时默认隔离公司总账/成本 V2/凭证草稿口径。

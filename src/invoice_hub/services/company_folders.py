@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING, Callable
 
 from invoice_hub.domain.models import utc_now_text
 from invoice_hub.monitoring.state import MANUAL_OVERRIDES_FILE_NAME, MonitorState
+from invoice_hub.platform import open_local_path
 from invoice_hub.platform.trash import move_to_trash
 from invoice_hub.services.company_directory_guard import (
     CompanyDirectoryChanged,
@@ -1210,3 +1211,335 @@ class CompanyFolderService:
         result = self.registry._after_write(self.registry.get_company(company_id), taxpayer_before)
         result.update(promoted_to=target_role, preserved_folder_id=preserved_id)
         return result
+
+    # ---- company-level disk rename, native recycle-bin trash & OS folder open --------------
+
+    def open_folder(self, company_id: str, key: str) -> dict:
+        from invoice_hub.services.company_registry import CompanyRegistryError
+
+        with self.registry._lock:
+            registry = self.registry._load()
+            company = self.registry._find(registry, company_id)
+            kind, entry = self._find_folder(company, key)
+            root = self.registry._registered_root(company["root_dir"])
+            if kind == "standard":
+                rel = company["subdirs"][key]
+                target = root / rel
+                status = (
+                    next(reversed(subdir_snapshot(root, rel).values()))[0]
+                    if directory_entry(root)[0] == "present"
+                    else "root_unavailable"
+                )
+            else:
+                assert entry is not None
+                target = self._entry_path(company, entry)
+                if entry["location"] == "inside_root":
+                    status = (
+                        next(reversed(subdir_snapshot(root, entry["relative_path"]).values()))[0]
+                        if directory_entry(root)[0] == "present"
+                        else "root_unavailable"
+                    )
+                else:
+                    status = external_path_snapshot(target)[1][0]
+            if status != "present":
+                raise CompanyRegistryError("COMPANY_FOLDER_UNAVAILABLE", "该文件夹在硬盘上不存在、是链接或不可用，无法打开。", status_code=409)
+        try:
+            open_local_path(target)
+        except OSError as exc:
+            raise CompanyRegistryError("COMPANY_FOLDER_IO_ERROR", f"打开文件夹失败：{exc.strerror or exc}", status_code=409) from exc
+        self.registry.repo.append_event("companies.folder_opened", {"company_id": company_id, "key": key})
+        return {"ok": True, "opened": True, "company_id": company_id, "key": key, "path": str(target)}
+
+    def _inside_root_profiles(self, company: dict, root: Path) -> list:
+        from invoice_hub.services.company_registry import STANDARD_SUBDIRS
+
+        cfg = self.registry.config
+        profiles: dict[str, object] = {}
+        for key in STANDARD_SUBDIRS:
+            prof = target_profile_for(cfg, root / company["subdirs"][key])
+            profiles[prof.id] = prof
+        for entry in company.get("custom_folders") or []:
+            if entry.get("location") == "inside_root":
+                prof = target_profile_for(cfg, root / entry["relative_path"])
+                profiles[prof.id] = prof
+        return [profiles[pid] for pid in sorted(profiles)]
+
+    def rename_company_root_with_overrides(
+        self,
+        company: dict,
+        old_root: Path,
+        new_root: Path,
+    ) -> tuple[Callable[[], None], Callable[[], None]]:
+        """Atomically rename a company root directory and rebase all inside-root override files.
+
+        Holds profile sync locks for every inside-root subfolder with an existing runtime state
+        directory before renaming, then migrates ``manual_overrides.json`` under the new target
+        profiles. Returns ``(commit_cleanup, rollback)`` so the caller can roll back on registry
+        save failure without losing saved manual edits.
+        """
+        from invoice_hub.services.company_registry import STANDARD_SUBDIRS, CompanyRegistryError
+
+        cfg = self.registry.config
+        inside_rels = [company["subdirs"][key] for key in STANDARD_SUBDIRS] + [
+            entry["relative_path"]
+            for entry in (company.get("custom_folders") or [])
+            if entry.get("location") == "inside_root"
+        ]
+        pairs = [
+            (
+                old_root / rel,
+                new_root / rel,
+                target_profile_for(cfg, old_root / rel),
+                target_profile_for(cfg, new_root / rel),
+            )
+            for rel in inside_rels
+        ]
+        lock_map = {}
+        for _op, _np, old_prof, new_prof in pairs:
+            lock_map[old_prof.id] = old_prof
+            lock_map[new_prof.id] = new_prof
+
+        old_overrides_snapshots: list[tuple[Path, Path, Path, Path, dict, list[tuple[str, dict, tuple[str, ...]]], bool]] = []
+        written_records: list[tuple[Path, bool, bytes | None, Path, bool, Path, dict, set[str], bool]] = []
+
+        with ExitStack() as stack:
+            for pid in sorted(lock_map):
+                acquired = stack.enter_context(self._try_profile_lock_for_profile(lock_map[pid]))
+                if not acquired:
+                    raise CompanyRegistryError("COMPANY_FOLDER_BUSY", "该公司下有文件夹正在同步或读取，请稍后重试。", status_code=409)
+
+            # Read and validate every existing override file BEFORE renaming the directory on disk.
+            for old_dir, new_dir, old_prof, new_prof in pairs:
+                old_file = Path(old_prof.state_dir) / MANUAL_OVERRIDES_FILE_NAME
+                if not old_file.is_file():
+                    continue
+                try:
+                    parsed = json.loads(old_file.read_text(encoding="utf-8"))
+                except (OSError, ValueError) as exc:
+                    raise CompanyRegistryError(
+                        "COMPANY_FOLDER_IO_ERROR",
+                        "原目录的手改记录文件损坏或不可读，已中止公司根文件夹重命名以免丢失手改字段。",
+                        status_code=409,
+                    ) from exc
+                if not isinstance(parsed, dict):
+                    raise CompanyRegistryError(
+                        "COMPANY_FOLDER_IO_ERROR",
+                        "原目录的手改记录格式无效，已中止公司根文件夹重命名以免丢失手改字段。",
+                        status_code=409,
+                    )
+                raw_items = parsed.get("items") if isinstance(parsed.get("items"), dict) else (
+                    parsed if "version" not in parsed and "items" not in parsed else {}
+                )
+                if not isinstance(raw_items, dict) or not raw_items:
+                    continue
+                old_canon = Path(canonical_path(old_dir))
+                old_canon_folded = Path(str(old_canon).casefold())
+                pending: list[tuple[str, dict, tuple[str, ...]]] = []
+                for raw_key, raw_entry in raw_items.items():
+                    if not isinstance(raw_entry, dict):
+                        continue
+                    src_value = raw_entry.get("source_path") or raw_key
+                    src_canon_str = canonical_path(src_value)
+                    src_canon = Path(src_canon_str)
+                    try:
+                        rel_folded = Path(src_canon_str.casefold()).relative_to(old_canon_folded)
+                    except ValueError:
+                        continue
+                    tail_parts = src_canon.parts[len(old_canon.parts):] if len(rel_folded.parts) > 0 else ()
+                    pending.append((str(raw_key), dict(raw_entry), tail_parts))
+                if pending:
+                    old_overrides_snapshots.append(
+                        (old_file, Path(new_prof.state_dir) / MANUAL_OVERRIDES_FILE_NAME, new_dir, Path(new_prof.state_dir).parent, raw_items, pending, old_prof.id == new_prof.id)
+                    )
+
+            try:
+                os.rename(old_root, new_root)
+            except OSError as exc:
+                raise CompanyRegistryError("COMPANY_FOLDER_IO_ERROR", f"重命名公司文件夹失败：{exc.strerror or exc}", status_code=409) from exc
+
+            try:
+                for old_file, new_file, new_dir, new_target_dir, raw_items, pending, same_profile in old_overrides_snapshots:
+                    new_canon = Path(canonical_path(new_dir))
+                    rebased: dict[str, dict] = {}
+                    migrated_keys: set[str] = set()
+                    for raw_key, copied, tail_parts in pending:
+                        rebased_path = canonical_path(new_canon.joinpath(*tail_parts))
+                        copied["source_path"] = rebased_path
+                        copied["invoice_key"] = ""
+                        copied["renamed_at"] = utc_now_text()
+                        rebased[rebased_path] = copied
+                        migrated_keys.add(raw_key)
+                    if not rebased:
+                        continue
+                    new_existed = new_file.exists()
+                    new_prior = new_file.read_bytes() if new_existed else None
+                    created_dir = not new_target_dir.exists()
+                    if same_profile:
+                        remaining = {str(k): v for k, v in raw_items.items() if str(k) not in migrated_keys}
+                        merged = {**remaining, **rebased}
+                    else:
+                        existing_new = read_json_object(new_file, {}) if new_existed else {}
+                        existing_items = existing_new.get("items") if isinstance(existing_new.get("items"), dict) else {}
+                        merged = {**existing_items, **rebased}
+                    new_file.parent.mkdir(parents=True, exist_ok=True)
+                    atomic_write_json(new_file, {"version": 1, "items": merged, "updated_at": utc_now_text()})
+                    written_records.append((new_file, new_existed, new_prior, new_target_dir, created_dir, old_file, raw_items, migrated_keys, same_profile))
+            except Exception as exc:
+                for new_file, new_existed, new_prior, new_target_dir, created_dir, *_rest in reversed(written_records):
+                    self._restore_overrides_file(new_file, new_existed, new_prior, new_target_dir, created_dir)
+                try:
+                    os.rename(new_root, old_root)
+                except OSError:
+                    pass
+                if isinstance(exc, CompanyRegistryError):
+                    raise
+                raise CompanyRegistryError("COMPANY_FOLDER_IO_ERROR", f"迁移手改记录失败，已回滚公司文件夹名称：{exc}", status_code=409) from exc
+
+        def rollback() -> None:
+            for new_file, new_existed, new_prior, new_target_dir, created_dir, *_rest in reversed(written_records):
+                self._restore_overrides_file(new_file, new_existed, new_prior, new_target_dir, created_dir)
+            try:
+                os.rename(new_root, old_root)
+            except OSError:
+                pass
+
+        def commit_cleanup() -> None:
+            for _nf, _ne, _np, _ntd, _cd, old_file, raw_items, migrated_keys, same_profile in written_records:
+                if same_profile or not migrated_keys or not old_file.is_file():
+                    continue
+                try:
+                    remaining = {str(k): v for k, v in raw_items.items() if str(k) not in migrated_keys}
+                    if remaining:
+                        atomic_write_json(old_file, {"version": 1, "items": remaining, "updated_at": utc_now_text()})
+                    else:
+                        old_file.unlink(missing_ok=True)
+                except OSError:
+                    pass
+
+        return commit_cleanup, rollback
+
+    def _company_trash_plan(self, registry: dict, company: dict, payload: dict) -> tuple[dict, Path, dict, list]:
+        self.registry._check_revision(registry, payload)
+        root = self.registry._registered_root(company["root_dir"])
+        project_root = self.registry.config.root_dir
+        snap, entry_info = external_path_snapshot(root)
+
+        blocked_reason = ""
+        if entry_info[0] != "present":
+            blocked_reason = "该公司资料夹在硬盘上不存在、是链接或不可用，无法移入回收站；可直接选择「仅从清单移除」。"
+        elif _is_forbidden_system_root(root, project_root):
+            blocked_reason = "该路径受保护（系统目录、用户主目录或程序根目录），禁止移入回收站。"
+        elif _paths_overlap(root, Path(self.registry.active_profile.watch_dir)):
+            blocked_reason = "该公司下有目录正在监控，请先切换监控目录后再将公司资料夹移入回收站。"
+        else:
+            for other in registry["companies"]:
+                if other["id"] == company["id"]:
+                    continue
+                other_root = self.registry._registered_root(other["root_dir"])
+                if _paths_overlap(root, other_root):
+                    blocked_reason = f"该路径与已登记公司“{other['name']}”重叠，已禁止移入回收站。"
+                    break
+
+        file_count = dir_count = total_bytes = 0
+        truncated = False
+        if not blocked_reason:
+            file_count, dir_count, total_bytes, truncated = _count_folder_contents(root)
+
+        external_folders = [
+            {
+                "key": entry["id"],
+                "label": entry["label"],
+                "path": str(resolve_external_folder(project_root, entry["external_path"])),
+            }
+            for entry in (company.get("custom_folders") or [])
+            if entry.get("location") == "external"
+        ]
+
+        binding = {
+            "op": "trash_company",
+            "company_id": company["id"],
+            "registry_revision": registry["revision"],
+            "root_path": str(root).casefold(),
+            "directory_identities": snap,
+        }
+        plan_hash = hashlib.sha256(json.dumps(binding, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
+        plan = {
+            "ok": True,
+            "company_id": company["id"],
+            "company_name": company["name"],
+            "revision": registry["revision"],
+            "path": str(root),
+            "can_trash": not blocked_reason,
+            "blocked_reason": blocked_reason,
+            "file_count": file_count,
+            "dir_count": dir_count,
+            "total_bytes": total_bytes,
+            "truncated": truncated,
+            "external_folders": external_folders,
+            "plan_hash": plan_hash,
+        }
+        return plan, root, snap, entry_info
+
+    def preview_trash_company(self, company_id: str, payload: object) -> dict:
+        body = payload if isinstance(payload, dict) else {}
+        with self.registry._lock:
+            registry = self.registry._load()
+            company = self.registry._find(registry, company_id)
+            plan, *_ = self._company_trash_plan(registry, company, body)
+            return plan
+
+    def trash_company(self, company_id: str, payload: object) -> dict:
+        from invoice_hub.services.company_registry import CompanyRegistryError
+
+        body = payload if isinstance(payload, dict) else {}
+        if body.get("confirm") is not True:
+            raise CompanyRegistryError("COMPANY_CONFIRM_REQUIRED", "请先明确确认再将公司资料夹移入系统回收站。", field="confirm")
+        with self.registry._lock:
+            registry = self.registry._load()
+            company = self.registry._find(registry, company_id)
+            taxpayer_before = self.registry._active_taxpayer()
+            plan, root, snap, entry_info = self._company_trash_plan(registry, company, body)
+            if str(body.get("plan_hash") or "") != plan["plan_hash"]:
+                raise CompanyRegistryError(
+                    "COMPANY_PLAN_STALE", "公司资料夹状态已变化，请重新预览后再确认。", status_code=409, field="plan_hash"
+                )
+            if not plan["can_trash"]:
+                raise CompanyRegistryError("COMPANY_TRASH_BLOCKED", plan["blocked_reason"], status_code=409)
+
+            profiles = self._inside_root_profiles(company, root)
+            with ExitStack() as stack:
+                for prof in profiles:
+                    acquired = stack.enter_context(self._try_profile_lock_for_profile(prof))
+                    if not acquired:
+                        raise CompanyRegistryError("COMPANY_FOLDER_BUSY", "该公司下有文件夹正在同步或读取，请稍后重试。", status_code=409)
+                # Re-verify live identity immediately before native recycle-bin transfer.
+                if external_path_snapshot(root) != (snap, entry_info):
+                    raise CompanyRegistryError("COMPANY_PLAN_STALE", "公司资料夹已变化或被替换，未执行删除。", status_code=409)
+                try:
+                    move_to_trash(root)
+                except OSError as exc:
+                    raise CompanyRegistryError(
+                        "COMPANY_TRASH_FAILED",
+                        str(exc) or "未能将公司资料夹移入系统回收站，未执行永久删除。",
+                        status_code=409,
+                    ) from exc
+
+            registry["companies"] = [item for item in registry["companies"] if item is not company]
+            self.registry._save(registry)
+            self.registry.repo.append_event(
+                "companies.trashed",
+                {
+                    "company_id": company_id,
+                    "company_name": company["name"],
+                    "external_folders_untouched": len(plan["external_folders"]),
+                    "revision": registry["revision"],
+                },
+            )
+            result = {
+                "ok": True,
+                "deleted": company_id,
+                "trashed_path": str(root),
+                "external_folders_untouched": plan["external_folders"],
+                "revision": registry["revision"],
+            }
+        return self.registry._after_write(result, taxpayer_before)
