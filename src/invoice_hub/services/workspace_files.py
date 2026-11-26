@@ -153,6 +153,20 @@ def _file_signature(path: Path) -> list[int]:
     return [int(info.st_dev), int(info.st_ino), int(info.st_size), int(info.st_mtime_ns), int(info.st_ctime_ns)]
 
 
+def _dir_binding(path: Path) -> dict[str, object]:
+    """Bind a real non-link directory to its path hash and (dev, ino) identity without exposing host paths."""
+    try:
+        info = path.lstat()
+    except OSError as exc:
+        raise CompanyRegistryError("COMPANY_DIRECTORY_UNAVAILABLE", "目标文件夹不存在或不可用。", status_code=409) from exc
+    if stat.S_ISLNK(info.st_mode) or (hasattr(path, "is_junction") and path.is_junction()) or not stat.S_ISDIR(info.st_mode):
+        raise CompanyRegistryError("COMPANY_DIRECTORY_UNAVAILABLE", "目标文件夹不可用或包含链接。", status_code=409)
+    return {
+        "path_hash": hashlib.sha256(_path_key(path).encode("utf-8")).hexdigest(),
+        "identity": [int(info.st_dev), int(info.st_ino)],
+    }
+
+
 def _check_chain_no_links(base: Path, parts: list[str], *, expect_file: bool = False) -> Path:
     cur = base
     for idx, part in enumerate(parts):
@@ -735,13 +749,29 @@ class WorkspaceFileService:
         parent = src_path.parent
         dst_path = parent / new_name
         with _try_profile_locks([profile], self._views._db_path):
-            # Re-verify source after lock and reject any collision (including case-insensitive names on another file).
+            # Re-verify source after lock and reject any collision. For case-only renames, only
+            # allow os.rename when dst_path is absent or actually refers to the exact same inode
+            # (never overwrite a distinct file such as Invoice.xml vs invoice.xml on case-sensitive FS).
             src_path = _check_chain_no_links(dir_path, rel_parts, expect_file=True)
+            src_stat = src_path.lstat()
             same_name_case = new_name.casefold() == old_name.casefold()
-            if not same_name_case and (new_name.casefold() in _existing_names_folded(parent) or dst_path.exists() or _is_link(dst_path)):
+            dst_is_same_file = False
+            try:
+                dst_stat = dst_path.lstat()
+            except FileNotFoundError:
+                dst_stat = None
+            if dst_stat is not None:
+                if (
+                    stat.S_ISLNK(dst_stat.st_mode)
+                    or (hasattr(dst_path, "is_junction") and dst_path.is_junction())
+                    or not os.path.samestat(src_stat, dst_stat)
+                ):
+                    raise CompanyRegistryError("WORKSPACE_FILE_CONFLICT", f"同目录下已存在「{new_name}」，未覆盖。", status_code=409)
+                dst_is_same_file = True
+            elif not same_name_case and new_name.casefold() in _existing_names_folded(parent):
                 raise CompanyRegistryError("WORKSPACE_FILE_CONFLICT", f"同目录下已存在「{new_name}」，未覆盖。", status_code=409)
             try:
-                if same_name_case:
+                if dst_is_same_file:
                     os.rename(src_path, dst_path)
                 else:
                     _move_file_no_overwrite(src_path, dst_path)
@@ -754,7 +784,7 @@ class WorkspaceFileService:
             except (CompanyRegistryError, OSError):
                 # Restore the original filename if migrating manual_overrides.json fails.
                 with contextlib.suppress(OSError, FileExistsError):
-                    if same_name_case:
+                    if dst_is_same_file:
                         os.rename(dst_path, src_path)
                     else:
                         _move_file_no_overwrite(dst_path, src_path)
@@ -799,6 +829,7 @@ class WorkspaceFileService:
             raise CompanyRegistryError("WORKSPACE_FILE_INVALID", "请求格式不正确。", status_code=422)
         src_company, src_subdir, _, src_dir_path, src_monitored, src_role = self._resolve_dir(company_id, key)
         self._assert_mutate_allowed(src_role, src_monitored, "移动")
+        source_binding = _dir_binding(src_dir_path)
 
         conflict_policy = str(payload.get("conflict_policy") or "reject").strip()
         if conflict_policy not in {"reject", "rename"}:
@@ -832,6 +863,8 @@ class WorkspaceFileService:
             dst_sub_parts = _clean_rel_parts(raw.get("target_subpath", ""), allow_empty=True, label="目标子路径")
             dst_company, dst_subdir, _, dst_dir_path, _, _ = self._resolve_dir(dst_company_id, dst_dir_key)
             dst_parent = _check_chain_no_links(dst_dir_path, dst_sub_parts, expect_file=False) if dst_sub_parts else dst_dir_path
+            dst_dir_binding = _dir_binding(dst_dir_path)
+            dst_parent_binding = _dir_binding(dst_parent)
 
             if _path_key(src_file.parent) == _path_key(dst_parent):
                 summary["blocked"] += 1
@@ -845,6 +878,8 @@ class WorkspaceFileService:
                     "target_dir_label": str(dst_subdir.get("label") or dst_dir_key),
                     "target_subpath": "/".join(dst_sub_parts),
                     "target_name": src_file.name,
+                    "target_dir_binding": dst_dir_binding,
+                    "target_parent_binding": dst_parent_binding,
                     "action": "blocked",
                     "reason": "目标目录与当前所在目录相同。",
                 })
@@ -868,6 +903,8 @@ class WorkspaceFileService:
                         "target_dir_label": str(dst_subdir.get("label") or dst_dir_key),
                         "target_subpath": "/".join(dst_sub_parts),
                         "target_name": src_file.name,
+                        "target_dir_binding": dst_dir_binding,
+                        "target_parent_binding": dst_parent_binding,
                         "action": "conflict",
                         "reason": "目标目录已存在同名文件，拒绝覆盖。",
                     })
@@ -885,6 +922,8 @@ class WorkspaceFileService:
                         "target_dir_label": str(dst_subdir.get("label") or dst_dir_key),
                         "target_subpath": "/".join(dst_sub_parts),
                         "target_name": target_name,
+                        "target_dir_binding": dst_dir_binding,
+                        "target_parent_binding": dst_parent_binding,
                         "action": "rename",
                         "reason": f"目标存在同名文件，将重命名为「{target_name}」后移动。",
                     })
@@ -901,6 +940,8 @@ class WorkspaceFileService:
                     "target_dir_label": str(dst_subdir.get("label") or dst_dir_key),
                     "target_subpath": "/".join(dst_sub_parts),
                     "target_name": src_file.name,
+                    "target_dir_binding": dst_dir_binding,
+                    "target_parent_binding": dst_parent_binding,
                     "action": "move",
                     "reason": "",
                 })
@@ -911,6 +952,7 @@ class WorkspaceFileService:
         plan_digest = _plan_hash({
             "company_id": company_id,
             "dir_key": key,
+            "source_binding": source_binding,
             "conflict_policy": conflict_policy,
             "items": [
                 {
@@ -920,6 +962,8 @@ class WorkspaceFileService:
                     "target_dir_key": item["target_dir_key"],
                     "target_subpath": item["target_subpath"],
                     "target_name": item["target_name"],
+                    "target_dir_binding": item["target_dir_binding"],
+                    "target_parent_binding": item["target_parent_binding"],
                     "action": item["action"],
                 }
                 for item in planned_items
@@ -931,6 +975,7 @@ class WorkspaceFileService:
             "company_name": src_company["name"],
             "dir_key": key,
             "dir_label": str(src_subdir.get("label") or key),
+            "source_binding": source_binding,
             "conflict_policy": conflict_policy,
             "plan_hash": plan_digest,
             "status": "prepared",
@@ -963,18 +1008,30 @@ class WorkspaceFileService:
 
         _, _, src_profile, src_dir_path, src_monitored, src_role = self._resolve_dir(company_id, key)
         self._assert_mutate_allowed(src_role, src_monitored, "移动")
+        if _dir_binding(src_dir_path) != job.get("source_binding"):
+            raise CompanyRegistryError("WORKSPACE_PLAN_STALE", "源目录映射或目录身份在预览后已变化，未移动任何文件，请重新预览。", status_code=409)
 
         involved_profiles: list[TargetProfile] = [src_profile]
-        resolved_targets: list[tuple[dict, TargetProfile, Path]] = []
+        resolved_targets: list[tuple[dict, TargetProfile, Path, Path]] = []
         for item in job["items"]:
             _, _, dst_profile, dst_dir_path, _, _ = self._resolve_dir(item["target_company_id"], item["target_dir_key"])
             involved_profiles.append(dst_profile)
             dst_sub_parts = _clean_rel_parts(item.get("target_subpath", ""), allow_empty=True, label="目标子路径")
             dst_parent = _check_chain_no_links(dst_dir_path, dst_sub_parts, expect_file=False) if dst_sub_parts else dst_dir_path
-            resolved_targets.append((item, dst_profile, dst_parent))
-            # If this explicit move carries an existing manual override to an uninitialized destination
-            # profile, create dst_profile.state_dir before locking so both profiles enter _try_profile_locks
-            # in deterministic ID order and destination manual_overrides.json is durably persisted.
+            if (
+                _dir_binding(dst_dir_path) != item.get("target_dir_binding")
+                or _dir_binding(dst_parent) != item.get("target_parent_binding")
+            ):
+                raise CompanyRegistryError(
+                    "WORKSPACE_PLAN_STALE",
+                    "目标目录映射或目录身份在预览后已变化，未移动任何文件，请重新预览。",
+                    status_code=409,
+                )
+            resolved_targets.append((item, dst_profile, dst_dir_path, dst_parent))
+
+        # Only after source/destination directory bindings are verified, initialize any missing
+        # destination state_dir needed to carry over an existing manual override.
+        for item, dst_profile, _, _ in resolved_targets:
             if dst_profile.id != src_profile.id and not Path(dst_profile.state_dir).is_dir():
                 rel_parts = _clean_rel_parts(item["relative_path"], allow_empty=False, label="源文件路径")
                 if _has_override_for_path(src_profile, src_dir_path.joinpath(*rel_parts)):
@@ -986,12 +1043,33 @@ class WorkspaceFileService:
         overrides_migrated = 0
 
         with _try_profile_locks(involved_profiles, self._views._db_path):
-            # Persist started intent before mutating files so lost responses can inspect the journal.
-            job["status"] = "running"
-            job["started_at"] = time.time()
-            self._save_job(job)
+            with self._job_lock:
+                job = read_json_object(self._job_path(job_id))
+                if not isinstance(job, dict) or job.get("company_id") != company_id or job.get("dir_key") != key:
+                    raise CompanyRegistryError("WORKSPACE_MOVE_NOT_FOUND", "移动计划不存在或已失效。", status_code=404)
+                if job.get("status") in {"completed", "partial"}:
+                    return {"ok": True, **job}
+                if job.get("status") != "prepared":
+                    raise CompanyRegistryError("WORKSPACE_MOVE_CONFLICT", "该移动计划正在执行或状态未知，请只读查询结果。", status_code=409)
+                # Re-verify source and destination directory bindings inside locks before mutating any file.
+                if _dir_binding(src_dir_path) != job.get("source_binding"):
+                    raise CompanyRegistryError("WORKSPACE_PLAN_STALE", "源目录映射或目录身份在预览后已变化，未移动任何文件，请重新预览。", status_code=409)
+                for item, _, dst_dir_path, dst_parent in resolved_targets:
+                    if (
+                        _dir_binding(dst_dir_path) != item.get("target_dir_binding")
+                        or _dir_binding(dst_parent) != item.get("target_parent_binding")
+                    ):
+                        raise CompanyRegistryError(
+                            "WORKSPACE_PLAN_STALE",
+                            "目标目录映射或目录身份在预览后已变化，未移动任何文件，请重新预览。",
+                            status_code=409,
+                        )
+                # Persist started intent before mutating files so lost responses can inspect the journal.
+                job["status"] = "running"
+                job["started_at"] = time.time()
+                self._save_job(job)
 
-            for item, dst_profile, dst_parent in resolved_targets:
+            for item, dst_profile, _, dst_parent in resolved_targets:
                 rel_parts = _clean_rel_parts(item["relative_path"], allow_empty=False, label="源文件路径")
                 try:
                     src_file = _check_chain_no_links(src_dir_path, rel_parts, expect_file=True)
@@ -1161,6 +1239,7 @@ class WorkspaceFileService:
             raise CompanyRegistryError("WORKSPACE_FILE_INVALID", "请求格式不正确。", status_code=422)
         company, subdir, _, dir_path, is_monitored, eff_role = self._resolve_dir(company_id, key)
         self._assert_mutate_allowed(eff_role, is_monitored, "移入回收站")
+        source_binding = _dir_binding(dir_path)
         raw_paths = payload.get("relative_paths")
         if not isinstance(raw_paths, list) or not raw_paths or len(raw_paths) > MAX_BATCH_ITEMS:
             raise CompanyRegistryError("WORKSPACE_FILE_INVALID", f"单次删除文件数需在 1 到 {MAX_BATCH_ITEMS} 之间。", status_code=422)
@@ -1189,6 +1268,7 @@ class WorkspaceFileService:
         digest = _plan_hash({
             "company_id": company_id,
             "dir_key": key,
+            "source_binding": source_binding,
             "items": [
                 {
                     "relative_path": item["relative_path"],
@@ -1207,6 +1287,7 @@ class WorkspaceFileService:
             "company_name": company["name"],
             "dir_key": key,
             "dir_label": str(subdir.get("label") or key),
+            "source_binding": source_binding,
             "monitored": is_monitored,
             "plan_hash": digest,
             "status": "prepared",
@@ -1259,6 +1340,8 @@ class WorkspaceFileService:
                         status_code=409,
                     )
                 job["monitored"] = is_monitored
+                if _dir_binding(dir_path) != job.get("source_binding"):
+                    raise CompanyRegistryError("WORKSPACE_PLAN_STALE", "源目录映射或目录身份在预览后已变化，未删除任何文件，请重新预览。", status_code=409)
                 items = job.get("items") if isinstance(job.get("items"), list) else []
 
                 # Re-verify every planned file before transitioning the job to running so a pre-commit

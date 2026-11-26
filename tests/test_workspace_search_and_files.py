@@ -552,3 +552,76 @@ def test_workspace_cross_directory_move_and_native_trash(tmp_path: Path, monkeyp
     )
     assert blocked_retry.status_code == 409
     assert blocked_retry.json()["error"]["code"] == "WORKSPACE_TRASH_CONFLICT"
+
+
+def test_rename_case_only_rejects_distinct_inode_and_move_rejects_remapped_destination(tmp_path: Path, monkeypatch) -> None:
+    _, client = _create_app_client(tmp_path, monkeypatch)
+    comp = tmp_path / "绑定公司"
+    (comp / "归档A").mkdir(parents=True)
+    (comp / "费用报销").mkdir(parents=True)
+    (comp / "费用报销新").mkdir(parents=True)
+    reg = _register_company(client, "绑定公司", comp, revision=0)
+    cid = reg["company"]["id"]
+    imp = client.post(
+        f"/api/v1/companies/{cid}/folders/import",
+        json={"revision": reg["revision"], "location": "inside_root", "relative_path": "归档A", "label": "归档A", "role": "general"},
+        headers=SAME_ORIGIN,
+    )
+    assert imp.status_code == 200
+    gkey = next(sub["key"] for sub in imp.json()["company"]["subdirs"] if sub["label"] == "归档A")
+
+    # 1) Case-only rename must reject when destination exists as a distinct file (case-sensitive FS protection)
+    f_upper = comp / "归档A" / "Invoice.txt"
+    f_upper.write_text("upper-content", encoding="utf-8")
+    f_lower = comp / "归档A" / "invoice.txt"
+    if not f_lower.exists():
+        # Case-sensitive filesystem (e.g. Linux CI): create two genuinely distinct files
+        f_lower.write_text("lower-content", encoding="utf-8")
+        conflict = client.post(
+            f"/api/v1/companies/{cid}/directories/{gkey}/files/rename",
+            json={"relative_path": "Invoice.txt", "new_name": "invoice.txt"},
+            headers=SAME_ORIGIN,
+        )
+        assert conflict.status_code == 409
+        assert f_upper.read_text(encoding="utf-8") == "upper-content"
+        assert f_lower.read_text(encoding="utf-8") == "lower-content"
+    else:
+        # Case-insensitive filesystem (e.g. macOS APFS/Windows): simulate distinct inode via samestat=False
+        monkeypatch.setattr("invoice_hub.services.workspace_files.os.path.samestat", lambda a, b: False)
+        conflict = client.post(
+            f"/api/v1/companies/{cid}/directories/{gkey}/files/rename",
+            json={"relative_path": "Invoice.txt", "new_name": "invoice.txt"},
+            headers=SAME_ORIGIN,
+        )
+        assert conflict.status_code == 409
+        assert f_upper.read_text(encoding="utf-8") == "upper-content"
+
+    # 2) Move confirmation must reject when destination directory mapping changes after preview
+    doc = comp / "归档A" / "contract.txt"
+    doc.write_text("keep-me", encoding="utf-8")
+    plan = client.post(
+        f"/api/v1/companies/{cid}/directories/{gkey}/files/move/preview",
+        json={"conflict_policy": "reject", "items": [{"relative_path": "contract.txt", "target_company_id": cid, "target_dir_key": "expense_reimbursement_dir"}]},
+        headers=SAME_ORIGIN,
+    ).json()
+    assert plan["can_confirm"] is True
+
+    # Remap expense_reimbursement_dir from 费用报销 -> 费用报销新 after preview
+    cur_rev = client.get("/api/v1/companies").json()["revision"]
+    remap = client.patch(
+        f"/api/v1/companies/{cid}",
+        json={"revision": cur_rev, "subdirs": {"expense_reimbursement_dir": "费用报销新"}},
+        headers=SAME_ORIGIN,
+    )
+    assert remap.status_code == 200, remap.text
+
+    stale = client.post(
+        f"/api/v1/companies/{cid}/directories/{gkey}/files/move/{plan['job_id']}/confirm",
+        json={"confirm": True, "plan_hash": plan["plan_hash"]},
+        headers=SAME_ORIGIN,
+    )
+    assert stale.status_code == 409
+    assert stale.json()["error"]["code"] == "WORKSPACE_PLAN_STALE"
+    assert doc.is_file()
+    assert not (comp / "费用报销新" / "contract.txt").exists()
+    assert not (comp / "费用报销" / "contract.txt").exists()
