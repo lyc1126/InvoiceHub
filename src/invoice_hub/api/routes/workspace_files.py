@@ -166,12 +166,19 @@ def router() -> APIRouter:
         except CompanyRegistryError as exc:
             return _error(exc)
 
-    @routes.post("/api/v1/companies/{company_id}/directories/{key}/files/trash")
-    async def confirm_trash_files(request: Request, company_id: str, key: str):
+    @routes.post("/api/v1/companies/{company_id}/directories/{key}/files/trash/{job_id}/confirm")
+    async def confirm_trash_files(request: Request, company_id: str, key: str, job_id: str):
         _require_same_origin_write(request)
         body = await _json_body(request)
         try:
-            return await run_in_threadpool(_state(request).company_views.files.confirm_trash, company_id, key, body)
+            return await run_in_threadpool(_state(request).company_views.files.confirm_trash, company_id, key, job_id, body)
+        except CompanyRegistryError as exc:
+            return _error(exc)
+
+    @routes.get("/api/v1/companies/{company_id}/directories/{key}/files/trash/{job_id}")
+    async def get_trash_files_job(request: Request, company_id: str, key: str, job_id: str):
+        try:
+            return await run_in_threadpool(_state(request).company_views.files.get_trash_job, company_id, key, job_id)
         except CompanyRegistryError as exc:
             return _error(exc)
 

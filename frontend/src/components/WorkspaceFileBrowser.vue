@@ -63,11 +63,14 @@ const renameError = ref("");
 // Cross-dir move
 const movePaths = ref<string[] | null>(null);
 
-// Native recycle-bin delete
+// Native recycle-bin delete (durable job + read-only result lookup on unknown response)
 const trashPreview = ref<FileTrashPreviewPayload | null>(null);
 const trashConfirmed = ref(false);
 const trashBusy = ref(false);
+const trashChecking = ref(false);
 const trashError = ref("");
+const lostTrashJobId = ref("");
+const trashResult = ref<FileTrashConfirmPayload | null>(null);
 
 let reqGen = 0;
 let searchTimer: ReturnType<typeof setTimeout> | undefined;
@@ -286,9 +289,27 @@ async function onMoved(result: FileMovePlanPayload): Promise<void> {
   emit("mutated");
 }
 
+function closeTrashModal(): void {
+  if (trashBusy.value || trashChecking.value) return;
+  trashPreview.value = null;
+  trashResult.value = null;
+  lostTrashJobId.value = "";
+  trashConfirmed.value = false;
+  trashError.value = "";
+}
+
+function trashStatusLabel(status: string): string {
+  if (status === "trashed") return "已移入回收站";
+  if (status === "failed") return "失败";
+  if (status === "unknown" || status === "moving") return "待核对";
+  return "未执行";
+}
+
 async function startTrash(entry: DirectoryFileEntry): Promise<void> {
   trashError.value = "";
   trashConfirmed.value = false;
+  lostTrashJobId.value = "";
+  trashResult.value = null;
   try {
     trashPreview.value = await request<FileTrashPreviewPayload>(`${base()}/trash/preview`, {
       method: "POST",
@@ -299,32 +320,70 @@ async function startTrash(entry: DirectoryFileEntry): Promise<void> {
   }
 }
 
+async function applyTrashOutcome(res: FileTrashConfirmPayload): Promise<void> {
+  trashResult.value = res;
+  lostTrashJobId.value = "";
+  await load();
+  if (res.trashed > 0 && props.isInvoiceDir && res.monitored) {
+    await request("/api/v1/bridge/rebuild", { method: "POST", body: {} }).catch(() => undefined);
+  }
+  window.dispatchEvent(new CustomEvent("workspace:company-refreshed", { detail: { companyId: props.company.id } }));
+  emit("mutated");
+  if (res.status === "completed" && res.failed === 0 && res.unknown === 0) {
+    closeTrashModal();
+    toast(`已移入系统回收站 ${res.trashed} 个文件。`, "info", 4000);
+  } else {
+    trashError.value = `部分文件未完成（已移入 ${res.trashed}，失败 ${res.failed}，待核对 ${res.unknown}，未执行 ${res.pending}）；请按下方逐文件结果核对，切勿盲目重复确认。`;
+  }
+}
+
 async function confirmTrash(): Promise<void> {
   const preview = trashPreview.value;
-  if (!preview || !trashConfirmed.value || trashBusy.value) return;
+  if (!preview || !trashConfirmed.value || trashBusy.value || lostTrashJobId.value || trashResult.value) return;
   trashBusy.value = true;
   trashError.value = "";
   try {
-    const res = await request<FileTrashConfirmPayload>(`${base()}/trash`, {
+    const res = await request<FileTrashConfirmPayload>(`${base()}/trash/${encodeURIComponent(preview.job_id)}/confirm`, {
       method: "POST",
       body: {
         confirm: true,
         plan_hash: preview.plan_hash,
-        relative_paths: preview.items.map((item) => item.relative_path),
       },
+      acceptPartial: true,
     });
-    trashPreview.value = null;
-    toast(`已移入系统回收站 ${res.trashed} 个文件。`, res.failed ? "error" : "info", 4000);
-    await load();
-    if (res.trashed > 0 && props.isInvoiceDir && res.monitored) {
-      await request("/api/v1/bridge/rebuild", { method: "POST", body: {} }).catch(() => undefined);
+    await applyTrashOutcome(res);
+  } catch (cause) {
+    // Unknown confirm outcome: lock confirmation and require read-only receipt inspection.
+    lostTrashJobId.value = preview.job_id;
+    trashError.value = `${errorText(cause)}（请先只读查询本次删除结果，切勿重复确认。）`;
+  } finally {
+    trashBusy.value = false;
+  }
+}
+
+async function checkLostTrashJob(): Promise<void> {
+  if (!lostTrashJobId.value || trashChecking.value) return;
+  trashChecking.value = true;
+  trashError.value = "";
+  try {
+    const res = await request<FileTrashConfirmPayload>(`${base()}/trash/${encodeURIComponent(lostTrashJobId.value)}`, {
+      acceptPartial: true,
+    });
+    if (res.status === "completed" || res.status === "partial") {
+      await applyTrashOutcome(res);
+    } else if (res.status === "running") {
+      trashResult.value = res;
+      trashError.value = "该回收站任务正在执行或上次中断，请稍后刷新核对下方逐文件状态，切勿重复确认。";
+    } else {
+      // Still prepared: backend never started execution, safe to unlock confirmation.
+      lostTrashJobId.value = "";
+      trashPreview.value = res;
+      trashError.value = "后端尚未开始移入回收站，可核对后重新确认。";
     }
-    window.dispatchEvent(new CustomEvent("workspace:company-refreshed", { detail: { companyId: props.company.id } }));
-    emit("mutated");
   } catch (cause) {
     trashError.value = errorText(cause);
   } finally {
-    trashBusy.value = false;
+    trashChecking.value = false;
   }
 }
 
@@ -338,6 +397,10 @@ watch(
     stagedFiles.value = [];
     importPreview.value = null;
     uploadResults.value = [];
+    trashPreview.value = null;
+    trashResult.value = null;
+    lostTrashJobId.value = "";
+    trashError.value = "";
     void load();
   },
   { immediate: true },
@@ -527,24 +590,48 @@ onBeforeUnmount(() => {
       @moved="onMoved"
     />
 
-    <WsModal v-if="trashPreview" title="移入系统回收站" :subtitle="`目录：${trashPreview.dir_label}`" @close="trashPreview = null">
+    <WsModal v-if="trashPreview" title="移入系统回收站" :subtitle="`目录：${trashPreview.dir_label}`" @close="closeTrashModal">
       <div class="ws-files__modal-form">
         <p v-if="trashError" class="banner banner--error" role="alert">{{ trashError }}</p>
         <p>
           将以下 <strong>{{ trashPreview.file_count }}</strong> 个文件（共 {{ formatSize(trashPreview.total_bytes) }}）移入系统回收站 / 废纸篓（支持从系统回收站恢复，绝不执行永久删除）：
         </p>
-        <ul>
+        <ul v-if="trashResult?.results?.length">
+          <li v-for="item in trashResult.results" :key="item.relative_path" class="mono">
+            {{ item.relative_path }} — <strong>{{ trashStatusLabel(item.status) }}</strong><span v-if="item.message" class="muted">（{{ item.message }}）</span>
+          </li>
+        </ul>
+        <ul v-else>
           <li v-for="item in trashPreview.items" :key="item.relative_path" class="mono">{{ item.relative_path }}</li>
         </ul>
-        <label class="ws-files__confirm-check">
+        <label v-if="!trashResult && !lostTrashJobId" class="ws-files__confirm-check">
           <input v-model="trashConfirmed" type="checkbox">
           <span>我已核对文件名，确认移入系统回收站</span>
         </label>
         <div class="actions">
-          <button type="button" class="danger" :disabled="!trashConfirmed || trashBusy" :aria-busy="trashBusy" @click="confirmTrash">
+          <button
+            v-if="lostTrashJobId"
+            type="button"
+            class="primary"
+            :disabled="trashChecking"
+            :aria-busy="trashChecking"
+            @click="checkLostTrashJob"
+          >
+            {{ trashChecking ? "查询中…" : "查询本次删除结果" }}
+          </button>
+          <button
+            v-else-if="!trashResult"
+            type="button"
+            class="danger"
+            :disabled="!trashConfirmed || trashBusy"
+            :aria-busy="trashBusy"
+            @click="confirmTrash"
+          >
             {{ trashBusy ? "移入中…" : "确认移入系统回收站" }}
           </button>
-          <button type="button" :disabled="trashBusy" @click="trashPreview = null">取消</button>
+          <button type="button" :disabled="trashBusy || trashChecking" @click="closeTrashModal">
+            {{ trashResult ? "关闭" : "取消" }}
+          </button>
         </div>
       </div>
     </WsModal>

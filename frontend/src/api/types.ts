@@ -919,21 +919,33 @@ export interface FileMovePlanPayload {
   overrides_migrated?: number;
 }
 
-export interface FileTrashPreviewPayload {
-  ok: boolean;
-  company_id: string;
-  dir_key: string;
-  dir_label: string;
-  file_count: number;
-  total_bytes: number;
-  items: { relative_path: string; name: string; size_bytes: number }[];
-  plan_hash: string;
+export interface FileTrashItemStatus {
+  relative_path: string;
+  name: string;
+  size_bytes: number;
+  status: "pending" | "moving" | "trashed" | "failed" | "unknown";
+  message: string;
 }
 
-export interface FileTrashConfirmPayload {
+export interface FileTrashJobPayload {
   ok: boolean;
+  job_id: string;
+  company_id: string;
+  company_name?: string;
+  dir_key: string;
+  dir_label: string;
+  monitored: boolean;
+  status: "prepared" | "running" | "completed" | "partial";
+  file_count: number;
+  total_bytes: number;
+  plan_hash: string;
   trashed: number;
   failed: number;
-  results: { relative_path: string; name: string; status: "trashed" | "failed"; message: string }[];
-  monitored: boolean;
+  unknown: number;
+  pending: number;
+  items: FileTrashItemStatus[];
+  results: FileTrashItemStatus[];
 }
+
+export type FileTrashPreviewPayload = FileTrashJobPayload;
+export type FileTrashConfirmPayload = FileTrashJobPayload;

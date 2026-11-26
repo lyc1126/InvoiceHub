@@ -650,6 +650,7 @@ class CompanyRegistryService:
                 raise _invalid("同时修改公司根目录路径与重命名硬盘文件夹不能合并提交，请分开操作。", "root_dir")
             disk_commit = lambda: None
             disk_rollback = lambda: None
+            pending_disk_rename: tuple[Path, Path] | None = None
             if rename_root_on_disk:
                 new_root_name = clean_single_folder_name(payload.get("new_root_name"), "new_root_name")
                 old_root = self._registered_root(company["root_dir"])
@@ -686,7 +687,9 @@ class CompanyRegistryService:
                                 f"新公司根路径不能与本公司外部文件夹“{ext['label']}”重叠。",
                                 "new_root_name",
                             )
-                    disk_commit, disk_rollback = self.folders.rename_company_root_with_overrides(company, old_root, new_root)
+                    # Defer the actual filesystem rename until every submitted field (subdirs,
+                    # taxpayer_periods, etc.) has been validated, so invalid requests never rename disk state.
+                    pending_disk_rename = (old_root, new_root)
                     updated["root_dir"] = stored_new_root
             elif "root_dir" in payload:
                 new_stored_root = self._clean_root(payload.get("root_dir"), registry, company_id)
@@ -718,11 +721,15 @@ class CompanyRegistryService:
             if "taxpayer_periods" in payload:
                 updated["taxpayer_periods"] = clean_taxpayer_periods(payload.get("taxpayer_periods"))
             if updated != company:
-                updated["updated_at"] = utc_now_text()
+                if pending_disk_rename is not None:
+                    disk_commit, disk_rollback = self.folders.rename_company_root_with_overrides(
+                        company, pending_disk_rename[0], pending_disk_rename[1]
+                    )
                 previous_snapshot = dict(company)
-                company.clear()
-                company.update(updated)
                 try:
+                    updated["updated_at"] = utc_now_text()
+                    company.clear()
+                    company.update(updated)
                     self._save(registry)
                 except Exception:
                     company.clear()

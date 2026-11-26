@@ -231,17 +231,42 @@ describe("Phase 2 WS-12 generic file browser and active invoice file actions", (
         if (url.endsWith("/files/trash/preview")) {
           return new Response(JSON.stringify({
             ok: true,
+            job_id: "0123456789abcdef0123456789abcdef",
             company_id: "co_a",
             dir_key: "cf_general",
             dir_label: "合同归档",
+            monitored: false,
+            status: "prepared",
             file_count: 1,
             total_bytes: 2048,
-            items: [{ relative_path: "采购合同.pdf", name: "采购合同.pdf", size_bytes: 2048 }],
+            trashed: 0,
+            failed: 0,
+            unknown: 0,
+            pending: 1,
+            items: [{ relative_path: "采购合同.pdf", name: "采购合同.pdf", size_bytes: 2048, status: "pending", message: "" }],
+            results: [],
             plan_hash: "hash_trash_1",
           }), { status: 200 });
         }
-        if (url.endsWith("/files/trash")) {
-          return new Response(JSON.stringify({ ok: true, trashed: 1, failed: 0, results: [], monitored: false }), { status: 200 });
+        if (url.endsWith("/files/trash/0123456789abcdef0123456789abcdef/confirm")) {
+          return new Response(JSON.stringify({
+            ok: true,
+            job_id: "0123456789abcdef0123456789abcdef",
+            company_id: "co_a",
+            dir_key: "cf_general",
+            dir_label: "合同归档",
+            monitored: false,
+            status: "completed",
+            file_count: 1,
+            total_bytes: 2048,
+            trashed: 1,
+            failed: 0,
+            unknown: 0,
+            pending: 0,
+            items: [{ relative_path: "采购合同.pdf", name: "采购合同.pdf", size_bytes: 2048, status: "trashed", message: "已移入系统回收站。" }],
+            results: [{ relative_path: "采购合同.pdf", name: "采购合同.pdf", size_bytes: 2048, status: "trashed", message: "已移入系统回收站。" }],
+            plan_hash: "hash_trash_1",
+          }), { status: 200 });
         }
         return new Response(JSON.stringify({ ok: true }), { status: 200 });
       }),
@@ -261,7 +286,7 @@ describe("Phase 2 WS-12 generic file browser and active invoice file actions", (
     await flushPromises();
     expect(calls.some((c) => c.url.endsWith("/files/mkdir") && (c.body as { name?: string })?.name === "补充协议")).toBe(true);
 
-    // Native recycle-bin confirmation flow
+    // Native recycle-bin confirmation flow (durable job_id confirm route)
     await panel.findAll("button").find((b) => b.text() === "回收站")!.trigger("click");
     await flushPromises();
     const dialog = new DOMWrapper(document.body.querySelector('[role="dialog"]')!);
@@ -270,8 +295,109 @@ describe("Phase 2 WS-12 generic file browser and active invoice file actions", (
     await dialog.get('input[type="checkbox"]').setValue(true);
     await confirmBtn.trigger("click");
     await flushPromises();
-    expect(calls.some((c) => c.url.endsWith("/files/trash") && (c.body as { confirm?: boolean; plan_hash?: string })?.confirm === true && (c.body as { plan_hash?: string })?.plan_hash === "hash_trash_1")).toBe(true);
+    expect(calls.some((c) => c.url.endsWith("/files/trash/0123456789abcdef0123456789abcdef/confirm") && (c.body as { confirm?: boolean; plan_hash?: string })?.confirm === true && (c.body as { plan_hash?: string })?.plan_hash === "hash_trash_1")).toBe(true);
 
+    panel.unmount();
+  });
+
+  it("locks trash confirmation on unknown response and recovers per-file receipt via read-only GET", async () => {
+    const calls: { url: string; method: string }[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init: RequestInit = {}) => {
+        const method = init.method ?? "GET";
+        calls.push({ url, method });
+        if (url.endsWith("/directories")) {
+          return new Response(JSON.stringify({ ok: true, revision: 2, company: COMPANY_A, directories: DIRS_A }), { status: 200 });
+        }
+        if (url.includes("/directories/cf_general/files?")) {
+          return new Response(JSON.stringify({
+            ok: true,
+            company_id: "co_a",
+            company_name: "甲公司",
+            dir_key: "cf_general",
+            dir_label: "合同归档",
+            dir_role: "general",
+            monitored: false,
+            can_upload: true,
+            can_mutate_existing: true,
+            subpath: "",
+            breadcrumbs: [{ name: "合同归档", subpath: "" }],
+            folders: [],
+            files: [{ name: "采购合同.pdf", relative_path: "采购合同.pdf", ext: ".pdf", size_bytes: 2048, mtime: "2026-11-25 12:00:00", mtime_ns: 2, is_invoice_ext: true, is_symlink: false }],
+            extensions: [".pdf"],
+            total_folders: 0,
+            total_files: 1,
+            truncated: false,
+          }), { status: 200 });
+        }
+        if (url.endsWith("/files/trash/preview")) {
+          return new Response(JSON.stringify({
+            ok: true,
+            job_id: "fedcba9876543210fedcba9876543210",
+            company_id: "co_a",
+            dir_key: "cf_general",
+            dir_label: "合同归档",
+            monitored: false,
+            status: "prepared",
+            file_count: 1,
+            total_bytes: 2048,
+            trashed: 0,
+            failed: 0,
+            unknown: 0,
+            pending: 1,
+            items: [{ relative_path: "采购合同.pdf", name: "采购合同.pdf", size_bytes: 2048, status: "pending", message: "" }],
+            results: [],
+            plan_hash: "hash_trash_lost",
+          }), { status: 200 });
+        }
+        if (url.endsWith("/files/trash/fedcba9876543210fedcba9876543210/confirm")) {
+          throw new TypeError("network disconnected");
+        }
+        if (url.endsWith("/files/trash/fedcba9876543210fedcba9876543210") && method === "GET") {
+          return new Response(JSON.stringify({
+            ok: true,
+            job_id: "fedcba9876543210fedcba9876543210",
+            company_id: "co_a",
+            dir_key: "cf_general",
+            dir_label: "合同归档",
+            monitored: false,
+            status: "partial",
+            file_count: 1,
+            total_bytes: 2048,
+            trashed: 0,
+            failed: 1,
+            unknown: 0,
+            pending: 0,
+            items: [{ relative_path: "采购合同.pdf", name: "采购合同.pdf", size_bytes: 2048, status: "failed", message: "回收站不可用" }],
+            results: [{ relative_path: "采购合同.pdf", name: "采购合同.pdf", size_bytes: 2048, status: "failed", message: "回收站不可用" }],
+            plan_hash: "hash_trash_lost",
+          }), { status: 200 });
+        }
+        return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      }),
+    );
+
+    setActivePinia(createPinia());
+    const panel = mount(DirectoryPanel, { props: { company: COMPANY_A, dirKey: "cf_general" }, attachTo: document.body });
+    await flushPromises();
+
+    await panel.findAll("button").find((b) => b.text() === "回收站")!.trigger("click");
+    await flushPromises();
+    const dialog = new DOMWrapper(document.body.querySelector('[role="dialog"]')!);
+    await dialog.get('input[type="checkbox"]').setValue(true);
+    await dialog.findAll("button").find((b) => b.text().includes("确认移入系统回收站"))!.trigger("click");
+    await flushPromises();
+
+    // Confirm button is replaced with read-only lookup; never invites blind retry
+    expect(dialog.findAll("button").some((b) => b.text().includes("确认移入系统回收站"))).toBe(false);
+    const lookupBtn = dialog.findAll("button").find((b) => b.text().includes("查询本次删除结果"))!;
+    await lookupBtn.trigger("click");
+    await flushPromises();
+
+    expect(calls.some((c) => c.url.endsWith("/files/trash/fedcba9876543210fedcba9876543210") && c.method === "GET")).toBe(true);
+    expect(dialog.text()).toContain("回收站不可用");
+    expect(dialog.text()).toContain("失败");
     panel.unmount();
   });
 

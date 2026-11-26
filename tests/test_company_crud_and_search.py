@@ -463,3 +463,52 @@ def test_directory_deep_search_buyer_multitoken_date_amount_tax_project_and_sort
     assert set(empty["filter_options"]["tax_rates"]) == {"3%", "13%", "免税"}
     assert empty["filter_options"]["has_missing_tax_rate"] is True
     assert empty["filter_options"]["has_duplicates"] is True
+
+
+def test_company_disk_rename_validates_complete_update_before_renaming_root(client, tmp_path: Path) -> None:
+    root = _make_company_root(tmp_path, "原公司根")
+    (root / "合同归档").mkdir()
+    company_id = _register_company(client, root, "原公司根")
+
+    # Add an inside-root custom folder so we can trigger a subdirs overlap validation error.
+    imp = client.post(
+        f"/api/v1/companies/{company_id}/folders/import",
+        headers=SAME_ORIGIN,
+        json={"revision": _rev(client), "relative_path": "合同归档", "label": "合同归档", "role": "general"},
+    )
+    assert imp.status_code == 200, imp.text
+
+    # 1) Disk rename combined with invalid subdirs (overlapping custom folder) must reject BEFORE renaming disk.
+    bad_subdirs = client.patch(
+        f"/api/v1/companies/{company_id}",
+        headers=SAME_ORIGIN,
+        json={
+            "revision": _rev(client),
+            "rename_root_on_disk": True,
+            "new_root_name": "不应改名一",
+            "subdirs": {"cost_invoice_dir": "合同归档"},
+        },
+    )
+    assert bad_subdirs.status_code == 422
+    assert root.is_dir()
+    assert not (tmp_path / "不应改名一").exists()
+    assert client.get(f"/api/v1/companies/{company_id}").json()["company"]["root_path"] == str(root.resolve())
+
+    # 2) Disk rename combined with duplicate taxpayer effective months must reject BEFORE renaming disk.
+    bad_tax = client.patch(
+        f"/api/v1/companies/{company_id}",
+        headers=SAME_ORIGIN,
+        json={
+            "revision": _rev(client),
+            "rename_root_on_disk": True,
+            "new_root_name": "不应改名二",
+            "taxpayer_periods": [
+                {"effective_from": "2026-01", "taxpayer_type": "general"},
+                {"effective_from": "2026-01", "taxpayer_type": "small_scale"},
+            ],
+        },
+    )
+    assert bad_tax.status_code == 422
+    assert root.is_dir()
+    assert not (tmp_path / "不应改名二").exists()
+    assert client.get(f"/api/v1/companies/{company_id}").json()["company"]["root_path"] == str(root.resolve())

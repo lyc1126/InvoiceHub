@@ -20,6 +20,7 @@ import os
 import re
 import secrets
 import stat
+import threading
 import time
 import uuid
 from datetime import datetime
@@ -48,6 +49,7 @@ MAX_LIST_ENTRIES = 2_000
 MAX_UPLOAD_FILE_BYTES = 50 * 1024 * 1024
 MAX_BATCH_ITEMS = 100
 MOVE_PLAN_EXPIRY_SECONDS = 300
+TRASH_PLAN_EXPIRY_SECONDS = 300
 _INVALID_NAME_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 _WINDOWS_RESERVED_STEMS = frozenset(
     {
@@ -187,13 +189,37 @@ def _try_profile_locks(profiles: list[TargetProfile], db_path: Path) -> Iterator
         yield
 
 
+def _has_override_for_path(profile: TargetProfile, path: Path) -> bool:
+    """Read-only check whether ``profile`` currently holds a manual override entry for ``path``."""
+    src_file = Path(profile.state_dir) / "manual_overrides.json"
+    if not src_file.is_file():
+        return False
+    src_payload = read_json_object(src_file, {"items": {}})
+    src_items = src_payload.get("items")
+    if not isinstance(src_items, dict):
+        return False
+    target_key = _path_key(path)
+    for identity in src_items:
+        try:
+            if _path_key(Path(str(identity))) == target_key:
+                return True
+        except (OSError, TypeError, ValueError):
+            continue
+    return False
+
+
 def _migrate_single_override(
     src_profile: TargetProfile,
     dst_profile: TargetProfile,
     old_path: Path,
     new_path: Path,
 ) -> bool:
-    """Move a manual_overrides.json entry when a source invoice is renamed or moved across directories."""
+    """Move a manual_overrides.json entry when a source invoice is renamed or moved across directories.
+
+    Cross-directory moves persist the destination override FIRST (creating ``dst_profile.state_dir``
+    for this explicit write operation when the destination directory has not yet been initialized)
+    before removing the source entry, so user-edited fields can never be silently dropped.
+    """
     src_file = Path(src_profile.state_dir) / "manual_overrides.json"
     if not src_file.is_file():
         return False
@@ -215,30 +241,55 @@ def _migrate_single_override(
     if matched_identity is None:
         return False
 
+    try:
+        new_path_str = str(new_path.resolve())
+    except OSError:
+        new_path_str = str(new_path)
+
     copied = dict(matched_entry) if isinstance(matched_entry, dict) else matched_entry
     if isinstance(copied, dict):
-        copied["source_path"] = str(new_path)
+        copied["source_path"] = new_path_str
         copied["invoice_key"] = ""
         copied["renamed_at"] = utc_now_text()
 
     if src_profile.id == dst_profile.id:
         new_items = {k: v for k, v in src_items.items() if str(k) != matched_identity}
-        new_items[str(new_path)] = copied
+        new_items[new_path_str] = copied
         src_payload["items"] = new_items
+        src_payload["updated_at"] = utc_now_text()
         atomic_write_json(src_file, src_payload)
         return True
 
-    # Cross-directory move: write destination override only if destination state dir exists (never fabricate new state dir).
+    # Cross-directory move: explicit write creates destination state_dir if uninitialized and persists
+    # the destination manual_overrides.json before touching the source file.
     dst_state_dir = Path(dst_profile.state_dir)
-    if dst_state_dir.is_dir():
-        dst_file = dst_state_dir / "manual_overrides.json"
-        dst_payload = read_json_object(dst_file, {"items": {}})
-        dst_items = dst_payload.setdefault("items", {})
-        if isinstance(dst_items, dict):
-            dst_items[str(new_path)] = copied
-            atomic_write_json(dst_file, dst_payload)
+    dst_state_dir.mkdir(parents=True, exist_ok=True)
+    dst_file = dst_state_dir / "manual_overrides.json"
+    if dst_file.is_file():
+        try:
+            dst_payload = json.loads(dst_file.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise CompanyRegistryError(
+                "WORKSPACE_OVERRIDE_CORRUPT",
+                "目标目录的手改记录文件已损坏，已中止迁移以保护原手改字段。",
+                status_code=409,
+            ) from exc
+        if not isinstance(dst_payload, dict) or not isinstance(dst_payload.get("items", {}), dict):
+            raise CompanyRegistryError(
+                "WORKSPACE_OVERRIDE_CORRUPT",
+                "目标目录的手改记录格式异常，已中止迁移以保护原手改字段。",
+                status_code=409,
+            )
+    else:
+        dst_payload = {"version": 1, "items": {}}
+    dst_items = dst_payload.setdefault("items", {})
+    dst_items[new_path_str] = copied
+    dst_payload["updated_at"] = utc_now_text()
+    atomic_write_json(dst_file, dst_payload)
+
     new_src_items = {k: v for k, v in src_items.items() if str(k) != matched_identity}
     src_payload["items"] = new_src_items
+    src_payload["updated_at"] = utc_now_text()
     atomic_write_json(src_file, src_payload)
     return True
 
@@ -331,7 +382,10 @@ class WorkspaceFileService:
 
     def __init__(self, views: CompanyViewService) -> None:
         self._views = views
-        self._move_root = Path(views._registry.registry_path).parent / "workspace-moves"
+        state_root = Path(views._registry.registry_path).parent
+        self._move_root = state_root / "workspace-moves"
+        self._trash_root = state_root / "workspace-trash"
+        self._job_lock = threading.RLock()
 
     def _resolve_dir(self, company_id: str, key: str) -> tuple[dict, dict, TargetProfile, Path, bool, str]:
         company = self._views._registry.get_company(company_id)["company"]
@@ -695,7 +749,16 @@ class WorkspaceFileService:
                 raise CompanyRegistryError("WORKSPACE_FILE_CONFLICT", f"同目录下已存在「{new_name}」，未覆盖。", status_code=409) from exc
             except OSError as exc:
                 raise CompanyRegistryError("WORKSPACE_FILE_UNAVAILABLE", f"重命名失败：{exc}", status_code=409) from exc
-            migrated = _migrate_single_override(profile, profile, src_path, dst_path)
+            try:
+                migrated = _migrate_single_override(profile, profile, src_path, dst_path)
+            except (CompanyRegistryError, OSError):
+                # Restore the original filename if migrating manual_overrides.json fails.
+                with contextlib.suppress(OSError, FileExistsError):
+                    if same_name_case:
+                        os.rename(dst_path, src_path)
+                    else:
+                        _move_file_no_overwrite(dst_path, src_path)
+                raise
 
         self._clear_active_cache_if_monitored(profile)
         new_rel = "/".join([*rel_parts[:-1], new_name])
@@ -909,6 +972,13 @@ class WorkspaceFileService:
             dst_sub_parts = _clean_rel_parts(item.get("target_subpath", ""), allow_empty=True, label="目标子路径")
             dst_parent = _check_chain_no_links(dst_dir_path, dst_sub_parts, expect_file=False) if dst_sub_parts else dst_dir_path
             resolved_targets.append((item, dst_profile, dst_parent))
+            # If this explicit move carries an existing manual override to an uninitialized destination
+            # profile, create dst_profile.state_dir before locking so both profiles enter _try_profile_locks
+            # in deterministic ID order and destination manual_overrides.json is durably persisted.
+            if dst_profile.id != src_profile.id and not Path(dst_profile.state_dir).is_dir():
+                rel_parts = _clean_rel_parts(item["relative_path"], allow_empty=False, label="源文件路径")
+                if _has_override_for_path(src_profile, src_dir_path.joinpath(*rel_parts)):
+                    Path(dst_profile.state_dir).mkdir(parents=True, exist_ok=True)
 
         results: list[dict] = []
         moved_count = 0
@@ -933,8 +1003,15 @@ class WorkspaceFileService:
                     if dst_name.casefold() in _existing_names_folded(dst_parent) or dst_file.exists() or _is_link(dst_file):
                         raise FileExistsError(f"目标目录已存在「{dst_name}」，未覆盖。")
                     _move_file_no_overwrite(src_file, dst_file)
-                    if _migrate_single_override(src_profile, dst_profile, src_file, dst_file):
-                        overrides_migrated += 1
+                    try:
+                        if _migrate_single_override(src_profile, dst_profile, src_file, dst_file):
+                            overrides_migrated += 1
+                    except (CompanyRegistryError, OSError):
+                        # Roll back the moved file when destination override persistence fails so
+                        # neither the file nor its source override is split or lost.
+                        with contextlib.suppress(OSError, FileExistsError):
+                            _move_file_no_overwrite(dst_file, src_file)
+                        raise
                     moved_count += 1
                     results.append({
                         "relative_path": item["relative_path"],
@@ -973,12 +1050,116 @@ class WorkspaceFileService:
         )
         return {"ok": True, **job}
 
-    # ---- Generic file trash (preview -> native recycle bin only) ----
+    # ---- Generic file trash (preview -> durable receipt -> native recycle bin -> read-only lookup) ----
+
+    def _trash_job_path(self, job_id: str) -> Path:
+        if len(job_id) != 32 or any(ch not in "0123456789abcdef" for ch in job_id):
+            raise CompanyRegistryError("WORKSPACE_TRASH_NOT_FOUND", "回收站任务不存在或已失效。", status_code=404)
+        return self._trash_root / f"{job_id}.json"
+
+    def _trash_journal_path(self, job_id: str) -> Path:
+        return self._trash_job_path(job_id).with_suffix(".jsonl")
+
+    def _save_trash_job(self, job: dict) -> None:
+        self._trash_root.mkdir(parents=True, exist_ok=True)
+        atomic_write_json(self._trash_job_path(job["job_id"]), job)
+
+    def _append_trash_journal(self, job_id: str, index: int, status: str, message: str) -> None:
+        """Append and fsync one per-file intent/observation before and after ``move_to_trash``."""
+        self._trash_root.mkdir(parents=True, exist_ok=True)
+        entry = {"index": index, "result": {"status": status, "message": message}}
+        with self._trash_journal_path(job_id).open("a", encoding="utf-8") as stream:
+            stream.write(json.dumps(entry, ensure_ascii=False) + "\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+
+    def _load_trash_job(self, company_id: str, key: str, job_id: str) -> dict:
+        job = read_json_object(self._trash_job_path(job_id))
+        if not isinstance(job, dict) or job.get("company_id") != company_id or job.get("dir_key") != key:
+            raise CompanyRegistryError("WORKSPACE_TRASH_NOT_FOUND", "回收站任务不存在或已失效。", status_code=404)
+        journal = self._trash_journal_path(job_id)
+        if job.get("status") == "running" and journal.is_file():
+            items = job.get("items")
+            if isinstance(items, list):
+                for line in journal.read_text(encoding="utf-8").splitlines():
+                    try:
+                        event = json.loads(line)
+                        idx = int(event["index"])
+                        result = event["result"]
+                        if 0 <= idx < len(items) and isinstance(result, dict):
+                            if "status" in result:
+                                items[idx]["status"] = str(result["status"])
+                            if "message" in result:
+                                items[idx]["message"] = str(result["message"])
+                    except (ValueError, KeyError, TypeError, IndexError):
+                        break  # An interrupted trailing journal write is never treated as completion.
+        return job
+
+    @staticmethod
+    def _public_trash_job(job: dict, *, lookup_ok: bool | None = None) -> dict:
+        raw_items = job.get("items") if isinstance(job.get("items"), list) else []
+        status = str(job.get("status") or "prepared")
+        trashed = 0
+        failed = 0
+        unknown = 0
+        pending = 0
+        public_items: list[dict] = []
+        results: list[dict] = []
+        for item in raw_items:
+            item_status = str(item.get("status") or "pending")
+            item_message = str(item.get("message") or "")
+            if item_status == "trashed":
+                trashed += 1
+            elif item_status == "failed":
+                failed += 1
+            elif item_status in {"unknown", "moving"}:
+                unknown += 1
+                if item_status == "moving" and not item_message:
+                    item_message = "执行中断，请核对文件是否已移入系统回收站。"
+            else:
+                pending += 1
+            entry = {
+                "relative_path": str(item.get("relative_path") or ""),
+                "name": str(item.get("name") or ""),
+                "size_bytes": int(item.get("size_bytes") or 0),
+                "status": item_status,
+                "message": item_message,
+            }
+            public_items.append(entry)
+            if status != "prepared":
+                results.append(entry)
+        ok_flag = lookup_ok if lookup_ok is not None else (status in {"prepared", "completed"} and failed == 0 and unknown == 0)
+        return {
+            "ok": ok_flag,
+            "job_id": str(job.get("job_id") or ""),
+            "company_id": str(job.get("company_id") or ""),
+            "company_name": str(job.get("company_name") or ""),
+            "dir_key": str(job.get("dir_key") or ""),
+            "dir_label": str(job.get("dir_label") or ""),
+            "monitored": bool(job.get("monitored", False)),
+            "status": status,
+            "file_count": len(public_items),
+            "total_bytes": int(job.get("total_bytes") or 0),
+            "plan_hash": str(job.get("plan_hash") or ""),
+            "created_at": job.get("created_at"),
+            "expires_at": job.get("expires_at"),
+            "trashed": trashed,
+            "failed": failed,
+            "unknown": unknown,
+            "pending": pending,
+            "items": public_items,
+            "results": results,
+        }
+
+    def get_trash_job(self, company_id: str, key: str, job_id: str) -> dict:
+        """Strictly read-only lookup of a persisted trash job and its per-file journal."""
+        job = self._load_trash_job(company_id, key, job_id)
+        return self._public_trash_job(job, lookup_ok=True)
 
     def preview_trash(self, company_id: str, key: str, payload: object) -> dict:
         if not isinstance(payload, dict):
             raise CompanyRegistryError("WORKSPACE_FILE_INVALID", "请求格式不正确。", status_code=422)
-        _, subdir, _, dir_path, is_monitored, eff_role = self._resolve_dir(company_id, key)
+        company, subdir, _, dir_path, is_monitored, eff_role = self._resolve_dir(company_id, key)
         self._assert_mutate_allowed(eff_role, is_monitored, "移入回收站")
         raw_paths = payload.get("relative_paths")
         if not isinstance(raw_paths, list) or not raw_paths or len(raw_paths) > MAX_BATCH_ITEMS:
@@ -1001,59 +1182,155 @@ class WorkspaceFileService:
                 "name": target.name,
                 "size_bytes": sig[2],
                 "signature": sig,
+                "status": "pending",
+                "message": "",
             })
 
-        digest = _plan_hash({"company_id": company_id, "dir_key": key, "items": items})
-        return {
-            "ok": True,
+        digest = _plan_hash({
             "company_id": company_id,
             "dir_key": key,
+            "items": [
+                {
+                    "relative_path": item["relative_path"],
+                    "name": item["name"],
+                    "size_bytes": item["size_bytes"],
+                    "signature": item["signature"],
+                }
+                for item in items
+            ],
+        })
+        now = time.time()
+        job_id = uuid.uuid4().hex
+        job = {
+            "job_id": job_id,
+            "company_id": company_id,
+            "company_name": company["name"],
+            "dir_key": key,
             "dir_label": str(subdir.get("label") or key),
-            "file_count": len(items),
+            "monitored": is_monitored,
+            "plan_hash": digest,
+            "status": "prepared",
+            "created_at": now,
+            "expires_at": now + TRASH_PLAN_EXPIRY_SECONDS,
             "total_bytes": total_bytes,
             "items": items,
-            "plan_hash": digest,
         }
+        self._save_trash_job(job)
+        return self._public_trash_job(job, lookup_ok=True)
 
-    def confirm_trash(self, company_id: str, key: str, payload: object) -> dict:
+    def confirm_trash(self, company_id: str, key: str, job_id: str, payload: object) -> dict:
         if not isinstance(payload, dict) or payload.get("confirm") is not True:
             raise CompanyRegistryError("WORKSPACE_TRASH_CONFIRM_REQUIRED", "必须显式勾选确认才能移入系统回收站。", status_code=422)
         expected_hash = str(payload.get("plan_hash") or "")
         if not expected_hash:
             raise CompanyRegistryError("WORKSPACE_PLAN_STALE", "缺少 plan_hash，请重新预览。", status_code=409)
+
+        job = self._load_trash_job(company_id, key, job_id)
+        # Never replay an already-completed, partial, or interrupted trash job: a replacement file
+        # created later at the same filename must never be trashed by re-confirming an old receipt.
+        if job.get("status") in {"completed", "partial"}:
+            return self._public_trash_job(job)
+        if job.get("status") != "prepared":
+            raise CompanyRegistryError(
+                "WORKSPACE_TRASH_CONFLICT",
+                "该回收站任务正在执行或上次执行中断，请只读查询任务结果，切勿重复确认。",
+                status_code=409,
+            )
+        if expected_hash != str(job.get("plan_hash") or ""):
+            raise CompanyRegistryError("WORKSPACE_PLAN_STALE", "回收站任务指纹不匹配，请重新预览。", status_code=409)
+        if time.time() > float(job.get("expires_at") or 0):
+            raise CompanyRegistryError("WORKSPACE_PLAN_STALE", "回收站确认计划已过期，请重新预览。", status_code=409)
+
         _, _, profile, dir_path, is_monitored, eff_role = self._resolve_dir(company_id, key)
         self._assert_mutate_allowed(eff_role, is_monitored, "移入回收站")
-        preview = self.preview_trash(company_id, key, payload)
-        if preview["plan_hash"] != expected_hash:
-            raise CompanyRegistryError("WORKSPACE_PLAN_STALE", "文件状态在确认前已发生变化，请重新预览。", status_code=409)
+        job["monitored"] = is_monitored
 
-        results: list[dict] = []
-        trashed = 0
-        failed = 0
         with _try_profile_locks([profile], self._views._db_path):
-            for item in preview["items"]:
+            # Serialize prepared -> running transition even for uninitialized general folders whose
+            # profile.state_dir does not exist yet so concurrent confirms never double-execute.
+            with self._job_lock:
+                job = self._load_trash_job(company_id, key, job_id)
+                if job.get("status") in {"completed", "partial"}:
+                    return self._public_trash_job(job)
+                if job.get("status") != "prepared":
+                    raise CompanyRegistryError(
+                        "WORKSPACE_TRASH_CONFLICT",
+                        "该回收站任务正在执行或上次执行中断，请只读查询任务结果，切勿重复确认。",
+                        status_code=409,
+                    )
+                job["monitored"] = is_monitored
+                items = job.get("items") if isinstance(job.get("items"), list) else []
+
+                # Re-verify every planned file before transitioning the job to running so a pre-commit
+                # mismatch aborts cleanly with zero files moved.
+                for item in items:
+                    rel_parts = _clean_rel_parts(item["relative_path"], allow_empty=False, label="文件路径")
+                    try:
+                        target = _check_chain_no_links(dir_path, rel_parts, expect_file=True)
+                        if _file_signature(target) != item["signature"]:
+                            raise CompanyRegistryError("WORKSPACE_PLAN_STALE", "文件状态在确认前已发生变化，未删除任何文件，请重新预览。", status_code=409)
+                    except CompanyRegistryError as exc:
+                        if exc.code == "WORKSPACE_FILE_NOT_FOUND":
+                            raise CompanyRegistryError("WORKSPACE_PLAN_STALE", "文件在确认前已不存在，未删除任何文件，请重新预览。", status_code=409) from exc
+                        raise
+
+                # Persist running state before invoking move_to_trash so crashes/restarts recover via GET.
+                job["status"] = "running"
+                job["started_at"] = time.time()
+                self._save_trash_job(job)
+
+            stopped_on_error = False
+            for idx, item in enumerate(items):
                 rel_parts = _clean_rel_parts(item["relative_path"], allow_empty=False, label="文件路径")
+                target = dir_path.joinpath(*rel_parts)
                 try:
                     target = _check_chain_no_links(dir_path, rel_parts, expect_file=True)
                     if _file_signature(target) != item["signature"]:
-                        raise CompanyRegistryError("WORKSPACE_PLAN_STALE", "文件在移入回收站前已变化，已跳过。", status_code=409)
+                        raise CompanyRegistryError("WORKSPACE_PLAN_STALE", "文件在移入回收站前已变化，后续操作已停止。", status_code=409)
+                    # Record fsynced per-file intent BEFORE calling the native recycle-bin API.
+                    item["status"] = "moving"
+                    item["message"] = "正在移入系统回收站…"
+                    self._append_trash_journal(job_id, idx, "moving", item["message"])
+
                     move_to_trash(target)
-                    trashed += 1
-                    results.append({"relative_path": item["relative_path"], "name": item["name"], "status": "trashed", "message": "已移入系统回收站。"})
+
+                    item["status"] = "trashed"
+                    item["message"] = "已移入系统回收站。"
+                    self._append_trash_journal(job_id, idx, "trashed", item["message"])
                 except (CompanyRegistryError, OSError) as exc:
-                    failed += 1
-                    msg = exc.message if isinstance(exc, CompanyRegistryError) else str(exc)
-                    results.append({"relative_path": item["relative_path"], "name": item["name"], "status": "failed", "message": msg})
+                    # Native trash failure can be ambiguous: record failed vs unknown and stop immediately
+                    # without continuing or falling back to permanent deletion.
+                    if item.get("status") == "moving":
+                        try:
+                            still_present = target.exists() or _is_link(target)
+                        except OSError:
+                            still_present = False
+                        item["status"] = "failed" if still_present else "unknown"
+                    elif item.get("status") != "trashed":
+                        item["status"] = "failed"
+                    msg = exc.message if isinstance(exc, CompanyRegistryError) else (str(exc) or "未能移入系统回收站，未执行永久删除。")
+                    item["message"] = msg
+                    self._append_trash_journal(job_id, idx, item["status"], msg)
+                    stopped_on_error = True
+                    break
+
+            job["status"] = "partial" if stopped_on_error else "completed"
+            job["finished_at"] = time.time()
+            self._save_trash_job(job)
 
         self._clear_active_cache_if_monitored(profile)
+        public = self._public_trash_job(job)
         self._views.repo.append_event(
             "workspace.files.trashed",
-            {"company_id": company_id, "dir_key": key, "trashed": trashed, "failed": failed},
+            {
+                "company_id": company_id,
+                "dir_key": key,
+                "job_id": job_id,
+                "status": public["status"],
+                "trashed": public["trashed"],
+                "failed": public["failed"],
+                "unknown": public["unknown"],
+                "pending": public["pending"],
+            },
         )
-        return {
-            "ok": failed == 0,
-            "trashed": trashed,
-            "failed": failed,
-            "results": results,
-            "monitored": is_monitored,
-        }
+        return public

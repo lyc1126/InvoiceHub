@@ -332,9 +332,10 @@ def test_workspace_cross_directory_move_and_native_trash(tmp_path: Path, monkeyp
     # Add manual override before moving
     assert client.patch("/api/v1/invoices/0/manual-fields", json={"fields": {"销售方": "手工差旅"}}, headers=SAME_ORIGIN).status_code == 200
 
-    # Prepare destination state dir so override migration can carry over to target profile
+    # Destination profile starts completely uninitialized (no state_dir on disk yet):
+    # moving an edited invoice must still create destination state_dir and persist overrides.
     dst_profile = target_profile_for(app.state.invoice_hub.config, comp / "费用报销")
-    Path(dst_profile.state_dir).mkdir(parents=True, exist_ok=True)
+    assert not Path(dst_profile.state_dir).exists()
 
     # 1) conflict_policy=reject blocks move when target already has dup.xml
     prev_reject = client.post(
@@ -370,7 +371,7 @@ def test_workspace_cross_directory_move_and_native_trash(tmp_path: Path, monkeyp
         headers=SAME_ORIGIN,
     ).status_code == 409
 
-    # Confirm executes move, migrates override, preserves existing dup.xml
+    # Confirm executes move, migrates override into newly initialized destination state_dir, preserves existing dup.xml
     confirmed = client.post(
         f"/api/v1/companies/{cid}/directories/cost_invoice_dir/files/move/{plan['job_id']}/confirm",
         json={"confirm": True, "plan_hash": plan["plan_hash"]},
@@ -389,11 +390,41 @@ def test_workspace_cross_directory_move_and_native_trash(tmp_path: Path, monkeyp
     assert journal.status_code == 200
     assert journal.json()["status"] == "completed"
 
-    # Destination profile received migrated manual override
+    # Destination profile received migrated manual override AND source override was removed only after destination persisted
     dst_overrides = json.loads((Path(dst_profile.state_dir) / "manual_overrides.json").read_text(encoding="utf-8"))
-    assert str((comp / "费用报销" / "dup (1).xml").resolve()) in dst_overrides["items"]
+    dst_key = str((comp / "费用报销" / "dup (1).xml").resolve())
+    assert dst_key in dst_overrides["items"]
+    assert dst_overrides["items"][dst_key]["fields"]["销售方"] == "手工差旅"
+    src_profile = target_profile_for(app.state.invoice_hub.config, comp / "成本发票")
+    src_overrides = json.loads((Path(src_profile.state_dir) / "manual_overrides.json").read_text(encoding="utf-8"))
+    assert src_overrides["items"] == {}
 
-    # 3) Native recycle bin delete on a general folder calls move_to_trash (never unlink)
+    # 3) Corrupt destination manual_overrides.json aborts move and rolls back file + keeps source override intact
+    (comp / "成本发票" / "keep.xml").write_text(
+        _make_xml("原卖方", "流转公司", "40000002", "2026-11-11", "300.00", "0.13"),
+        encoding="utf-8",
+    )
+    assert client.post("/api/v1/bridge/rebuild", json={}, headers=SAME_ORIGIN).json()["ok"] is True
+    assert client.patch("/api/v1/invoices/0/manual-fields", json={"fields": {"销售方": "必保手改"}}, headers=SAME_ORIGIN).status_code == 200
+    (Path(dst_profile.state_dir) / "manual_overrides.json").write_text("{bad json", encoding="utf-8")
+    corrupt_plan = client.post(
+        f"/api/v1/companies/{cid}/directories/cost_invoice_dir/files/move/preview",
+        json={"conflict_policy": "reject", "items": [{"relative_path": "keep.xml", "target_company_id": cid, "target_dir_key": "expense_reimbursement_dir"}]},
+        headers=SAME_ORIGIN,
+    ).json()
+    corrupt_res = client.post(
+        f"/api/v1/companies/{cid}/directories/cost_invoice_dir/files/move/{corrupt_plan['job_id']}/confirm",
+        json={"confirm": True, "plan_hash": corrupt_plan["plan_hash"]},
+        headers=SAME_ORIGIN,
+    ).json()
+    assert corrupt_res["moved"] == 0
+    assert corrupt_res["failed"] == 1
+    assert (comp / "成本发票" / "keep.xml").is_file()
+    assert not (comp / "费用报销" / "keep.xml").exists()
+    kept_src_overrides = json.loads((Path(src_profile.state_dir) / "manual_overrides.json").read_text(encoding="utf-8"))
+    assert str((comp / "成本发票" / "keep.xml").resolve()) in kept_src_overrides["items"]
+
+    # 4) Native recycle bin delete uses durable job ID, per-file journal, and read-only GET recovery
     (comp / "归档").mkdir()
     trash_file = comp / "归档" / "note.txt"
     trash_file.write_text("to trash", encoding="utf-8")
@@ -416,19 +447,108 @@ def test_workspace_cross_directory_move_and_native_trash(tmp_path: Path, monkeyp
     assert tp.status_code == 200
     tp_body = tp.json()
     assert tp_body["file_count"] == 1
+    assert len(tp_body["job_id"]) == 32
+    assert tp_body["status"] == "prepared"
 
     # Missing confirm rejected
     assert client.post(
-        f"/api/v1/companies/{cid}/directories/{gkey}/files/trash",
-        json={"confirm": False, "plan_hash": tp_body["plan_hash"], "relative_paths": ["note.txt"]},
+        f"/api/v1/companies/{cid}/directories/{gkey}/files/trash/{tp_body['job_id']}/confirm",
+        json={"confirm": False, "plan_hash": tp_body["plan_hash"]},
         headers=SAME_ORIGIN,
     ).status_code == 422
 
     tc = client.post(
-        f"/api/v1/companies/{cid}/directories/{gkey}/files/trash",
-        json={"confirm": True, "plan_hash": tp_body["plan_hash"], "relative_paths": ["note.txt"]},
+        f"/api/v1/companies/{cid}/directories/{gkey}/files/trash/{tp_body['job_id']}/confirm",
+        json={"confirm": True, "plan_hash": tp_body["plan_hash"]},
         headers=SAME_ORIGIN,
     )
-    assert tc.status_code == 200
+    assert tc.status_code == 200, tc.text
+    assert tc.json()["status"] == "completed"
     assert tc.json()["trashed"] == 1
     assert trashed_targets == [trash_file.resolve()]
+
+    # Read-only lookup returns persisted per-file receipt, and replaying confirm never trashes a replacement file
+    trash_file.write_text("brand new replacement", encoding="utf-8")
+    lookup = client.get(f"/api/v1/companies/{cid}/directories/{gkey}/files/trash/{tp_body['job_id']}")
+    assert lookup.status_code == 200
+    assert lookup.json()["status"] == "completed"
+    assert lookup.json()["results"][0]["status"] == "trashed"
+    replay = client.post(
+        f"/api/v1/companies/{cid}/directories/{gkey}/files/trash/{tp_body['job_id']}/confirm",
+        json={"confirm": True, "plan_hash": tp_body["plan_hash"]},
+        headers=SAME_ORIGIN,
+    )
+    assert replay.status_code == 200
+    assert replay.json()["status"] == "completed"
+    assert trash_file.read_text(encoding="utf-8") == "brand new replacement"
+    assert len(trashed_targets) == 1
+
+    # 5) Partial native failure stops immediately and crash-interrupted running job recovers via GET without retry
+    (comp / "归档" / "a.txt").write_text("a", encoding="utf-8")
+    (comp / "归档" / "b.txt").write_text("b", encoding="utf-8")
+    (comp / "归档" / "c.txt").write_text("c", encoding="utf-8")
+    p3 = client.post(
+        f"/api/v1/companies/{cid}/directories/{gkey}/files/trash/preview",
+        json={"relative_paths": ["a.txt", "b.txt", "c.txt"]},
+        headers=SAME_ORIGIN,
+    ).json()
+
+    def _fail_on_b(path: Path) -> None:
+        if path.name == "b.txt":
+            raise OSError("recycle bin unavailable")
+        path.unlink()
+
+    monkeypatch.setattr("invoice_hub.services.workspace_files.move_to_trash", _fail_on_b)
+    partial = client.post(
+        f"/api/v1/companies/{cid}/directories/{gkey}/files/trash/{p3['job_id']}/confirm",
+        json={"confirm": True, "plan_hash": p3["plan_hash"]},
+        headers=SAME_ORIGIN,
+    )
+    assert partial.status_code == 200
+    pbody = partial.json()
+    assert pbody["ok"] is False
+    assert pbody["status"] == "partial"
+    assert pbody["trashed"] == 1
+    assert pbody["failed"] == 1
+    assert pbody["pending"] == 1
+    assert [r["status"] for r in pbody["results"]] == ["trashed", "failed", "pending"]
+    assert not (comp / "归档" / "a.txt").exists()
+    assert (comp / "归档" / "b.txt").is_file()
+    assert (comp / "归档" / "c.txt").is_file()
+
+    # Simulate an interrupted running trash job (process died between moving intent and finalization)
+    p2 = client.post(
+        f"/api/v1/companies/{cid}/directories/{gkey}/files/trash/preview",
+        json={"relative_paths": ["b.txt", "c.txt"]},
+        headers=SAME_ORIGIN,
+    ).json()
+    trash_root = app.state.invoice_hub.company_views.files._trash_root
+    job_file = trash_root / f"{p2['job_id']}.json"
+    saved = json.loads(job_file.read_text(encoding="utf-8"))
+    saved["status"] = "running"
+    job_file.write_text(json.dumps(saved, ensure_ascii=False), encoding="utf-8")
+    journal_file = trash_root / f"{p2['job_id']}.jsonl"
+    journal_file.write_text(
+        json.dumps({"index": 0, "result": {"status": "trashed", "message": "已移入系统回收站。"}}, ensure_ascii=False)
+        + "\n"
+        + json.dumps({"index": 1, "result": {"status": "moving", "message": "正在移入系统回收站…"}}, ensure_ascii=False)
+        + "\n",
+        encoding="utf-8",
+    )
+    recovered = client.get(f"/api/v1/companies/{cid}/directories/{gkey}/files/trash/{p2['job_id']}")
+    assert recovered.status_code == 200
+    rbody = recovered.json()
+    assert rbody["ok"] is True
+    assert rbody["status"] == "running"
+    assert rbody["trashed"] == 1
+    assert rbody["unknown"] == 1
+    assert [r["status"] for r in rbody["results"]] == ["trashed", "moving"]
+
+    # Confirming an interrupted/running trash job is strictly blocked (409) and never retries move_to_trash
+    blocked_retry = client.post(
+        f"/api/v1/companies/{cid}/directories/{gkey}/files/trash/{p2['job_id']}/confirm",
+        json={"confirm": True, "plan_hash": p2["plan_hash"]},
+        headers=SAME_ORIGIN,
+    )
+    assert blocked_retry.status_code == 409
+    assert blocked_retry.json()["error"]["code"] == "WORKSPACE_TRASH_CONFLICT"
