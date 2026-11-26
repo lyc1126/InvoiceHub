@@ -672,6 +672,8 @@ describe("Phase 2 WS-12 generic file browser and active invoice file actions", (
     expect(document.body.querySelector('[role="dialog"]')).not.toBeNull();
     expect(dialog.text()).toContain("目标文件已存在");
     expect(dialog.text()).toContain("执行回执");
+    // Controls remain locked once receipt is present
+    expect((dialog.get('select[aria-label="移动目标目录"]').element as HTMLSelectElement).disabled).toBe(true);
     panel.unmount();
   });
 

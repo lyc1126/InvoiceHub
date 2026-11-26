@@ -110,11 +110,15 @@ def _fmt_mtime(ts: float) -> str:
         return ""
 
 
-def _path_key(path: Path) -> str:
+def _exact_path(path: Path) -> str:
     try:
-        return str(path.resolve()).casefold()
+        return str(path.resolve())
     except OSError:
-        return str(path).casefold()
+        return str(path)
+
+
+def _path_key(path: Path) -> str:
+    return _exact_path(path).casefold()
 
 
 def _plan_hash(payload: object) -> str:
@@ -162,7 +166,7 @@ def _dir_binding(path: Path) -> dict[str, object]:
     if stat.S_ISLNK(info.st_mode) or (hasattr(path, "is_junction") and path.is_junction()) or not stat.S_ISDIR(info.st_mode):
         raise CompanyRegistryError("COMPANY_DIRECTORY_UNAVAILABLE", "目标文件夹不可用或包含链接。", status_code=409)
     return {
-        "path_hash": hashlib.sha256(_path_key(path).encode("utf-8")).hexdigest(),
+        "path_hash": hashlib.sha256(_exact_path(path).encode("utf-8")).hexdigest(),
         "identity": [int(info.st_dev), int(info.st_ino)],
     }
 
@@ -203,23 +207,46 @@ def _try_profile_locks(profiles: list[TargetProfile], db_path: Path) -> Iterator
         yield
 
 
-def _has_override_for_path(profile: TargetProfile, path: Path) -> bool:
-    """Read-only check whether ``profile`` currently holds a manual override entry for ``path``."""
+def _match_override_identity(src_items: dict, target_path: Path) -> str | None:
+    """Resolve the exact manual_overrides.json key for ``target_path``.
+
+    Prefers an exact canonical-path match; falls back to case-insensitive matching ONLY when
+    ``os.path.samefile`` proves both paths denote the same filesystem inode (preventing
+    ``Invoice.xml`` vs ``invoice.xml`` cross-contamination on case-sensitive filesystems).
+    """
+    exact = _exact_path(target_path)
+    for identity in src_items:
+        try:
+            if _exact_path(Path(str(identity))) == exact:
+                return str(identity)
+        except (OSError, TypeError, ValueError):
+            continue
+    folded = exact.casefold()
+    for identity in src_items:
+        try:
+            cand = Path(str(identity))
+            if _path_key(cand) == folded and os.path.samefile(target_path, cand):
+                return str(identity)
+        except (OSError, TypeError, ValueError):
+            continue
+    return None
+
+
+def _find_override_identity(profile: TargetProfile, path: Path) -> str | None:
+    """Read-only lookup of the exact override key for ``path`` while ``path`` still exists on disk."""
     src_file = Path(profile.state_dir) / "manual_overrides.json"
     if not src_file.is_file():
-        return False
+        return None
     src_payload = read_json_object(src_file, {"items": {}})
     src_items = src_payload.get("items")
     if not isinstance(src_items, dict):
-        return False
-    target_key = _path_key(path)
-    for identity in src_items:
-        try:
-            if _path_key(Path(str(identity))) == target_key:
-                return True
-        except (OSError, TypeError, ValueError):
-            continue
-    return False
+        return None
+    return _match_override_identity(src_items, path)
+
+
+def _has_override_for_path(profile: TargetProfile, path: Path) -> bool:
+    """Read-only check whether ``profile`` currently holds a manual override entry for ``path``."""
+    return _find_override_identity(profile, path) is not None
 
 
 def _migrate_single_override(
@@ -227,9 +254,13 @@ def _migrate_single_override(
     dst_profile: TargetProfile,
     old_path: Path,
     new_path: Path,
+    *,
+    matched_identity: str | None = None,
 ) -> bool:
     """Move a manual_overrides.json entry when a source invoice is renamed or moved across directories.
 
+    Callers should resolve ``matched_identity`` via ``_find_override_identity`` BEFORE moving
+    ``old_path`` so filesystem identity (``os.path.samefile``) can disambiguate case variants.
     Cross-directory moves persist the destination override FIRST (creating ``dst_profile.state_dir``
     for this explicit write operation when the destination directory has not yet been initialized)
     before removing the source entry, so user-edited fields can never be silently dropped.
@@ -241,19 +272,11 @@ def _migrate_single_override(
     src_items = src_payload.get("items")
     if not isinstance(src_items, dict):
         return False
-    old_key = _path_key(old_path)
-    matched_identity: str | None = None
-    matched_entry: object = None
-    for identity, entry in src_items.items():
-        try:
-            if _path_key(Path(str(identity))) == old_key:
-                matched_identity = str(identity)
-                matched_entry = entry
-                break
-        except (OSError, TypeError, ValueError):
-            continue
-    if matched_identity is None:
+    resolved_key = matched_identity if (matched_identity is not None and matched_identity in src_items) else _match_override_identity(src_items, old_path)
+    if resolved_key is None:
         return False
+    matched_identity = resolved_key
+    matched_entry = src_items[matched_identity]
 
     try:
         new_path_str = str(new_path.resolve())
@@ -772,6 +795,9 @@ class WorkspaceFileService:
                 dst_is_same_file = True
             elif not same_name_case and new_name.casefold() in _existing_names_folded(parent):
                 raise CompanyRegistryError("WORKSPACE_FILE_CONFLICT", f"同目录下已存在「{new_name}」，未覆盖。", status_code=409)
+            # Capture the exact override key while src_path still exists on disk so case-sensitive FS
+            # distinct files (Invoice.xml vs invoice.xml) never migrate the wrong override.
+            override_identity = _find_override_identity(profile, src_path)
             try:
                 if dst_is_same_file:
                     os.rename(src_path, dst_path)
@@ -782,7 +808,7 @@ class WorkspaceFileService:
             except OSError as exc:
                 raise CompanyRegistryError("WORKSPACE_FILE_UNAVAILABLE", f"重命名失败：{exc}", status_code=409) from exc
             try:
-                migrated = _migrate_single_override(profile, profile, src_path, dst_path)
+                migrated = _migrate_single_override(profile, profile, src_path, dst_path, matched_identity=override_identity)
             except (CompanyRegistryError, OSError):
                 # Restore the original filename if migrating manual_overrides.json fails.
                 with contextlib.suppress(OSError, FileExistsError):
@@ -928,7 +954,11 @@ class WorkspaceFileService:
             dst_dir_binding = _dir_binding(dst_dir_path)
             dst_parent_binding = _dir_binding(dst_parent)
 
-            if _path_key(src_file.parent) == _path_key(dst_parent):
+            try:
+                same_parent_dir = os.path.samefile(src_file.parent, dst_parent)
+            except OSError:
+                same_parent_dir = _exact_path(src_file.parent) == _exact_path(dst_parent)
+            if same_parent_dir:
                 summary["blocked"] += 1
                 planned_items.append({
                     "relative_path": rel_posix,
@@ -1144,6 +1174,8 @@ class WorkspaceFileService:
                     dst_file = dst_parent / dst_name
                     if dst_name.casefold() in _existing_names_folded(dst_parent) or dst_file.exists() or _is_link(dst_file):
                         raise FileExistsError(f"目标目录已存在「{dst_name}」，未覆盖。")
+                    # Capture exact override identity before moving src_file off its original path.
+                    override_identity = _find_override_identity(src_profile, src_file)
                     # Persist fsynced per-file moving intent BEFORE mutating disk state.
                     started_move = True
                     self._append_move_journal(
@@ -1160,7 +1192,7 @@ class WorkspaceFileService:
                     )
                     _move_file_no_overwrite(src_file, dst_file)
                     try:
-                        if _migrate_single_override(src_profile, dst_profile, src_file, dst_file):
+                        if _migrate_single_override(src_profile, dst_profile, src_file, dst_file, matched_identity=override_identity):
                             overrides_migrated += 1
                     except (CompanyRegistryError, OSError):
                         # Roll back the moved file when destination override persistence fails so

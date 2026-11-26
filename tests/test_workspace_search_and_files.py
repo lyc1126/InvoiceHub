@@ -814,3 +814,18 @@ def test_fallback_move_never_overwrites_and_list_search_reaches_beyond_limit(tmp
     by_ext = client.get(f"/api/v1/companies/{cid}/directories/{gkey}/files", params={"ext": ".ofd"}).json()
     assert by_ext["truncated"] is False
     assert [f["name"] for f in by_ext["files"]] == ["zzz_target_needle.ofd"]
+
+    # 3) _match_override_identity prefers exact canonical path and only falls back to case-folding when samefile is True
+    upper_path = tmp_path / "Invoice.xml"
+    upper_path.write_text("u", encoding="utf-8")
+    upper_exact = wf_mod._exact_path(upper_path)
+    lower_exact = str(Path(upper_exact).with_name("invoice.xml"))
+    items_both = {
+        upper_exact: {"fields": {"销售方": "大写票"}},
+        lower_exact: {"fields": {"销售方": "小写票"}},
+    }
+    monkeypatch.setattr(wf_mod.os.path, "samefile", lambda a, b: False)
+    # Exact key match always selects lower_exact, never stealing upper_exact
+    assert wf_mod._match_override_identity(items_both, Path(lower_exact)) == lower_exact
+    # When only upper_exact has an override and samefile is False (distinct case-sensitive file), must return None
+    assert wf_mod._match_override_identity({upper_exact: {"fields": {"销售方": "大写票"}}}, Path(lower_exact)) is None

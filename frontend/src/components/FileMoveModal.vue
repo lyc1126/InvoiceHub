@@ -31,8 +31,9 @@ const plan = ref<FileMovePlanPayload | null>(null);
 const lostResponseJobId = ref("");
 
 const receiptLocked = computed(
-  () => confirming.value || Boolean(lostResponseJobId.value) || Boolean(plan.value && plan.value.status !== "prepared"),
+  () => previewing.value || confirming.value || Boolean(lostResponseJobId.value) || Boolean(plan.value && plan.value.status !== "prepared"),
 );
+let previewGen = 0;
 
 const targetCompany = computed(() =>
   companies.companies.find((item) => item.id === targetCompanyId.value) ?? props.company,
@@ -58,6 +59,8 @@ watch(
 );
 
 watch([targetCompanyId, targetDirKey, targetSubpath, conflictPolicy], () => {
+  ++previewGen;
+  previewing.value = false;
   plan.value = null;
   lostResponseJobId.value = "";
   error.value = "";
@@ -65,6 +68,7 @@ watch([targetCompanyId, targetDirKey, targetSubpath, conflictPolicy], () => {
 
 async function buildPreview(): Promise<void> {
   if (!targetDirKey.value || !props.relativePaths.length || previewing.value) return;
+  const gen = ++previewGen;
   previewing.value = true;
   error.value = "";
   plan.value = null;
@@ -84,11 +88,15 @@ async function buildPreview(): Promise<void> {
         },
       },
     );
+    if (gen !== previewGen) return;
     plan.value = res;
   } catch (cause) {
+    if (gen !== previewGen) return;
     error.value = errorText(cause);
   } finally {
-    previewing.value = false;
+    if (gen === previewGen) {
+      previewing.value = false;
+    }
   }
 }
 

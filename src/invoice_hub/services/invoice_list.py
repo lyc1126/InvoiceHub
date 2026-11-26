@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import threading
 from datetime import datetime
@@ -720,7 +721,18 @@ class InvoiceListService:
             # insertions/deletions can never silently apply edits to a shifted replacement row.
             if expected_source_path:
                 live_source_path = str(row.get("文件路径") or "").strip()
-                if not live_source_path or canonical_path(live_source_path).casefold() != canonical_path(expected_source_path).casefold():
+                same_source = False
+                if live_source_path:
+                    live_canon = canonical_path(live_source_path)
+                    expected_canon = canonical_path(expected_source_path)
+                    if live_canon == expected_canon:
+                        same_source = True
+                    elif live_canon.casefold() == expected_canon.casefold():
+                        try:
+                            same_source = os.path.samefile(live_canon, expected_canon)
+                        except OSError:
+                            same_source = False
+                if not same_source:
                     raise StaleInvoiceSelectionError("该发票行在列表刷新后已变化，为防止误改其它发票已取消保存，请刷新列表后重试。")
             fields = dict(body.get("fields") or body)
             allowed = set(MANUAL_OVERRIDE_FIELDS)
