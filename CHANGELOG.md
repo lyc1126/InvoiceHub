@@ -2,6 +2,20 @@
 
 ## 未发布
 
+### 2026-11-27 准备 v1.0.0 双平台 Draft Release 并更新 README 脱敏示例预览与下载地址
+
+- 需求与起点：基于双平台同源验收通过的干净主线 `main@ba259c3f5d16b360979390b84170b26f5e6908a3`（双平台 `core_build_id` 均为 `8f698c1ebf5d2745592c9d69f336ac205bbe8c940abbcc59153a35e6fa37d212`），新建隔离文档 worktree `../InvoiceHub-v100-docs`（分支 `codex/v100-readme-release-preview`），完成两项发布准备：（1）在本地忽略目录 `dist/candidates/20261127-v1.0.0-release/` 组装双平台 `v1.0.0` 全部 10 项发布资产、交叉核对哈希并创建 GitHub `v1.0.0` Draft Release（不提前公开、不切换公开更新 Feed）；（2）按用户要求更新 GitHub 首页 `README.md`，用 100% 脱敏的 `v1.0.0` 合成示例截屏替换旧版 `v0.3.0-alpha.2` 空态截屏，展示多公司工作区、原始电子专票预览及全部新模块，并标明 `v1.0.0` 更新要点与双平台下载地址（按 `docs/architecture/rules/RELEASE.md`，纯文档更新不触发二进制重打）。
+- 采用方案：
+  - **双平台 `v1.0.0` Draft Release 资产组装**：
+    - 复核双平台同源产物：`InvoiceHub-v1.0.0-windows-x64-portable.zip`（115,047,995 字节，SHA-256 `7a1339f1237403c5e1274bf8a8d09b3fc48865725936d0fde406699a362efc96`）与 `InvoiceHub-v1.0.0-macos-arm64-preview.dmg`（171,580,517 字节，SHA-256 `f5be0b2205877d46beb412eec6352e5db95aa93f4c1bf9cbde5ee9d930d195f7`），补齐双平台 `.sha256`、schema-1 `.build-receipt.json`、基于 `ba259c3` 锁文件现生 Python CycloneDX SBOM 与直接取自双端成品内嵌的 OFD Preview CycloneDX SBOM（排除过期的 `0.3.0-alpha.2` SBOM），编写 `RELEASE-NOTES.md` 与 `release-plan.json`，并在 GitHub 创建指向 `ba259c3f5d16b360979390b84170b26f5e6908a3` 的 `v1.0.0` Draft Release（远端复核 10 项资产及字节数完全一致）。
+  - **全脱敏合成示例截屏与 README 同步**：
+    - 在完全隔离的临时目录与随机本地端口运行 `v1.0.0` 合成多公司示例后端（虚构主体 `星河机电科技有限公司（示例）` 与 `晨曦建材商贸有限公司（示例）`，带清晰脱敏水印的合成电子专票 PDF 并经字体裁剪），用 Playwright 截取并逐张目检 7 张 1440×900 @2x 预览图：`docs/screenshots/invoicehub-workspace-home.png`、`invoicehub-original-preview.png`、`invoicehub-global-search.png`、`invoicehub-file-browser.png`、`invoicehub-cost-v2.png`、`invoicehub-reconciliation.png`、`invoicehub-vouchers.png`，移除 3 张旧版 `v0.3.0-alpha.2` 空态截屏（`invoicehub-home.png`、`invoicehub-costs.png`、`invoicehub-appearance.png`）。
+    - 同步更新 `README.md`（新增 `v1.0.0` 更新要点、6 模块 + 工作区首页产品预览、双平台 `v1.0.0` 下载链接与诚实签名/更新说明）、`docs/screenshots/README.md` 与 `docs/architecture/FILE_MAP.md`。
+- 验证范围：
+  - 全部 7 张脱敏截图逐张目检通过（零真实主体、零真实发票、零缺字方框、零个人绝对路径）；临时演示目录均已在脚本收尾清理。
+  - 文档契约回归：运行 `pytest tests/test_development_documentation.py -q` 与 `git diff --check`，并核查暂存区敏感路径与本地文件链接（纯文档/截图变更，未改动源码与打包输入，故未重跑产品全量单测或重打双平台安装包）。
+- 未覆盖项：本轮文档 PR 未触及代码执行路径，未覆盖真实默认配置、正式 Windows BAT、系统浏览器前台拉起、系统原生选择器弹窗及重新构建双平台产物（双平台 `ba259c3` 成品真机验收已于前置步骤单独完成并记录于 `RELEASE-NOTES.md`）；`v1.0.0` Draft Release 尚未正式点击发布，故 `README.md` 中的 `/releases/download/v1.0.0/...` 下载链接需在用户确认发布 Draft Release 后生效。
+
 ### 2026-11-26 修复 Tauri 严格握手 `/openapi.json` 超出 128 KiB 上限的启动阻断
 
 - 需求与起点：基于干净主线 `main@933d7d7` 新建独立 worktree `../InvoiceHub-openapi-limit`（分支 `codex/fix-tauri-openapi-limit`，未改动原工作区既有未提交文件）。Windows x64 `v1.0.0` 候选 EXE 两次真机严格握手启动失败，实测 `/openapi.json` 正文为 140,330 字节（235 条路径），超出双平台共享 `src-tauri/src/backend.rs` 统一的 128 KiB（131,072 字节）HTTP 响应上限；复核同源 `933d7d7` macOS 候选内嵌核心生成的 `/openapi.json` 同样为 140,330 字节，确认为双平台共用的宿主阻断。
