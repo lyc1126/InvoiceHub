@@ -1101,9 +1101,13 @@
 | 文件 | 职责与约束 |
 |---|---|
 | `docs/USER_GUIDE.md` | 面向使用者的目录、汇总、成本、单据、监控及外观恢复说明；README 的详细操作入口。 |
-| `docs/screenshots/README.md` | 三张当前版本截图的来源、空目录事实和隐私处理说明；不保存原始业务 DOM。 |
-| `docs/screenshots/invoicehub-home.png` | 真实汇总首页截图，只在截图会话中隐藏本机路径。 |
-| `docs/screenshots/invoicehub-costs.png` | 同版本成本分析零记录截图，不伪造业务数据。 |
-| `docs/screenshots/invoicehub-appearance.png` | 同版本图标与皮肤管理截图，拍摄不保存新的外观设置。 |
+| `docs/screenshots/README.md` | 七张 `v1.0.0` 脱敏合成示例截图的来源、覆盖模块与脱敏核查说明；不保存原始业务 DOM。 |
+| `docs/screenshots/invoicehub-workspace-home.png` | `v1.0.0` 多公司工作区首页与监控目录发票列表脱敏示例截图。 |
+| `docs/screenshots/invoicehub-original-preview.png` | `v1.0.0` 原始电子发票侧滑高清预览脱敏示例截图（合成带水印电子专票 PDF）。 |
+| `docs/screenshots/invoicehub-global-search.png` | `v1.0.0` 跨公司全局检索（`⌘K / Ctrl+K`，WS-11）脱敏示例截图。 |
+| `docs/screenshots/invoicehub-file-browser.png` | `v1.0.0` 通用文件浏览与无覆盖导入（WS-12）脱敏示例截图。 |
+| `docs/screenshots/invoicehub-cost-v2.png` | `v1.0.0` 成本分析 V2 按品类单位毛利分析脱敏示例截图。 |
+| `docs/screenshots/invoicehub-reconciliation.png` | `v1.0.0` 成本发票与开具发票进销存账目核对脱敏示例截图。 |
+| `docs/screenshots/invoicehub-vouchers.png` | `v1.0.0` 凭证草稿审核、借贷平衡校验与导出脱敏示例截图。 |
 
 以上只用于 GitHub 文档展示，不增加包内业务资源或改变当前 Release 输入。
