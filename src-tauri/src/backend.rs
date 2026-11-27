@@ -49,6 +49,10 @@ pub const RECOVERY_SMOKE_ENDPOINT: &str =
 pub const RECOVERY_SMOKE_PUBLIC_KEY: &str =
     "SU5WT0lDRUhVQiBSRUNPVkVSWSBTTU9LRSAtIE5PVCBBIFNJR05JTkcgS0VZ";
 const MAX_HTTP_RESPONSE_BYTES: usize = 128 * 1024;
+// FastAPI `/openapi.json` enumerates the full route table (>137 KiB in v1.0.0) during strict
+// startup handshake; scope the wider 1 MiB ceiling strictly to OPENAPI_PATH so proof/health/
+// preferences/shutdown/index probes keep the tighter 128 KiB bound.
+const MAX_OPENAPI_RESPONSE_BYTES: usize = 1024 * 1024;
 const HTTP_TIMEOUT: Duration = Duration::from_secs(5);
 const BACKEND_STARTUP_TIMEOUT: Duration = Duration::from_secs(20);
 const BACKEND_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(10);
@@ -579,8 +583,15 @@ pub fn probe_existing_invoicehub_at(address: SocketAddr) -> Option<ExistingInvoi
         address.ip(),
         address.port(),
     );
-    let response =
-        local_request_at(address, HEALTH_PATH, request.as_bytes(), &[], deadline).ok()?;
+    let response = local_request_at(
+        address,
+        HEALTH_PATH,
+        request.as_bytes(),
+        &[],
+        deadline,
+        MAX_HTTP_RESPONSE_BYTES,
+    )
+    .ok()?;
     if response.status != 200 {
         return None;
     }
@@ -606,6 +617,7 @@ fn request_existing_keep_monitor_shutdown_at(address: SocketAddr) -> Result<(), 
         request.as_bytes(),
         body,
         deadline,
+        MAX_HTTP_RESPONSE_BYTES,
     )
     .map_err(|_| BackendError::ExistingInstanceShutdownFailed)?;
     if response.status != 200 {
@@ -828,12 +840,30 @@ fn probe_backend_until(
     ownership_secret: &[u8; OWNERSHIP_SECRET_BYTES],
     deadline: Instant,
 ) -> Result<BackendHealth, BackendError> {
+    probe_backend_at(
+        fixed_backend_socket_addr(),
+        expected_identity,
+        expected_pid,
+        ownership_secret,
+        deadline,
+    )
+}
+
+fn probe_backend_at(
+    address: SocketAddr,
+    expected_identity: &ExpectedBackendIdentity,
+    expected_pid: u32,
+    ownership_secret: &[u8; OWNERSHIP_SECRET_BYTES],
+    deadline: Instant,
+) -> Result<BackendHealth, BackendError> {
     let challenge = generate_ownership_challenge()?;
-    let proof_response = local_get_with_header(
+    let proof_response = local_get_at(
+        address,
         DESKTOP_HOST_PROOF_PATH,
         DESKTOP_HOST_CHALLENGE_HEADER,
         &challenge,
         deadline,
+        MAX_HTTP_RESPONSE_BYTES,
     )?;
     let response = proof_response
         .headers
@@ -845,7 +875,14 @@ fn probe_backend_until(
     {
         return Err(HandshakeError::OwnershipProofMismatch.into());
     }
-    let health_response = local_get_until(HEALTH_PATH, deadline)?;
+    let health_response = local_get_at(
+        address,
+        HEALTH_PATH,
+        "",
+        "",
+        deadline,
+        MAX_HTTP_RESPONSE_BYTES,
+    )?;
     require_status(&health_response, HEALTH_PATH, 200)?;
     let health_value: Value = serde_json::from_slice(&health_response.body).map_err(|_| {
         BackendError::ProbeStage("health JSON", Box::new(BackendError::ProbeFailed))
@@ -854,9 +891,17 @@ fn probe_backend_until(
         .map_err(|error| BackendError::ProbeStage("health 字段", Box::new(error)))?;
     expected_identity.validate_health(&health, expected_pid)?;
 
-    let index_response = local_get_until("/", deadline)?;
+    let index_response = local_get_at(address, "/", "", "", deadline, MAX_HTTP_RESPONSE_BYTES)?;
     require_status(&index_response, "/", 200)?;
-    let openapi_response = local_get_until(OPENAPI_PATH, deadline)?;
+    // Only `/openapi.json` uses the wider 1 MiB response ceiling; all other probes stay at 128 KiB.
+    let openapi_response = local_get_at(
+        address,
+        OPENAPI_PATH,
+        "",
+        "",
+        deadline,
+        MAX_OPENAPI_RESPONSE_BYTES,
+    )?;
     require_status(&openapi_response, OPENAPI_PATH, 200)?;
     let openapi: Value = serde_json::from_slice(&openapi_response.body).map_err(|_| {
         BackendError::ProbeStage("OpenAPI JSON", Box::new(BackendError::ProbeFailed))
@@ -1934,11 +1979,14 @@ fn required_string_list(
 }
 
 fn local_get(path: &'static str) -> Result<HttpResponse, BackendError> {
-    local_get_until(path, Instant::now() + HTTP_TIMEOUT)
-}
-
-fn local_get_until(path: &'static str, deadline: Instant) -> Result<HttpResponse, BackendError> {
-    local_get_with_header(path, "", "", deadline)
+    local_get_at(
+        fixed_backend_socket_addr(),
+        path,
+        "",
+        "",
+        Instant::now() + HTTP_TIMEOUT,
+        MAX_HTTP_RESPONSE_BYTES,
+    )
 }
 
 fn is_keep_monitor_shutdown_ack(value: &Value) -> bool {
@@ -1957,14 +2005,23 @@ fn local_post_json(path: &'static str, body: &[u8]) -> Result<HttpResponse, Back
         "POST {path} HTTP/1.1\r\nHost: {FIXED_BACKEND_HOST}:{FIXED_BACKEND_PORT}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
         body.len(),
     );
-    local_request(path, request.as_bytes(), body, deadline)
+    local_request_at(
+        fixed_backend_socket_addr(),
+        path,
+        request.as_bytes(),
+        body,
+        deadline,
+        MAX_HTTP_RESPONSE_BYTES,
+    )
 }
 
-fn local_get_with_header(
+fn local_get_at(
+    address: SocketAddr,
     path: &'static str,
     header_name: &str,
     header_value: &str,
     deadline: Instant,
+    max_response_bytes: usize,
 ) -> Result<HttpResponse, BackendError> {
     let extra_header = if header_name.is_empty() {
         String::new()
@@ -1972,18 +2029,18 @@ fn local_get_with_header(
         format!("{header_name}: {header_value}\r\n")
     };
     let request = format!(
-        "GET {path} HTTP/1.1\r\nHost: {FIXED_BACKEND_HOST}:{FIXED_BACKEND_PORT}\r\n{extra_header}Connection: close\r\n\r\n"
+        "GET {path} HTTP/1.1\r\nHost: {}:{}\r\n{extra_header}Connection: close\r\n\r\n",
+        address.ip(),
+        address.port(),
     );
-    local_request(path, request.as_bytes(), &[], deadline)
-}
-
-fn local_request(
-    path: &'static str,
-    request: &[u8],
-    body: &[u8],
-    deadline: Instant,
-) -> Result<HttpResponse, BackendError> {
-    local_request_at(fixed_backend_socket_addr(), path, request, body, deadline)
+    local_request_at(
+        address,
+        path,
+        request.as_bytes(),
+        &[],
+        deadline,
+        max_response_bytes,
+    )
 }
 
 fn local_request_at(
@@ -1992,6 +2049,7 @@ fn local_request_at(
     request: &[u8],
     body: &[u8],
     deadline: Instant,
+    max_response_bytes: usize,
 ) -> Result<HttpResponse, BackendError> {
     if address.ip() != IpAddr::V4(Ipv4Addr::LOCALHOST) {
         return Err(BackendError::FixedPortRequiresLoopback);
@@ -2026,7 +2084,7 @@ fn local_request_at(
             }
         }
     }
-    local_http::read_response(&mut stream, deadline, MAX_HTTP_RESPONSE_BYTES)
+    local_http::read_response(&mut stream, deadline, max_response_bytes)
         .map_err(|error| BackendError::HttpProbe { path, error })
 }
 
@@ -2158,11 +2216,15 @@ fn thread_sleep_until(deadline: Instant) {
 #[cfg(test)]
 mod tests {
     use std::fs;
+    use std::io::{Read, Write};
+    use std::net::{TcpListener, TcpStream};
     use std::path::Path;
     use std::process::{Child, Command};
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::mpsc;
     use std::sync::{Arc, Mutex};
+    use std::thread;
+    use std::time::Instant;
 
     use serde_json::{Map, Value};
     use sha2::{Digest, Sha256};
@@ -2171,11 +2233,14 @@ mod tests {
         bundle_manifest_hash_matches, bundle_relative_directory, bundle_root_for_executable,
         desktop_state_paths_for, fixed_backend_arguments, generate_ownership_challenge,
         generate_ownership_secret, identity_from_json, is_keep_monitor_shutdown_ack,
-        ownership_response_for_test, ownership_response_matches, retry_probe,
+        ownership_response_for_test, ownership_response_matches, probe_backend_at, retry_probe,
         revalidate_backend_after_preferences, spawn_backend_liveness_watcher,
         state_paths_for_bundle_profile, updater_from_json, BackendError, BackendHealth,
         BackendLifecycleState, BundleProfile, DesktopStatePaths, DesktopStatePlatform,
-        HandshakeError, LifecyclePhase, RECOVERY_SMOKE_ENDPOINT, RECOVERY_SMOKE_PUBLIC_KEY,
+        ExpectedBackendIdentity, HandshakeError, LifecyclePhase, DESKTOP_HOST_CHALLENGE_HEADER,
+        DESKTOP_HOST_PROOF_PATH, DESKTOP_HOST_RESPONSE_HEADER, HEALTH_PATH, HTTP_TIMEOUT,
+        MAX_HTTP_RESPONSE_BYTES, MAX_OPENAPI_RESPONSE_BYTES, OPENAPI_PATH, RECOVERY_SMOKE_ENDPOINT,
+        RECOVERY_SMOKE_PUBLIC_KEY, REQUIRED_OPENAPI_OPERATIONS,
     };
     #[cfg(unix)]
     use super::{BackendLifecycleAuthority, LifecycleAuthority, RecoveryError};
@@ -2887,6 +2952,238 @@ mod tests {
         assert!(matches!(
             exited,
             Err(BackendError::Handshake(HandshakeError::BackendNotReady))
+        ));
+    }
+
+    fn read_http_request_head(stream: &mut TcpStream) -> String {
+        let mut raw = Vec::new();
+        let mut chunk = [0_u8; 1024];
+        loop {
+            let count = stream.read(&mut chunk).unwrap_or(0);
+            if count == 0 {
+                break;
+            }
+            raw.extend_from_slice(&chunk[..count]);
+            if raw.windows(4).any(|window| window == b"\r\n\r\n") {
+                break;
+            }
+        }
+        String::from_utf8_lossy(&raw).into_owned()
+    }
+
+    fn request_header(request: &str, name: &str) -> String {
+        request
+            .lines()
+            .skip(1)
+            .find_map(|line| {
+                let (key, value) = line.split_once(':')?;
+                key.eq_ignore_ascii_case(name)
+                    .then(|| value.trim().to_owned())
+            })
+            .unwrap_or_default()
+    }
+
+    fn expected_identity_for_probe_test() -> ExpectedBackendIdentity {
+        ExpectedBackendIdentity {
+            bundle_profile: BundleProfile::Release,
+            build_id: "a".repeat(64),
+            api_contract_version: "2026-08-02-release-update-v1".to_owned(),
+            bookkeeping_protocol_version: "w9-ledger-review-v1".to_owned(),
+            capabilities: vec!["release.package-identity.v1".to_owned()],
+            product_version: "1.0.0".to_owned(),
+            package_id: "com.invoicehub.windows.x64.portable".to_owned(),
+            platform: "windows".to_owned(),
+            architecture: "x86_64".to_owned(),
+            package_type: "portable".to_owned(),
+            config_path: "/safe/config/app.local.json".into(),
+            runtime_dir: "/safe/runtime".into(),
+        }
+    }
+
+    fn health_json_for_probe_test(identity: &ExpectedBackendIdentity, pid: u32) -> String {
+        serde_json::json!({
+            "ok": true,
+            "pid": pid,
+            "build_manifest_present": true,
+            "build_manifest_valid": true,
+            "package_manifest_present": true,
+            "package_manifest_valid": true,
+            "build_id": identity.build_id,
+            "api_contract_version": identity.api_contract_version,
+            "bookkeeping_protocol_version": identity.bookkeeping_protocol_version,
+            "capabilities": identity.capabilities,
+            "product_version": identity.product_version,
+            "package_id": identity.package_id,
+            "platform": identity.platform,
+            "architecture": identity.architecture,
+            "package_type": identity.package_type,
+            "config_path": identity.config_path.to_string_lossy(),
+            "runtime_dir": identity.runtime_dir.to_string_lossy(),
+        })
+        .to_string()
+    }
+
+    fn large_openapi_json(min_bytes: usize) -> String {
+        let mut paths = Map::new();
+        for (path, method) in REQUIRED_OPENAPI_OPERATIONS {
+            let entry = paths
+                .entry((*path).to_owned())
+                .or_insert_with(|| Value::Object(Map::new()));
+            entry
+                .as_object_mut()
+                .expect("path item object")
+                .insert((*method).to_owned(), Value::Object(Map::new()));
+        }
+        let padding = "x".repeat(min_bytes);
+        serde_json::json!({
+            "openapi": "3.1.0",
+            "info": {"title": "InvoiceHub", "description": padding},
+            "paths": paths,
+        })
+        .to_string()
+    }
+
+    fn spawn_handshake_mock(
+        expected: ExpectedBackendIdentity,
+        pid: u32,
+        secret: [u8; 32],
+        index_header_override: Option<String>,
+        openapi_response: String,
+    ) -> (std::net::SocketAddr, thread::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind mock handshake server");
+        let addr = listener.local_addr().expect("mock server addr");
+        let health_body = health_json_for_probe_test(&expected, pid);
+        let handle = thread::spawn(move || {
+            for _ in 0..4 {
+                let Ok((mut stream, _)) = listener.accept() else {
+                    break;
+                };
+                let request = read_http_request_head(&mut stream);
+                let path = request
+                    .lines()
+                    .next()
+                    .and_then(|line| line.split_whitespace().nth(1))
+                    .unwrap_or_default();
+                let reply = if path == DESKTOP_HOST_PROOF_PATH {
+                    let challenge = request_header(&request, DESKTOP_HOST_CHALLENGE_HEADER);
+                    let proof = ownership_response_for_test(&secret, &challenge);
+                    format!(
+                        "HTTP/1.1 204 No Content\r\n{DESKTOP_HOST_RESPONSE_HEADER}: {proof}\r\nConnection: close\r\n\r\n"
+                    )
+                } else if path == HEALTH_PATH {
+                    format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                        health_body.len(),
+                        health_body
+                    )
+                } else if path == "/" {
+                    if let Some(ref custom) = index_header_override {
+                        let _ = stream.write_all(custom.as_bytes());
+                        break;
+                    }
+                    let html = "<!doctype html><html><body>ok</body></html>";
+                    format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                        html.len(),
+                        html
+                    )
+                } else if path == OPENAPI_PATH {
+                    openapi_response.clone()
+                } else {
+                    "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                        .to_owned()
+                };
+                let _ = stream.write_all(reply.as_bytes());
+                if path == OPENAPI_PATH {
+                    break;
+                }
+            }
+        });
+        (addr, handle)
+    }
+
+    #[test]
+    fn probe_backend_accepts_openapi_larger_than_default_http_limit() {
+        let expected = expected_identity_for_probe_test();
+        let secret = generate_ownership_secret().expect("ownership secret");
+        let body = large_openapi_json(MAX_HTTP_RESPONSE_BYTES + 32 * 1024);
+        assert!(body.len() > MAX_HTTP_RESPONSE_BYTES);
+        assert!(body.len() < MAX_OPENAPI_RESPONSE_BYTES);
+        let openapi_reply = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            body.len(),
+            body
+        );
+        let (addr, server) =
+            spawn_handshake_mock(expected.clone(), 4242, secret, None, openapi_reply);
+
+        let health = probe_backend_at(
+            addr,
+            &expected,
+            4242,
+            &secret,
+            Instant::now() + HTTP_TIMEOUT,
+        )
+        .expect("handshake should accept a valid OpenAPI schema above 128 KiB");
+        server.join().expect("mock server joins cleanly");
+        assert_eq!(health.pid, 4242);
+    }
+
+    #[test]
+    fn probe_backend_rejects_oversized_openapi_and_preserves_non_openapi_limit() {
+        let expected = expected_identity_for_probe_test();
+        let secret = generate_ownership_secret().expect("ownership secret");
+
+        // 1. OpenAPI beyond MAX_OPENAPI_RESPONSE_BYTES must still fail closed.
+        let oversized_openapi = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            MAX_OPENAPI_RESPONSE_BYTES + 1
+        );
+        let (addr, server) =
+            spawn_handshake_mock(expected.clone(), 4242, secret, None, oversized_openapi);
+        let result = probe_backend_at(
+            addr,
+            &expected,
+            4242,
+            &secret,
+            Instant::now() + HTTP_TIMEOUT,
+        );
+        server.join().expect("oversized openapi server joins");
+        assert!(matches!(
+            result,
+            Err(BackendError::HttpProbe {
+                path: OPENAPI_PATH,
+                ref error,
+            }) if error.reason == "response_too_large"
+        ));
+
+        // 2. Non-OpenAPI probes (such as `/`) must retain the tighter 128 KiB limit even when
+        //    the declared size is below MAX_OPENAPI_RESPONSE_BYTES.
+        let oversized_index = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            MAX_HTTP_RESPONSE_BYTES + 10_000
+        );
+        let (addr, server) = spawn_handshake_mock(
+            expected.clone(),
+            4242,
+            secret,
+            Some(oversized_index),
+            String::new(),
+        );
+        let result = probe_backend_at(
+            addr,
+            &expected,
+            4242,
+            &secret,
+            Instant::now() + HTTP_TIMEOUT,
+        );
+        server.join().expect("oversized index server joins");
+        assert!(matches!(
+            result,
+            Err(BackendError::HttpProbe {
+                path: "/",
+                ref error,
+            }) if error.reason == "response_too_large"
         ));
     }
 }

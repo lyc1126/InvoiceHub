@@ -678,6 +678,8 @@ Windows验包测试中的假凭据在运行时拼接：保持生成文件的扫�
 
 `local_http.rs::read_framed`：服务端成功状态不等于完整响应，完整响应也不要求 TCP 正常关闭；204 在响应头完成，Content-Length 在足量字节完成，chunked 在合法终止块完成。只在无明确 framing 时依赖正常 EOF，不能把 reset 普遍当成功。共同总预算防止慢分片拖延，重复身份头/长度冲突/截断继续阻断；守护为同文件的分片、reset、截断、真实保持连接和超时测试。
 
+`backend.rs::MAX_OPENAPI_RESPONSE_BYTES`：FastAPI 全量 `/openapi.json` 随路由增长已超过 128 KiB（`v1.0.0` 实测 140,330 字节），共用 128 KiB 会在严格握手阶段稳定触发 `response_too_large` 阻断启动；而 `desktop-host-proof`/`health`/`preferences`/`shutdown`/`/` 仍应维持紧凑上限以防异常回环响应无界占内存。因此通过 `probe_backend_at`/`local_get_at` 将 1 MiB 上限严格限定在 `OPENAPI_PATH`，其余探针保持 `MAX_HTTP_RESPONSE_BYTES`（128 KiB）；守护为 `backend.rs` 的大 OpenAPI 握手通过/超限拒绝与非 OpenAPI 保持 128 KiB 拒绝单测，以及 `tests/test_tauri_lifecycle_contract.py::test_tauri_handshake_response_limits_cover_actual_fastapi_endpoints` 对真实 FastAPI 端点体积与必需操作的跨层契约。
+
 `backend.rs` 在失败清理前记录 Python PID、尝试次数、耗时和存活状态，避免用户把清理后的无监听误解为端口从未可用。错误不含 proof、challenge 或业务正文；守护为 HTTP error redaction 与 child 提前退出回归。`main.rs::start_surface` 的浏览器兜底只在已握手后的窗口错误上触发；用户等待时 child 可能退出，故确认后必须 fresh 重验，不能降级为只看 health.ok。守护为 accepted/declined/ownership_lost/browser_failure 的纯编排测试。
 
 `main.rs` 的 setup 错误必须在 setup 闭包内部消费并提示：Tauri 将该闭包推迟到事件循环，直接返回 `Err` 会触发 panic，无法被 `Builder::build` 的错误分支捕获。清理 owned backend 后记录失败标记、展示诊断并请求退出；`--no-startup-dialog` 仅用于自动化且不能吞掉日志/退出码。守护为 `test_gui_setup_failure_is_presented_before_requesting_exit` 和实际冲突成品运行。
